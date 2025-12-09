@@ -44,6 +44,10 @@ jobs:
     - name: Show built DLLs
       run: Get-ChildItem .\MMMapEditor\bin\${{ matrix.configuration }}\net6.0-windows\ -Recurse
 
+    - name: Copy additional files
+      run: |
+        cp -R Additional_files/* MMMapEditor/bin/${{ matrix.configuration }}/net6.0-windows/
+
     # Публикация DLL как артефакта
     - name: Publish Artifact
       uses: actions/upload-artifact@v4
