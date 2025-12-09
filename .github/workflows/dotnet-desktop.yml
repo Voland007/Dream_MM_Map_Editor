@@ -91,6 +91,10 @@ jobs:
     -  name: Build project
        run: dotnet build --configuration Release --no-restore
 
+       # Дебаг: тут ты опубликуешь содержимое папки, чтобы проверить их наличие перед загрузко
+    - name: Show built DLLs
+      run: dir /s MMMapEditor\bin\Release\net6.0-windows\
+
     -  name: Publish Artifact
        uses: actions/upload-artifact@v4
        with:
