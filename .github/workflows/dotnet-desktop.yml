@@ -87,6 +87,10 @@ jobs:
       env:
         Configuration: ${{ matrix.configuration }}
 
+     # Execute all unit tests in the solution
+    -  name: Build project
+       run: dotnet build --configuration Release --no-restore
+
     # Decode the base 64 encoded pfx and save the Signing_Certificate
     #- name: Decode the pfx
     #  run: |
