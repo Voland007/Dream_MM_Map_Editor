@@ -95,13 +95,13 @@ jobs:
        uses: actions/upload-artifact@v4
        with:
          name: app-binary
-         path: Dream_MM_Map_Editor/MMMapEditor/bin/Release/net6.0-windows/**/*.dll
+         path: Dream_MM_Map_Editor\Dream_MM_Map_Editor\MMMapEditor\bin\Release\net6.0-windows\MMMapEditor.dll
 
     -  name: Upload build artifacts
        uses: actions/upload-artifact@v4
        with:
          name: my-artifact
-         path: Dream_MM_Map_Editor/MMMapEditor/bin/Release/net6.0-windows
+         path: Dream_MM_Map_Editor\Dream_MM_Map_Editor\MMMapEditor\bin\Release\net6.0-windows\MMMapEditor.dll
 
     # Decode the base 64 encoded pfx and save the Signing_Certificate
     #- name: Decode the pfx
