@@ -37,16 +37,16 @@ jobs:
         Configuration: ${{ matrix.configuration }}
 
     - name: Build project
-      run: dotnet build --configuration Release --no-restore
+      run: dotnet build --configuration ${{ matrix.configuration }} --no-restore
 
     # Показ содержимого папки со сборкой
     # чтобы проверить, что DLL реально собрался
     - name: Show built DLLs
-      run: Get-ChildItem .\MMMapEditor\bin\Release\net6.0-windows\ -Recurse
+      run: Get-ChildItem .\MMMapEditor\bin\${{ matrix.configuration }}\net6.0-windows\ -Recurse
 
     # Публикация DLL как артефакта
     - name: Publish Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: app-binary
-        path: MMMapEditor\bin\Release\net6.0-windows\
+        name: app-binary-${{ matrix.configuration }}
+        path: MMMapEditor\bin\${{ matrix.configuration }}\net6.0-windows\
