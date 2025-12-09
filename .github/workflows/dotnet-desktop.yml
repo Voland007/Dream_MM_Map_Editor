@@ -91,6 +91,12 @@ jobs:
     -  name: Build project
        run: dotnet build --configuration Release --no-restore
 
+    -  name: Publish Artifact
+       uses: actions/upload-artifact@v3
+       with:
+         name: app-binary
+         path: ./src/bin/Release/**/*.dll
+
     -  name: Upload build artifacts
        uses: actions/upload-artifact@v4
        with:
