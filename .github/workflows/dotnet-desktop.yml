@@ -91,6 +91,12 @@ jobs:
     -  name: Build project
        run: dotnet build --configuration Release --no-restore
 
+    -  name: Upload build artifacts
+       uses: actions/upload-artifact@v4
+       with:
+         name: my-artifact
+         path: Dream_MM_Map_Editor/MMMapEditor/bin/Release/net6.0-windows
+
     # Decode the base 64 encoded pfx and save the Signing_Certificate
     #- name: Decode the pfx
     #  run: |
