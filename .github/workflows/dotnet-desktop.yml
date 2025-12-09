@@ -8,8 +8,12 @@ on:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
     runs-on: windows-latest
-    
+
     env:
       Solution_Name: Dream_MM_Map_Editor.sln
 
@@ -27,20 +31,22 @@ jobs:
     - name: Setup MSBuild.exe
       uses: microsoft/setup-msbuild@v2
 
-    - name: Restore
-      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=Release
+    - name: Restore the application
+      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
+      env:
+        Configuration: ${{ matrix.configuration }}
 
     - name: Build project
-      run: dotnet build $env:Solution_Name --configuration Release --no-restore
+      run: dotnet build --configuration Release --no-restore
 
     # Показ содержимого папки со сборкой
     # чтобы проверить, что DLL реально собрался
     - name: Show built DLLs
-      run: dir /s MMMapEditor\bin\Release\net6.0-windows\
+      run: Get-ChildItem .\MMMapEditor\bin\Release\net6.0-windows\ -Recurse
 
     # Публикация DLL как артефакта
     - name: Publish Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: MMMapEditor-DLL
-        path: MMMapEditor\bin\Release\net6.0-windows\MMMapEditor.dll
+        name: app-binary
+        path: MMMapEditor\bin\Release\net6.0-windows\
