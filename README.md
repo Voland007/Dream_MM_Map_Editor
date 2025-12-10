@@ -62,3 +62,7 @@ The editor comes equipped with demonstration materials prepared by the author:
 -   Two ready-to-use sample maps.
 
 However, when viewing these, you'll see a warning about potential spoilers. Therefore, we recommend starting new maps from scratch.
+
+## Future Improvements
+
+In future updates, we'll add support for opening and visualizing maps directly from the original game resources.
