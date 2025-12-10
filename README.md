@@ -31,3 +31,34 @@
 ## Будущие улучшения
 
 Следующая версия планируется с поддержкой открытия и визуализации карт непосредственно из оригинальных игровых ресурсов.
+
+---
+
+# Map Editor for _Might and Magic Book One_
+
+## Project Description
+
+This project is a tool designed to edit maps in the classic RPG game **Might and Magic Book One: The Secret of the Inner Sanctum**. Known for its vast open-world without an integrated map system, navigating through this expansive universe can be challenging. To fully enjoy the adventure, it's highly recommended that players create their own maps manually or digitally. Otherwise, exploring will become a real test of memory.
+
+Our editor addresses this issue by providing gamers with a convenient digital way to craft and update maps while preserving the original spirit of exploration without relying on pre-made solutions.
+
+## Key Features
+
+-   ✅ Create and modify game maps consisting of individual grid cells.
+-   ⚙️ Automatic calculation of cell coordinates, eliminating manual entry.
+-   📝 Add notes to cells and search them across all your created maps.
+-   🖼 Attach screenshots directly from clipboard.
+-   🔀 Easily copy previously created cells for quick filling similar areas.
+-   🗂 Support custom sets of game objects with unique tile design and naming options.
+-   👍 Share object collections between users.
+-   🌿 Unique wall patterns and moss textures generated dynamically each time.
+-   🪄 Portals are displayed with subtle flickering effects.
+
+## Demonstration Materials
+
+The editor comes equipped with demonstration materials prepared by the author:
+
+-   A set of predefined game objects.
+-   Two ready-to-use sample maps.
+
+However, when viewing these maps, you'll see a warning about potential spoilers. Therefore, we recommend starting new maps from scratch.
