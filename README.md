@@ -26,7 +26,7 @@
 -   Набор предустановленного списка объектов.
 -   Две предварительно созданные карты.
 
-Однако при попытке просмотра этих карт появится предупреждающее сообщение о наличии потенциальных спойлеров, поэтому  рекомендуется начинать создание карт с чистого листа.
+Однако при попытке их просмотра появится предупреждающее сообщение о наличии потенциальных спойлеров, поэтому рекомендуется начинать создание карт с чистого листа.
 
 ## Будущие улучшения
 
@@ -61,4 +61,4 @@ The editor comes equipped with demonstration materials prepared by the author:
 -   A set of predefined game objects.
 -   Two ready-to-use sample maps.
 
-However, when viewing these maps, you'll see a warning about potential spoilers. Therefore, we recommend starting new maps from scratch.
+However, when viewing these, you'll see a warning about potential spoilers. Therefore, we recommend starting new maps from scratch.
