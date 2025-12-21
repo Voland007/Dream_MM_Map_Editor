@@ -126,6 +126,7 @@ namespace MMMapEditor
         public MainForm()
         {
             InitializeComponent();
+            this.Font = new Font("Segoe UI", 9f); // явно присваиваем шрифт
             this.Width = 1080;
             this.Height = 703;
             this.Text = "–едактор моей мечты";
