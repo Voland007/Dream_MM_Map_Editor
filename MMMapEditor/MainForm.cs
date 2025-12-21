@@ -22,7 +22,7 @@ using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Diagnostics;
 using System.Xml;
-using Newtonsoft.Json; // Необходим пакет Newtonsoft.Json для сериализации
+using Newtonsoft.Json; // РќРµРѕР±С…РѕРґРёРј РїР°РєРµС‚ Newtonsoft.Json РґР»СЏ СЃРµСЂРёР°Р»РёР·Р°С†РёРё
 using Newtonsoft.Json.Linq;
 using IniParser;
 using IniParser.Model;
@@ -35,36 +35,36 @@ namespace MMMapEditor
         private const int GridSize = 16;
         private const int CellSize = 40;
         private Button[,] gridButtons;
-        private bool[,] highlightedCells; // Массив для подсветки
-        private Pen highlightPen = new Pen(Color.White, 2); // Пен для выделения
-        private Label infoLabel; // Лейбл для отображения информации о выбранной клетке
+        private bool[,] highlightedCells; // РњР°СЃСЃРёРІ РґР»СЏ РїРѕРґСЃРІРµС‚РєРё
+        private Pen highlightPen = new Pen(Color.White, 2); // РџРµРЅ РґР»СЏ РІС‹РґРµР»РµРЅРёСЏ
+        private Label infoLabel; // Р›РµР№Р±Р» РґР»СЏ РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ РёРЅС„РѕСЂРјР°С†РёРё Рѕ РІС‹Р±СЂР°РЅРЅРѕР№ РєР»РµС‚РєРµ
         private List<string> options = new List<string>()
         {
-            "Пустота",
-            "Кирпичная стена",
-            "Каменная стена",
-            "Еловый лес",
-            "Еловый лес(снег)",
-            "Дубовый лес",
-            "Дубовый лес(снег)",
-            "Горы",
-            "Горы (снег)",
-            "Вода",
-            "Пустыня",
-            "Болото",
-            "Барьер"
+            "РџСѓСЃС‚РѕС‚Р°",
+            "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°",
+            "РљР°РјРµРЅРЅР°СЏ СЃС‚РµРЅР°",
+            "Р•Р»РѕРІС‹Р№ Р»РµСЃ",
+            "Р•Р»РѕРІС‹Р№ Р»РµСЃ(СЃРЅРµРі)",
+            "Р”СѓР±РѕРІС‹Р№ Р»РµСЃ",
+            "Р”СѓР±РѕРІС‹Р№ Р»РµСЃ(СЃРЅРµРі)",
+            "Р“РѕСЂС‹",
+            "Р“РѕСЂС‹ (СЃРЅРµРі)",
+            "Р’РѕРґР°",
+            "РџСѓСЃС‚С‹РЅСЏ",
+            "Р‘РѕР»РѕС‚Рѕ",
+            "Р‘Р°СЂСЊРµСЂ"
         };
-        private ComboBox topComboBox, bottomComboBox, leftComboBox, rightComboBox; // Комбобоксы для границ
+        private ComboBox topComboBox, bottomComboBox, leftComboBox, rightComboBox; // РљРѕРјР±РѕР±РѕРєСЃС‹ РґР»СЏ РіСЂР°РЅРёС†
         private Dictionary<Point, Tuple<int, int, int, int>> settingsDict = new Dictionary<Point, Tuple<int, int, int, int>>();
-        private Point? selectedPosition = null; // Текущая выделенная позиция
+        private Point? selectedPosition = null; // РўРµРєСѓС‰Р°СЏ РІС‹РґРµР»РµРЅРЅР°СЏ РїРѕР·РёС†РёСЏ
         private Dictionary<Point, Tuple<string, string, string, string>> borders = new Dictionary<Point, Tuple<string, string, string, string>>();
         private Dictionary<Point, Tuple<int, int, int, int>> passageDict = new Dictionary<Point, Tuple<int, int, int, int>>();
         private Dictionary<Point, Tuple<bool, bool, bool, bool>> closedStates = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
         private Dictionary<Point, Tuple<bool, bool, bool, bool>> messageStates = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
-        private Dictionary<Point, string> centralOptions = new Dictionary<Point, string>(); // Словарь для хранения значения тела каждой ячейки
-        private PictureBox magnifierPictureBox; // Объявление картинки, увеличивающей выделенную ячейку
-        private ComboBox passTopComboBox, passBottomComboBox, passLeftComboBox, passRightComboBox; // Комбобоксы для прохода
-        private ComboBox centerComboBox; //Комбобокс для тела клетки
+        private Dictionary<Point, string> centralOptions = new Dictionary<Point, string>(); // РЎР»РѕРІР°СЂСЊ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ Р·РЅР°С‡РµРЅРёСЏ С‚РµР»Р° РєР°Р¶РґРѕР№ СЏС‡РµР№РєРё
+        private PictureBox magnifierPictureBox; // РћР±СЉСЏРІР»РµРЅРёРµ РєР°СЂС‚РёРЅРєРё, СѓРІРµР»РёС‡РёРІР°СЋС‰РµР№ РІС‹РґРµР»РµРЅРЅСѓСЋ СЏС‡РµР№РєСѓ
+        private ComboBox passTopComboBox, passBottomComboBox, passLeftComboBox, passRightComboBox; // РљРѕРјР±РѕР±РѕРєСЃС‹ РґР»СЏ РїСЂРѕС…РѕРґР°
+        private ComboBox centerComboBox; //РљРѕРјР±РѕР±РѕРєСЃ РґР»СЏ С‚РµР»Р° РєР»РµС‚РєРё
         Dictionary<string, string> colorsMap = new Dictionary<string, string>()
         {
             {"72,0,0", "-1,-1,-1"},
@@ -113,12 +113,12 @@ namespace MMMapEditor
         private ToolStripMenuItem searchMenuItem;
         private ToolStripMenuItem onMapsSearchItem;
         private ContextMenuStrip contextMenu;
-        private CopiedCellInfo? copiedCellInfo; // Переменная для хранения временно скопированной ячейки
-        private string lastSavedFilename; // Переменная для хранения пути к последней сохранённой карте
-        private bool isMapModified = false; // Флаг отслеживает изменения на карте
-        private readonly Dictionary<string, JObject> _objectsData = new Dictionary<string, JObject>(); // Приватное поле для хранения данных объектов из JSON
+        private CopiedCellInfo? copiedCellInfo; // РџРµСЂРµРјРµРЅРЅР°СЏ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РІСЂРµРјРµРЅРЅРѕ СЃРєРѕРїРёСЂРѕРІР°РЅРЅРѕР№ СЏС‡РµР№РєРё
+        private string lastSavedFilename; // РџРµСЂРµРјРµРЅРЅР°СЏ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РїСѓС‚Рё Рє РїРѕСЃР»РµРґРЅРµР№ СЃРѕС…СЂР°РЅС‘РЅРЅРѕР№ РєР°СЂС‚Рµ
+        private bool isMapModified = false; // Р¤Р»Р°Рі РѕС‚СЃР»РµР¶РёРІР°РµС‚ РёР·РјРµРЅРµРЅРёСЏ РЅР° РєР°СЂС‚Рµ
+        private readonly Dictionary<string, JObject> _objectsData = new Dictionary<string, JObject>(); // РџСЂРёРІР°С‚РЅРѕРµ РїРѕР»Рµ РґР»СЏ С…СЂР°РЅРµРЅРёСЏ РґР°РЅРЅС‹С… РѕР±СЉРµРєС‚РѕРІ РёР· JSON
         public string ActiveConfigObjectFile { get; set; }
-        private LocalizedDirectionsForm localizedDirectionsForm; // Новые свойства для управления формой настроек
+        private LocalizedDirectionsForm localizedDirectionsForm; // РќРѕРІС‹Рµ СЃРІРѕР№СЃС‚РІР° РґР»СЏ СѓРїСЂР°РІР»РµРЅРёСЏ С„РѕСЂРјРѕР№ РЅР°СЃС‚СЂРѕРµРє
         private string mapSector = ""; 
         private string surface = "";
 
@@ -126,33 +126,33 @@ namespace MMMapEditor
         public MainForm()
         {
             InitializeComponent();
-            this.Font = new Font("Segoe UI", 9f); // Явно присваиваем шрифт
+            this.Font = new Font("Segoe UI", 9f); // РЇРІРЅРѕ РїСЂРёСЃРІР°РёРІР°РµРј С€СЂРёС„С‚
             this.Width = 1080;
             this.Height = 703;
-            this.Text = "Редактор моей мечты";
+            this.Text = "Р РµРґР°РєС‚РѕСЂ РјРѕРµР№ РјРµС‡С‚С‹";
             this.MaximizeBox = false;
             this.FormBorderStyle = FormBorderStyle.FixedSingle;
-            this.FormClosing += MainForm_FormClosing; // Подключаем обработчик события
+            this.FormClosing += MainForm_FormClosing; // РџРѕРґРєР»СЋС‡Р°РµРј РѕР±СЂР°Р±РѕС‚С‡РёРє СЃРѕР±С‹С‚РёСЏ
             CreateGrid();
-            CreateControls(); // Функция для создания правой панели
-            InitializeAllCells(); // Начальное задание свойств каждой клетки
+            CreateControls(); // Р¤СѓРЅРєС†РёСЏ РґР»СЏ СЃРѕР·РґР°РЅРёСЏ РїСЂР°РІРѕР№ РїР°РЅРµР»Рё
+            InitializeAllCells(); // РќР°С‡Р°Р»СЊРЅРѕРµ Р·Р°РґР°РЅРёРµ СЃРІРѕР№СЃС‚РІ РєР°Р¶РґРѕР№ РєР»РµС‚РєРё
             CreateContxtMenu();
 
-            // Читаем файл по умолчанию из INI
+            // Р§РёС‚Р°РµРј С„Р°Р№Р» РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РёР· INI
             string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
             if (!string.IsNullOrEmpty(defaultConfigObjectFile))
             {
-                // Проверяем существование файла
+                // РџСЂРѕРІРµСЂСЏРµРј СЃСѓС‰РµСЃС‚РІРѕРІР°РЅРёРµ С„Р°Р№Р»Р°
                 if (File.Exists(defaultConfigObjectFile))
                 {
                     ActiveConfigObjectFile = defaultConfigObjectFile;
-                    ReloadData(defaultConfigObjectFile); // Загружаем файл
+                    ReloadData(defaultConfigObjectFile); // Р—Р°РіСЂСѓР¶Р°РµРј С„Р°Р№Р»
                 }
                 else
                 {
-                    // Если файл не найден, показываем предупреждение
-                    MessageBox.Show("Файл с объектами по умолчанию (" + defaultConfigObjectFile + ") не найден. Будет использоваться базовая конфигурация.");
-                    ReloadData(null); // Загружаем базовые объекты
+                    // Р•СЃР»Рё С„Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ, РїРѕРєР°Р·С‹РІР°РµРј РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёРµ
+                    MessageBox.Show("Р¤Р°Р№Р» СЃ РѕР±СЉРµРєС‚Р°РјРё РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ (" + defaultConfigObjectFile + ") РЅРµ РЅР°Р№РґРµРЅ. Р‘СѓРґРµС‚ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊСЃСЏ Р±Р°Р·РѕРІР°СЏ РєРѕРЅС„РёРіСѓСЂР°С†РёСЏ.");
+                    ReloadData(null); // Р—Р°РіСЂСѓР¶Р°РµРј Р±Р°Р·РѕРІС‹Рµ РѕР±СЉРµРєС‚С‹
                 }
             }
             else
@@ -160,18 +160,18 @@ namespace MMMapEditor
 
         }
 
-        // Дополнительный метод перевода русских названий в английские
+        // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Р№ РјРµС‚РѕРґ РїРµСЂРµРІРѕРґР° СЂСѓСЃСЃРєРёС… РЅР°Р·РІР°РЅРёР№ РІ Р°РЅРіР»РёР№СЃРєРёРµ
         private static string TranslateKey(string key)
         {
             switch (key)
             {
-                case "Верх":
+                case "Р’РµСЂС…":
                     return "Top";
-                case "Низ":
+                case "РќРёР·":
                     return "Bottom";
-                case "Право":
+                case "РџСЂР°РІРѕ":
                     return "Right";
-                case "Лево":
+                case "Р›РµРІРѕ":
                     return "Left";
                 default:
                     return key;
@@ -182,41 +182,41 @@ namespace MMMapEditor
         {
             try
             {
-                // Проверяем, существует ли файл
+                // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё С„Р°Р№Р»
                 if (!File.Exists("Settings.ini"))
                 {
-                    // Если файл не найден, сразу возвращаем fallbackValue
+                    // Р•СЃР»Рё С„Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ, СЃСЂР°Р·Сѓ РІРѕР·РІСЂР°С‰Р°РµРј fallbackValue
                     return fallbackValue;
                 }
 
-                // Парсим файл INI
+                // РџР°СЂСЃРёРј С„Р°Р№Р» INI
                 var parser = new FileIniDataParser();
                 var iniFile = parser.ReadFile("Settings.ini");
 
-                // Секция настроек направлений
+                // РЎРµРєС†РёСЏ РЅР°СЃС‚СЂРѕРµРє РЅР°РїСЂР°РІР»РµРЅРёР№
                 if (section == "CustomDirections")
                 {
                     string translatedKey = TranslateKey(key);
                     string customValue = iniFile[section][translatedKey];
 
-                    // Возвращаем кастомизированное значение, если оно есть
+                    // Р’РѕР·РІСЂР°С‰Р°РµРј РєР°СЃС‚РѕРјРёР·РёСЂРѕРІР°РЅРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ, РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ
                     if (!string.IsNullOrWhiteSpace(customValue))
                     {
                         return customValue.Trim();
                     }
                 }
 
-                // Извлекаем значение по заданному ключу
+                // РР·РІР»РµРєР°РµРј Р·РЅР°С‡РµРЅРёРµ РїРѕ Р·Р°РґР°РЅРЅРѕРјСѓ РєР»СЋС‡Сѓ
                 return iniFile[section][key];
             }
             catch (Exception ex)
             {
-                // В случае возникновения ошибки при чтении или разборе файла, выводим сообщение
-                MessageBox.Show($"Ошибка при чтении файла Settings.ini: {ex.Message}",
-                                "Ошибка",
+                // Р’ СЃР»СѓС‡Р°Рµ РІРѕР·РЅРёРєРЅРѕРІРµРЅРёСЏ РѕС€РёР±РєРё РїСЂРё С‡С‚РµРЅРёРё РёР»Рё СЂР°Р·Р±РѕСЂРµ С„Р°Р№Р»Р°, РІС‹РІРѕРґРёРј СЃРѕРѕР±С‰РµРЅРёРµ
+                MessageBox.Show($"РћС€РёР±РєР° РїСЂРё С‡С‚РµРЅРёРё С„Р°Р№Р»Р° Settings.ini: {ex.Message}",
+                                "РћС€РёР±РєР°",
                                 MessageBoxButtons.OK,
                                 MessageBoxIcon.Error);
-                // Возвращаем значение по умолчанию
+                // Р’РѕР·РІСЂР°С‰Р°РµРј Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
                 return fallbackValue;
             }
         }
@@ -224,20 +224,20 @@ namespace MMMapEditor
         public void ReloadData(string configCentralObjectFile)
         {
             _objectsData.Clear();
-            LoadObjectsData(configCentralObjectFile);  // Новая загрузка данных объектов
-            LoadNamesFromJson(); // Заполняем выпадающий список объектов из файла
+            LoadObjectsData(configCentralObjectFile);  // РќРѕРІР°СЏ Р·Р°РіСЂСѓР·РєР° РґР°РЅРЅС‹С… РѕР±СЉРµРєС‚РѕРІ
+            LoadNamesFromJson(); // Р—Р°РїРѕР»РЅСЏРµРј РІС‹РїР°РґР°СЋС‰РёР№ СЃРїРёСЃРѕРє РѕР±СЉРµРєС‚РѕРІ РёР· С„Р°Р№Р»Р°
             foreach (var button in gridButtons)
             {
-                button.Invalidate(); // вызываем перерисовку для каждой кнопки
+                button.Invalidate(); // РІС‹Р·С‹РІР°РµРј РїРµСЂРµСЂРёСЃРѕРІРєСѓ РґР»СЏ РєР°Р¶РґРѕР№ РєРЅРѕРїРєРё
             }
         }
 
-        // Метод для загрузки данных из JSON
+        // РњРµС‚РѕРґ РґР»СЏ Р·Р°РіСЂСѓР·РєРё РґР°РЅРЅС‹С… РёР· JSON
         private void LoadObjectsData(string configCentralObjectFile)
         {
             if (!string.IsNullOrEmpty(configCentralObjectFile))
             {
-                // Проверяем, существует ли указанный файл
+                // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё СѓРєР°Р·Р°РЅРЅС‹Р№ С„Р°Р№Р»
                 if (File.Exists(configCentralObjectFile))
                 {
                     string jsonContent = File.ReadAllText(configCentralObjectFile);
@@ -251,14 +251,14 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    // Файл не найден, выводим сообщение
-                    MessageBox.Show("Файл с объектами '" + configCentralObjectFile + "' не найден.\nБудет использована базовая конфигурация.");
+                    // Р¤Р°Р№Р» РЅРµ РЅР°Р№РґРµРЅ, РІС‹РІРѕРґРёРј СЃРѕРѕР±С‰РµРЅРёРµ
+                    MessageBox.Show("Р¤Р°Р№Р» СЃ РѕР±СЉРµРєС‚Р°РјРё '" + configCentralObjectFile + "' РЅРµ РЅР°Р№РґРµРЅ.\nР‘СѓРґРµС‚ РёСЃРїРѕР»СЊР·РѕРІР°РЅР° Р±Р°Р·РѕРІР°СЏ РєРѕРЅС„РёРіСѓСЂР°С†РёСЏ.");
                 }
             }
 
-                // Если файл не указан, используем базовую конфигурацию
-                _objectsData["Пустота"] = new JObject(
-                    new JProperty("Name", "Пустота"),
+                // Р•СЃР»Рё С„Р°Р№Р» РЅРµ СѓРєР°Р·Р°РЅ, РёСЃРїРѕР»СЊР·СѓРµРј Р±Р°Р·РѕРІСѓСЋ РєРѕРЅС„РёРіСѓСЂР°С†РёСЋ
+                _objectsData["РџСѓСЃС‚РѕС‚Р°"] = new JObject(
+                    new JProperty("Name", "РџСѓСЃС‚РѕС‚Р°"),
                     new JProperty("LeftMargin", 0),
                     new JProperty("RightMargin", 0),
                     new JProperty("FilterLevel", 0),
@@ -266,8 +266,8 @@ namespace MMMapEditor
                     new JProperty("BodyPixels", new JArray())
                 );
 
-                _objectsData["Не исследовано"] = new JObject(
-                    new JProperty("Name", "Не исследовано"),
+                _objectsData["РќРµ РёСЃСЃР»РµРґРѕРІР°РЅРѕ"] = new JObject(
+                    new JProperty("Name", "РќРµ РёСЃСЃР»РµРґРѕРІР°РЅРѕ"),
                     new JProperty("LeftMargin", 0),
                     new JProperty("RightMargin", 0),
                     new JProperty("FilterLevel", 0),
@@ -281,16 +281,16 @@ namespace MMMapEditor
         {
             try
             {
-                // Очистим старый список
+                // РћС‡РёСЃС‚РёРј СЃС‚Р°СЂС‹Р№ СЃРїРёСЃРѕРє
                 centerComboBox.Items.Clear();
 
-                // Добавляем имена из нашего словаря _objectsData
+                // Р”РѕР±Р°РІР»СЏРµРј РёРјРµРЅР° РёР· РЅР°С€РµРіРѕ СЃР»РѕРІР°СЂСЏ _objectsData
                 foreach (var entry in _objectsData.Keys)
                 {
                     centerComboBox.Items.Add(entry);
                 }
 
-                // Устанавливаем первое значение по умолчанию
+                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїРµСЂРІРѕРµ Р·РЅР°С‡РµРЅРёРµ РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ
                 if (centerComboBox.Items.Count > 0)
                 {
                     centerComboBox.SelectedIndex = 0;
@@ -298,7 +298,7 @@ namespace MMMapEditor
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при чтении JSON: {ex.Message}");
+                MessageBox.Show($"РћС€РёР±РєР° РїСЂРё С‡С‚РµРЅРёРё JSON: {ex.Message}");
             }
         }
 
@@ -306,29 +306,29 @@ namespace MMMapEditor
         {
             if (isMapModified)
             {
-                // Диалог подтверждения выхода
+                // Р”РёР°Р»РѕРі РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ РІС‹С…РѕРґР°
                 DialogResult result = MessageBox.Show(
-                "Вы действительно хотите выйти?\nВсе текущие данные будут потеряны!",
-                "Выход из программы",
+                "Р’С‹ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ С…РѕС‚РёС‚Рµ РІС‹Р№С‚Рё?\nР’СЃРµ С‚РµРєСѓС‰РёРµ РґР°РЅРЅС‹Рµ Р±СѓРґСѓС‚ РїРѕС‚РµСЂСЏРЅС‹!",
+                "Р’С‹С…РѕРґ РёР· РїСЂРѕРіСЂР°РјРјС‹",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Warning
             );
 
-                // Если пользователь нажал Cancel, отменяем закрытие окна
+                // Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ РЅР°Р¶Р°Р» Cancel, РѕС‚РјРµРЅСЏРµРј Р·Р°РєСЂС‹С‚РёРµ РѕРєРЅР°
                 if (result == DialogResult.Cancel)
                 {
-                    e.Cancel = true; // Отмена закрытия окна
+                    e.Cancel = true; // РћС‚РјРµРЅР° Р·Р°РєСЂС‹С‚РёСЏ РѕРєРЅР°
                 }
             }
         }
 
         private void CreateContxtMenu()
         {
-            // Создаем контекстное меню
+            // РЎРѕР·РґР°РµРј РєРѕРЅС‚РµРєСЃС‚РЅРѕРµ РјРµРЅСЋ
             contextMenu = new ContextMenuStrip();
-            ToolStripMenuItem pasteItem = new ToolStripMenuItem("&Вставить");
-            ToolStripMenuItem copyItem = new ToolStripMenuItem("&Копировать");
-            ToolStripMenuItem resetItem = new ToolStripMenuItem("&Сбросить");
+            ToolStripMenuItem pasteItem = new ToolStripMenuItem("&Р’СЃС‚Р°РІРёС‚СЊ");
+            ToolStripMenuItem copyItem = new ToolStripMenuItem("&РљРѕРїРёСЂРѕРІР°С‚СЊ");
+            ToolStripMenuItem resetItem = new ToolStripMenuItem("&РЎР±СЂРѕСЃРёС‚СЊ");
 
             pasteItem.Click += PasteItem_Click;
             copyItem.Click += CopyItem_Click;
@@ -338,7 +338,7 @@ namespace MMMapEditor
             contextMenu.Items.Add(copyItem);
             contextMenu.Items.Add(resetItem);
 
-            // Назначаем контекстное меню кнопкам сетки
+            // РќР°Р·РЅР°С‡Р°РµРј РєРѕРЅС‚РµРєСЃС‚РЅРѕРµ РјРµРЅСЋ РєРЅРѕРїРєР°Рј СЃРµС‚РєРё
             foreach (var button in gridButtons)
             {
                 button.ContextMenuStrip = contextMenu;
@@ -351,7 +351,7 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                // Вставляем состояние из буфера в текущую ячейку
+                // Р’СЃС‚Р°РІР»СЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РёР· Р±СѓС„РµСЂР° РІ С‚РµРєСѓС‰СѓСЋ СЏС‡РµР№РєСѓ
                 borders[pos] = copiedCellInfo.Value.Borders;
                 passageDict[pos] = copiedCellInfo.Value.Passages;
                 closedStates[pos] = copiedCellInfo.Value.ClosedStates;
@@ -363,7 +363,7 @@ namespace MMMapEditor
                 imagesPerCell[pos] = copiedCellInfo.Value.CellImage;
                 notesPerCell[pos] = copiedCellInfo.Value.Notes;
 
-                // Обновляем отображение
+                // РћР±РЅРѕРІР»СЏРµРј РѕС‚РѕР±СЂР°Р¶РµРЅРёРµ
                 gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
                 UpdatePreview();
                 RestoreSettings(pos);
@@ -377,7 +377,7 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                // Копируем текущее состояние выбранной ячейки
+                // РљРѕРїРёСЂСѓРµРј С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РІС‹Р±СЂР°РЅРЅРѕР№ СЏС‡РµР№РєРё
                 copiedCellInfo = new CopiedCellInfo
                 {
                     Borders = borders[pos],
@@ -399,7 +399,7 @@ namespace MMMapEditor
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                InitializeCell(pos); // Инициализирует выбранную ячейку
+                InitializeCell(pos); // РРЅРёС†РёР°Р»РёР·РёСЂСѓРµС‚ РІС‹Р±СЂР°РЅРЅСѓСЋ СЏС‡РµР№РєСѓ
                 gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
                 UpdatePreview();
                 RestoreSettings(pos);
@@ -409,7 +409,7 @@ namespace MMMapEditor
 
         private void InitializeCell(Point pos)
         {
-            // Сброс настроек выбранной клетки
+            // РЎР±СЂРѕСЃ РЅР°СЃС‚СЂРѕРµРє РІС‹Р±СЂР°РЅРЅРѕР№ РєР»РµС‚РєРё
             borders.Remove(pos);
             passageDict.Remove(pos);
             closedStates.Remove(pos);
@@ -421,9 +421,9 @@ namespace MMMapEditor
             lightingLevels.Remove(pos);
             centralOptions.Remove(pos);
 
-            // Дополнительно можно добавить восстановление дефолтных значений, если это требуется
-            // Например:
-            borders[pos] = new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
+            // Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ РґРµС„РѕР»С‚РЅС‹С… Р·РЅР°С‡РµРЅРёР№, РµСЃР»Рё СЌС‚Рѕ С‚СЂРµР±СѓРµС‚СЃСЏ
+            // РќР°РїСЂРёРјРµСЂ:
+            borders[pos] = new Tuple<string, string, string, string>("РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°");
             passageDict[pos] = new Tuple<int, int, int, int>(0, 0, 0, 0);
             closedStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
             messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
@@ -432,32 +432,32 @@ namespace MMMapEditor
             isDangerStates[pos] = false;
             noMagicStates[pos] = false;
             lightingLevels[pos] = Lighting.Light;
-            centralOptions[pos] = "Не исследовано";
+            centralOptions[pos] = "РќРµ РёСЃСЃР»РµРґРѕРІР°РЅРѕ";
         }
 
         private void ResetForm()
         {
-            // Сброс всех чекбоксов
+            // РЎР±СЂРѕСЃ РІСЃРµС… С‡РµРєР±РѕРєСЃРѕРІ
             isDangerCheckBox.Checked = false;
             noMagicCheckBox.Checked = false;
 
-            // Сброс радиокнопок (возвращаем состояние обратно к первому варианту)
+            // РЎР±СЂРѕСЃ СЂР°РґРёРѕРєРЅРѕРїРѕРє (РІРѕР·РІСЂР°С‰Р°РµРј СЃРѕСЃС‚РѕСЏРЅРёРµ РѕР±СЂР°С‚РЅРѕ Рє РїРµСЂРІРѕРјСѓ РІР°СЂРёР°РЅС‚Сѓ)
             lightRadioButton.Checked = true;
             darkRadioButton.Checked = false;
             darknessRadioButton.Checked = false;
 
-            // Сброс комбо-боксов
+            // РЎР±СЂРѕСЃ РєРѕРјР±Рѕ-Р±РѕРєСЃРѕРІ
             topComboBox.SelectedIndex = 0;
             bottomComboBox.SelectedIndex = 0;
             leftComboBox.SelectedIndex = 0;
             rightComboBox.SelectedIndex = 0;
 
-            // Очищаем все рисунки и изображения
+            // РћС‡РёС‰Р°РµРј РІСЃРµ СЂРёСЃСѓРЅРєРё Рё РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             cellImageBox.Image = null;
             selectedPosition = null;
-            infoLabel.Text = "Нет выделенного квадрата";
+            infoLabel.Text = "РќРµС‚ РІС‹РґРµР»РµРЅРЅРѕРіРѕ РєРІР°РґСЂР°С‚Р°";
 
-            // Очищаем тексты и заметки
+            // РћС‡РёС‰Р°РµРј С‚РµРєСЃС‚С‹ Рё Р·Р°РјРµС‚РєРё
             notesTextBox.Clear();
         }
 
@@ -508,21 +508,21 @@ namespace MMMapEditor
             return checkBox;
         }
 
-        // Обработчик изменения состояния чекбокса
+        // РћР±СЂР°Р±РѕС‚С‡РёРє РёР·РјРµРЅРµРЅРёСЏ СЃРѕСЃС‚РѕСЏРЅРёСЏ С‡РµРєР±РѕРєСЃР°
         private void Checkbox_CheckedChanged(object sender, EventArgs e)
         {
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
 
-                // 1. Сначала сохраним текущее состояние закрытыъ дверей и сообщений ячейки
+                // 1. РЎРЅР°С‡Р°Р»Р° СЃРѕС…СЂР°РЅРёРј С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ Р·Р°РєСЂС‹С‚С‹СЉ РґРІРµСЂРµР№ Рё СЃРѕРѕР±С‰РµРЅРёР№ СЏС‡РµР№РєРё
                 Tuple<bool, bool, bool, bool>? previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed) ? prevClosed : null;
                 Tuple<bool, bool, bool, bool>? previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg) ? prevMsg : null;
 
                 CheckBox checkbox = (CheckBox)sender;
                 bool checkedState = checkbox.Checked;
 
-                // Индексация чекбоксов по порядку следования
+                // РРЅРґРµРєСЃР°С†РёСЏ С‡РµРєР±РѕРєСЃРѕРІ РїРѕ РїРѕСЂСЏРґРєСѓ СЃР»РµРґРѕРІР°РЅРёСЏ
                 int index = -1;
                 if (checkbox == topCheck) index = 0;
                 else if (checkbox == bottomCheck) index = 1;
@@ -535,7 +535,7 @@ namespace MMMapEditor
 
                 if (index >= 0 && index <= 3)
                 {
-                    // Обновляем состояние закрытых границ
+                    // РћР±РЅРѕРІР»СЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ Р·Р°РєСЂС‹С‚С‹С… РіСЂР°РЅРёС†
                     var existingClosed = closedStates.ContainsKey(pos)
                                             ? closedStates[pos]
                                             : new Tuple<bool, bool, bool, bool>(false, false, false, false);
@@ -553,7 +553,7 @@ namespace MMMapEditor
                 }
                 else if (index >= 4 && index <= 7)
                 {
-                    // Обновляем состояние чекбоксов "Текст"
+                    // РћР±РЅРѕРІР»СЏРµРј СЃРѕСЃС‚РѕСЏРЅРёРµ С‡РµРєР±РѕРєСЃРѕРІ "РўРµРєСЃС‚"
                     var existingMessages = messageStates.ContainsKey(pos)
                                               ? messageStates[pos]
                                               : new Tuple<bool, bool, bool, bool>(false, false, false, false);
@@ -574,7 +574,7 @@ namespace MMMapEditor
                 Tuple<bool, bool, bool, bool> currentMessageStates = messageStates[pos];
 
 
-                // Теперь сравним сохранённые ранее значения с новыми
+                // РўРµРїРµСЂСЊ СЃСЂР°РІРЅРёРј СЃРѕС…СЂР°РЅС‘РЅРЅС‹Рµ СЂР°РЅРµРµ Р·РЅР°С‡РµРЅРёСЏ СЃ РЅРѕРІС‹РјРё
                 bool hasChanged =
                     !previousClosedStates.Equals(currentClosedStates) ||
                     !previousMessageStates.Equals(currentMessageStates);
@@ -594,11 +594,11 @@ namespace MMMapEditor
             Panel rightPanel = new Panel
             {
                 Dock = DockStyle.Right,
-                Width = 430,                     // Ширина панели
+                Width = 430,                     // РЁРёСЂРёРЅР° РїР°РЅРµР»Рё
                 BackColor = Color.FromArgb(30, 30, 30)
             };
 
-            // Создаем инфо-лейбл
+            // РЎРѕР·РґР°РµРј РёРЅС„Рѕ-Р»РµР№Р±Р»
             infoLabel = new Label
             {
                 Font = new Font(FontFamily.GenericSansSerif, 14f, FontStyle.Bold),
@@ -606,22 +606,22 @@ namespace MMMapEditor
                 TextAlign = ContentAlignment.MiddleCenter,
                 Width = 200,
                 Height = 100,
-                Location = new Point(6, 300),    // Местоположение чуть выше превью
-                Text = "Нет выделенного квадрата",
+                Location = new Point(6, 300),    // РњРµСЃС‚РѕРїРѕР»РѕР¶РµРЅРёРµ С‡СѓС‚СЊ РІС‹С€Рµ РїСЂРµРІСЊСЋ
+                Text = "РќРµС‚ РІС‹РґРµР»РµРЅРЅРѕРіРѕ РєРІР°РґСЂР°С‚Р°",
                 AutoSize = false
             };
 
-            // Создаем многострочное поле редактирования для заметок о клетке
+            // РЎРѕР·РґР°РµРј РјРЅРѕРіРѕСЃС‚СЂРѕС‡РЅРѕРµ РїРѕР»Рµ СЂРµРґР°РєС‚РёСЂРѕРІР°РЅРёСЏ РґР»СЏ Р·Р°РјРµС‚РѕРє Рѕ РєР»РµС‚РєРµ
             notesTextBox = new RichTextBox
             {
                 Multiline = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical,
-                Location = new Point(infoLabel.Right + 5, 300), // позиционируйте внизу панели
+                Location = new Point(infoLabel.Right + 5, 300), // РїРѕР·РёС†РёРѕРЅРёСЂСѓР№С‚Рµ РІРЅРёР·Сѓ РїР°РЅРµР»Рё
                 Width = 200,
                 Height = 150,
-                BackColor = Color.Black,              // чёрный фон
-                ForeColor = Color.White,              // белый текст
-                Font = new Font("Garamond", 12, FontStyle.Bold)  // шрифт полужирный
+                BackColor = Color.Black,              // С‡С‘СЂРЅС‹Р№ С„РѕРЅ
+                ForeColor = Color.White,              // Р±РµР»С‹Р№ С‚РµРєСЃС‚
+                Font = new Font("Garamond", 12, FontStyle.Bold)  // С€СЂРёС„С‚ РїРѕР»СѓР¶РёСЂРЅС‹Р№
             };
 
             notesTextBox.TextChanged += NotesTextBox_TextChanged;
@@ -630,30 +630,30 @@ namespace MMMapEditor
 
             bufferPasteImageButton = new Button
             {
-               // Text = "Вставить изображение",
+               // Text = "Р’СЃС‚Р°РІРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ",
                 Location = new Point(infoLabel.Left + 45, 400),
                 Width = 50,
                 Height = 50,
                 Image = Properties.Resources.BufferPasterButtonIcon, 
-                ImageAlign = ContentAlignment.MiddleLeft, // Выравнивание изображения
-              //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
+                ImageAlign = ContentAlignment.MiddleLeft, // Р’С‹СЂР°РІРЅРёРІР°РЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
+              //  TextImageRelation = TextImageRelation.ImageBeforeText // Р Р°СЃРїРѕР»РѕР¶РµРЅРёРµ С‚РµРєСЃС‚Р° РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             };
 
             bufferPasteImageButton.Click += BufferPasteImageButton_Click;
 
             deleteImageButton = new Button
             {
-                // Text = "Вставить изображение",
+                // Text = "Р’СЃС‚Р°РІРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ",
                 Location = new Point(bufferPasteImageButton.Right + 30, 400),
                 Width = 50,
                 Height = 50,
                 Image = Properties.Resources.TrashBasket, 
-                ImageAlign = ContentAlignment.MiddleLeft, // Выравнивание изображения
-                                                          //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
+                ImageAlign = ContentAlignment.MiddleLeft, // Р’С‹СЂР°РІРЅРёРІР°РЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
+                                                          //  TextImageRelation = TextImageRelation.ImageBeforeText // Р Р°СЃРїРѕР»РѕР¶РµРЅРёРµ С‚РµРєСЃС‚Р° РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             };
             deleteImageButton.Click += DeleteImageButton_Click;
 
-            // Добавляем PictureBox для изображений, которую добавляет пользователь
+            // Р”РѕР±Р°РІР»СЏРµРј PictureBox РґР»СЏ РёР·РѕР±СЂР°Р¶РµРЅРёР№, РєРѕС‚РѕСЂСѓСЋ РґРѕР±Р°РІР»СЏРµС‚ РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ
             cellImageBox = new PictureBox
             {
                 Width = 390,
@@ -665,41 +665,41 @@ namespace MMMapEditor
 
             cellImageBox.Paint += CellImageBox_PaintNoPicture;
 
-            // Создаем чекбоксы
+            // РЎРѕР·РґР°РµРј С‡РµРєР±РѕРєСЃС‹
             topCheck = CreateCheckBox();
             bottomCheck = CreateCheckBox();
             leftCheck = CreateCheckBox();
             rightCheck = CreateCheckBox();
 
-            // Создаем комбобоксы для границ
-            var topCombo = CreateComboBox("Верх");
-            var bottomCombo = CreateComboBox("Низ");
-            var leftCombo = CreateComboBox("Лево");
-            var rightCombo = CreateComboBox("Право");
+            // РЎРѕР·РґР°РµРј РєРѕРјР±РѕР±РѕРєСЃС‹ РґР»СЏ РіСЂР°РЅРёС†
+            var topCombo = CreateComboBox("Р’РµСЂС…");
+            var bottomCombo = CreateComboBox("РќРёР·");
+            var leftCombo = CreateComboBox("Р›РµРІРѕ");
+            var rightCombo = CreateComboBox("РџСЂР°РІРѕ");
 
             topComboBox = topCombo.Item2;
             bottomComboBox = bottomCombo.Item2;
             leftComboBox = leftCombo.Item2;
             rightComboBox = rightCombo.Item2;
 
-            // Создаем комбобоксы для прохода
-            var passTopCombo = CreatePassageComboBox("Проход вверх");
-            var passBottomCombo = CreatePassageComboBox("Проход вниз");
-            var passLeftCombo = CreatePassageComboBox("Проход влево");
-            var passRightCombo = CreatePassageComboBox("Проход вправо");
+            // РЎРѕР·РґР°РµРј РєРѕРјР±РѕР±РѕРєСЃС‹ РґР»СЏ РїСЂРѕС…РѕРґР°
+            var passTopCombo = CreatePassageComboBox("РџСЂРѕС…РѕРґ РІРІРµСЂС…");
+            var passBottomCombo = CreatePassageComboBox("РџСЂРѕС…РѕРґ РІРЅРёР·");
+            var passLeftCombo = CreatePassageComboBox("РџСЂРѕС…РѕРґ РІР»РµРІРѕ");
+            var passRightCombo = CreatePassageComboBox("РџСЂРѕС…РѕРґ РІРїСЂР°РІРѕ");
 
             passTopComboBox = passTopCombo.Item2;
             passBottomComboBox = passBottomCombo.Item2;
             passLeftComboBox = passLeftCombo.Item2;
             passRightComboBox = passRightCombo.Item2;
 
-            // Создаем новые чекбоксы для "Текст"
+            // РЎРѕР·РґР°РµРј РЅРѕРІС‹Рµ С‡РµРєР±РѕРєСЃС‹ РґР»СЏ "РўРµРєСЃС‚"
             topMessageCheck = CreateCheckBox();
             bottomMessageCheck = CreateCheckBox();
             leftMessageCheck = CreateCheckBox();
             rightMessageCheck = CreateCheckBox();
 
-            // Присоединяем обработчики событий с указанием точного источника
+            // РџСЂРёСЃРѕРµРґРёРЅСЏРµРј РѕР±СЂР°Р±РѕС‚С‡РёРєРё СЃРѕР±С‹С‚РёР№ СЃ СѓРєР°Р·Р°РЅРёРµРј С‚РѕС‡РЅРѕРіРѕ РёСЃС‚РѕС‡РЅРёРєР°
             topCheck.CheckedChanged += Checkbox_CheckedChanged;
             bottomCheck.CheckedChanged += Checkbox_CheckedChanged;
             leftCheck.CheckedChanged += Checkbox_CheckedChanged;
@@ -710,104 +710,104 @@ namespace MMMapEditor
             leftMessageCheck.CheckedChanged += Checkbox_CheckedChanged;
             rightMessageCheck.CheckedChanged += Checkbox_CheckedChanged;
 
-            // Создаем tablelayoutpanel с шестью колонками
+            // РЎРѕР·РґР°РµРј tablelayoutpanel СЃ С€РµСЃС‚СЊСЋ РєРѕР»РѕРЅРєР°РјРё
             TableLayoutPanel layout = new TableLayoutPanel
             {
-                ColumnCount = 6,                  // теперь шесть колонок
-                RowCount = 5,                     // пять строк
+                ColumnCount = 6,                  // С‚РµРїРµСЂСЊ С€РµСЃС‚СЊ РєРѕР»РѕРЅРѕРє
+                RowCount = 5,                     // РїСЏС‚СЊ СЃС‚СЂРѕРє
                 Location = new Point(5, 150),
-                Width = 433,                      // ширина совпадает с панелью
+                Width = 433,                      // С€РёСЂРёРЅР° СЃРѕРІРїР°РґР°РµС‚ СЃ РїР°РЅРµР»СЊСЋ
                 Height = 133
             };
 
-            // Центровка элементов с помощью padding
+            // Р¦РµРЅС‚СЂРѕРІРєР° СЌР»РµРјРµРЅС‚РѕРІ СЃ РїРѕРјРѕС‰СЊСЋ padding
             layout.CellBorderStyle = TableLayoutPanelCellBorderStyle.None;
 
-            // Настройка колонок
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12)); // Колонка для лейблов
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32)); // Колонка для комбобоксов "Граница"
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 11)); // Колонка для новых чекбоксов "Текст"
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30)); // Колонка для комбобоксов "Проход"
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 15)); // Колонка для чекбоксов закрытия
+            // РќР°СЃС‚СЂРѕР№РєР° РєРѕР»РѕРЅРѕРє
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12)); // РљРѕР»РѕРЅРєР° РґР»СЏ Р»РµР№Р±Р»РѕРІ
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32)); // РљРѕР»РѕРЅРєР° РґР»СЏ РєРѕРјР±РѕР±РѕРєСЃРѕРІ "Р“СЂР°РЅРёС†Р°"
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 11)); // РљРѕР»РѕРЅРєР° РґР»СЏ РЅРѕРІС‹С… С‡РµРєР±РѕРєСЃРѕРІ "РўРµРєСЃС‚"
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30)); // РљРѕР»РѕРЅРєР° РґР»СЏ РєРѕРјР±РѕР±РѕРєСЃРѕРІ "РџСЂРѕС…РѕРґ"
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 15)); // РљРѕР»РѕРЅРєР° РґР»СЏ С‡РµРєР±РѕРєСЃРѕРІ Р·Р°РєСЂС‹С‚РёСЏ
 
-            // Настройка строк
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 15)); // Шапка фиксированной высоты
+            // РќР°СЃС‚СЂРѕР№РєР° СЃС‚СЂРѕРє
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 15)); // РЁР°РїРєР° С„РёРєСЃРёСЂРѕРІР°РЅРЅРѕР№ РІС‹СЃРѕС‚С‹
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
 
-            // Центровка элементов в шапке таблицы
+            // Р¦РµРЅС‚СЂРѕРІРєР° СЌР»РµРјРµРЅС‚РѕРІ РІ С€Р°РїРєРµ С‚Р°Р±Р»РёС†С‹
             var headerLabels = new[]
             {
         new Label { Text = "", AutoSize = true, ForeColor = Color.White },
-        new Label { Text = "Граница", AutoSize = true, ForeColor = Color.White },
-        new Label { Text = "Текст", AutoSize = true, ForeColor = Color.White },
-        new Label { Text = "Проход", AutoSize = true, ForeColor = Color.White },
-        new Label { Text = "Закрыто", AutoSize = true, ForeColor = Color.White }
+        new Label { Text = "Р“СЂР°РЅРёС†Р°", AutoSize = true, ForeColor = Color.White },
+        new Label { Text = "РўРµРєСЃС‚", AutoSize = true, ForeColor = Color.White },
+        new Label { Text = "РџСЂРѕС…РѕРґ", AutoSize = true, ForeColor = Color.White },
+        new Label { Text = "Р—Р°РєСЂС‹С‚Рѕ", AutoSize = true, ForeColor = Color.White }
     };
 
-            // Устанавливаем Anchor для централизации
+            // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј Anchor РґР»СЏ С†РµРЅС‚СЂР°Р»РёР·Р°С†РёРё
             foreach (var lbl in headerLabels)
             {
-                lbl.Anchor = AnchorStyles.None; // снимаем привязку
+                lbl.Anchor = AnchorStyles.None; // СЃРЅРёРјР°РµРј РїСЂРёРІСЏР·РєСѓ
             }
 
-            // Добавляем шапку таблицы
-            layout.Controls.Add(headerLabels[0], 0, 0); // Пустая первая колонка
-            layout.Controls.Add(headerLabels[1], 1, 0); // Колонка "Граница"
-            layout.Controls.Add(headerLabels[2], 2, 0); // Колонка "Текст"
-            layout.Controls.Add(headerLabels[3], 3, 0); // Колонка "Проход"
-            layout.Controls.Add(headerLabels[4], 4, 0); // Колонка "Закрыто"
+            // Р”РѕР±Р°РІР»СЏРµРј С€Р°РїРєСѓ С‚Р°Р±Р»РёС†С‹
+            layout.Controls.Add(headerLabels[0], 0, 0); // РџСѓСЃС‚Р°СЏ РїРµСЂРІР°СЏ РєРѕР»РѕРЅРєР°
+            layout.Controls.Add(headerLabels[1], 1, 0); // РљРѕР»РѕРЅРєР° "Р“СЂР°РЅРёС†Р°"
+            layout.Controls.Add(headerLabels[2], 2, 0); // РљРѕР»РѕРЅРєР° "РўРµРєСЃС‚"
+            layout.Controls.Add(headerLabels[3], 3, 0); // РљРѕР»РѕРЅРєР° "РџСЂРѕС…РѕРґ"
+            layout.Controls.Add(headerLabels[4], 4, 0); // РљРѕР»РѕРЅРєР° "Р—Р°РєСЂС‹С‚Рѕ"
 
-            // Основная часть таблицы (без учета первой строки-шапки)
-            layout.Controls.Add(topCombo.Item1, 0, 1);  // Лейбл "Верх"
-            layout.Controls.Add(topCombo.Item2, 1, 1);  // Комбобокс верхнего направления
-            layout.Controls.Add(topMessageCheck, 2, 1); // Новый чекбокс "Текст" для верха
-            layout.Controls.Add(passTopCombo.Item2, 3, 1);  // Комбобокс прохода сверху
-            layout.Controls.Add(topCheck, 4, 1);  // Чекбокс для верхушки
+            // РћСЃРЅРѕРІРЅР°СЏ С‡Р°СЃС‚СЊ С‚Р°Р±Р»РёС†С‹ (Р±РµР· СѓС‡РµС‚Р° РїРµСЂРІРѕР№ СЃС‚СЂРѕРєРё-С€Р°РїРєРё)
+            layout.Controls.Add(topCombo.Item1, 0, 1);  // Р›РµР№Р±Р» "Р’РµСЂС…"
+            layout.Controls.Add(topCombo.Item2, 1, 1);  // РљРѕРјР±РѕР±РѕРєСЃ РІРµСЂС…РЅРµРіРѕ РЅР°РїСЂР°РІР»РµРЅРёСЏ
+            layout.Controls.Add(topMessageCheck, 2, 1); // РќРѕРІС‹Р№ С‡РµРєР±РѕРєСЃ "РўРµРєСЃС‚" РґР»СЏ РІРµСЂС…Р°
+            layout.Controls.Add(passTopCombo.Item2, 3, 1);  // РљРѕРјР±РѕР±РѕРєСЃ РїСЂРѕС…РѕРґР° СЃРІРµСЂС…Сѓ
+            layout.Controls.Add(topCheck, 4, 1);  // Р§РµРєР±РѕРєСЃ РґР»СЏ РІРµСЂС…СѓС€РєРё
 
-            layout.Controls.Add(bottomCombo.Item1, 0, 2);  // Лейбл "Низ"
-            layout.Controls.Add(bottomCombo.Item2, 1, 2);  // Комбобокс нижнего направления
-            layout.Controls.Add(bottomMessageCheck, 2, 2); // Новый чекбокс "Текст" для низа
-            layout.Controls.Add(passBottomCombo.Item2, 3, 2);  // Комбобокс прохода снизу
-            layout.Controls.Add(bottomCheck, 4, 2);  // Чекбокс для низа
+            layout.Controls.Add(bottomCombo.Item1, 0, 2);  // Р›РµР№Р±Р» "РќРёР·"
+            layout.Controls.Add(bottomCombo.Item2, 1, 2);  // РљРѕРјР±РѕР±РѕРєСЃ РЅРёР¶РЅРµРіРѕ РЅР°РїСЂР°РІР»РµРЅРёСЏ
+            layout.Controls.Add(bottomMessageCheck, 2, 2); // РќРѕРІС‹Р№ С‡РµРєР±РѕРєСЃ "РўРµРєСЃС‚" РґР»СЏ РЅРёР·Р°
+            layout.Controls.Add(passBottomCombo.Item2, 3, 2);  // РљРѕРјР±РѕР±РѕРєСЃ РїСЂРѕС…РѕРґР° СЃРЅРёР·Сѓ
+            layout.Controls.Add(bottomCheck, 4, 2);  // Р§РµРєР±РѕРєСЃ РґР»СЏ РЅРёР·Р°
 
-            layout.Controls.Add(leftCombo.Item1, 0, 3);  // Лейбл "Лево"
-            layout.Controls.Add(leftCombo.Item2, 1, 3);  // Комбобокс левого направления
-            layout.Controls.Add(leftMessageCheck, 2, 3); // Новый чекбокс "Текст" для лево
-            layout.Controls.Add(passLeftCombo.Item2, 3, 3);  // Комбобокс прохода слева
-            layout.Controls.Add(leftCheck, 4, 3);  // Чекбокс для лево
+            layout.Controls.Add(leftCombo.Item1, 0, 3);  // Р›РµР№Р±Р» "Р›РµРІРѕ"
+            layout.Controls.Add(leftCombo.Item2, 1, 3);  // РљРѕРјР±РѕР±РѕРєСЃ Р»РµРІРѕРіРѕ РЅР°РїСЂР°РІР»РµРЅРёСЏ
+            layout.Controls.Add(leftMessageCheck, 2, 3); // РќРѕРІС‹Р№ С‡РµРєР±РѕРєСЃ "РўРµРєСЃС‚" РґР»СЏ Р»РµРІРѕ
+            layout.Controls.Add(passLeftCombo.Item2, 3, 3);  // РљРѕРјР±РѕР±РѕРєСЃ РїСЂРѕС…РѕРґР° СЃР»РµРІР°
+            layout.Controls.Add(leftCheck, 4, 3);  // Р§РµРєР±РѕРєСЃ РґР»СЏ Р»РµРІРѕ
 
-            layout.Controls.Add(rightCombo.Item1, 0, 4);  // Лейбл "Право"
-            layout.Controls.Add(rightCombo.Item2, 1, 4);  // Комбобокс правого направления
-            layout.Controls.Add(rightMessageCheck, 2, 4); // Новый чекбокс "Текст" для право
-            layout.Controls.Add(passRightCombo.Item2, 3, 4);  // Комбобокс прохода справа
-            layout.Controls.Add(rightCheck, 4, 4);  // Чекбокс для право
+            layout.Controls.Add(rightCombo.Item1, 0, 4);  // Р›РµР№Р±Р» "РџСЂР°РІРѕ"
+            layout.Controls.Add(rightCombo.Item2, 1, 4);  // РљРѕРјР±РѕР±РѕРєСЃ РїСЂР°РІРѕРіРѕ РЅР°РїСЂР°РІР»РµРЅРёСЏ
+            layout.Controls.Add(rightMessageCheck, 2, 4); // РќРѕРІС‹Р№ С‡РµРєР±РѕРєСЃ "РўРµРєСЃС‚" РґР»СЏ РїСЂР°РІРѕ
+            layout.Controls.Add(passRightCombo.Item2, 3, 4);  // РљРѕРјР±РѕР±РѕРєСЃ РїСЂРѕС…РѕРґР° СЃРїСЂР°РІР°
+            layout.Controls.Add(rightCheck, 4, 4);  // Р§РµРєР±РѕРєСЃ РґР»СЏ РїСЂР°РІРѕ
 
-            // Централизуем все элементы, кроме заголовков
+            // Р¦РµРЅС‚СЂР°Р»РёР·СѓРµРј РІСЃРµ СЌР»РµРјРµРЅС‚С‹, РєСЂРѕРјРµ Р·Р°РіРѕР»РѕРІРєРѕРІ
             foreach (Control control in layout.Controls)
             {
                 if (!(control is Label))
                 {
-                    control.Anchor = AnchorStyles.None; // Централизуем остальные элементы
+                    control.Anchor = AnchorStyles.None; // Р¦РµРЅС‚СЂР°Р»РёР·СѓРµРј РѕСЃС‚Р°Р»СЊРЅС‹Рµ СЌР»РµРјРµРЅС‚С‹
                 }
                 else
                 {
-                    // Только лейблы с направлением (шапка таблицы) получаем левый anchor
-                    if (new[] { "Верх", "Низ", "Лево", "Право" }.Contains(((Label)control).Text))
+                    // РўРѕР»СЊРєРѕ Р»РµР№Р±Р»С‹ СЃ РЅР°РїСЂР°РІР»РµРЅРёРµРј (С€Р°РїРєР° С‚Р°Р±Р»РёС†С‹) РїРѕР»СѓС‡Р°РµРј Р»РµРІС‹Р№ anchor
+                    if (new[] { "Р’РµСЂС…", "РќРёР·", "Р›РµРІРѕ", "РџСЂР°РІРѕ" }.Contains(((Label)control).Text))
                     {
                         control.Anchor = AnchorStyles.Left;
                     }
                     else
                     {
-                        control.Anchor = AnchorStyles.None; // Остальные лейблы централизуем
+                        control.Anchor = AnchorStyles.None; // РћСЃС‚Р°Р»СЊРЅС‹Рµ Р»РµР№Р±Р»С‹ С†РµРЅС‚СЂР°Р»РёР·СѓРµРј
                     }
                 }
             }
 
 
-            // Создаем picture box для превью
+            // РЎРѕР·РґР°РµРј picture box РґР»СЏ РїСЂРµРІСЊСЋ
             magnifierPictureBox = new PictureBox
             {
                 Width = 120,
@@ -818,7 +818,7 @@ namespace MMMapEditor
 
             Panel topPanel = new Panel
             {
-                Width = 250,                     // Ширина панели
+                Width = 250,                     // РЁРёСЂРёРЅР° РїР°РЅРµР»Рё
                 Height = 200,
                 Location = new Point(magnifierPictureBox.Right + 10, magnifierPictureBox.Top - 10),
                 BackColor = Color.FromArgb(30, 30, 30)
@@ -826,7 +826,7 @@ namespace MMMapEditor
 
             Label centerLabel = new Label
             {
-                Text = "Центр",
+                Text = "Р¦РµРЅС‚СЂ",
                 AutoSize = true,
                 ForeColor = Color.White,
                 Location = new Point(magnifierPictureBox.Right - 70, 0)
@@ -837,14 +837,14 @@ namespace MMMapEditor
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Location = new Point(centerLabel.Left - 70, centerLabel.Top + 20),
                 Width = 200,
-                BackColor = Color.Black,       // черный фон
-                ForeColor = Color.White,       // белый текст
+                BackColor = Color.Black,       // С‡РµСЂРЅС‹Р№ С„РѕРЅ
+                ForeColor = Color.White,       // Р±РµР»С‹Р№ С‚РµРєСЃС‚
                 FlatStyle = FlatStyle.Flat
             };
 
             centerComboBox.Items.AddRange(new object[] { 
-                "Пустота", 
-                "Не исследовано" });
+                "РџСѓСЃС‚РѕС‚Р°", 
+                "РќРµ РёСЃСЃР»РµРґРѕРІР°РЅРѕ" });
             if (centerComboBox.Items.Count > 0)
             {
                 centerComboBox.SelectedIndex = 0;
@@ -852,7 +852,7 @@ namespace MMMapEditor
 
             isDangerCheckBox = new CheckBox
             {
-                Text = "Опасно",
+                Text = "РћРїР°СЃРЅРѕ",
                 AutoSize = true,
                 Location = new Point(centerComboBox.Left, centerComboBox.Bottom + 5),
                 ForeColor = Color.White,
@@ -864,7 +864,7 @@ namespace MMMapEditor
 
             noMagicCheckBox = new CheckBox
             {
-                Text = "Нет магии",
+                Text = "РќРµС‚ РјР°РіРёРё",
                 AutoSize = true,
                 Location = new Point(isDangerCheckBox.Left, isDangerCheckBox.Bottom),
                 ForeColor = Color.White
@@ -873,27 +873,27 @@ namespace MMMapEditor
 
             lightingGroupBox = new GroupBox
             {
-                Text = "Освещение",
+                Text = "РћСЃРІРµС‰РµРЅРёРµ",
                 ForeColor = Color.White,
                 Location = new Point(isDangerCheckBox.Right + 5, isDangerCheckBox.Top),
                 Width = 90,
                 Height = 80
             };
 
-            // Радиокнопки
+            // Р Р°РґРёРѕРєРЅРѕРїРєРё
             lightRadioButton = new RadioButton
             {
-                Text = "Светло",
+                Text = "РЎРІРµС‚Р»Рѕ",
                 AutoSize = true,
                 ForeColor = Color.White,
-                Checked = true, // По умолчанию выбран "светло"
+                Checked = true, // РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РІС‹Р±СЂР°РЅ "СЃРІРµС‚Р»Рѕ"
                 Location = new Point(10, 15)
             };
             lightRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
 
             darkRadioButton = new RadioButton
             {
-                Text = "Темно",
+                Text = "РўРµРјРЅРѕ",
                 AutoSize = true,
                 ForeColor = Color.White,
                 Location = new Point(10, 35)
@@ -902,14 +902,14 @@ namespace MMMapEditor
 
             darknessRadioButton = new RadioButton
             {
-                Text = "Мрак",
+                Text = "РњСЂР°Рє",
                 AutoSize = true,
                 ForeColor = Color.White,
                 Location = new Point(10, 55)
             };
             darknessRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
 
-            // Добавляем радиокнопки внутрь группы
+            // Р”РѕР±Р°РІР»СЏРµРј СЂР°РґРёРѕРєРЅРѕРїРєРё РІРЅСѓС‚СЂСЊ РіСЂСѓРїРїС‹
             lightingGroupBox.Controls.Add(lightRadioButton);
             lightingGroupBox.Controls.Add(darkRadioButton);
             lightingGroupBox.Controls.Add(darknessRadioButton);
@@ -921,75 +921,75 @@ namespace MMMapEditor
             topPanel.Controls.Add(noMagicCheckBox);
             topPanel.Controls.Add(lightingGroupBox);
 
-            // Добавляем таблицу компоновки на правую панель
+            // Р”РѕР±Р°РІР»СЏРµРј С‚Р°Р±Р»РёС†Сѓ РєРѕРјРїРѕРЅРѕРІРєРё РЅР° РїСЂР°РІСѓСЋ РїР°РЅРµР»СЊ
             rightPanel.Controls.Add(layout);
             rightPanel.Controls.Add(topPanel);
-            rightPanel.Controls.Add(magnifierPictureBox); // Превью картинка
-            rightPanel.Controls.Add(infoLabel); // Информация о ячейке
+            rightPanel.Controls.Add(magnifierPictureBox); // РџСЂРµРІСЊСЋ РєР°СЂС‚РёРЅРєР°
+            rightPanel.Controls.Add(infoLabel); // РРЅС„РѕСЂРјР°С†РёСЏ Рѕ СЏС‡РµР№РєРµ
             rightPanel.Controls.Add(notesTextBox);
             rightPanel.Controls.Add(cellImageBox);
             rightPanel.Controls.Add(bufferPasteImageButton);
             rightPanel.Controls.Add(deleteImageButton);
 
-            // Создание меню
+            // РЎРѕР·РґР°РЅРёРµ РјРµРЅСЋ
             MenuStrip menuStrip = new MenuStrip();
-            fileMenuItem = new ToolStripMenuItem("Карта");
-            newMapItem = new ToolStripMenuItem("&Создать новую");
+            fileMenuItem = new ToolStripMenuItem("РљР°СЂС‚Р°");
+            newMapItem = new ToolStripMenuItem("&РЎРѕР·РґР°С‚СЊ РЅРѕРІСѓСЋ");
             newMapItem.Click += NewMapItem_Click;
             fileMenuItem.DropDownItems.Add(newMapItem);
 
-            saveItem = new ToolStripMenuItem("&Сохранить");
+            saveItem = new ToolStripMenuItem("&РЎРѕС…СЂР°РЅРёС‚СЊ");
             saveItem.Click += SaveItem_Click;
             fileMenuItem.DropDownItems.Add(saveItem);
 
-            saveAsItem = new ToolStripMenuItem("&Сохранить как...");
+            saveAsItem = new ToolStripMenuItem("&РЎРѕС…СЂР°РЅРёС‚СЊ РєР°Рє...");
             saveAsItem.Click += SaveAsItem_Click;
             fileMenuItem.DropDownItems.Add(saveAsItem);
 
-            loadItem = new ToolStripMenuItem("&Загрузить");
+            loadItem = new ToolStripMenuItem("&Р—Р°РіСЂСѓР·РёС‚СЊ");
             loadItem.Click += LoadItem_Click;
             fileMenuItem.DropDownItems.Add(loadItem);
 
-            // Создаем пункт меню "Поменять на"
-            changeToMapsDropdown = new ToolStripMenuItem("Поменять на");
-            // Подменю для карт
+            // РЎРѕР·РґР°РµРј РїСѓРЅРєС‚ РјРµРЅСЋ "РџРѕРјРµРЅСЏС‚СЊ РЅР°"
+            changeToMapsDropdown = new ToolStripMenuItem("РџРѕРјРµРЅСЏС‚СЊ РЅР°");
+            // РџРѕРґРјРµРЅСЋ РґР»СЏ РєР°СЂС‚
             PopulateChangeToMapsSubmenu(changeToMapsDropdown);
-            // Подписываемся на событие открытия подменю
+            // РџРѕРґРїРёСЃС‹РІР°РµРјСЃСЏ РЅР° СЃРѕР±С‹С‚РёРµ РѕС‚РєСЂС‹С‚РёСЏ РїРѕРґРјРµРЅСЋ
             changeToMapsDropdown.DropDownOpening += (s, ea) =>
             {
                 PopulateChangeToMapsSubmenu(changeToMapsDropdown);
             };
-            // Добавляем "Поменять на" в главное меню
+            // Р”РѕР±Р°РІР»СЏРµРј "РџРѕРјРµРЅСЏС‚СЊ РЅР°" РІ РіР»Р°РІРЅРѕРµ РјРµРЅСЋ
             fileMenuItem.DropDownItems.Add(changeToMapsDropdown);
 
-            // Добавляем пункт "Метаданные" в меню "Карта"
-            ToolStripMenuItem metadataItem = new ToolStripMenuItem("Метаданные");
+            // Р”РѕР±Р°РІР»СЏРµРј РїСѓРЅРєС‚ "РњРµС‚Р°РґР°РЅРЅС‹Рµ" РІ РјРµРЅСЋ "РљР°СЂС‚Р°"
+            ToolStripMenuItem metadataItem = new ToolStripMenuItem("РњРµС‚Р°РґР°РЅРЅС‹Рµ");
             metadataItem.Click += MetadataItem_Click;
             fileMenuItem.DropDownItems.Add(metadataItem);
 
-            searchMenuItem = new ToolStripMenuItem("Поиск");
-            onMapsSearchItem = new ToolStripMenuItem("По картам");
+            searchMenuItem = new ToolStripMenuItem("РџРѕРёСЃРє");
+            onMapsSearchItem = new ToolStripMenuItem("РџРѕ РєР°СЂС‚Р°Рј");
             onMapsSearchItem.Click += OnMapsSearchItem_Click;
             searchMenuItem.DropDownItems.Add(onMapsSearchItem);
 
           //  menuStrip.Items.Insert(menuStrip.Items.IndexOf(settingMenuItem), searchMenuItem);
 
-            settingMenuItem = new ToolStripMenuItem("Настройки");
-            toolStripMenuItemManageObjects = new ToolStripMenuItem("Управление объектами");
+            settingMenuItem = new ToolStripMenuItem("РќР°СЃС‚СЂРѕР№РєРё");
+            toolStripMenuItemManageObjects = new ToolStripMenuItem("РЈРїСЂР°РІР»РµРЅРёРµ РѕР±СЉРµРєС‚Р°РјРё");
 
-            // Добавляем подпункт в меню "Настройки"
+            // Р”РѕР±Р°РІР»СЏРµРј РїРѕРґРїСѓРЅРєС‚ РІ РјРµРЅСЋ "РќР°СЃС‚СЂРѕР№РєРё"
             settingMenuItem.DropDownItems.Add(toolStripMenuItemManageObjects);
 
-            // Создаем пункт меню "Направления"
-            ToolStripMenuItem directionsMenuItem = new ToolStripMenuItem("Направления");
+            // РЎРѕР·РґР°РµРј РїСѓРЅРєС‚ РјРµРЅСЋ "РќР°РїСЂР°РІР»РµРЅРёСЏ"
+            ToolStripMenuItem directionsMenuItem = new ToolStripMenuItem("РќР°РїСЂР°РІР»РµРЅРёСЏ");
             directionsMenuItem.Click += DirectionsMenuItem_Click;
-            // Добавляем подпункт в меню "Настройки"
+            // Р”РѕР±Р°РІР»СЏРµРј РїРѕРґРїСѓРЅРєС‚ РІ РјРµРЅСЋ "РќР°СЃС‚СЂРѕР№РєРё"
             settingMenuItem.DropDownItems.Add(directionsMenuItem);
 
-            // Подписываемся на событие Click для вызова формы
+            // РџРѕРґРїРёСЃС‹РІР°РµРјСЃСЏ РЅР° СЃРѕР±С‹С‚РёРµ Click РґР»СЏ РІС‹Р·РѕРІР° С„РѕСЂРјС‹
             toolStripMenuItemManageObjects.Click += toolStripMenuItemManageObjects_Click;
 
-            // Добавляем панель на главную форму
+            // Р”РѕР±Р°РІР»СЏРµРј РїР°РЅРµР»СЊ РЅР° РіР»Р°РІРЅСѓСЋ С„РѕСЂРјСѓ
             Controls.Add(rightPanel);
             menuStrip.Items.Add(fileMenuItem);
             menuStrip.Items.Add(searchMenuItem);
@@ -1003,7 +1003,7 @@ namespace MMMapEditor
             searchForm.ShowDialog();
         }
 
-        // Обработчик события пункта меню "Метаданные"
+        // РћР±СЂР°Р±РѕС‚С‡РёРє СЃРѕР±С‹С‚РёСЏ РїСѓРЅРєС‚Р° РјРµРЅСЋ "РњРµС‚Р°РґР°РЅРЅС‹Рµ"
         private void MetadataItem_Click(object sender, EventArgs e)
         {
             MetadataForm metadataForm = new MetadataForm(mapSector, surface);
@@ -1012,7 +1012,7 @@ namespace MMMapEditor
                 mapSector = metadataForm.SelectedMapSector;
                 surface = metadataForm.SelectedSurface;
 
-                // Обновляем заголовок окна
+                // РћР±РЅРѕРІР»СЏРµРј Р·Р°РіРѕР»РѕРІРѕРє РѕРєРЅР°
                 if (string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
                 {
                     this.Text = Path.GetFileNameWithoutExtension(lastSavedFilename);
@@ -1039,7 +1039,7 @@ namespace MMMapEditor
             form2.ShowDialog();
         }
 
-        // Обработчик события для открытия формы настроек
+        // РћР±СЂР°Р±РѕС‚С‡РёРє СЃРѕР±С‹С‚РёСЏ РґР»СЏ РѕС‚РєСЂС‹С‚РёСЏ С„РѕСЂРјС‹ РЅР°СЃС‚СЂРѕРµРє
         private void DirectionsMenuItem_Click(object sender, EventArgs e)
         {
             if (localizedDirectionsForm == null || localizedDirectionsForm.IsDisposed)
@@ -1050,28 +1050,28 @@ namespace MMMapEditor
             localizedDirectionsForm.Show();
         }
 
-        // Обработчик события обновления локализации направления
+        // РћР±СЂР°Р±РѕС‚С‡РёРє СЃРѕР±С‹С‚РёСЏ РѕР±РЅРѕРІР»РµРЅРёСЏ Р»РѕРєР°Р»РёР·Р°С†РёРё РЅР°РїСЂР°РІР»РµРЅРёСЏ
         private void LocalizedDirectionsForm_LocalizationChanged(object sender, EventArgs e)
         {
-            // Получаем данные из файла .ini
+            // РџРѕР»СѓС‡Р°РµРј РґР°РЅРЅС‹Рµ РёР· С„Р°Р№Р»Р° .ini
             var parser = new FileIniDataParser();
             var iniFile = parser.ReadFile("Settings.ini");
 
             if (iniFile.Sections.ContainsSection("CustomDirections"))
             {
-                // Получаем названия направлений из файла .ini
+                // РџРѕР»СѓС‡Р°РµРј РЅР°Р·РІР°РЅРёСЏ РЅР°РїСЂР°РІР»РµРЅРёР№ РёР· С„Р°Р№Р»Р° .ini
                 string topLabel = iniFile["CustomDirections"]["Top"];
                 string bottomLabel = iniFile["CustomDirections"]["Bottom"];
                 string leftLabel = iniFile["CustomDirections"]["Left"];
                 string rightLabel = iniFile["CustomDirections"]["Right"];
 
-                // Находим метки по их русским именам
-                Control topLabelCtrl = FindControlByName(this, "lbl_Верх");
-                Control bottomLabelCtrl = FindControlByName(this, "lbl_Низ");
-                Control leftLabelCtrl = FindControlByName(this, "lbl_Лево");
-                Control rightLabelCtrl = FindControlByName(this, "lbl_Право");
+                // РќР°С…РѕРґРёРј РјРµС‚РєРё РїРѕ РёС… СЂСѓСЃСЃРєРёРј РёРјРµРЅР°Рј
+                Control topLabelCtrl = FindControlByName(this, "lbl_Р’РµСЂС…");
+                Control bottomLabelCtrl = FindControlByName(this, "lbl_РќРёР·");
+                Control leftLabelCtrl = FindControlByName(this, "lbl_Р›РµРІРѕ");
+                Control rightLabelCtrl = FindControlByName(this, "lbl_РџСЂР°РІРѕ");
 
-                // Обновляем текст меток
+                // РћР±РЅРѕРІР»СЏРµРј С‚РµРєСЃС‚ РјРµС‚РѕРє
                 if (topLabelCtrl is Label)
                 {
                     topLabelCtrl.Text = topLabel;
@@ -1091,7 +1091,7 @@ namespace MMMapEditor
             }
         }
 
-        // Метод для поиска контроля по имени
+        // РњРµС‚РѕРґ РґР»СЏ РїРѕРёСЃРєР° РєРѕРЅС‚СЂРѕР»СЏ РїРѕ РёРјРµРЅРё
         private Control FindControlByName(Control container, string name)
         {
             foreach (Control child in container.Controls)
@@ -1101,7 +1101,7 @@ namespace MMMapEditor
                     return child;
                 }
 
-                // Рекурсивный поиск среди вложенных элементов
+                // Р РµРєСѓСЂСЃРёРІРЅС‹Р№ РїРѕРёСЃРє СЃСЂРµРґРё РІР»РѕР¶РµРЅРЅС‹С… СЌР»РµРјРµРЅС‚РѕРІ
                 Control foundChild = FindControlByName(child, name);
                 if (foundChild != null)
                 {
@@ -1121,23 +1121,23 @@ namespace MMMapEditor
 
                 if (imagesPerCell.TryGetValue(selectedPosition.Value, out var existingImage) && existingImage != null)
                 {
-                    // Выводим диалоговое окно с вопросом
-                    DialogResult result = MessageBox.Show("Вы действительно хотите удалить изображение?", "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    // Р’С‹РІРѕРґРёРј РґРёР°Р»РѕРіРѕРІРѕРµ РѕРєРЅРѕ СЃ РІРѕРїСЂРѕСЃРѕРј
+                    DialogResult result = MessageBox.Show("Р’С‹ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ С…РѕС‚РёС‚Рµ СѓРґР°Р»РёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ?", "РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                     if (result == DialogResult.Yes)
                     {
-                        // Удаляем изображение из текущего положения
+                        // РЈРґР°Р»СЏРµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ РёР· С‚РµРєСѓС‰РµРіРѕ РїРѕР»РѕР¶РµРЅРёСЏ
                         imagesPerCell[pos] = null;
 
-                        // Обновляем изображение в Preview-контроле
+                        // РћР±РЅРѕРІР»СЏРµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ РІ Preview-РєРѕРЅС‚СЂРѕР»Рµ
                         cellImageBox.Image = null;
 
-                        // Принудительная перерисовка ячейки
+                        // РџСЂРёРЅСѓРґРёС‚РµР»СЊРЅР°СЏ РїРµСЂРµСЂРёСЃРѕРІРєР° СЏС‡РµР№РєРё
                         gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
 
-                        // Обновляем предварительный просмотр
+                        // РћР±РЅРѕРІР»СЏРµРј РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅС‹Р№ РїСЂРѕСЃРјРѕС‚СЂ
                         UpdatePreview();
 
-                        // Метка о внесении изменений в карту
+                        // РњРµС‚РєР° Рѕ РІРЅРµСЃРµРЅРёРё РёР·РјРµРЅРµРЅРёР№ РІ РєР°СЂС‚Сѓ
                         isMapModified = true;
                     }
                 }
@@ -1146,27 +1146,27 @@ namespace MMMapEditor
 
         private void PopulateChangeToMapsSubmenu(ToolStripMenuItem parentMenu)
         {
-            // Очищаем существующие пункты
+            // РћС‡РёС‰Р°РµРј СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёРµ РїСѓРЅРєС‚С‹
             parentMenu.DropDownItems.Clear();
 
-            // Получаем папку рядом с исполняемым файлом (.exe)
+            // РџРѕР»СѓС‡Р°РµРј РїР°РїРєСѓ СЂСЏРґРѕРј СЃ РёСЃРїРѕР»РЅСЏРµРјС‹Рј С„Р°Р№Р»РѕРј (.exe)
             string mapsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MM1_Maps");
 
             if (Directory.Exists(mapsDirectory))
             {
-                // Берём только файлы с расширением .map
+                // Р‘РµСЂС‘Рј С‚РѕР»СЊРєРѕ С„Р°Р№Р»С‹ СЃ СЂР°СЃС€РёСЂРµРЅРёРµРј .map
                 string[] mapFiles = Directory.GetFiles(mapsDirectory, "*.map");
 
                 foreach (string file in mapFiles)
                 {
                     string filename = Path.GetFileNameWithoutExtension(file);
 
-                    // Создаём новый пункт меню для каждой карты
+                    // РЎРѕР·РґР°С‘Рј РЅРѕРІС‹Р№ РїСѓРЅРєС‚ РјРµРЅСЋ РґР»СЏ РєР°Р¶РґРѕР№ РєР°СЂС‚С‹
                     ToolStripMenuItem subItem = new ToolStripMenuItem(filename);
-                    subItem.Tag = file; // Полный путь сохраняется в Tag
-                    subItem.Click += ChangeToMapItem_Click; // Обработчик щелчка по карте
+                    subItem.Tag = file; // РџРѕР»РЅС‹Р№ РїСѓС‚СЊ СЃРѕС…СЂР°РЅСЏРµС‚СЃСЏ РІ Tag
+                    subItem.Click += ChangeToMapItem_Click; // РћР±СЂР°Р±РѕС‚С‡РёРє С‰РµР»С‡РєР° РїРѕ РєР°СЂС‚Рµ
 
-                    // Добавляем пункт в подменю
+                    // Р”РѕР±Р°РІР»СЏРµРј РїСѓРЅРєС‚ РІ РїРѕРґРјРµРЅСЋ
                     parentMenu.DropDownItems.Add(subItem);
                 }
             }
@@ -1174,38 +1174,38 @@ namespace MMMapEditor
 
         private void ChangeToMapsDropdown_DropDownOpening(object sender, EventArgs e)
         {
-            // Обновляем подменю прямо перед его открытием
+            // РћР±РЅРѕРІР»СЏРµРј РїРѕРґРјРµРЅСЋ РїСЂСЏРјРѕ РїРµСЂРµРґ РµРіРѕ РѕС‚РєСЂС‹С‚РёРµРј
             PopulateChangeToMapsSubmenu(changeToMapsDropdown);
         }
 
-        // Обработчик нажатия на пункт меню "Поменять на"
+        // РћР±СЂР°Р±РѕС‚С‡РёРє РЅР°Р¶Р°С‚РёСЏ РЅР° РїСѓРЅРєС‚ РјРµРЅСЋ "РџРѕРјРµРЅСЏС‚СЊ РЅР°"
         private void ChangeToMapItem_Click(object sender, EventArgs e)
         {
             ToolStripMenuItem clickedItem = (ToolStripMenuItem)sender;
             string mapFilePath = (string)clickedItem.Tag;
 
-            // Проверка флага модификации
+            // РџСЂРѕРІРµСЂРєР° С„Р»Р°РіР° РјРѕРґРёС„РёРєР°С†РёРё
             if (isMapModified)
             {
                 DialogResult result = MessageBox.Show(
-                    "Вы действительно хотите сменить карту?\nВсе текущие изменения будут потеряны!",
-                    "Смена карты",
+                    "Р’С‹ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ С…РѕС‚РёС‚Рµ СЃРјРµРЅРёС‚СЊ РєР°СЂС‚Сѓ?\nР’СЃРµ С‚РµРєСѓС‰РёРµ РёР·РјРµРЅРµРЅРёСЏ Р±СѓРґСѓС‚ РїРѕС‚РµСЂСЏРЅС‹!",
+                    "РЎРјРµРЅР° РєР°СЂС‚С‹",
                     MessageBoxButtons.OKCancel,
                     MessageBoxIcon.Warning
                 );
 
                 if (result == DialogResult.Cancel)
                 {
-                    return; // Отменяем операцию смены карты
+                    return; // РћС‚РјРµРЅСЏРµРј РѕРїРµСЂР°С†РёСЋ СЃРјРµРЅС‹ РєР°СЂС‚С‹
                 }
             }
 
-            // Загружаем карту, аналогично команде "Открыть"
+            // Р—Р°РіСЂСѓР¶Р°РµРј РєР°СЂС‚Сѓ, Р°РЅР°Р»РѕРіРёС‡РЅРѕ РєРѕРјР°РЅРґРµ "РћС‚РєСЂС‹С‚СЊ"
             LoadMap(mapFilePath);
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                RestoreSettings(pos); // Восстановление состояния выделенной ячейки
+                RestoreSettings(pos); // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РІС‹РґРµР»РµРЅРЅРѕР№ СЏС‡РµР№РєРё
                 UpdatePreview();
                 isMapModified = false;
             }
@@ -1213,26 +1213,26 @@ namespace MMMapEditor
 
         private void SaveItem_Click(object sender, EventArgs e)
         {
-            // Проверяем заголовок окна
+            // РџСЂРѕРІРµСЂСЏРµРј Р·Р°РіРѕР»РѕРІРѕРє РѕРєРЅР°
             if (lastSavedFilename == "")
             {
-                // Если заголовок содержит "Редактор моей мечты", вызываем "Сохранить как..."
+                // Р•СЃР»Рё Р·Р°РіРѕР»РѕРІРѕРє СЃРѕРґРµСЂР¶РёС‚ "Р РµРґР°РєС‚РѕСЂ РјРѕРµР№ РјРµС‡С‚С‹", РІС‹Р·С‹РІР°РµРј "РЎРѕС…СЂР°РЅРёС‚СЊ РєР°Рє..."
                 SaveAsItem_Click(sender, e);
             }
             else
             {
-                // Иначе производим автоматическое сохранение
+                // РРЅР°С‡Рµ РїСЂРѕРёР·РІРѕРґРёРј Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРѕРµ СЃРѕС…СЂР°РЅРµРЅРёРµ
                 if (lastSavedFilename != null)
                 {
-                    // Сохраняем карту в последний известный путь
+                    // РЎРѕС…СЂР°РЅСЏРµРј РєР°СЂС‚Сѓ РІ РїРѕСЃР»РµРґРЅРёР№ РёР·РІРµСЃС‚РЅС‹Р№ РїСѓС‚СЊ
                     SaveMap(lastSavedFilename);
-                    MessageBox.Show("Карта успешно сохранена", "Сохранение выполнено", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("РљР°СЂС‚Р° СѓСЃРїРµС€РЅРѕ СЃРѕС…СЂР°РЅРµРЅР°", "РЎРѕС…СЂР°РЅРµРЅРёРµ РІС‹РїРѕР»РЅРµРЅРѕ", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     isMapModified = false;
                     PopulateChangeToMapsSubmenu(changeToMapsDropdown);
                 }
                 else
                 {
-                    // Если путь неизвестен, предлагаем пользователю выбрать файл
+                    // Р•СЃР»Рё РїСѓС‚СЊ РЅРµРёР·РІРµСЃС‚РµРЅ, РїСЂРµРґР»Р°РіР°РµРј РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ РІС‹Р±СЂР°С‚СЊ С„Р°Р№Р»
                     SaveAsItem_Click(sender, e);
                 }
             }
@@ -1243,8 +1243,8 @@ namespace MMMapEditor
             if (isMapModified)
             {
                 DialogResult confirmResult = MessageBox.Show(
-                    "Вы действительно хотите загрузить новую карту?\nВсе текущие данные будут потеряны!",
-                    "Загрузка карты",
+                    "Р’С‹ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ С…РѕС‚РёС‚Рµ Р·Р°РіСЂСѓР·РёС‚СЊ РЅРѕРІСѓСЋ РєР°СЂС‚Сѓ?\nР’СЃРµ С‚РµРєСѓС‰РёРµ РґР°РЅРЅС‹Рµ Р±СѓРґСѓС‚ РїРѕС‚РµСЂСЏРЅС‹!",
+                    "Р—Р°РіСЂСѓР·РєР° РєР°СЂС‚С‹",
                     MessageBoxButtons.OKCancel,
                     MessageBoxIcon.Warning
                 );
@@ -1264,10 +1264,10 @@ namespace MMMapEditor
         {
             using (OpenFileDialog dialog = new OpenFileDialog())
             {
-                // Директорию для открытия ставим папку рядом с исполняемым файлом
+                // Р”РёСЂРµРєС‚РѕСЂРёСЋ РґР»СЏ РѕС‚РєСЂС‹С‚РёСЏ СЃС‚Р°РІРёРј РїР°РїРєСѓ СЂСЏРґРѕРј СЃ РёСЃРїРѕР»РЅСЏРµРјС‹Рј С„Р°Р№Р»РѕРј
                 string mapsDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MM1_Maps");
 
-                // Если папки нет, используем директорию исполняемого файла
+                // Р•СЃР»Рё РїР°РїРєРё РЅРµС‚, РёСЃРїРѕР»СЊР·СѓРµРј РґРёСЂРµРєС‚РѕСЂРёСЋ РёСЃРїРѕР»РЅСЏРµРјРѕРіРѕ С„Р°Р№Р»Р°
                 if (!Directory.Exists(mapsDirectory))
                 {
                     mapsDirectory = AppDomain.CurrentDomain.BaseDirectory;
@@ -1275,7 +1275,7 @@ namespace MMMapEditor
 
                 dialog.InitialDirectory = mapsDirectory;
                 dialog.Filter = "Map Files (*.map)|*.map|All files (*.*)|*.*";
-                dialog.Title = "Выбор карты для загрузки";
+                dialog.Title = "Р’С‹Р±РѕСЂ РєР°СЂС‚С‹ РґР»СЏ Р·Р°РіСЂСѓР·РєРё";
                 dialog.DefaultExt = ".map";
 
                 if (dialog.ShowDialog() == DialogResult.OK)
@@ -1283,11 +1283,11 @@ namespace MMMapEditor
                     string filename = dialog.FileName;
                     LoadMap(filename);
 
-                    // Если есть выделенная ячейка, обновляем её представление
+                    // Р•СЃР»Рё РµСЃС‚СЊ РІС‹РґРµР»РµРЅРЅР°СЏ СЏС‡РµР№РєР°, РѕР±РЅРѕРІР»СЏРµРј РµС‘ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёРµ
                     if (selectedPosition.HasValue)
                     {
                         Point pos = selectedPosition.Value;
-                        RestoreSettings(pos); // Восстановление состояния выделенной ячейки
+                        RestoreSettings(pos); // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РІС‹РґРµР»РµРЅРЅРѕР№ СЏС‡РµР№РєРё
                         UpdatePreview();
                         isMapModified = false;
                     }
@@ -1298,53 +1298,53 @@ namespace MMMapEditor
 
         private void LoadMap(string filename)
         {
-            // Читаем данные из файла
+            // Р§РёС‚Р°РµРј РґР°РЅРЅС‹Рµ РёР· С„Р°Р№Р»Р°
             string jsonContent = File.ReadAllText(filename);
 
-            // Десериализуем JSON
+            // Р”РµСЃРµСЂРёР°Р»РёР·СѓРµРј JSON
             dynamic data = JsonConvert.DeserializeObject(jsonContent);
 
-            // Получаем список ячеек
+            // РџРѕР»СѓС‡Р°РµРј СЃРїРёСЃРѕРє СЏС‡РµРµРє
             JArray cellsData = data.Cells;
 
-            lastSavedFilename = filename; // Запоминаем путь к файлу
+            lastSavedFilename = filename; // Р—Р°РїРѕРјРёРЅР°РµРј РїСѓС‚СЊ Рє С„Р°Р№Р»Сѓ
 
-            // Восстанавливаем данные ячеек
+            // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РґР°РЅРЅС‹Рµ СЏС‡РµРµРє
             for (int i = 0; i < cellsData.Count; i++)
             {
                 dynamic cellInfo = cellsData[i];
                 Point pos = new Point(i % GridSize, i / GridSize);
 
-                // Границы: приводим значения к строкам
+                // Р“СЂР°РЅРёС†С‹: РїСЂРёРІРѕРґРёРј Р·РЅР°С‡РµРЅРёСЏ Рє СЃС‚СЂРѕРєР°Рј
                 borders[pos] = new Tuple<string, string, string, string>(
                     (string)cellInfo.Borders.Item1, (string)cellInfo.Borders.Item2, (string)cellInfo.Borders.Item3, (string)cellInfo.Borders.Item4);
 
-                // Проходы: приводим значения к целочисленным
+                // РџСЂРѕС…РѕРґС‹: РїСЂРёРІРѕРґРёРј Р·РЅР°С‡РµРЅРёСЏ Рє С†РµР»РѕС‡РёСЃР»РµРЅРЅС‹Рј
                 passageDict[pos] = new Tuple<int, int, int, int>(
                     (int)cellInfo.Passages.Item1, (int)cellInfo.Passages.Item2, (int)cellInfo.Passages.Item3, (int)cellInfo.Passages.Item4);
 
-                // Закрытость: приводим значения к булевым
+                // Р—Р°РєСЂС‹С‚РѕСЃС‚СЊ: РїСЂРёРІРѕРґРёРј Р·РЅР°С‡РµРЅРёСЏ Рє Р±СѓР»РµРІС‹Рј
                 closedStates[pos] = new Tuple<bool, bool, bool, bool>(
                     (bool)cellInfo.ClosedStates.Item1, (bool)cellInfo.ClosedStates.Item2, (bool)cellInfo.ClosedStates.Item3, (bool)cellInfo.ClosedStates.Item4);
 
-                // Сообщения: приводим значения к булевым
+                // РЎРѕРѕР±С‰РµРЅРёСЏ: РїСЂРёРІРѕРґРёРј Р·РЅР°С‡РµРЅРёСЏ Рє Р±СѓР»РµРІС‹Рј
                 messageStates[pos] = new Tuple<bool, bool, bool, bool>(
                     (bool)cellInfo.Messages.Item1, (bool)cellInfo.Messages.Item2, (bool)cellInfo.Messages.Item3, (bool)cellInfo.Messages.Item4);
 
-                // Центральный элемент
+                // Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ СЌР»РµРјРµРЅС‚
                 centralOptions[pos] = (string)cellInfo.CentralOption;
 
-                // Опасность и магия
+                // РћРїР°СЃРЅРѕСЃС‚СЊ Рё РјР°РіРёСЏ
                 isDangerStates[pos] = (bool)cellInfo.IsDanger;
                 noMagicStates[pos] = (bool)cellInfo.NoMagic;
 
-                // Освещение: приводим значение к перечислению
+                // РћСЃРІРµС‰РµРЅРёРµ: РїСЂРёРІРѕРґРёРј Р·РЅР°С‡РµРЅРёРµ Рє РїРµСЂРµС‡РёСЃР»РµРЅРёСЋ
                 lightingLevels[pos] = (Lighting)Enum.Parse(typeof(Lighting), (string)cellInfo.Lighting);
 
-                // Примечания
+                // РџСЂРёРјРµС‡Р°РЅРёСЏ
                 notesPerCell[pos] = (string)cellInfo.Note;
 
-                // Восстановим изображение (если оно есть)
+                // Р’РѕСЃСЃС‚Р°РЅРѕРІРёРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ (РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ)
                 if (cellInfo.Image != null)
                 {
                     byte[] bytes = Convert.FromBase64String((string)cellInfo.Image);
@@ -1360,7 +1360,7 @@ namespace MMMapEditor
             mapSector = "";
             surface = "";
 
-            // Загружаем метаданные
+            // Р—Р°РіСЂСѓР¶Р°РµРј РјРµС‚Р°РґР°РЅРЅС‹Рµ
             if (data.MetaData != null &&
                 data.MetaData.MapSector != null &&
                 data.MetaData.Surface != null)
@@ -1368,7 +1368,7 @@ namespace MMMapEditor
                 mapSector = (string)data.MetaData.MapSector;
                 surface = (string)data.MetaData.Surface;
 
-                // Устанавливаем заголовок окна
+                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј Р·Р°РіРѕР»РѕРІРѕРє РѕРєРЅР°
                 if (!string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
                 {
                     this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - MAP SECTOR: {mapSector}";
@@ -1388,14 +1388,14 @@ namespace MMMapEditor
             }
 
 
-            // Обновляем визуализацию формы
+            // РћР±РЅРѕРІР»СЏРµРј РІРёР·СѓР°Р»РёР·Р°С†РёСЋ С„РѕСЂРјС‹
             foreach (var button in gridButtons)
             {
                 button.Invalidate();
             }
 
-            // Показываем уведомление о выполнении загрузки
-          //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // РџРѕРєР°Р·С‹РІР°РµРј СѓРІРµРґРѕРјР»РµРЅРёРµ Рѕ РІС‹РїРѕР»РЅРµРЅРёРё Р·Р°РіСЂСѓР·РєРё
+          //  MessageBox.Show("РљР°СЂС‚Р° СѓСЃРїРµС€РЅРѕ Р·Р°РіСЂСѓР¶РµРЅР°", "Р—Р°РіСЂСѓР·РєР° РІС‹РїРѕР»РЅРµРЅР°", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void SaveAsItem_Click(object sender, EventArgs e)
@@ -1409,7 +1409,7 @@ namespace MMMapEditor
 
                 dialog.InitialDirectory = mapsDirectory;
                 dialog.Filter = "Map Files (*.map)|*.map|All files (*.*)|*.*";
-                dialog.Title = "Сохранить карту как...";
+                dialog.Title = "РЎРѕС…СЂР°РЅРёС‚СЊ РєР°СЂС‚Сѓ РєР°Рє...";
                 dialog.DefaultExt = ".map";
 
                 if (dialog.ShowDialog() == DialogResult.OK)
@@ -1417,12 +1417,12 @@ namespace MMMapEditor
                     filename = dialog.FileName;
                     SaveMap(filename);
 
-                    // Меняем заголовок окна на имя файла
+                    // РњРµРЅСЏРµРј Р·Р°РіРѕР»РѕРІРѕРє РѕРєРЅР° РЅР° РёРјСЏ С„Р°Р№Р»Р°
                     this.Text = Path.GetFileNameWithoutExtension(filename);
-                    lastSavedFilename = filename; // Запоминаем путь к файлу
+                    lastSavedFilename = filename; // Р—Р°РїРѕРјРёРЅР°РµРј РїСѓС‚СЊ Рє С„Р°Р№Р»Сѓ
 
-                    // Показываем уведомление о завершении
-                    MessageBox.Show("Карта успешно сохранена", "Сохранение выполнено", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    // РџРѕРєР°Р·С‹РІР°РµРј СѓРІРµРґРѕРјР»РµРЅРёРµ Рѕ Р·Р°РІРµСЂС€РµРЅРёРё
+                    MessageBox.Show("РљР°СЂС‚Р° СѓСЃРїРµС€РЅРѕ СЃРѕС…СЂР°РЅРµРЅР°", "РЎРѕС…СЂР°РЅРµРЅРёРµ РІС‹РїРѕР»РЅРµРЅРѕ", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     isMapModified = false;
                     PopulateChangeToMapsSubmenu(changeToMapsDropdown);
                 }
@@ -1431,10 +1431,10 @@ namespace MMMapEditor
 
 private void SaveMap(string filename)
     {
-        // Создаем контейнер для данных карты
+        // РЎРѕР·РґР°РµРј РєРѕРЅС‚РµР№РЅРµСЂ РґР»СЏ РґР°РЅРЅС‹С… РєР°СЂС‚С‹
         var mapData = new Dictionary<string, object>();
 
-        // Состояние каждой ячейки будем собирать в отдельную структуру
+        // РЎРѕСЃС‚РѕСЏРЅРёРµ РєР°Р¶РґРѕР№ СЏС‡РµР№РєРё Р±СѓРґРµРј СЃРѕР±РёСЂР°С‚СЊ РІ РѕС‚РґРµР»СЊРЅСѓСЋ СЃС‚СЂСѓРєС‚СѓСЂСѓ
         var cellsData = new List<object>();
 
         for (int y = 0; y < GridSize; y++)
@@ -1453,46 +1453,46 @@ private void SaveMap(string filename)
                     ["NoMagic"] = noMagicStates[pos],
                     ["Lighting"] = lightingLevels[pos],
                     ["Note"] = notesPerCell[pos],
-                    ["Image"] = imagesPerCell[pos]?.ToBase64String() // Сериализуем изображение в Base64
+                    ["Image"] = imagesPerCell[pos]?.ToBase64String() // РЎРµСЂРёР°Р»РёР·СѓРµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ РІ Base64
                 };
                 cellsData.Add(cellInfo);
             }
         }
 
-        // Добавляем список ячеек в главный контейнер
+        // Р”РѕР±Р°РІР»СЏРµРј СЃРїРёСЃРѕРє СЏС‡РµРµРє РІ РіР»Р°РІРЅС‹Р№ РєРѕРЅС‚РµР№РЅРµСЂ
         mapData["Cells"] = cellsData;
 
-            // Добавляем MetaData с необходимыми полями
+            // Р”РѕР±Р°РІР»СЏРµРј MetaData СЃ РЅРµРѕР±С…РѕРґРёРјС‹РјРё РїРѕР»СЏРјРё
             mapData["MetaData"] = new Dictionary<string, object>()
             {
                 ["MapSector"] = mapSector,
                 ["Surface"] = surface
             };
 
-            // Сериализуем данные и сохраняем в файл
+            // РЎРµСЂРёР°Р»РёР·СѓРµРј РґР°РЅРЅС‹Рµ Рё СЃРѕС…СЂР°РЅСЏРµРј РІ С„Р°Р№Р»
             string jsonContent = JsonConvert.SerializeObject(mapData, Newtonsoft.Json.Formatting.Indented);
             File.WriteAllText(filename, jsonContent);
     }
 
-    // Обработчик клика по пункту "Создать новую(карту)"
+    // РћР±СЂР°Р±РѕС‚С‡РёРє РєР»РёРєР° РїРѕ РїСѓРЅРєС‚Сѓ "РЎРѕР·РґР°С‚СЊ РЅРѕРІСѓСЋ(РєР°СЂС‚Сѓ)"
     private void NewMapItem_Click(object sender, EventArgs e)
         {
             if (isMapModified)
             {
                 DialogResult result = MessageBox.Show(
-                    "Вы действительно хотите создать новую карту?\nВсе текущие данные будут потеряны!",
-                    "Создание новой карты",
+                    "Р’С‹ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ С…РѕС‚РёС‚Рµ СЃРѕР·РґР°С‚СЊ РЅРѕРІСѓСЋ РєР°СЂС‚Сѓ?\nР’СЃРµ С‚РµРєСѓС‰РёРµ РґР°РЅРЅС‹Рµ Р±СѓРґСѓС‚ РїРѕС‚РµСЂСЏРЅС‹!",
+                    "РЎРѕР·РґР°РЅРёРµ РЅРѕРІРѕР№ РєР°СЂС‚С‹",
                     MessageBoxButtons.OKCancel,
                     MessageBoxIcon.Warning
                 );
 
                 if (result == DialogResult.OK)
                 {
-                    // Сбрасываем метаданные
+                    // РЎР±СЂР°СЃС‹РІР°РµРј РјРµС‚Р°РґР°РЅРЅС‹Рµ
                     mapSector = "";
                     surface = "";
-                    // Обновляем заголовок окна
-                    this.Text = "Редактор моей мечты";
+                    // РћР±РЅРѕРІР»СЏРµРј Р·Р°РіРѕР»РѕРІРѕРє РѕРєРЅР°
+                    this.Text = "Р РµРґР°РєС‚РѕСЂ РјРѕРµР№ РјРµС‡С‚С‹";
                     lastSavedFilename = "";
 
                     InitializeAllCells();
@@ -1500,25 +1500,25 @@ private void SaveMap(string filename)
                     UpdatePreview();
                     foreach (var button in gridButtons)
                     {
-                        button.Invalidate(); // вызываем перерисовку для каждой кнопки
+                        button.Invalidate(); // РІС‹Р·С‹РІР°РµРј РїРµСЂРµСЂРёСЃРѕРІРєСѓ РґР»СЏ РєР°Р¶РґРѕР№ РєРЅРѕРїРєРё
                     }
                     isMapModified = false;
                 }
             }
             else
             {
-                // Сбрасываем метаданные
+                // РЎР±СЂР°СЃС‹РІР°РµРј РјРµС‚Р°РґР°РЅРЅС‹Рµ
                 mapSector = "";
                 surface = "";
-                // Обновляем заголовок окна
-                this.Text = "Редактор моей мечты";
+                // РћР±РЅРѕРІР»СЏРµРј Р·Р°РіРѕР»РѕРІРѕРє РѕРєРЅР°
+                this.Text = "Р РµРґР°РєС‚РѕСЂ РјРѕРµР№ РјРµС‡С‚С‹";
                 lastSavedFilename = "";
                 InitializeAllCells();
                 ResetForm();
                 UpdatePreview();
                 foreach (var button in gridButtons)
                 {
-                    button.Invalidate(); // вызываем перерисовку для каждой кнопки
+                    button.Invalidate(); // РІС‹Р·С‹РІР°РµРј РїРµСЂРµСЂРёСЃРѕРІРєСѓ РґР»СЏ РєР°Р¶РґРѕР№ РєРЅРѕРїРєРё
                 }
                 isMapModified = false;
             }
@@ -1533,7 +1533,7 @@ private void SaveMap(string filename)
 
                 isDangerStates[pos] = isDangerCheckBox.Checked;
 
-                // Проверка на изменение
+                // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                 bool hasChanged = previousDangerState != isDangerStates[pos];
 
                 if (hasChanged)
@@ -1555,7 +1555,7 @@ private void SaveMap(string filename)
 
                 noMagicStates[pos] = noMagicCheckBox.Checked;
 
-                // Проверка на изменение
+                // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                 bool hasChanged = previousNoMagicState != isDangerStates[pos];
 
                 if (hasChanged)
@@ -1580,7 +1580,7 @@ private void SaveMap(string filename)
                 RadioButton rb = (RadioButton)sender;
                 if (rb.Checked)
                 {
-                    // Обновляем освещение для выбранной ячейки
+                    // РћР±РЅРѕРІР»СЏРµРј РѕСЃРІРµС‰РµРЅРёРµ РґР»СЏ РІС‹Р±СЂР°РЅРЅРѕР№ СЏС‡РµР№РєРё
                     if (rb == lightRadioButton)
                     {
                         ApplyLightingEffect(pos, Lighting.Light);
@@ -1594,12 +1594,12 @@ private void SaveMap(string filename)
                         ApplyLightingEffect(pos, Lighting.Darkness);
                     }
 
-                    // Проверка на изменение
+                    // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                     bool hasChanged = previousLighting != lightingLevels[pos];
 
                     if (hasChanged)
                     {
-                        // Обязательно заново перерисуем кнопку
+                        // РћР±СЏР·Р°С‚РµР»СЊРЅРѕ Р·Р°РЅРѕРІРѕ РїРµСЂРµСЂРёСЃСѓРµРј РєРЅРѕРїРєСѓ
                         gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
 
                         UpdatePreview();
@@ -1610,7 +1610,7 @@ private void SaveMap(string filename)
         }
         private void ApplyLightingEffect(Point pos, Lighting level)
         {
-            // Устанавливаем уровень освещенности для данной позиции
+            // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј СѓСЂРѕРІРµРЅСЊ РѕСЃРІРµС‰РµРЅРЅРѕСЃС‚Рё РґР»СЏ РґР°РЅРЅРѕР№ РїРѕР·РёС†РёРё
             lightingLevels[pos] = level;
         }
 
@@ -1626,26 +1626,26 @@ private void SaveMap(string filename)
                     Image clipboardImage = Clipboard.GetImage();
                     if (clipboardImage != null)
                     {
-                        // Проверяем, есть ли уже изображение у выбранной ячейки
+                        // РџСЂРѕРІРµСЂСЏРµРј, РµСЃС‚СЊ Р»Рё СѓР¶Рµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ Сѓ РІС‹Р±СЂР°РЅРЅРѕР№ СЏС‡РµР№РєРё
                         if (imagesPerCell.TryGetValue(selectedPosition.Value, out var existingImage) && existingImage != null)
                         {
-                            // Выводим диалоговое окно с вопросом
-                            DialogResult result = MessageBox.Show("Вы действительно хотите заменить изображение?", "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                            // Р’С‹РІРѕРґРёРј РґРёР°Р»РѕРіРѕРІРѕРµ РѕРєРЅРѕ СЃ РІРѕРїСЂРѕСЃРѕРј
+                            DialogResult result = MessageBox.Show("Р’С‹ РґРµР№СЃС‚РІРёС‚РµР»СЊРЅРѕ С…РѕС‚РёС‚Рµ Р·Р°РјРµРЅРёС‚СЊ РёР·РѕР±СЂР°Р¶РµРЅРёРµ?", "РџРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
                             if (result == DialogResult.Yes)
                             {
-                                // Сохраняем новое изображение
+                                // РЎРѕС…СЂР°РЅСЏРµРј РЅРѕРІРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                                 imagesPerCell[selectedPosition.Value] = clipboardImage;
                                 cellImageBox.Image = clipboardImage;
                             }
                         }
                         else
                         {
-                            // Если изображения нет, просто сохраняем новое
+                            // Р•СЃР»Рё РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РЅРµС‚, РїСЂРѕСЃС‚Рѕ СЃРѕС…СЂР°РЅСЏРµРј РЅРѕРІРѕРµ
                             imagesPerCell[selectedPosition.Value] = clipboardImage;
                             cellImageBox.Image = clipboardImage;
                         }
                     }
-                    // Проверка на изменение
+                    // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                     bool hasChanged = previousImage != imagesPerCell[pos];
 
                     if (hasChanged)
@@ -1653,12 +1653,12 @@ private void SaveMap(string filename)
                 }
                 else
                 {
-                    MessageBox.Show("Буфер обмена пуст или не содержит изображения.");
+                    MessageBox.Show("Р‘СѓС„РµСЂ РѕР±РјРµРЅР° РїСѓСЃС‚ РёР»Рё РЅРµ СЃРѕРґРµСЂР¶РёС‚ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ.");
                 }
             }
         }
 
-        // Реализация метода для события Paint
+        // Р РµР°Р»РёР·Р°С†РёСЏ РјРµС‚РѕРґР° РґР»СЏ СЃРѕР±С‹С‚РёСЏ Paint
         private void CellImageBox_PaintNoPicture(object sender, PaintEventArgs e)
         {
             if (selectedPosition.HasValue)
@@ -1685,27 +1685,27 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод для вывода большого белого текста по центру
+        // РњРµС‚РѕРґ РґР»СЏ РІС‹РІРѕРґР° Р±РѕР»СЊС€РѕРіРѕ Р±РµР»РѕРіРѕ С‚РµРєСЃС‚Р° РїРѕ С†РµРЅС‚СЂСѓ
         private void ShowPlaceholderText(Graphics g)
         {
-            // Большой белый шрифт
+            // Р‘РѕР»СЊС€РѕР№ Р±РµР»С‹Р№ С€СЂРёС„С‚
             Font bigFont = new Font("Arial", 16, FontStyle.Bold);
             SolidBrush whiteBrush = new SolidBrush(Color.White);
 
-            // Текст, который хотим показать
-            string placeholderText = "Изображение отсутствует";
+            // РўРµРєСЃС‚, РєРѕС‚РѕСЂС‹Р№ С…РѕС‚РёРј РїРѕРєР°Р·Р°С‚СЊ
+            string placeholderText = "РР·РѕР±СЂР°Р¶РµРЅРёРµ РѕС‚СЃСѓС‚СЃС‚РІСѓРµС‚";
 
-            // Центрирование текста по ширине и высоте
+            // Р¦РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ С‚РµРєСЃС‚Р° РїРѕ С€РёСЂРёРЅРµ Рё РІС‹СЃРѕС‚Рµ
             StringFormat format = new StringFormat
             {
                 Alignment = StringAlignment.Center,
                 LineAlignment = StringAlignment.Center
             };
 
-            // Рисуем текст по центру PictureBox
+            // Р РёСЃСѓРµРј С‚РµРєСЃС‚ РїРѕ С†РµРЅС‚СЂСѓ PictureBox
             g.DrawString(placeholderText, bigFont, whiteBrush, new RectangleF(0, 0, cellImageBox.Width, cellImageBox.Height), format);
 
-            // Важно освободить ресурсы шрифтов и кистей
+            // Р’Р°Р¶РЅРѕ РѕСЃРІРѕР±РѕРґРёС‚СЊ СЂРµСЃСѓСЂСЃС‹ С€СЂРёС„С‚РѕРІ Рё РєРёСЃС‚РµР№
             bigFont.Dispose();
             whiteBrush.Dispose();
         }
@@ -1723,19 +1723,19 @@ private void SaveMap(string filename)
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = 120,
-                BackColor = Color.Black,       // черный фон
-                ForeColor = Color.White,       // белый текст
+                BackColor = Color.Black,       // С‡РµСЂРЅС‹Р№ С„РѕРЅ
+                ForeColor = Color.White,       // Р±РµР»С‹Р№ С‚РµРєСЃС‚
                 FlatStyle = FlatStyle.Flat
             };
 
-            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход" });
+            comboBox.Items.AddRange(new object[] { "РќРµС‚", "Р”РІРµСЂСЊ", "Р РµС€С‘С‚РєР°", "РЎРµРєСЂРµС‚", "Р›РµСЃС‚РЅРёС†Р° РІРІРµСЂС…", "Р›РµСЃС‚РЅРёС†Р° РІРЅРёР·", "РџРѕСЂС‚Р°Р»", "Р’С‹С…РѕРґ" });
 
             if (comboBox.Items.Count > 0)
             {
                 comboBox.SelectedIndex = 0;
             }
 
-            // Важный момент: регистрация обработчика для комбобокса прохода
+            // Р’Р°Р¶РЅС‹Р№ РјРѕРјРµРЅС‚: СЂРµРіРёСЃС‚СЂР°С†РёСЏ РѕР±СЂР°Р±РѕС‚С‡РёРєР° РґР»СЏ РєРѕРјР±РѕР±РѕРєСЃР° РїСЂРѕС…РѕРґР°
             comboBox.SelectionChangeCommitted += PassageComboBox_SelectionChanged;
 
             return new Tuple<Label, ComboBox>(label, comboBox);
@@ -1745,17 +1745,17 @@ private void SaveMap(string filename)
         {
             var label = new Label
             {
-                Name = $"lbl_{title}", // Назначение уникального имени метке
+                Name = $"lbl_{title}", // РќР°Р·РЅР°С‡РµРЅРёРµ СѓРЅРёРєР°Р»СЊРЅРѕРіРѕ РёРјРµРЅРё РјРµС‚РєРµ
                 Text = title,
                 //AutoSize = true,
                 Height = 20,
                 ForeColor = Color.White,
-               // Anchor = AnchorStyles.Left // Прикрепляем к левому краю и вершине
+               // Anchor = AnchorStyles.Left // РџСЂРёРєСЂРµРїР»СЏРµРј Рє Р»РµРІРѕРјСѓ РєСЂР°СЋ Рё РІРµСЂС€РёРЅРµ
                                                               //  Location = new Point(10,10)
 
             };
 
-            // Получаем кастомное название стороны
+            // РџРѕР»СѓС‡Р°РµРј РєР°СЃС‚РѕРјРЅРѕРµ РЅР°Р·РІР°РЅРёРµ СЃС‚РѕСЂРѕРЅС‹
             string customTitle = GetSetting("CustomDirections", title);
             if (!string.IsNullOrWhiteSpace(customTitle))
             {
@@ -1765,8 +1765,8 @@ private void SaveMap(string filename)
             var comboBox = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = Color.Black,       // черный фон
-                ForeColor = Color.White,       // белый текст
+                BackColor = Color.Black,       // С‡РµСЂРЅС‹Р№ С„РѕРЅ
+                ForeColor = Color.White,       // Р±РµР»С‹Р№ С‚РµРєСЃС‚
                 FlatStyle = FlatStyle.Flat,
                 Width = 200
             };
@@ -1795,7 +1795,7 @@ private void SaveMap(string filename)
 
                 notesPerCell[pos] = notesTextBox.Text;
 
-                // Проверка на изменение
+                // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                 bool hasChanged = previousNote != notesPerCell[pos];
 
                 if (hasChanged)
@@ -1805,54 +1805,54 @@ private void SaveMap(string filename)
 
         private void RestoreSettings(Point pos)
         {
-            // Проверяем, существует ли запись в словаре границ
+            // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё Р·Р°РїРёСЃСЊ РІ СЃР»РѕРІР°СЂРµ РіСЂР°РЅРёС†
             if (borders.TryGetValue(pos, out var borderValues))
             {
-                // Устанавливаем значения комбинационных списков
+                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј Р·РЅР°С‡РµРЅРёСЏ РєРѕРјР±РёРЅР°С†РёРѕРЅРЅС‹С… СЃРїРёСЃРєРѕРІ
                 topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item1);
                 bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item2);
                 leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item3);
                 rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item4);
             }
 
-            // Проверяем, существует ли запись в словаре переходов
+            // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё Р·Р°РїРёСЃСЊ РІ СЃР»РѕРІР°СЂРµ РїРµСЂРµС…РѕРґРѕРІ
             if (passageDict.TryGetValue(pos, out var passageValues))
             {
-                // Устанавливаем значения комбинационных списков перехода
+                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј Р·РЅР°С‡РµРЅРёСЏ РєРѕРјР±РёРЅР°С†РёРѕРЅРЅС‹С… СЃРїРёСЃРєРѕРІ РїРµСЂРµС…РѕРґР°
                 passTopComboBox.SelectedIndex = passageValues.Item1;
                 passBottomComboBox.SelectedIndex = passageValues.Item2;
                 passLeftComboBox.SelectedIndex = passageValues.Item3;
                 passRightComboBox.SelectedIndex = passageValues.Item4;
             }
 
-            // Проверяем, существует ли запись в словаре закрытых состояний
+            // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё Р·Р°РїРёСЃСЊ РІ СЃР»РѕРІР°СЂРµ Р·Р°РєСЂС‹С‚С‹С… СЃРѕСЃС‚РѕСЏРЅРёР№
             if (closedStates.TryGetValue(pos, out var closedValues))
             {
-                // Устанавливаем состояние чекбоксов закрытия
+                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј СЃРѕСЃС‚РѕСЏРЅРёРµ С‡РµРєР±РѕРєСЃРѕРІ Р·Р°РєСЂС‹С‚РёСЏ
                 topCheck.Checked = closedValues.Item1;
                 bottomCheck.Checked = closedValues.Item2;
                 leftCheck.Checked = closedValues.Item3;
                 rightCheck.Checked = closedValues.Item4;
             }
 
-            // Проверяем, существует ли запись в словаре сообщений
+            // РџСЂРѕРІРµСЂСЏРµРј, СЃСѓС‰РµСЃС‚РІСѓРµС‚ Р»Рё Р·Р°РїРёСЃСЊ РІ СЃР»РѕРІР°СЂРµ СЃРѕРѕР±С‰РµРЅРёР№
             if (messageStates.TryGetValue(pos, out var messageValues))
             {
-                // Устанавливаем состояние чекбоксов сообщений
+                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј СЃРѕСЃС‚РѕСЏРЅРёРµ С‡РµРєР±РѕРєСЃРѕРІ СЃРѕРѕР±С‰РµРЅРёР№
                 topMessageCheck.Checked = messageValues.Item1;
                 bottomMessageCheck.Checked = messageValues.Item2;
                 leftMessageCheck.Checked = messageValues.Item3;
                 rightMessageCheck.Checked = messageValues.Item4;
             }
 
-            //Считываем значение из тела ячейки
+            //РЎС‡РёС‚С‹РІР°РµРј Р·РЅР°С‡РµРЅРёРµ РёР· С‚РµР»Р° СЏС‡РµР№РєРё
             if (centralOptions.TryGetValue(pos, out var centralOption))
             {
                 centerComboBox.SelectedItem = centralOption;
             }
 
             notesTextBox.Text = notesPerCell[pos];
-            // Обновляем изображение в PictureBox
+            // РћР±РЅРѕРІР»СЏРµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ РІ PictureBox
             if (imagesPerCell.TryGetValue(pos, out var image))
             {
                 cellImageBox.Image = image;
@@ -1872,7 +1872,7 @@ private void SaveMap(string filename)
                 noMagicCheckBox.Checked = noMagicState;
             }
 
-            // Восстановление состояния освещения
+            // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРёРµ СЃРѕСЃС‚РѕСЏРЅРёСЏ РѕСЃРІРµС‰РµРЅРёСЏ
             if (lightingLevels.TryGetValue(pos, out var lightingLevel))
             {
                 switch (lightingLevel)
@@ -1889,7 +1889,7 @@ private void SaveMap(string filename)
                 }
             }
 
-            UpdatePreview(); // Обновляем предварительное изображение
+            UpdatePreview(); // РћР±РЅРѕРІР»СЏРµРј РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
         }
 
         private Point ParseCurrentPosition()
@@ -1914,7 +1914,7 @@ private void SaveMap(string filename)
             selectedPosition = pos;
             button.Invalidate();
 
-            infoLabel.Text = $"Выделен квадрат: X={pos.X}, Y={pos.Y}";
+            infoLabel.Text = $"Р’С‹РґРµР»РµРЅ РєРІР°РґСЂР°С‚: X={pos.X}, Y={pos.Y}";
             RestoreSettings(pos);
             UpdatePreview();
         }
@@ -1924,7 +1924,7 @@ private void SaveMap(string filename)
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                Tuple<string, string, string, string> previousBorders = borders.TryGetValue(pos, out var prev) ? prev : new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
+                Tuple<string, string, string, string> previousBorders = borders.TryGetValue(pos, out var prev) ? prev : new Tuple<string, string, string, string>("РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°");
 
                 borders[pos] = new Tuple<string, string, string, string>(
                     topComboBox.SelectedItem?.ToString() ?? "",
@@ -1933,7 +1933,7 @@ private void SaveMap(string filename)
                     rightComboBox.SelectedItem?.ToString() ?? ""
                 );
 
-                // Проверка на изменение
+                // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                 bool hasChanged = !previousBorders.Equals(borders[pos]);
 
                 if (hasChanged)
@@ -1952,7 +1952,7 @@ private void SaveMap(string filename)
             {
                 Point pos = selectedPosition.Value;
 
-                // Сначала сохраним текущее состояние данных о проходах
+                // РЎРЅР°С‡Р°Р»Р° СЃРѕС…СЂР°РЅРёРј С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РґР°РЅРЅС‹С… Рѕ РїСЂРѕС…РѕРґР°С…
                 Tuple<int, int, int, int> previousPassages = passageDict.TryGetValue(pos, out var prev) ? prev : new Tuple<int, int, int, int>(0, 0, 0, 0);
 
                 passageDict[selectedPosition.Value] = new Tuple<int, int, int, int>(
@@ -1962,13 +1962,13 @@ private void SaveMap(string filename)
                     passRightComboBox.SelectedIndex
                 );
 
-                // Проверка на изменение
+                // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                 bool hasChanged = !previousPassages.Equals(passageDict[pos]);
 
                 if (hasChanged)
                 {     
 
-                // Обновляем соответствующую ячейку на карте
+                // РћР±РЅРѕРІР»СЏРµРј СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰СѓСЋ СЏС‡РµР№РєСѓ РЅР° РєР°СЂС‚Рµ
                 gridButtons[selectedPosition.Value.X, GridSize - 1 - (selectedPosition.Value.Y)].Invalidate();
                 UpdatePreview();
                 isMapModified = true;
@@ -2013,41 +2013,41 @@ private void SaveMap(string filename)
             pos = new Point(pos.X, GridSize - 1 - (pos.Y));
             if (mainMapImage == null)
             {
-                return; // Пропускаем обработку, если нет изображения
+                return; // РџСЂРѕРїСѓСЃРєР°РµРј РѕР±СЂР°Р±РѕС‚РєСѓ, РµСЃР»Рё РЅРµС‚ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             }
 
-            // Целевые координаты участка изображения для отображения на клетке
-            int tileSize = CellSize; // Размер одной клетки в сетке
+            // Р¦РµР»РµРІС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹ СѓС‡Р°СЃС‚РєР° РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РґР»СЏ РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ РЅР° РєР»РµС‚РєРµ
+            int tileSize = CellSize; // Р Р°Р·РјРµСЂ РѕРґРЅРѕР№ РєР»РµС‚РєРё РІ СЃРµС‚РєРµ
             int mapX = pos.X * tileSize;
             int mapY = pos.Y * tileSize;
 
-            // Область обрезки на главном изображении
+            // РћР±Р»Р°СЃС‚СЊ РѕР±СЂРµР·РєРё РЅР° РіР»Р°РІРЅРѕРј РёР·РѕР±СЂР°Р¶РµРЅРёРё
             Rectangle cropRect = new Rectangle(mapX, mapY, tileSize, tileSize);
 
-            // Отображаем вырезанный фрагмент на холсте клетки
+            // РћС‚РѕР±СЂР°Р¶Р°РµРј РІС‹СЂРµР·Р°РЅРЅС‹Р№ С„СЂР°РіРјРµРЅС‚ РЅР° С…РѕР»СЃС‚Рµ РєР»РµС‚РєРё
             g.DrawImage(
                 mainMapImage,
-                bounds,          // Габариты целевого региона (ячейки)
-                cropRect,        // Источник (координаты вырезанного фрагмента)
+                bounds,          // Р“Р°Р±Р°СЂРёС‚С‹ С†РµР»РµРІРѕРіРѕ СЂРµРіРёРѕРЅР° (СЏС‡РµР№РєРё)
+                cropRect,        // РСЃС‚РѕС‡РЅРёРє (РєРѕРѕСЂРґРёРЅР°С‚С‹ РІС‹СЂРµР·Р°РЅРЅРѕРіРѕ С„СЂР°РіРјРµРЅС‚Р°)
                 GraphicsUnit.Pixel
             );
 
         }
 
-        // Метод для окраски опасных областей внутри ячейки
+        // РњРµС‚РѕРґ РґР»СЏ РѕРєСЂР°СЃРєРё РѕРїР°СЃРЅС‹С… РѕР±Р»Р°СЃС‚РµР№ РІРЅСѓС‚СЂРё СЏС‡РµР№РєРё
         private void PaintDangerArea(Graphics g, Rectangle bounds)
         {
-            // Площадь покраски — это внутренний прямоугольник 26x26 пикселей
+            // РџР»РѕС‰Р°РґСЊ РїРѕРєСЂР°СЃРєРё вЂ” СЌС‚Рѕ РІРЅСѓС‚СЂРµРЅРЅРёР№ РїСЂСЏРјРѕСѓРіРѕР»СЊРЅРёРє 26x26 РїРёРєСЃРµР»РµР№
             int innerSquareSize = 40;
             //int startX = bounds.X + (bounds.Width - innerSquareSize) / 2;
             //int startY = bounds.Y + (bounds.Height - innerSquareSize) / 2;
 
-            // Циклическое окрашивание каждого четвертого пикселя
+            // Р¦РёРєР»РёС‡РµСЃРєРѕРµ РѕРєСЂР°С€РёРІР°РЅРёРµ РєР°Р¶РґРѕРіРѕ С‡РµС‚РІРµСЂС‚РѕРіРѕ РїРёРєСЃРµР»СЏ
             for (int y = 0; y < innerSquareSize; y++)
             {
                 for (int x = 0; x < innerSquareSize; x++)
                 {
-                    // Начинаем с индекса 1 (второй пиксель), потом каждый четвёртый
+                    // РќР°С‡РёРЅР°РµРј СЃ РёРЅРґРµРєСЃР° 1 (РІС‚РѕСЂРѕР№ РїРёРєСЃРµР»СЊ), РїРѕС‚РѕРј РєР°Р¶РґС‹Р№ С‡РµС‚РІС‘СЂС‚С‹Р№
                     if ((x + y) % 4 == 1)
                     {
                         g.FillRectangle(Brushes.Red, x, y, 1, 1);
@@ -2056,20 +2056,20 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод для окраски зон с отсутствием магии
+        // РњРµС‚РѕРґ РґР»СЏ РѕРєСЂР°СЃРєРё Р·РѕРЅ СЃ РѕС‚СЃСѓС‚СЃС‚РІРёРµРј РјР°РіРёРё
         private void PaintNoMagicArea(Graphics g, Rectangle bounds)
         {
-            // Размер внутреннего квадрата 26x26 пикселей
+            // Р Р°Р·РјРµСЂ РІРЅСѓС‚СЂРµРЅРЅРµРіРѕ РєРІР°РґСЂР°С‚Р° 26x26 РїРёРєСЃРµР»РµР№
             int innerSquareSize = 40;
             //int startX = bounds.X + (bounds.Width - innerSquareSize) / 2;
             //int startY = bounds.Y + (bounds.Height - innerSquareSize) / 2;
 
-            // Покраска каждым 4-м пикселем, начиная с 4-го (индекс 3)
+            // РџРѕРєСЂР°СЃРєР° РєР°Р¶РґС‹Рј 4-Рј РїРёРєСЃРµР»РµРј, РЅР°С‡РёРЅР°СЏ СЃ 4-РіРѕ (РёРЅРґРµРєСЃ 3)
             for (int y = 0; y < innerSquareSize; y++)
             {
                 for (int x = 0; x < innerSquareSize; x++)
                 {
-                    // Каждое 4-е смещение, начиная с третьего (индекс 3)
+                    // РљР°Р¶РґРѕРµ 4-Рµ СЃРјРµС‰РµРЅРёРµ, РЅР°С‡РёРЅР°СЏ СЃ С‚СЂРµС‚СЊРµРіРѕ (РёРЅРґРµРєСЃ 3)
                     if ((x + y) % 4 == 3)
                     {
                         g.FillRectangle(Brushes.Yellow, x, y, 1, 1);
@@ -2078,20 +2078,20 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод для нанесения эффекта "Темно"
+        // РњРµС‚РѕРґ РґР»СЏ РЅР°РЅРµСЃРµРЅРёСЏ СЌС„С„РµРєС‚Р° "РўРµРјРЅРѕ"
         private void PaintDarkArea(Graphics g, Rectangle bounds)
         {
-            // Участок для покрытия — внутренний прямоугольник 26x26 пикселей
+            // РЈС‡Р°СЃС‚РѕРє РґР»СЏ РїРѕРєСЂС‹С‚РёСЏ вЂ” РІРЅСѓС‚СЂРµРЅРЅРёР№ РїСЂСЏРјРѕСѓРіРѕР»СЊРЅРёРє 26x26 РїРёРєСЃРµР»РµР№
             int innerSquareSize = 40;
             //int startX = bounds.X + (bounds.Width - innerSquareSize) / 2;
             //int startY = bounds.Y + (bounds.Height - innerSquareSize) / 2;
 
-            // Окрашивание каждого 4-го пикселя, начиная с третьего (индекс 2)
+            // РћРєСЂР°С€РёРІР°РЅРёРµ РєР°Р¶РґРѕРіРѕ 4-РіРѕ РїРёРєСЃРµР»СЏ, РЅР°С‡РёРЅР°СЏ СЃ С‚СЂРµС‚СЊРµРіРѕ (РёРЅРґРµРєСЃ 2)
             for (int y = 0; y < innerSquareSize; y++)
             {
                 for (int x = 0; x < innerSquareSize; x++)
                 {
-                    // Окрашиваем каждый 4-й пиксель, начиная с 3-го (индекс 2)
+                    // РћРєСЂР°С€РёРІР°РµРј РєР°Р¶РґС‹Р№ 4-Р№ РїРёРєСЃРµР»СЊ, РЅР°С‡РёРЅР°СЏ СЃ 3-РіРѕ (РёРЅРґРµРєСЃ 2)
                     if ((x + y) % 8 == 2)
                     {
                         g.FillRectangle(Brushes.Gray, x, y, 1, 1);
@@ -2100,20 +2100,20 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод для нанесения эффекта "Мрак"
+        // РњРµС‚РѕРґ РґР»СЏ РЅР°РЅРµСЃРµРЅРёСЏ СЌС„С„РµРєС‚Р° "РњСЂР°Рє"
         private void PaintDarknessArea(Graphics g, Rectangle bounds)
         {
-            // Центральная область для закрашивания (размер 26x26 пикселей)
+            // Р¦РµРЅС‚СЂР°Р»СЊРЅР°СЏ РѕР±Р»Р°СЃС‚СЊ РґР»СЏ Р·Р°РєСЂР°С€РёРІР°РЅРёСЏ (СЂР°Р·РјРµСЂ 26x26 РїРёРєСЃРµР»РµР№)
             int innerSquareSize = 40;
             //int startX = bounds.X + (bounds.Width - innerSquareSize) / 2;
             //int startY = bounds.Y + (bounds.Height - innerSquareSize) / 2;
 
-            // Окрашивание каждого второго пикселя, начиная с первого (индекс 0)
+            // РћРєСЂР°С€РёРІР°РЅРёРµ РєР°Р¶РґРѕРіРѕ РІС‚РѕСЂРѕРіРѕ РїРёРєСЃРµР»СЏ, РЅР°С‡РёРЅР°СЏ СЃ РїРµСЂРІРѕРіРѕ (РёРЅРґРµРєСЃ 0)
             for (int y = 0; y < innerSquareSize; y++)
             {
                 for (int x = 0; x < innerSquareSize; x++)
                 {
-                    // Красятся пиксели с четными индексами суммы x+y
+                    // РљСЂР°СЃСЏС‚СЃСЏ РїРёРєСЃРµР»Рё СЃ С‡РµС‚РЅС‹РјРё РёРЅРґРµРєСЃР°РјРё СЃСѓРјРјС‹ x+y
                     if ((x + y) % 4 == 0)
                     {
                         g.FillRectangle(new SolidBrush(Color.LightGray), x, y, 1, 1);
@@ -2124,39 +2124,39 @@ private void SaveMap(string filename)
 
         private void DrawCentralCell(Graphics g, Rectangle bounds, int shift_x, int shift_y, int brightness_limit, int[,] body_pixels)
         {
-            // Масштабируем пространство под матрицу 26x26
+            // РњР°СЃС€С‚Р°Р±РёСЂСѓРµРј РїСЂРѕСЃС‚СЂР°РЅСЃС‚РІРѕ РїРѕРґ РјР°С‚СЂРёС†Сѓ 26x26
             int scale = Math.Min(bounds.Width / 26, bounds.Height / 26);
 
-            // Отрисовка массива пикселей на графике
-            // Обходим все пиксели массива
+            // РћС‚СЂРёСЃРѕРІРєР° РјР°СЃСЃРёРІР° РїРёРєСЃРµР»РµР№ РЅР° РіСЂР°С„РёРєРµ
+            // РћР±С…РѕРґРёРј РІСЃРµ РїРёРєСЃРµР»Рё РјР°СЃСЃРёРІР°
             for (int y = 0; y < body_pixels.GetLength(1); y++)
             {
                 for (int x = 0; x < body_pixels.GetLength(0); x++)
                 {
                     int pixelValue = body_pixels[x, y];
 
-                    // Получаем отдельные каналы цвета (RGBA)
+                    // РџРѕР»СѓС‡Р°РµРј РѕС‚РґРµР»СЊРЅС‹Рµ РєР°РЅР°Р»С‹ С†РІРµС‚Р° (RGBA)
                     byte alpha = (byte)((pixelValue >> 24) & 0xFF);
                     byte red = (byte)((pixelValue >> 16) & 0xFF);
                     byte green = (byte)((pixelValue >> 8) & 0xFF);
                     byte blue = (byte)(pixelValue & 0xFF);
 
-                    // Общая яркость пикселя
+                    // РћР±С‰Р°СЏ СЏСЂРєРѕСЃС‚СЊ РїРёРєСЃРµР»СЏ
                     int brightness = red + green + blue;
 
-                    // Если пиксель достаточно тёмный, делаем его прозрачным
+                    // Р•СЃР»Рё РїРёРєСЃРµР»СЊ РґРѕСЃС‚Р°С‚РѕС‡РЅРѕ С‚С‘РјРЅС‹Р№, РґРµР»Р°РµРј РµРіРѕ РїСЂРѕР·СЂР°С‡РЅС‹Рј
                     if (brightness < brightness_limit)
                     {
                         g.FillRectangle(new SolidBrush(Color.Transparent), bounds.X + x * scale, bounds.Y + y * scale, scale, scale);
                     }
                     else
                     {
-                        // red = (byte)Math.Min(red + 255, 255); // Ограничим максимальное значение канала красным пределом (255)
+                        // red = (byte)Math.Min(red + 255, 255); // РћРіСЂР°РЅРёС‡РёРј РјР°РєСЃРёРјР°Р»СЊРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ РєР°РЅР°Р»Р° РєСЂР°СЃРЅС‹Рј РїСЂРµРґРµР»РѕРј (255)
                         //red = 255;
                         //blue = (byte)Math.Max(blue - 150, 0);
                         //green = (byte)Math.Max(green - 150, 0);
 
-                        // Рисуем пиксель нормальным цветом
+                        // Р РёСЃСѓРµРј РїРёРєСЃРµР»СЊ РЅРѕСЂРјР°Р»СЊРЅС‹Рј С†РІРµС‚РѕРј
                         Color pixelColor = Color.FromArgb(alpha, red, green, blue);
                         g.FillRectangle(new SolidBrush(pixelColor), shift_x + bounds.X + x * scale, shift_y + bounds.Y + y * scale, scale, scale);
                     }
@@ -2164,32 +2164,32 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод для рисования слова "EXIT" и стрелок слева и справа от него
+        // РњРµС‚РѕРґ РґР»СЏ СЂРёСЃРѕРІР°РЅРёСЏ СЃР»РѕРІР° "EXIT" Рё СЃС‚СЂРµР»РѕРє СЃР»РµРІР° Рё СЃРїСЂР°РІР° РѕС‚ РЅРµРіРѕ
         private void DrawExitWord(Graphics g, Rectangle bounds, Direction direction, Color exitWordColor)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] exitWordPatternToUse = direction == Direction.Top ? Passage_Pixels_Patterns.exit_top :
                 direction == Direction.Left ? Passage_Pixels_Patterns.exit_top :
                 direction == Direction.Right ? Passage_Pixels_Patterns.exit_top :
                 Passage_Pixels_Patterns.exit_bottom;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
-        {1, exitWordColor}, // Средняя интенсивность серого
-        //{2, Color.FromArgb(160, 160, 160)}, // Светлее серый
-        //{3, Color.FromArgb(192, 192, 192)}, // Очень светлый оттенок серого
-        //{4, Color.FromArgb(100, 100, 100)},  // Тёмно-серый
-        //{5, Color.FromArgb(255, 201, 14)}   // Жёлтая ступенька
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
+        {1, exitWordColor}, // РЎСЂРµРґРЅСЏСЏ РёРЅС‚РµРЅСЃРёРІРЅРѕСЃС‚СЊ СЃРµСЂРѕРіРѕ
+        //{2, Color.FromArgb(160, 160, 160)}, // РЎРІРµС‚Р»РµРµ СЃРµСЂС‹Р№
+        //{3, Color.FromArgb(192, 192, 192)}, // РћС‡РµРЅСЊ СЃРІРµС‚Р»С‹Р№ РѕС‚С‚РµРЅРѕРє СЃРµСЂРѕРіРѕ
+        //{4, Color.FromArgb(100, 100, 100)},  // РўС‘РјРЅРѕ-СЃРµСЂС‹Р№
+        //{5, Color.FromArgb(255, 201, 14)}   // Р–С‘Р»С‚Р°СЏ СЃС‚СѓРїРµРЅСЊРєР°
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(exitWordPatternToUse.GetLength(1), exitWordPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < exitWordPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < exitWordPatternToUse.GetLength(1); x++)
@@ -2205,82 +2205,82 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X, 
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,                                        
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
-        //Метод для отрисовки портала
+        //РњРµС‚РѕРґ РґР»СЏ РѕС‚СЂРёСЃРѕРІРєРё РїРѕСЂС‚Р°Р»Р°
         private void DrawPortal(Graphics graphics, Rectangle bounds, Direction direction)
         {
-            // Параметры врат
+            // РџР°СЂР°РјРµС‚СЂС‹ РІСЂР°С‚
             int gateWidth = (bounds.Width / 3) + 1;
             int gateHeight = (bounds.Height / 6) - 1;
 
-            // Базовые цвета врат
+            // Р‘Р°Р·РѕРІС‹Рµ С†РІРµС‚Р° РІСЂР°С‚
             Color[] baseColors = new Color[]
             {
-        ColorTranslator.FromHtml("#3F48CC"), // Внешние ворота
-        ColorTranslator.FromHtml("#00BFFF"), // Средние ворота
-        ColorTranslator.FromHtml("#ADD8E6")  // Внутренние ворота
+        ColorTranslator.FromHtml("#3F48CC"), // Р’РЅРµС€РЅРёРµ РІРѕСЂРѕС‚Р°
+        ColorTranslator.FromHtml("#00BFFF"), // РЎСЂРµРґРЅРёРµ РІРѕСЂРѕС‚Р°
+        ColorTranslator.FromHtml("#ADD8E6")  // Р’РЅСѓС‚СЂРµРЅРЅРёРµ РІРѕСЂРѕС‚Р°
             };
 
-            // Класс Random для генерации случайных чисел
+            // РљР»Р°СЃСЃ Random РґР»СЏ РіРµРЅРµСЂР°С†РёРё СЃР»СѓС‡Р°Р№РЅС‹С… С‡РёСЃРµР»
             Random rand = new Random();
 
-            // Массив случайных цветов
+            // РњР°СЃСЃРёРІ СЃР»СѓС‡Р°Р№РЅС‹С… С†РІРµС‚РѕРІ
             Color[] colors = new Color[baseColors.Length];
 
-            // Генерируем случайные цвета
+            // Р“РµРЅРµСЂРёСЂСѓРµРј СЃР»СѓС‡Р°Р№РЅС‹Рµ С†РІРµС‚Р°
             for (int i = 0; i < baseColors.Length; i++)
             {
                 int r = baseColors[i].R;
                 int g = baseColors[i].G;
                 int b = baseColors[i].B;
 
-                float variationPercentage = 0.1f; // Вариативность в процентах
+                float variationPercentage = 0.1f; // Р’Р°СЂРёР°С‚РёРІРЅРѕСЃС‚СЊ РІ РїСЂРѕС†РµРЅС‚Р°С…
                 int deltaR = (int)(rand.NextFloat(-variationPercentage, variationPercentage) * r);
                 int deltaG = (int)(rand.NextFloat(-variationPercentage, variationPercentage) * g);
                 int deltaB = (int)(rand.NextFloat(-variationPercentage, variationPercentage) * b);
@@ -2292,10 +2292,10 @@ private void SaveMap(string filename)
                 );
             }
 
-            // Сохраняем оригинал графического контекста
+            // РЎРѕС…СЂР°РЅСЏРµРј РѕСЂРёРіРёРЅР°Р» РіСЂР°С„РёС‡РµСЃРєРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
             GraphicsState savedState = graphics.Save();
 
-            // Координаты начала рисования врат
+            // РљРѕРѕСЂРґРёРЅР°С‚С‹ РЅР°С‡Р°Р»Р° СЂРёСЃРѕРІР°РЅРёСЏ РІСЂР°С‚
             int dx = 0, dy = 1;
 
             switch (direction)
@@ -2309,34 +2309,34 @@ private void SaveMap(string filename)
                     dy = bounds.Bottom - gateHeight - 1;
                     break;
                 case Direction.Left:
-                    // Перенос и поворот на 90 градусов против часовой стрелки
+                    // РџРµСЂРµРЅРѕСЃ Рё РїРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ РїСЂРѕС‚РёРІ С‡Р°СЃРѕРІРѕР№ СЃС‚СЂРµР»РєРё
                     graphics.TranslateTransform(bounds.X + 3, bounds.Y - 1 + gateWidth * 2);
                     graphics.RotateTransform(-90);
                     dy = -gateHeight / 2;
                     break;
                 case Direction.Right:
-                    // Перенос и поворот на 270 градусов (90 градусов по часовой стрелке)
+                    // РџРµСЂРµРЅРѕСЃ Рё РїРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ (90 РіСЂР°РґСѓСЃРѕРІ РїРѕ С‡Р°СЃРѕРІРѕР№ СЃС‚СЂРµР»РєРµ)
                     graphics.TranslateTransform(bounds.Right - 3, bounds.Y - 1 + gateWidth);
                     graphics.RotateTransform(90);
                     dy = -gateHeight / 2;
                     break;
             }
 
-            // Толщина линий врат
+            // РўРѕР»С‰РёРЅР° Р»РёРЅРёР№ РІСЂР°С‚
             int lineThickness = 2;
 
-            // Рисуем врат слоями, начиная с самого внешнего
+            // Р РёСЃСѓРµРј РІСЂР°С‚ СЃР»РѕСЏРјРё, РЅР°С‡РёРЅР°СЏ СЃ СЃР°РјРѕРіРѕ РІРЅРµС€РЅРµРіРѕ
             for (int layer = 0; layer < colors.Length; layer++)
             {
-                // Координаты начала врат
+                // РљРѕРѕСЂРґРёРЅР°С‚С‹ РЅР°С‡Р°Р»Р° РІСЂР°С‚
                 int x = dx + layer * lineThickness;
                 int y = dy + layer * lineThickness;
 
-                // Ширина и высота уменьшаются на величину толщины линии
+                // РЁРёСЂРёРЅР° Рё РІС‹СЃРѕС‚Р° СѓРјРµРЅСЊС€Р°СЋС‚СЃСЏ РЅР° РІРµР»РёС‡РёРЅСѓ С‚РѕР»С‰РёРЅС‹ Р»РёРЅРёРё
                 int currentWidth = gateWidth - layer * lineThickness * 2;
                 int currentHeight = gateHeight - layer * lineThickness;
 
-                // Рисуем ворота
+                // Р РёСЃСѓРµРј РІРѕСЂРѕС‚Р°
                 using (Pen pen = new Pen(colors[layer], lineThickness))
                 {
                     graphics.DrawRectangle(pen, new Rectangle(x, y, currentWidth, currentHeight));
@@ -2344,119 +2344,119 @@ private void SaveMap(string filename)
             }
 
 
-            // Чёрный пиксель в верхнем левом углу внешних ворот
+            // Р§С‘СЂРЅС‹Р№ РїРёРєСЃРµР»СЊ РІ РІРµСЂС…РЅРµРј Р»РµРІРѕРј СѓРіР»Сѓ РІРЅРµС€РЅРёС… РІРѕСЂРѕС‚
             using (SolidBrush blackBrush = new SolidBrush(Color.Black))
             {
-                graphics.FillRectangle(blackBrush, dx-1, dy-1, 1, 1); // Верхний левый угол
-                graphics.FillRectangle(blackBrush, dx + gateWidth, dy-1, 1, 1); // Верхний правый угол
+                graphics.FillRectangle(blackBrush, dx-1, dy-1, 1, 1); // Р’РµСЂС…РЅРёР№ Р»РµРІС‹Р№ СѓРіРѕР»
+                graphics.FillRectangle(blackBrush, dx + gateWidth, dy-1, 1, 1); // Р’РµСЂС…РЅРёР№ РїСЂР°РІС‹Р№ СѓРіРѕР»
             }
 
-            // Средний слой получает цвет внешних ворот
+            // РЎСЂРµРґРЅРёР№ СЃР»РѕР№ РїРѕР»СѓС‡Р°РµС‚ С†РІРµС‚ РІРЅРµС€РЅРёС… РІРѕСЂРѕС‚
             int midX = dx + lineThickness;
             int midY = dy + lineThickness;
             int midW = gateWidth - 2 * lineThickness;
             int midH = gateHeight - 2 * lineThickness;
 
-            // Внутренний слой получает цвет средних ворот
+            // Р’РЅСѓС‚СЂРµРЅРЅРёР№ СЃР»РѕР№ РїРѕР»СѓС‡Р°РµС‚ С†РІРµС‚ СЃСЂРµРґРЅРёС… РІРѕСЂРѕС‚
             int innerX = dx + 2 * lineThickness;
             int innerY = dy + 2 * lineThickness;
             int innerW = gateWidth - 4 * lineThickness;
             int innerH = gateHeight - 4 * lineThickness;
 
-            // Уголки средних ворот
-            using (SolidBrush midBrush = new SolidBrush(colors[0])) // Цвет внешних ворот
+            // РЈРіРѕР»РєРё СЃСЂРµРґРЅРёС… РІРѕСЂРѕС‚
+            using (SolidBrush midBrush = new SolidBrush(colors[0])) // Р¦РІРµС‚ РІРЅРµС€РЅРёС… РІРѕСЂРѕС‚
             {
-                // Верхний левый угол
+                // Р’РµСЂС…РЅРёР№ Р»РµРІС‹Р№ СѓРіРѕР»
                 graphics.FillRectangle(midBrush, midX - 1, midY - 1, 1, 1);
-                // Верхний правый угол
+                // Р’РµСЂС…РЅРёР№ РїСЂР°РІС‹Р№ СѓРіРѕР»
                 graphics.FillRectangle(midBrush, midX + midW, midY - 1, 1, 1);
             }
 
-            // Уголки внутренних ворот
-            using (SolidBrush innerBrush = new SolidBrush(colors[1])) // Цвет средних ворот
+            // РЈРіРѕР»РєРё РІРЅСѓС‚СЂРµРЅРЅРёС… РІРѕСЂРѕС‚
+            using (SolidBrush innerBrush = new SolidBrush(colors[1])) // Р¦РІРµС‚ СЃСЂРµРґРЅРёС… РІРѕСЂРѕС‚
             {
-                // Верхний левый угол
+                // Р’РµСЂС…РЅРёР№ Р»РµРІС‹Р№ СѓРіРѕР»
                 graphics.FillRectangle(innerBrush, innerX - 1, innerY - 1, 1, 1);
-                // Верхний правый угол
+                // Р’РµСЂС…РЅРёР№ РїСЂР°РІС‹Р№ СѓРіРѕР»
                 graphics.FillRectangle(innerBrush, innerX + innerW, innerY - 1, 1, 1);
             }
 
-            // Черные линии по сторонам портала
+            // Р§РµСЂРЅС‹Рµ Р»РёРЅРёРё РїРѕ СЃС‚РѕСЂРѕРЅР°Рј РїРѕСЂС‚Р°Р»Р°
             using (Pen blackPen = new Pen(Color.Black, 1))
             {
                 switch (direction)
                 {
                     case Direction.Top:
                     case Direction.Bottom:
-                        // Левая и правая вертикальные линии
+                        // Р›РµРІР°СЏ Рё РїСЂР°РІР°СЏ РІРµСЂС‚РёРєР°Р»СЊРЅС‹Рµ Р»РёРЅРёРё
                         graphics.DrawLine(blackPen, dx - 2, dy - 1, dx - 2, dy + gateHeight);
                         graphics.DrawLine(blackPen, dx + gateWidth+1, dy - 1, dx + gateWidth+1, dy + gateHeight);
                         break;
                     case Direction.Left:
-                        // Левая и правая горизонтальные линии (после поворота) в левой части ячейки
-                        graphics.DrawLine(blackPen, dx - 1, dy - 1, dx - 1, dy + gateHeight);                   // Левая сторона
-                        graphics.DrawLine(blackPen, dx + gateWidth+2, dy - 1, dx + gateWidth+2, dy + gateHeight); // Правая сторона
+                        // Р›РµРІР°СЏ Рё РїСЂР°РІР°СЏ РіРѕСЂРёР·РѕРЅС‚Р°Р»СЊРЅС‹Рµ Р»РёРЅРёРё (РїРѕСЃР»Рµ РїРѕРІРѕСЂРѕС‚Р°) РІ Р»РµРІРѕР№ С‡Р°СЃС‚Рё СЏС‡РµР№РєРё
+                        graphics.DrawLine(blackPen, dx - 1, dy - 1, dx - 1, dy + gateHeight);                   // Р›РµРІР°СЏ СЃС‚РѕСЂРѕРЅР°
+                        graphics.DrawLine(blackPen, dx + gateWidth+2, dy - 1, dx + gateWidth+2, dy + gateHeight); // РџСЂР°РІР°СЏ СЃС‚РѕСЂРѕРЅР°
                         break;
                     case Direction.Right:
-                        // Левая и правая горизонтальные линии (после поворота) в правой части ячейки
-                        graphics.DrawLine(blackPen, dx - 2 , dy , dx - 2, dy + gateHeight+1);                   // Левая сторона
-                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy, dx + gateWidth + 1, dy + gateHeight+1); // Правая сторона
+                        // Р›РµРІР°СЏ Рё РїСЂР°РІР°СЏ РіРѕСЂРёР·РѕРЅС‚Р°Р»СЊРЅС‹Рµ Р»РёРЅРёРё (РїРѕСЃР»Рµ РїРѕРІРѕСЂРѕС‚Р°) РІ РїСЂР°РІРѕР№ С‡Р°СЃС‚Рё СЏС‡РµР№РєРё
+                        graphics.DrawLine(blackPen, dx - 2 , dy , dx - 2, dy + gateHeight+1);                   // Р›РµРІР°СЏ СЃС‚РѕСЂРѕРЅР°
+                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy, dx + gateWidth + 1, dy + gateHeight+1); // РџСЂР°РІР°СЏ СЃС‚РѕСЂРѕРЅР°
                         break;
 
                 }
             }
 
-            // Белый пиксель в центре портала
+            // Р‘РµР»С‹Р№ РїРёРєСЃРµР»СЊ РІ С†РµРЅС‚СЂРµ РїРѕСЂС‚Р°Р»Р°
             int cx = dx + gateWidth / 2;
             int cy = dy + (gateHeight / 2) + 3;
             using (SolidBrush whiteBrush = new SolidBrush(Color.White))
             {
-                graphics.FillRectangle(whiteBrush, cx - 1, cy, 2, 1); // Центральные белые пиксели
+                graphics.FillRectangle(whiteBrush, cx - 1, cy, 2, 1); // Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Рµ Р±РµР»С‹Рµ РїРёРєСЃРµР»Рё
             }
 
-            // Прозрачная центральная часть врат
+            // РџСЂРѕР·СЂР°С‡РЅР°СЏ С†РµРЅС‚СЂР°Р»СЊРЅР°СЏ С‡Р°СЃС‚СЊ РІСЂР°С‚
             using (SolidBrush transparentBrush = new SolidBrush(Color.FromArgb(0, 0, 0, 0)))
             {
                 graphics.FillRectangle(transparentBrush, dx + 5, dy + 5, gateWidth - 10, gateHeight - 10);
             }
 
-            // Восстанавливаем оригинал графического контекста
+            // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РѕСЂРёРіРёРЅР°Р» РіСЂР°С„РёС‡РµСЃРєРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
             graphics.Restore(savedState);
         }
 
-        // Функция ограничения RGB-значений
+        // Р¤СѓРЅРєС†РёСЏ РѕРіСЂР°РЅРёС‡РµРЅРёСЏ RGB-Р·РЅР°С‡РµРЅРёР№
         private int Clamp(int value, int min, int max)
         {
             return Math.Min(Math.Max(value, min), max);
         }
 
-        // Метод для отрисовки лестницы вверх
+        // РњРµС‚РѕРґ РґР»СЏ РѕС‚СЂРёСЃРѕРІРєРё Р»РµСЃС‚РЅРёС†С‹ РІРІРµСЂС…
         private void DrawStairsUp(Graphics g, Rectangle bounds, Direction direction)
         {
            
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] stairsPatternToUse = direction == Direction.Top ?
-                Passage_Pixels_Patterns.stairs_pattern_rotated270 : // Используем зеркальный массив для направления Top
+                Passage_Pixels_Patterns.stairs_pattern_rotated270 : // РСЃРїРѕР»СЊР·СѓРµРј Р·РµСЂРєР°Р»СЊРЅС‹Р№ РјР°СЃСЃРёРІ РґР»СЏ РЅР°РїСЂР°РІР»РµРЅРёСЏ Top
                 direction == Direction.Bottom ?
-                Passage_Pixels_Patterns.stairs_pattern_rotated : // Используем перевернутый массив для направления Bottom
-                Passage_Pixels_Patterns.stairs_pattern;         // Используем исходный массив для Left и Right
+                Passage_Pixels_Patterns.stairs_pattern_rotated : // РСЃРїРѕР»СЊР·СѓРµРј РїРµСЂРµРІРµСЂРЅСѓС‚С‹Р№ РјР°СЃСЃРёРІ РґР»СЏ РЅР°РїСЂР°РІР»РµРЅРёСЏ Bottom
+                Passage_Pixels_Patterns.stairs_pattern;         // РСЃРїРѕР»СЊР·СѓРµРј РёСЃС…РѕРґРЅС‹Р№ РјР°СЃСЃРёРІ РґР»СЏ Left Рё Right
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.Black},               // Пустой пиксель
-        {1, Color.FromArgb(128, 128, 128)}, // Средняя интенсивность серого
-        {2, Color.FromArgb(160, 160, 160)}, // Светлее серый
-        {3, Color.FromArgb(192, 192, 192)}, // Очень светлый оттенок серого
-        {4, Color.FromArgb(100, 100, 100)},  // Тёмно-серый
-        {5, Color.FromArgb(255, 201, 14)}   // Жёлтая ступенька
+        {0, Color.Black},               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
+        {1, Color.FromArgb(128, 128, 128)}, // РЎСЂРµРґРЅСЏСЏ РёРЅС‚РµРЅСЃРёРІРЅРѕСЃС‚СЊ СЃРµСЂРѕРіРѕ
+        {2, Color.FromArgb(160, 160, 160)}, // РЎРІРµС‚Р»РµРµ СЃРµСЂС‹Р№
+        {3, Color.FromArgb(192, 192, 192)}, // РћС‡РµРЅСЊ СЃРІРµС‚Р»С‹Р№ РѕС‚С‚РµРЅРѕРє СЃРµСЂРѕРіРѕ
+        {4, Color.FromArgb(100, 100, 100)},  // РўС‘РјРЅРѕ-СЃРµСЂС‹Р№
+        {5, Color.FromArgb(255, 201, 14)}   // Р–С‘Р»С‚Р°СЏ СЃС‚СѓРїРµРЅСЊРєР°
     };
 
-            // Рендер лестницы
+            // Р РµРЅРґРµСЂ Р»РµСЃС‚РЅРёС†С‹
             Bitmap stairsBitmap = new Bitmap(stairsPatternToUse.GetLength(1), stairsPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(stairsBitmap))
             {
-                // Отрисовка лестницы на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° Р»РµСЃС‚РЅРёС†С‹ РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < stairsPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < stairsPatternToUse.GetLength(1); x++)
@@ -2472,50 +2472,50 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                stairsBitmap.RotateFlip(RotateFlipType.Rotate180FlipY); // Поворот на 180 градусов
+                stairsBitmap.RotateFlip(RotateFlipType.Rotate180FlipY); // РџРѕРІРѕСЂРѕС‚ РЅР° 180 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения лестницы
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ Р»РµСЃС‚РЅРёС†С‹
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
-                        bounds.X + (bounds.Width - stairsBitmap.Width) / 2, // центрирование по горизонтали
-                        bounds.Y,                                          // начало сверху
+                        bounds.X + (bounds.Width - stairsBitmap.Width) / 2, // С†РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         stairsBitmap.Width, stairsBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
-                        bounds.X + (bounds.Width - stairsBitmap.Width) / 2, // центрирование по горизонтали
-                        bounds.Bottom - stairsBitmap.Height,                // начало снизу
+                        bounds.X + (bounds.Width - stairsBitmap.Width) / 2, // С†РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё
+                        bounds.Bottom - stairsBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         stairsBitmap.Width, stairsBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
-                        bounds.X,                                         // слева
-                        bounds.Y + (bounds.Height - stairsBitmap.Height) / 2, // центрирование по вертикали
+                        bounds.X,                                         // СЃР»РµРІР°
+                        bounds.Y + (bounds.Height - stairsBitmap.Height) / 2, // С†РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РІРµСЂС‚РёРєР°Р»Рё
                         stairsBitmap.Width, stairsBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - stairsBitmap.Width,                // справа
-                        bounds.Y + (bounds.Height - stairsBitmap.Height) / 2, // центрирование по вертикали
+                        bounds.Right - stairsBitmap.Width,                // СЃРїСЂР°РІР°
+                        bounds.Y + (bounds.Height - stairsBitmap.Height) / 2, // С†РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РІРµСЂС‚РёРєР°Р»Рё
                         stairsBitmap.Width, stairsBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка лестницы
+            // РћС‚СЂРёСЃРѕРІРєР° Р»РµСЃС‚РЅРёС†С‹
             g.DrawImage(stairsBitmap, targetRect);
         }
 
-        // Функция для получения противоположённого направления
+        // Р¤СѓРЅРєС†РёСЏ РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ РїСЂРѕС‚РёРІРѕРїРѕР»РѕР¶С‘РЅРЅРѕРіРѕ РЅР°РїСЂР°РІР»РµРЅРёСЏ
         private Direction GetOppositeDirection(Direction direction)
         {
             switch (direction)
@@ -2528,129 +2528,129 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод для отрисовки лестницы вниз
+        // РњРµС‚РѕРґ РґР»СЏ РѕС‚СЂРёСЃРѕРІРєРё Р»РµСЃС‚РЅРёС†С‹ РІРЅРёР·
         private void DrawStairsDown(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Получаем противоположённое направление
+            // РџРѕР»СѓС‡Р°РµРј РїСЂРѕС‚РёРІРѕРїРѕР»РѕР¶С‘РЅРЅРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             Direction oppositeDirection = GetOppositeDirection(direction);
 
-            // Создаем изображение лестницы вверх
+            // РЎРѕР·РґР°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ Р»РµСЃС‚РЅРёС†С‹ РІРІРµСЂС…
             Bitmap originalStairsImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originalStairsImage))
             {
-                DrawStairsUp(imgG, bounds, oppositeDirection); // Нарисовать оригинальную лестницу вверх
+                DrawStairsUp(imgG, bounds, oppositeDirection); // РќР°СЂРёСЃРѕРІР°С‚СЊ РѕСЂРёРіРёРЅР°Р»СЊРЅСѓСЋ Р»РµСЃС‚РЅРёС†Сѓ РІРІРµСЂС…
             }
 
-            // Зеркально отражаем изображение
+            // Р—РµСЂРєР°Р»СЊРЅРѕ РѕС‚СЂР°Р¶Р°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ
             originalStairsImage.RotateFlip(RotateFlipType.Rotate180FlipNone);
 
-            // Теперь переиспользуем старую логику, но с новым направлением
+            // РўРµРїРµСЂСЊ РїРµСЂРµРёСЃРїРѕР»СЊР·СѓРµРј СЃС‚Р°СЂСѓСЋ Р»РѕРіРёРєСѓ, РЅРѕ СЃ РЅРѕРІС‹Рј РЅР°РїСЂР°РІР»РµРЅРёРµРј
             Rectangle targetRect;
             switch (oppositeDirection)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
-                        bounds.X + (bounds.Width - originalStairsImage.Width) / 2, // Центрирование по горизонтали
-                        bounds.Y, // Начало сверху
+                        bounds.X + (bounds.Width - originalStairsImage.Width) / 2, // Р¦РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё
+                        bounds.Y, // РќР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         originalStairsImage.Width, originalStairsImage.Height
                     );
                     break;
 
                 case Direction.Bottom:
                     targetRect = new Rectangle(
-                        bounds.X + (bounds.Width - originalStairsImage.Width) / 2, // Центрирование по горизонтали
-                        bounds.Bottom - originalStairsImage.Height, // Начало снизу
+                        bounds.X + (bounds.Width - originalStairsImage.Width) / 2, // Р¦РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё
+                        bounds.Bottom - originalStairsImage.Height, // РќР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         originalStairsImage.Width, originalStairsImage.Height
                     );
                     break;
 
                 case Direction.Left:
                     targetRect = new Rectangle(
-                        bounds.X, // Слева
-                        bounds.Y + (bounds.Height - originalStairsImage.Height) / 2, // Центрирование по вертикали
+                        bounds.X, // РЎР»РµРІР°
+                        bounds.Y + (bounds.Height - originalStairsImage.Height) / 2, // Р¦РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РІРµСЂС‚РёРєР°Р»Рё
                         originalStairsImage.Width, originalStairsImage.Height
                     );
                     break;
 
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - originalStairsImage.Width, // Справа
-                        bounds.Y + (bounds.Height - originalStairsImage.Height) / 2, // Центрирование по вертикали
+                        bounds.Right - originalStairsImage.Width, // РЎРїСЂР°РІР°
+                        bounds.Y + (bounds.Height - originalStairsImage.Height) / 2, // Р¦РµРЅС‚СЂРёСЂРѕРІР°РЅРёРµ РїРѕ РІРµСЂС‚РёРєР°Р»Рё
                         originalStairsImage.Width, originalStairsImage.Height
                     );
                     break;
 
                 default:
-                    return; // Недопустимое направление
+                    return; // РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовываем преобразованное изображение
+            // РћС‚СЂРёСЃРѕРІС‹РІР°РµРј РїСЂРµРѕР±СЂР°Р·РѕРІР°РЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
             g.DrawImage(originalStairsImage, targetRect);
         }
 
-        // Метод для отрисовки надписи SECRET
+        // РњРµС‚РѕРґ РґР»СЏ РѕС‚СЂРёСЃРѕРІРєРё РЅР°РґРїРёСЃРё SECRET
         private void DrawSecretWord(Graphics g, Rectangle bounds, Direction direction)
         {
-            // Вычисляем максимальный допустимый размер шрифта
+            // Р’С‹С‡РёСЃР»СЏРµРј РјР°РєСЃРёРјР°Р»СЊРЅС‹Р№ РґРѕРїСѓСЃС‚РёРјС‹Р№ СЂР°Р·РјРµСЂ С€СЂРёС„С‚Р°
             float maxFontSize = CalculateOptimalFontSize(g, "SECRET", bounds.Width, bounds.Height);
 
-            // Создаем оптимальный шрифт
+            // РЎРѕР·РґР°РµРј РѕРїС‚РёРјР°Р»СЊРЅС‹Р№ С€СЂРёС„С‚
             Font font = new Font(FontFamily.GenericSansSerif, maxFontSize, FontStyle.Bold);
             StringFormat format = new StringFormat();
             format.Alignment = StringAlignment.Center;
             format.LineAlignment = StringAlignment.Center;
 
-            // Сохраняем исходное состояние графического контекста
+            // РЎРѕС…СЂР°РЅСЏРµРј РёСЃС…РѕРґРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РіСЂР°С„РёС‡РµСЃРєРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
             GraphicsState state = g.Save();
 
-            // Высокий уровень сглаживания и интерполяции
+            // Р’С‹СЃРѕРєРёР№ СѓСЂРѕРІРµРЅСЊ СЃРіР»Р°Р¶РёРІР°РЅРёСЏ Рё РёРЅС‚РµСЂРїРѕР»СЏС†РёРё
             g.SmoothingMode = SmoothingMode.HighQuality;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.CompositingQuality = CompositingQuality.HighQuality;
 
-            // Промежуточный буфер для отрисовки
+            // РџСЂРѕРјРµР¶СѓС‚РѕС‡РЅС‹Р№ Р±СѓС„РµСЂ РґР»СЏ РѕС‚СЂРёСЃРѕРІРєРё
             Bitmap bufferBmp = new Bitmap(bounds.Width + 2, bounds.Height);
             using (Graphics bufferG = Graphics.FromImage(bufferBmp))
             {
-                // Очистим буфер
+                // РћС‡РёСЃС‚РёРј Р±СѓС„РµСЂ
                 bufferG.Clear(Color.Transparent);
 
-                // Предварительно выводим текст
+                // РџСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕ РІС‹РІРѕРґРёРј С‚РµРєСЃС‚
                 bufferG.DrawString("SECRE", font, Brushes.HotPink, bounds, format);
                 SizeF textSize = bufferG.MeasureString("SECRE", font);
-                float extraSpace = 3f; // Интервал между "E" и "T"
+                float extraSpace = 3f; // РРЅС‚РµСЂРІР°Р» РјРµР¶РґСѓ "E" Рё "T"
                 float nextX = bounds.X + textSize.Width + extraSpace;
                 float nextY = bounds.Y + (bounds.Height - textSize.Height) / 2;
                 bufferG.DrawString("T", font, Brushes.HotPink, nextX, nextY);
             }
 
-            // Основа: наносим подготовленный буфер на изображение с учётом направления
+            // РћСЃРЅРѕРІР°: РЅР°РЅРѕСЃРёРј РїРѕРґРіРѕС‚РѕРІР»РµРЅРЅС‹Р№ Р±СѓС„РµСЂ РЅР° РёР·РѕР±СЂР°Р¶РµРЅРёРµ СЃ СѓС‡С‘С‚РѕРј РЅР°РїСЂР°РІР»РµРЅРёСЏ
             switch (direction)
             {
                 case Direction.Top:
-                    g.DrawImage(bufferBmp, bounds.X - 3, bounds.Y - 15); // Верхний край
+                    g.DrawImage(bufferBmp, bounds.X - 3, bounds.Y - 15); // Р’РµСЂС…РЅРёР№ РєСЂР°Р№
                     break;
 
                 case Direction.Bottom:
-                    g.DrawImage(bufferBmp, bounds.X - 3, bounds.Bottom - (bufferBmp.Height / 2) - 3); // Нижний край
+                    g.DrawImage(bufferBmp, bounds.X - 3, bounds.Bottom - (bufferBmp.Height / 2) - 3); // РќРёР¶РЅРёР№ РєСЂР°Р№
                     break;
 
                 case Direction.Left:
-                    g.TranslateTransform(bounds.X, bounds.Y + bounds.Height / 2); // Поворот и сдвиг влево
+                    g.TranslateTransform(bounds.X, bounds.Y + bounds.Height / 2); // РџРѕРІРѕСЂРѕС‚ Рё СЃРґРІРёРі РІР»РµРІРѕ
                     g.RotateTransform(-90);
-                    g.DrawImage(bufferBmp, -2 - bufferBmp.Width / 2, -15); // Сдвигаем картинку по оси Х, чтобы текст не ушёл за пределы
+                    g.DrawImage(bufferBmp, -2 - bufferBmp.Width / 2, -15); // РЎРґРІРёРіР°РµРј РєР°СЂС‚РёРЅРєСѓ РїРѕ РѕСЃРё РҐ, С‡С‚РѕР±С‹ С‚РµРєСЃС‚ РЅРµ СѓС€С‘Р» Р·Р° РїСЂРµРґРµР»С‹
                     break;
 
                 case Direction.Right:
-                    g.TranslateTransform(bounds.Right, bounds.Y + bounds.Height / 2); // Поворот и сдвиг вправо
+                    g.TranslateTransform(bounds.Right, bounds.Y + bounds.Height / 2); // РџРѕРІРѕСЂРѕС‚ Рё СЃРґРІРёРі РІРїСЂР°РІРѕ
                     g.RotateTransform(90);
-                    g.DrawImage(bufferBmp, -2 - bufferBmp.Width / 2, -15); // Сдвигаем картинку по оси Х
+                    g.DrawImage(bufferBmp, -2 - bufferBmp.Width / 2, -15); // РЎРґРІРёРіР°РµРј РєР°СЂС‚РёРЅРєСѓ РїРѕ РѕСЃРё РҐ
                     break;
             }
 
-            // Восстанавливаем исходное состояние графического контекста
+            // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РёСЃС…РѕРґРЅРѕРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РіСЂР°С„РёС‡РµСЃРєРѕРіРѕ РєРѕРЅС‚РµРєСЃС‚Р°
             g.Restore(state);
         }
 
@@ -2664,7 +2664,7 @@ private void SaveMap(string filename)
                 {
                     Color pixel = bmp.GetPixel(x, y);
 
-                    // Проверяем равенство цвета пикселя целевому цвету
+                    // РџСЂРѕРІРµСЂСЏРµРј СЂР°РІРµРЅСЃС‚РІРѕ С†РІРµС‚Р° РїРёРєСЃРµР»СЏ С†РµР»РµРІРѕРјСѓ С†РІРµС‚Сѓ
                     if (pixel == targetColor)
                     {
                         SafeSetPixel(bmp, x, y, Color.FromArgb(255, 0, 255, 0));
@@ -2673,7 +2673,7 @@ private void SaveMap(string filename)
             }
         }
 
-        // Метод фильтрации изображений с использованием Dictionary для соответствия цветов
+        // РњРµС‚РѕРґ С„РёР»СЊС‚СЂР°С†РёРё РёР·РѕР±СЂР°Р¶РµРЅРёР№ СЃ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµРј Dictionary РґР»СЏ СЃРѕРѕС‚РІРµС‚СЃС‚РІРёСЏ С†РІРµС‚РѕРІ
         private void FilterColors(Bitmap bmp, Dictionary<string, string> colorMapping)
         {
             foreach (var pair in colorMapping)
@@ -2685,7 +2685,7 @@ private void SaveMap(string filename)
                 byte gFrom = byte.Parse(fromRgbString[1].Trim());
                 byte bFrom = byte.Parse(fromRgbString[2].Trim());
 
-                int rTo = int.Parse(toRgbString[0].Trim()); // Может быть отрицательным!
+                int rTo = int.Parse(toRgbString[0].Trim()); // РњРѕР¶РµС‚ Р±С‹С‚СЊ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅС‹Рј!
                 int gTo = int.Parse(toRgbString[1].Trim());
                 int bTo = int.Parse(toRgbString[2].Trim());
 
@@ -2701,12 +2701,12 @@ private void SaveMap(string filename)
                         {
                             if (isTransparent)
                             {
-                                // Устанавливаем прозрачность, сохраняя оригинальную позицию цвета
+                                // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСЂРѕР·СЂР°С‡РЅРѕСЃС‚СЊ, СЃРѕС…СЂР°РЅСЏСЏ РѕСЂРёРіРёРЅР°Р»СЊРЅСѓСЋ РїРѕР·РёС†РёСЋ С†РІРµС‚Р°
                                 SafeSetPixel(bmp, x, y, Color.FromArgb(0, pixel.R, pixel.G, pixel.B));
                             }
                             else
                             {
-                                // Обычная замена цвета
+                                // РћР±С‹С‡РЅР°СЏ Р·Р°РјРµРЅР° С†РІРµС‚Р°
                                 SafeSetPixel(bmp, x, y, Color.FromArgb((byte)rTo, (byte)gTo, (byte)bTo));
                             }
                         }
@@ -2749,7 +2749,7 @@ private void SaveMap(string filename)
             }
         }
 
-        //мнтод замены писселей одного цвета на пиксели другого цвета в переданноым в него изображении
+        //РјРЅС‚РѕРґ Р·Р°РјРµРЅС‹ РїРёСЃСЃРµР»РµР№ РѕРґРЅРѕРіРѕ С†РІРµС‚Р° РЅР° РїРёРєСЃРµР»Рё РґСЂСѓРіРѕРіРѕ С†РІРµС‚Р° РІ РїРµСЂРµРґР°РЅРЅРѕС‹Рј РІ РЅРµРіРѕ РёР·РѕР±СЂР°Р¶РµРЅРёРё
         private void ReplaceColorInBitmap(Bitmap bmp, Color oldColor, Color newColor)
         {
             for (int x = 0; x < bmp.Width; x++)
@@ -2767,14 +2767,14 @@ private void SaveMap(string filename)
 
         void DrawFilteredHotPinkSecret(Graphics g, Rectangle bounds, Direction direction)
         {
-            // Предполагаем, что DrawSecret создает изображение с размерами bounds
+            // РџСЂРµРґРїРѕР»Р°РіР°РµРј, С‡С‚Рѕ DrawSecret СЃРѕР·РґР°РµС‚ РёР·РѕР±СЂР°Р¶РµРЅРёРµ СЃ СЂР°Р·РјРµСЂР°РјРё bounds
             Bitmap originaSecretTextImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originaSecretTextImage))
             {
-                DrawSecretWord(imgG, bounds, direction); // РИСУЕМ оригинальное изображение
+                DrawSecretWord(imgG, bounds, direction); // Р РРЎРЈР•Рњ РѕСЂРёРіРёРЅР°Р»СЊРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
             }
 
-            // Применяем фильтр, оставляем только горячий розовый цвет
+            // РџСЂРёРјРµРЅСЏРµРј С„РёР»СЊС‚СЂ, РѕСЃС‚Р°РІР»СЏРµРј С‚РѕР»СЊРєРѕ РіРѕСЂСЏС‡РёР№ СЂРѕР·РѕРІС‹Р№ С†РІРµС‚
             FilterColors(originaSecretTextImage, colorsMap);
             CorrectLetterC(originaSecretTextImage, direction);
 
@@ -2797,27 +2797,27 @@ private void SaveMap(string filename)
                     targetRect = new Rectangle(bounds.Right - secretTextWidth, bounds.Y + bounds.Height / 2 - secretTextWidth / 2, secretTextWidth, secretTextHeight);
                     break;
                 default:
-                    return; // Недопустимое направление
+                    return; // РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Выводим итоговое изображение двери на холст
+            // Р’С‹РІРѕРґРёРј РёС‚РѕРіРѕРІРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґРІРµСЂРё РЅР° С…РѕР»СЃС‚
             g.DrawImage(originaSecretTextImage, targetRect);
         }
 
-        //Отображение надписи SECRET для белых поверхностией
+        //РћС‚РѕР±СЂР°Р¶РµРЅРёРµ РЅР°РґРїРёСЃРё SECRET РґР»СЏ Р±РµР»С‹С… РїРѕРІРµСЂС…РЅРѕСЃС‚РёРµР№
         private void DrawFilteredDarkPinkSecret(Graphics g, Rectangle bounds, Direction direction)
         {
-            // Исходное изображение SECRET
+            // РСЃС…РѕРґРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ SECRET
             Bitmap originalSecretTextImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originalSecretTextImage))
             {
-                DrawFilteredHotPinkSecret(imgG, bounds, direction); // Нарисовать оригинальный текст SECRET
+                DrawFilteredHotPinkSecret(imgG, bounds, direction); // РќР°СЂРёСЃРѕРІР°С‚СЊ РѕСЂРёРіРёРЅР°Р»СЊРЅС‹Р№ С‚РµРєСЃС‚ SECRET
             }
 
-            // Замена цвета розовых пикселей на тёмно-зелёный
+            // Р—Р°РјРµРЅР° С†РІРµС‚Р° СЂРѕР·РѕРІС‹С… РїРёРєСЃРµР»РµР№ РЅР° С‚С‘РјРЅРѕ-Р·РµР»С‘РЅС‹Р№
             ReplaceColorInBitmap(originalSecretTextImage, Color.FromArgb(255, 105, 180), Color.FromArgb(0, 0, 255));
 
-            // Вывод результата
+            // Р’С‹РІРѕРґ СЂРµР·СѓР»СЊС‚Р°С‚Р°
             Rectangle targetRect;
             int secretTextWidth = originalSecretTextImage.Width;
             int secretTextHeight = originalSecretTextImage.Height;
@@ -2837,34 +2837,34 @@ private void SaveMap(string filename)
                     targetRect = new Rectangle(bounds.Right - secretTextWidth, bounds.Y + bounds.Height / 2 - secretTextWidth / 2, secretTextWidth, secretTextHeight);
                     break;
                 default:
-                    return; // Некорректное направление
+                    return; // РќРµРєРѕСЂСЂРµРєС‚РЅРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
             g.DrawImage(originalSecretTextImage, targetRect);
         }
 
-        // Метод для отрисовки надписи BARRIER!
+        // РњРµС‚РѕРґ РґР»СЏ РѕС‚СЂРёСЃРѕРІРєРё РЅР°РґРїРёСЃРё BARRIER!
         private void Draw_Barrier_Word(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.barrier :
                 direction == Direction.Left ? Border_Pixels_Patterns.barrier :
                 direction == Direction.Right ? Border_Pixels_Patterns.barrier :
                 Border_Pixels_Patterns.barrier;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.White}
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -2880,69 +2880,69 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
             //if (direction == Direction.Bottom)
             //{
             //    exitWordBitmap.RotateFlip(RotateFlipType.Rotate180FlipY); // 
             //}
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
-        // Вспомогательная функция для автоматического подбора размера шрифта
+        // Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅР°СЏ С„СѓРЅРєС†РёСЏ РґР»СЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРѕРіРѕ РїРѕРґР±РѕСЂР° СЂР°Р·РјРµСЂР° С€СЂРёС„С‚Р°
         private float CalculateOptimalFontSize(Graphics g, string text, float maxWidth, float maxHeight)
         {
-            float fontSize = 12f; // начальный предполагаемый размер шрифта
-            float step = 1f; // шаг уменьшения размера шрифта
+            float fontSize = 12f; // РЅР°С‡Р°Р»СЊРЅС‹Р№ РїСЂРµРґРїРѕР»Р°РіР°РµРјС‹Р№ СЂР°Р·РјРµСЂ С€СЂРёС„С‚Р°
+            float step = 1f; // С€Р°Рі СѓРјРµРЅСЊС€РµРЅРёСЏ СЂР°Р·РјРµСЂР° С€СЂРёС„С‚Р°
 
-            while (fontSize > 1f) // ограничиваем минимальное значение размера шрифта
+            while (fontSize > 1f) // РѕРіСЂР°РЅРёС‡РёРІР°РµРј РјРёРЅРёРјР°Р»СЊРЅРѕРµ Р·РЅР°С‡РµРЅРёРµ СЂР°Р·РјРµСЂР° С€СЂРёС„С‚Р°
             {
                 Font testFont = new Font(FontFamily.GenericSansSerif, fontSize, FontStyle.Bold);
                 SizeF size = g.MeasureString(text, testFont);
 
-                // Если ширина или высота текста превышают доступные пределы, уменьшаем размер шрифта
+                // Р•СЃР»Рё С€РёСЂРёРЅР° РёР»Рё РІС‹СЃРѕС‚Р° С‚РµРєСЃС‚Р° РїСЂРµРІС‹С€Р°СЋС‚ РґРѕСЃС‚СѓРїРЅС‹Рµ РїСЂРµРґРµР»С‹, СѓРјРµРЅСЊС€Р°РµРј СЂР°Р·РјРµСЂ С€СЂРёС„С‚Р°
                 if (size.Width > maxWidth || size.Height > maxHeight)
                 {
                     fontSize -= step;
@@ -2953,13 +2953,13 @@ private void SaveMap(string filename)
                 }
             }
 
-            return Math.Max(fontSize, 1f); // дополнительно гарантируем, что размер шрифта не меньше 1
+            return Math.Max(fontSize, 1f); // РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ РіР°СЂР°РЅС‚РёСЂСѓРµРј, С‡С‚Рѕ СЂР°Р·РјРµСЂ С€СЂРёС„С‚Р° РЅРµ РјРµРЅСЊС€Рµ 1
         }
 
-        // Вспомогательная функция для правильного выбора метода рисования двери
+        // Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅР°СЏ С„СѓРЅРєС†РёСЏ РґР»СЏ РїСЂР°РІРёР»СЊРЅРѕРіРѕ РІС‹Р±РѕСЂР° РјРµС‚РѕРґР° СЂРёСЃРѕРІР°РЅРёСЏ РґРІРµСЂРё
         private void DrawCorrectDoor(Graphics g, Rectangle bounds, string wallType, Direction direction)
         {
-            if (wallType == "Каменная стена")
+            if (wallType == "РљР°РјРµРЅРЅР°СЏ СЃС‚РµРЅР°")
             {
                 DrawRoundedDoor(g, bounds, direction);
             }
@@ -2969,33 +2969,33 @@ private void SaveMap(string filename)
             }
         }
 
-        // Вспомогательная функция для правильного выбора метода рисования SECRET
+        // Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅР°СЏ С„СѓРЅРєС†РёСЏ РґР»СЏ РїСЂР°РІРёР»СЊРЅРѕРіРѕ РІС‹Р±РѕСЂР° РјРµС‚РѕРґР° СЂРёСЃРѕРІР°РЅРёСЏ SECRET
         private void DrawCorrectSecret(Graphics g, Rectangle bounds, string wallType, Direction direction)
         {
-            if (wallType == "Кирпичная стена")
+            if (wallType == "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°")
             {
-                DrawFilteredDarkPinkSecret(g, bounds, direction); // Новое условие для кирпичной стены
+                DrawFilteredDarkPinkSecret(g, bounds, direction); // РќРѕРІРѕРµ СѓСЃР»РѕРІРёРµ РґР»СЏ РєРёСЂРїРёС‡РЅРѕР№ СЃС‚РµРЅС‹
             }
             else
             {
-                DrawFilteredHotPinkSecret(g, bounds, direction); // Осталось как было раньше
+                DrawFilteredHotPinkSecret(g, bounds, direction); // РћСЃС‚Р°Р»РѕСЃСЊ РєР°Рє Р±С‹Р»Рѕ СЂР°РЅСЊС€Рµ
             }
         }
 
-        // Отрисовка закруглённой двери, в случае для каменной стены
+        // РћС‚СЂРёСЃРѕРІРєР° Р·Р°РєСЂСѓРіР»С‘РЅРЅРѕР№ РґРІРµСЂРё, РІ СЃР»СѓС‡Р°Рµ РґР»СЏ РєР°РјРµРЅРЅРѕР№ СЃС‚РµРЅС‹
         private void DrawRoundedDoor(Graphics g, Rectangle bounds, Direction direction)
         {
-            // Создаем оригинальное изображение двери
+            // РЎРѕР·РґР°РµРј РѕСЂРёРіРёРЅР°Р»СЊРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґРІРµСЂРё
             Bitmap originalDoorImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics drawSurface = Graphics.FromImage(originalDoorImage))
             {
-                DrawDoor(drawSurface, bounds, direction); // Рисуем обычную дверь
+                DrawDoor(drawSurface, bounds, direction); // Р РёСЃСѓРµРј РѕР±С‹С‡РЅСѓСЋ РґРІРµСЂСЊ
             }
 
-            // Применяем закругление и удаление пикселей
+            // РџСЂРёРјРµРЅСЏРµРј Р·Р°РєСЂСѓРіР»РµРЅРёРµ Рё СѓРґР°Р»РµРЅРёРµ РїРёРєСЃРµР»РµР№
             ModifyDoor(originalDoorImage, direction);
 
-            // Расположение двери на холсте
+            // Р Р°СЃРїРѕР»РѕР¶РµРЅРёРµ РґРІРµСЂРё РЅР° С…РѕР»СЃС‚Рµ
             Rectangle targetRect;
             int doorWidth = originalDoorImage.Width;
             int doorHeight = originalDoorImage.Height;
@@ -3015,78 +3015,78 @@ private void SaveMap(string filename)
                     targetRect = new Rectangle(bounds.Right - doorWidth, bounds.Y + bounds.Height / 2 - doorWidth / 2, doorWidth, doorHeight);
                     break;
                 default:
-                    return; // Недопустимое направление
+                    return; // РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Выводим итоговое изображение двери на холст
+            // Р’С‹РІРѕРґРёРј РёС‚РѕРіРѕРІРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґРІРµСЂРё РЅР° С…РѕР»СЃС‚
             g.DrawImage(originalDoorImage, targetRect);
         }
 
-        // Метод для удаления пикселей в конкретных столбцах
+        // РњРµС‚РѕРґ РґР»СЏ СѓРґР°Р»РµРЅРёСЏ РїРёРєСЃРµР»РµР№ РІ РєРѕРЅРєСЂРµС‚РЅС‹С… СЃС‚РѕР»Р±С†Р°С…
         private void ModifyDoor(Bitmap doorImage, Direction direction)
         {
-            // Определим начало колонны для обработки
+            // РћРїСЂРµРґРµР»РёРј РЅР°С‡Р°Р»Рѕ РєРѕР»РѕРЅРЅС‹ РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё
             int doorStartColumn = 13;
 
-            // Список индексов колонок, содержащих важные части рисунка двери
+            // РЎРїРёСЃРѕРє РёРЅРґРµРєСЃРѕРІ РєРѕР»РѕРЅРѕРє, СЃРѕРґРµСЂР¶Р°С‰РёС… РІР°Р¶РЅС‹Рµ С‡Р°СЃС‚Рё СЂРёСЃСѓРЅРєР° РґРІРµСЂРё
             int[] columnsToProcess = { 0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13 };
 
-            // Карта количества удаляемых пикселей для каждой колонки
+            // РљР°СЂС‚Р° РєРѕР»РёС‡РµСЃС‚РІР° СѓРґР°Р»СЏРµРјС‹С… РїРёРєСЃРµР»РµР№ РґР»СЏ РєР°Р¶РґРѕР№ РєРѕР»РѕРЅРєРё
             Dictionary<int, int> pixelRemovalMap = new Dictionary<int, int>()
     {
-        { 0, 3 }, // Убираем три верхних пикселя
-        { 1, 2 }, // Два верхних пикселя
-        { 2, 2 }, // Ещё два пикселя
-        { 3, 1 }, // Одну строку пикселей
-        { 4, 1 }, // Ещё одна строка пикселей
-        { 5, 1 }, // Одна строка пикселей
-        { 8, 1 }, // Пиксель №8 удаляется одним блоком
-        { 9, 1 }, // То же самое для 9-ой колонки
-        { 10, 1 }, // Продолжаем удалять
-        { 11, 2 }, // Две строки
-        { 12, 2 }, // Последние две строки
-        { 13, 3 }  // Завершаем картину трёхстрочным удалением
+        { 0, 3 }, // РЈР±РёСЂР°РµРј С‚СЂРё РІРµСЂС…РЅРёС… РїРёРєСЃРµР»СЏ
+        { 1, 2 }, // Р”РІР° РІРµСЂС…РЅРёС… РїРёРєСЃРµР»СЏ
+        { 2, 2 }, // Р•С‰С‘ РґРІР° РїРёРєСЃРµР»СЏ
+        { 3, 1 }, // РћРґРЅСѓ СЃС‚СЂРѕРєСѓ РїРёРєСЃРµР»РµР№
+        { 4, 1 }, // Р•С‰С‘ РѕРґРЅР° СЃС‚СЂРѕРєР° РїРёРєСЃРµР»РµР№
+        { 5, 1 }, // РћРґРЅР° СЃС‚СЂРѕРєР° РїРёРєСЃРµР»РµР№
+        { 8, 1 }, // РџРёРєСЃРµР»СЊ в„–8 СѓРґР°Р»СЏРµС‚СЃСЏ РѕРґРЅРёРј Р±Р»РѕРєРѕРј
+        { 9, 1 }, // РўРѕ Р¶Рµ СЃР°РјРѕРµ РґР»СЏ 9-РѕР№ РєРѕР»РѕРЅРєРё
+        { 10, 1 }, // РџСЂРѕРґРѕР»Р¶Р°РµРј СѓРґР°Р»СЏС‚СЊ
+        { 11, 2 }, // Р”РІРµ СЃС‚СЂРѕРєРё
+        { 12, 2 }, // РџРѕСЃР»РµРґРЅРёРµ РґРІРµ СЃС‚СЂРѕРєРё
+        { 13, 3 }  // Р—Р°РІРµСЂС€Р°РµРј РєР°СЂС‚РёРЅСѓ С‚СЂС‘С…СЃС‚СЂРѕС‡РЅС‹Рј СѓРґР°Р»РµРЅРёРµРј
     };
 
-            // Работаем только с нужными колонками
+            // Р Р°Р±РѕС‚Р°РµРј С‚РѕР»СЊРєРѕ СЃ РЅСѓР¶РЅС‹РјРё РєРѕР»РѕРЅРєР°РјРё
             foreach (int columnOffset in columnsToProcess)
             {
-                int actualColumn = doorStartColumn + columnOffset; // Получаем фактический номер колонки
+                int actualColumn = doorStartColumn + columnOffset; // РџРѕР»СѓС‡Р°РµРј С„Р°РєС‚РёС‡РµСЃРєРёР№ РЅРѕРјРµСЂ РєРѕР»РѕРЅРєРё
 
                 if (actualColumn < doorImage.Width && pixelRemovalMap.ContainsKey(columnOffset))
                 {
                     int pixelsToRemove = pixelRemovalMap[columnOffset];
 
-                    // Удаляем пиксели в указанной колонке
+                    // РЈРґР°Р»СЏРµРј РїРёРєСЃРµР»Рё РІ СѓРєР°Р·Р°РЅРЅРѕР№ РєРѕР»РѕРЅРєРµ
                     for (int y = 0; y < pixelsToRemove; y++)
                     {
                         if (direction == Direction.Top)
-                            SafeSetPixel(doorImage, actualColumn, y, Color.Transparent); // Убираем верхний ряд пикселей
+                            SafeSetPixel(doorImage, actualColumn, y, Color.Transparent); // РЈР±РёСЂР°РµРј РІРµСЂС…РЅРёР№ СЂСЏРґ РїРёРєСЃРµР»РµР№
                         else if (direction == Direction.Bottom)
-                            SafeSetPixel(doorImage, actualColumn, y + 33, Color.Transparent); // Аналогично для нижней части
+                            SafeSetPixel(doorImage, actualColumn, y + 33, Color.Transparent); // РђРЅР°Р»РѕРіРёС‡РЅРѕ РґР»СЏ РЅРёР¶РЅРµР№ С‡Р°СЃС‚Рё
                         else if (direction == Direction.Left)
-                            SafeSetPixel(doorImage, y, actualColumn, Color.Transparent); // Убираем левый ряд пикселей
+                            SafeSetPixel(doorImage, y, actualColumn, Color.Transparent); // РЈР±РёСЂР°РµРј Р»РµРІС‹Р№ СЂСЏРґ РїРёРєСЃРµР»РµР№
                         else if (direction == Direction.Right)
-                            SafeSetPixel(doorImage, doorImage.Width - y - 1, actualColumn, Color.Transparent); // Убираем правый ряд пикселей
+                            SafeSetPixel(doorImage, doorImage.Width - y - 1, actualColumn, Color.Transparent); // РЈР±РёСЂР°РµРј РїСЂР°РІС‹Р№ СЂСЏРґ РїРёРєСЃРµР»РµР№
                     }
                 }
             }
         }
 
-        // Метод для удаления пикселей в указанном столбце
+        // РњРµС‚РѕРґ РґР»СЏ СѓРґР°Р»РµРЅРёСЏ РїРёРєСЃРµР»РµР№ РІ СѓРєР°Р·Р°РЅРЅРѕРј СЃС‚РѕР»Р±С†Рµ
         private void RemovePixelsInColumn(Bitmap bitmap, int column, int pixelsToRemove)
         {
             for (int y = 0; y < pixelsToRemove; y++)
             {
-                // Ставим пиксели прозрачными
+                // РЎС‚Р°РІРёРј РїРёРєСЃРµР»Рё РїСЂРѕР·СЂР°С‡РЅС‹РјРё
                 SafeSetPixel(bitmap, column, y, Color.Transparent);
             }
         }
 
-        //Метод отрисовки металлической решётки
+        //РњРµС‚РѕРґ РѕС‚СЂРёСЃРѕРІРєРё РјРµС‚Р°Р»Р»РёС‡РµСЃРєРѕР№ СЂРµС€С‘С‚РєРё
         private void DrawGrate(Graphics g, Rectangle bounds, Direction direction)
         {
-            // Формирование решётки
+            // Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ СЂРµС€С‘С‚РєРё
             int grateWidth = (bounds.Width / 3) + 1;
             int grateHeight = (bounds.Height / 6) + 1;
 
@@ -3098,7 +3098,7 @@ private void SaveMap(string filename)
             {
                 imgG.Clear(Color.FromArgb(1, 1, 1));
 
-                // Рисуем горизонтальные полосы
+                // Р РёСЃСѓРµРј РіРѕСЂРёР·РѕРЅС‚Р°Р»СЊРЅС‹Рµ РїРѕР»РѕСЃС‹
                 int horizontalBars = (grateHeight - barThickness) / (spacing + barThickness);
                 for (int i = 0; i <= horizontalBars; i++)
                 {
@@ -3106,7 +3106,7 @@ private void SaveMap(string filename)
                     imgG.FillRectangle(Brushes.Silver, 0, y, grateWidth, barThickness);
                 }
 
-                // Рисуем вертикальные полосы
+                // Р РёСЃСѓРµРј РІРµСЂС‚РёРєР°Р»СЊРЅС‹Рµ РїРѕР»РѕСЃС‹
                 int verticalBars = (grateWidth - barThickness) / (spacing + barThickness);
                 for (int j = 0; j <= verticalBars; j++)
                 {
@@ -3115,7 +3115,7 @@ private void SaveMap(string filename)
                 }
             }
 
-            // Позиционирование решётки
+            // РџРѕР·РёС†РёРѕРЅРёСЂРѕРІР°РЅРёРµ СЂРµС€С‘С‚РєРё
             Rectangle targetRect;
             switch (direction)
             {
@@ -3154,26 +3154,26 @@ private void SaveMap(string filename)
                     );
                     break;
                 default:
-                    return; // Несуществующее направление
+                    return; // РќРµСЃСѓС‰РµСЃС‚РІСѓСЋС‰РµРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Оставляем решение, какое изображение возвращать
+            // РћСЃС‚Р°РІР»СЏРµРј СЂРµС€РµРЅРёРµ, РєР°РєРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РІРѕР·РІСЂР°С‰Р°С‚СЊ
             g.DrawImage(grateImage, targetRect);
         }
 
         private void DrawRoundedGrate(Graphics g, Rectangle cellBounds, Direction direction)
         {
-            // Создаем оригинальное изображение решётки
+            // РЎРѕР·РґР°РµРј РѕСЂРёРіРёРЅР°Р»СЊРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ СЂРµС€С‘С‚РєРё
             Bitmap originalGrateImage = new Bitmap(cellBounds.Width, cellBounds.Height);
             using (Graphics drawSurface = Graphics.FromImage(originalGrateImage))
             {
-                DrawGrate(drawSurface, cellBounds, direction); // Рисуем обычную решётку
+                DrawGrate(drawSurface, cellBounds, direction); // Р РёСЃСѓРµРј РѕР±С‹С‡РЅСѓСЋ СЂРµС€С‘С‚РєСѓ
             }
 
-            // Применяем закругление и удаление пикселей
+            // РџСЂРёРјРµРЅСЏРµРј Р·Р°РєСЂСѓРіР»РµРЅРёРµ Рё СѓРґР°Р»РµРЅРёРµ РїРёРєСЃРµР»РµР№
             ModifyGrate(originalGrateImage, direction);
 
-            // Расположение решётки на холсте
+            // Р Р°СЃРїРѕР»РѕР¶РµРЅРёРµ СЂРµС€С‘С‚РєРё РЅР° С…РѕР»СЃС‚Рµ
             Rectangle targetRect;
             int grateWidth = originalGrateImage.Width;
             int grateHeight = originalGrateImage.Height;
@@ -3193,58 +3193,58 @@ private void SaveMap(string filename)
                     targetRect = new Rectangle(cellBounds.Right - grateWidth, cellBounds.Y + cellBounds.Height / 2 - grateWidth / 2, grateWidth, grateHeight);
                     break;
                 default:
-                    return; // Недопустимое направление
+                    return; // РќРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Выводим итоговое изображение решётки на холст
+            // Р’С‹РІРѕРґРёРј РёС‚РѕРіРѕРІРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ СЂРµС€С‘С‚РєРё РЅР° С…РѕР»СЃС‚
             g.DrawImage(originalGrateImage, targetRect);
         }
 
         private void ModifyGrate(Bitmap doorImage, Direction direction)
         {
-            // Определим начало колонны для обработки
+            // РћРїСЂРµРґРµР»РёРј РЅР°С‡Р°Р»Рѕ РєРѕР»РѕРЅРЅС‹ РґР»СЏ РѕР±СЂР°Р±РѕС‚РєРё
             int doorStartColumn = 13;
 
-            // Список индексов колонок, содержащих важные части рисунка двери
+            // РЎРїРёСЃРѕРє РёРЅРґРµРєСЃРѕРІ РєРѕР»РѕРЅРѕРє, СЃРѕРґРµСЂР¶Р°С‰РёС… РІР°Р¶РЅС‹Рµ С‡Р°СЃС‚Рё СЂРёСЃСѓРЅРєР° РґРІРµСЂРё
             int[] columnsToProcess = { 0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13 };
 
-            // Карта количества удаляемых пикселей для каждой колонки
+            // РљР°СЂС‚Р° РєРѕР»РёС‡РµСЃС‚РІР° СѓРґР°Р»СЏРµРјС‹С… РїРёРєСЃРµР»РµР№ РґР»СЏ РєР°Р¶РґРѕР№ РєРѕР»РѕРЅРєРё
             Dictionary<int, int> pixelRemovalMap = new Dictionary<int, int>()
     {
-        { 0, 3 }, // Убираем три верхних пикселя
-        { 1, 2 }, // Два верхних пикселя
-        { 2, 2 }, // Ещё два пикселя
-        { 3, 1 }, // Одну строку пикселей
-        { 4, 1 }, // Ещё одна строка пикселей
-      //  { 5, 1 }, // Одна строка пикселей
-        { 8, 1 }, // Пиксель №8 удаляется одним блоком
-        { 9, 1 }, // То же самое для 9-ой колонки
-        { 10, 2 }, // Ещё 2 пикселя
-        { 11, 2 }, // Две строки
-        { 12, 3 }, // Последние две строки
-        { 13, 7 },  // Завершаем картину трёхстрочным удалением
+        { 0, 3 }, // РЈР±РёСЂР°РµРј С‚СЂРё РІРµСЂС…РЅРёС… РїРёРєСЃРµР»СЏ
+        { 1, 2 }, // Р”РІР° РІРµСЂС…РЅРёС… РїРёРєСЃРµР»СЏ
+        { 2, 2 }, // Р•С‰С‘ РґРІР° РїРёРєСЃРµР»СЏ
+        { 3, 1 }, // РћРґРЅСѓ СЃС‚СЂРѕРєСѓ РїРёРєСЃРµР»РµР№
+        { 4, 1 }, // Р•С‰С‘ РѕРґРЅР° СЃС‚СЂРѕРєР° РїРёРєСЃРµР»РµР№
+      //  { 5, 1 }, // РћРґРЅР° СЃС‚СЂРѕРєР° РїРёРєСЃРµР»РµР№
+        { 8, 1 }, // РџРёРєСЃРµР»СЊ в„–8 СѓРґР°Р»СЏРµС‚СЃСЏ РѕРґРЅРёРј Р±Р»РѕРєРѕРј
+        { 9, 1 }, // РўРѕ Р¶Рµ СЃР°РјРѕРµ РґР»СЏ 9-РѕР№ РєРѕР»РѕРЅРєРё
+        { 10, 2 }, // Р•С‰С‘ 2 РїРёРєСЃРµР»СЏ
+        { 11, 2 }, // Р”РІРµ СЃС‚СЂРѕРєРё
+        { 12, 3 }, // РџРѕСЃР»РµРґРЅРёРµ РґРІРµ СЃС‚СЂРѕРєРё
+        { 13, 7 },  // Р—Р°РІРµСЂС€Р°РµРј РєР°СЂС‚РёРЅСѓ С‚СЂС‘С…СЃС‚СЂРѕС‡РЅС‹Рј СѓРґР°Р»РµРЅРёРµРј
     };
 
-            // Работаем только с нужными колонками
+            // Р Р°Р±РѕС‚Р°РµРј С‚РѕР»СЊРєРѕ СЃ РЅСѓР¶РЅС‹РјРё РєРѕР»РѕРЅРєР°РјРё
             foreach (int columnOffset in columnsToProcess)
             {
-                int actualColumn = doorStartColumn + columnOffset; // Получаем фактический номер колонки
+                int actualColumn = doorStartColumn + columnOffset; // РџРѕР»СѓС‡Р°РµРј С„Р°РєС‚РёС‡РµСЃРєРёР№ РЅРѕРјРµСЂ РєРѕР»РѕРЅРєРё
 
                 if (actualColumn < doorImage.Width && pixelRemovalMap.ContainsKey(columnOffset))
                 {
                     int pixelsToRemove = pixelRemovalMap[columnOffset];
 
-                    // Удаляем пиксели в указанной колонке
+                    // РЈРґР°Р»СЏРµРј РїРёРєСЃРµР»Рё РІ СѓРєР°Р·Р°РЅРЅРѕР№ РєРѕР»РѕРЅРєРµ
                     for (int y = 0; y < pixelsToRemove; y++)
                     {
                         if (direction == Direction.Top)
-                            SafeSetPixel(doorImage, actualColumn, y, Color.Transparent); // Убираем верхний ряд пикселей
+                            SafeSetPixel(doorImage, actualColumn, y, Color.Transparent); // РЈР±РёСЂР°РµРј РІРµСЂС…РЅРёР№ СЂСЏРґ РїРёРєСЃРµР»РµР№
                         else if (direction == Direction.Bottom)
-                            SafeSetPixel(doorImage, actualColumn, y + 33, Color.Transparent); // Аналогично для нижней части
+                            SafeSetPixel(doorImage, actualColumn, y + 33, Color.Transparent); // РђРЅР°Р»РѕРіРёС‡РЅРѕ РґР»СЏ РЅРёР¶РЅРµР№ С‡Р°СЃС‚Рё
                         else if (direction == Direction.Left)
-                            SafeSetPixel(doorImage, y, actualColumn, Color.Transparent); // Убираем левый ряд пикселей
+                            SafeSetPixel(doorImage, y, actualColumn, Color.Transparent); // РЈР±РёСЂР°РµРј Р»РµРІС‹Р№ СЂСЏРґ РїРёРєСЃРµР»РµР№
                         else if (direction == Direction.Right)
-                            SafeSetPixel(doorImage, doorImage.Width - y - 1, actualColumn, Color.Transparent); // Убираем правый ряд пикселей
+                            SafeSetPixel(doorImage, doorImage.Width - y - 1, actualColumn, Color.Transparent); // РЈР±РёСЂР°РµРј РїСЂР°РІС‹Р№ СЂСЏРґ РїРёРєСЃРµР»РµР№
                     }
                 }
             }
@@ -3254,15 +3254,15 @@ private void SaveMap(string filename)
         {
             switch (option)
             {
-                case "Пустота":
+                case "РџСѓСЃС‚РѕС‚Р°":
                     return Color.Black;
-                case "Желтый":
+                case "Р–РµР»С‚С‹Р№":
                     return Color.Yellow;
-                case "Красный":
+                case "РљСЂР°СЃРЅС‹Р№":
                     return Color.Red;
-                case "Синий":
+                case "РЎРёРЅРёР№":
                     return Color.Blue;
-                case "Зеленый":
+                case "Р—РµР»РµРЅС‹Р№":
                     return Color.Green;
                 default:
                     return Color.Black;
@@ -3273,13 +3273,13 @@ private void SaveMap(string filename)
         {
             switch (colorName)
             {
-                case "Желтый":
+                case "Р–РµР»С‚С‹Р№":
                     return Brushes.Yellow;
-                case "Красный":
+                case "РљСЂР°СЃРЅС‹Р№":
                     return Brushes.Red;
-                case "Синий":
+                case "РЎРёРЅРёР№":
                     return Brushes.Blue;
-                case "Зелёный":
+                case "Р—РµР»С‘РЅС‹Р№":
                     return Brushes.Green;
                 default:
                     return Brushes.Black;
@@ -3288,7 +3288,7 @@ private void SaveMap(string filename)
 
         private void PrepareCellImage(Point pos, Graphics g, Rectangle bounds)
         {
-            // Применяем специальные эффекты согласно состоянию клетки
+            // РџСЂРёРјРµРЅСЏРµРј СЃРїРµС†РёР°Р»СЊРЅС‹Рµ СЌС„С„РµРєС‚С‹ СЃРѕРіР»Р°СЃРЅРѕ СЃРѕСЃС‚РѕСЏРЅРёСЋ РєР»РµС‚РєРё
             if (isDangerStates.TryGetValue(pos, out var isDangerous) && isDangerous)
             {
                 PaintDangerArea(g, bounds);
@@ -3299,13 +3299,13 @@ private void SaveMap(string filename)
                 PaintNoMagicArea(g, bounds);
             }
 
-            // Обработка уровней освещённости
+            // РћР±СЂР°Р±РѕС‚РєР° СѓСЂРѕРІРЅРµР№ РѕСЃРІРµС‰С‘РЅРЅРѕСЃС‚Рё
             if (lightingLevels.TryGetValue(pos, out var lightingLevel))
             {
                 switch (lightingLevel)
                 {
                     case Lighting.Light:
-                        break; // Ничего не делаем, нормальное освещение
+                        break; // РќРёС‡РµРіРѕ РЅРµ РґРµР»Р°РµРј, РЅРѕСЂРјР°Р»СЊРЅРѕРµ РѕСЃРІРµС‰РµРЅРёРµ
                     case Lighting.Dark:
                         PaintDarkArea(g, bounds);
                         break;
@@ -3315,10 +3315,10 @@ private void SaveMap(string filename)
                 }
             }
 
-            // Получаем текущее состояние границы клетки
+            // РџРѕР»СѓС‡Р°РµРј С‚РµРєСѓС‰РµРµ СЃРѕСЃС‚РѕСЏРЅРёРµ РіСЂР°РЅРёС†С‹ РєР»РµС‚РєРё
             if (borders.TryGetValue(pos, out var edgeTypes))
             {
-                // Проверка материалов стенок
+                // РџСЂРѕРІРµСЂРєР° РјР°С‚РµСЂРёР°Р»РѕРІ СЃС‚РµРЅРѕРє
                 for (int i = 0; i < 4; i++)
                 {
                     string borderType;
@@ -3344,195 +3344,195 @@ private void SaveMap(string filename)
 
                     switch (borderType)
                     {
-                        case "Кирпичная стена":
+                        case "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°":
                             DrawBrickWall(g, bounds, dir);
                             break;
-                        case "Каменная стена":
+                        case "РљР°РјРµРЅРЅР°СЏ СЃС‚РµРЅР°":
                             DrawStoneWall(g, bounds, dir);
                             break;
-                        case "Еловый лес":
+                        case "Р•Р»РѕРІС‹Р№ Р»РµСЃ":
                             DrawForestFir(g, bounds, dir);
                             break;
-                        case "Еловый лес(снег)":
+                        case "Р•Р»РѕРІС‹Р№ Р»РµСЃ(СЃРЅРµРі)":
                             DrawForestSnowFir(g, bounds, dir);
                             break;
-                        case "Дубовый лес":
+                        case "Р”СѓР±РѕРІС‹Р№ Р»РµСЃ":
                             DrawForestOak(g, bounds, dir);
                             break;
-                        case "Дубовый лес(снег)":
+                        case "Р”СѓР±РѕРІС‹Р№ Р»РµСЃ(СЃРЅРµРі)":
                             DrawForestSnowOak(g, bounds, dir);
                             break;
-                        case "Горы":
+                        case "Р“РѕСЂС‹":
                             DrawMountains(g, bounds, dir);
                             break;
-                        case "Горы (снег)":
+                        case "Р“РѕСЂС‹ (СЃРЅРµРі)":
                             DrawSnowMountains(g, bounds, dir);
                             break;
-                        case "Вода":
+                        case "Р’РѕРґР°":
                             DrawWater(g, bounds, dir);
                             break;
-                        case "Пустыня":
+                        case "РџСѓСЃС‚С‹РЅСЏ":
                             DrawDesert(g, bounds, dir);
                             break;
-                        case "Болото":
+                        case "Р‘РѕР»РѕС‚Рѕ":
                             DrawSwamp(g, bounds, dir);
                             break;
-                        case "Барьер":
+                        case "Р‘Р°СЂСЊРµСЂ":
                             Draw_Barrier_Word(g, bounds, dir);
                             break;
                         default:
-                            // Логика по умолчанию или игнорирование
+                            // Р›РѕРіРёРєР° РїРѕ СѓРјРѕР»С‡Р°РЅРёСЋ РёР»Рё РёРіРЅРѕСЂРёСЂРѕРІР°РЅРёРµ
                             break;
                     }
                 }
 
-                // Проверка и отрисовка "Секрет"
+                // РџСЂРѕРІРµСЂРєР° Рё РѕС‚СЂРёСЃРѕРІРєР° "РЎРµРєСЂРµС‚"
                 if (passageDict.TryGetValue(pos, out var passageData))
                 {
-                    // Проверяем каждое направление и рисуем тайник, если он найден
-                    if (passageData.Item1 == 3) // секретный проход сверху
+                    // РџСЂРѕРІРµСЂСЏРµРј РєР°Р¶РґРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ Рё СЂРёСЃСѓРµРј С‚Р°Р№РЅРёРє, РµСЃР»Рё РѕРЅ РЅР°Р№РґРµРЅ
+                    if (passageData.Item1 == 3) // СЃРµРєСЂРµС‚РЅС‹Р№ РїСЂРѕС…РѕРґ СЃРІРµСЂС…Сѓ
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Item1, Direction.Top);
                     }
-                    if (passageData.Item2 == 3) //  секретный проход снизу
+                    if (passageData.Item2 == 3) //  СЃРµРєСЂРµС‚РЅС‹Р№ РїСЂРѕС…РѕРґ СЃРЅРёР·Сѓ
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Item2, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 3) //  секретный проход слева
+                    if (passageData.Item3 == 3) //  СЃРµРєСЂРµС‚РЅС‹Р№ РїСЂРѕС…РѕРґ СЃР»РµРІР°
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Item3, Direction.Left);
                     }
-                    if (passageData.Item4 == 3) //  секретный проход справа
+                    if (passageData.Item4 == 3) //  СЃРµРєСЂРµС‚РЅС‹Р№ РїСЂРѕС…РѕРґ СЃРїСЂР°РІР°
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Item4, Direction.Right);
                     }
 
-                    // Остальные элементы (двери и решётки) остались прежними
-                    if (passageData.Item1 == 1) // Дверь сверху
+                    // РћСЃС‚Р°Р»СЊРЅС‹Рµ СЌР»РµРјРµРЅС‚С‹ (РґРІРµСЂРё Рё СЂРµС€С‘С‚РєРё) РѕСЃС‚Р°Р»РёСЃСЊ РїСЂРµР¶РЅРёРјРё
+                    if (passageData.Item1 == 1) // Р”РІРµСЂСЊ СЃРІРµСЂС…Сѓ
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Item1, Direction.Top);
                     }
-                    else if (passageData.Item1 == 2) // Решётка сверху
+                    else if (passageData.Item1 == 2) // Р РµС€С‘С‚РєР° СЃРІРµСЂС…Сѓ
                     {
                         DrawRoundedGrate(g, bounds, Direction.Top);
                     }
 
-                    if (passageData.Item2 == 1) // Дверь снизу
+                    if (passageData.Item2 == 1) // Р”РІРµСЂСЊ СЃРЅРёР·Сѓ
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Item2, Direction.Bottom);
                     }
-                    else if (passageData.Item2 == 2) // Решётка снизу
+                    else if (passageData.Item2 == 2) // Р РµС€С‘С‚РєР° СЃРЅРёР·Сѓ
                     {
                         DrawRoundedGrate(g, bounds, Direction.Bottom);
                     }
 
-                    if (passageData.Item3 == 1) // Дверь слева
+                    if (passageData.Item3 == 1) // Р”РІРµСЂСЊ СЃР»РµРІР°
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Item3, Direction.Left);
                     }
-                    else if (passageData.Item3 == 2) // Решётка слева
+                    else if (passageData.Item3 == 2) // Р РµС€С‘С‚РєР° СЃР»РµРІР°
                     {
                         DrawRoundedGrate(g, bounds, Direction.Left);
                     }
 
-                    if (passageData.Item4 == 1) // Дверь справа
+                    if (passageData.Item4 == 1) // Р”РІРµСЂСЊ СЃРїСЂР°РІР°
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Item4, Direction.Right);
                     }
-                    else if (passageData.Item4 == 2) // Решётка справа
+                    else if (passageData.Item4 == 2) // Р РµС€С‘С‚РєР° СЃРїСЂР°РІР°
                     {
                         DrawRoundedGrate(g, bounds, Direction.Right);
                     }
 
-                    // Проверка и отрисовка лестниц вверх
-                    if (passageData.Item1 == 4) // Лестница вверх сверху
+                    // РџСЂРѕРІРµСЂРєР° Рё РѕС‚СЂРёСЃРѕРІРєР° Р»РµСЃС‚РЅРёС† РІРІРµСЂС…
+                    if (passageData.Item1 == 4) // Р›РµСЃС‚РЅРёС†Р° РІРІРµСЂС… СЃРІРµСЂС…Сѓ
                     {
                         DrawStairsUp(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 4) // Лестница вверх снизу
+                    if (passageData.Item2 == 4) // Р›РµСЃС‚РЅРёС†Р° РІРІРµСЂС… СЃРЅРёР·Сѓ
                     {
                         DrawStairsUp(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 4) // Лестница вверх слева
+                    if (passageData.Item3 == 4) // Р›РµСЃС‚РЅРёС†Р° РІРІРµСЂС… СЃР»РµРІР°
                     {
                         DrawStairsUp(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 4) // Лестница вверх справа
+                    if (passageData.Item4 == 4) // Р›РµСЃС‚РЅРёС†Р° РІРІРµСЂС… СЃРїСЂР°РІР°
                     {
                         DrawStairsUp(g, bounds, Direction.Right);
                     }
 
-                    // Проверка и отрисовка лестниц вниз
-                    if (passageData.Item1 == 5) // Лестница вниз сверху
+                    // РџСЂРѕРІРµСЂРєР° Рё РѕС‚СЂРёСЃРѕРІРєР° Р»РµСЃС‚РЅРёС† РІРЅРёР·
+                    if (passageData.Item1 == 5) // Р›РµСЃС‚РЅРёС†Р° РІРЅРёР· СЃРІРµСЂС…Сѓ
                     {
                         DrawStairsDown(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 5) // Лестница вниз снизу
+                    if (passageData.Item2 == 5) // Р›РµСЃС‚РЅРёС†Р° РІРЅРёР· СЃРЅРёР·Сѓ
                     {
                         DrawStairsDown(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 5) // Лестница вниз слева
+                    if (passageData.Item3 == 5) // Р›РµСЃС‚РЅРёС†Р° РІРЅРёР· СЃР»РµРІР°
                     {
                         DrawStairsDown(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 5) // Лестница вниз справа
+                    if (passageData.Item4 == 5) // Р›РµСЃС‚РЅРёС†Р° РІРЅРёР· СЃРїСЂР°РІР°
                     {
                         DrawStairsDown(g, bounds, Direction.Right);
                     }
 
-                    // Проверка и отрисовка портала
-                    if (passageData.Item1 == 6) // Портал сверху
+                    // РџСЂРѕРІРµСЂРєР° Рё РѕС‚СЂРёСЃРѕРІРєР° РїРѕСЂС‚Р°Р»Р°
+                    if (passageData.Item1 == 6) // РџРѕСЂС‚Р°Р» СЃРІРµСЂС…Сѓ
                     {
                         DrawPortal(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 6) // Портал снизу
+                    if (passageData.Item2 == 6) // РџРѕСЂС‚Р°Р» СЃРЅРёР·Сѓ
                     {
                         DrawPortal(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 6) // Портал слева
+                    if (passageData.Item3 == 6) // РџРѕСЂС‚Р°Р» СЃР»РµРІР°
                     {
                         DrawPortal(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 6) // Портал справа
+                    if (passageData.Item4 == 6) // РџРѕСЂС‚Р°Р» СЃРїСЂР°РІР°
                     {
                         DrawPortal(g, bounds, Direction.Right);
                     }
 
-                    // Проверка и отрисовка надписи "Выход"
-                    if (passageData.Item1 == 7) // Выход сверху
+                    // РџСЂРѕРІРµСЂРєР° Рё РѕС‚СЂРёСЃРѕРІРєР° РЅР°РґРїРёСЃРё "Р’С‹С…РѕРґ"
+                    if (passageData.Item1 == 7) // Р’С‹С…РѕРґ СЃРІРµСЂС…Сѓ
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item1 == "Кирпичная стена")
+                            if (borderValues.Item1 == "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°")
                                 DrawExitWord(g, bounds, Direction.Top, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Top, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Top, Color.LightSkyBlue);
                     }
-                    if (passageData.Item2 == 7) // Выход снизу
+                    if (passageData.Item2 == 7) // Р’С‹С…РѕРґ СЃРЅРёР·Сѓ
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item2 == "Кирпичная стена")
+                            if (borderValues.Item2 == "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°")
                                 DrawExitWord(g, bounds, Direction.Bottom, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Bottom, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Bottom, Color.LightSkyBlue);
                     }
-                    if (passageData.Item3 == 7) // Выход слева
+                    if (passageData.Item3 == 7) // Р’С‹С…РѕРґ СЃР»РµРІР°
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item3 == "Кирпичная стена")
+                            if (borderValues.Item3 == "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°")
                                 DrawExitWord(g, bounds, Direction.Left, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Left, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Left, Color.LightSkyBlue);
                     }
-                    if (passageData.Item4 == 7) // Выход справа
+                    if (passageData.Item4 == 7) // Р’С‹С…РѕРґ СЃРїСЂР°РІР°
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item4 == "Кирпичная стена")
+                            if (borderValues.Item4 == "РљРёСЂРїРёС‡РЅР°СЏ СЃС‚РµРЅР°")
                                 DrawExitWord(g, bounds, Direction.Right, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Right, Color.LightSkyBlue);
@@ -3542,7 +3542,7 @@ private void SaveMap(string filename)
                 }
             }
 
-            // Центральный объект клетки
+            // Р¦РµРЅС‚СЂР°Р»СЊРЅС‹Р№ РѕР±СЉРµРєС‚ РєР»РµС‚РєРё
             if (centralOptions.TryGetValue(pos, out var centralOption))
             {
                 if (_objectsData.TryGetValue(centralOption, out JObject obj))
@@ -3551,7 +3551,7 @@ private void SaveMap(string filename)
                     int rightMargin = obj["RightMargin"].ToObject<int>();
                     int brightnessLimit = obj["FilterLevel"].ToObject<int>();
 
-                    // Получаем изображение из IconBase64
+                    // РџРѕР»СѓС‡Р°РµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ РёР· IconBase64
                     string iconBase64 = obj["IconBase64"]?.ToString() ?? "";
                     Image icon = null;
                     if (!string.IsNullOrEmpty(iconBase64))
@@ -3563,18 +3563,18 @@ private void SaveMap(string filename)
                         }
                     }
 
-                    if (centralOption == "Пустота") return;
-                    if (centralOption == "Не исследовано")
+                    if (centralOption == "РџСѓСЃС‚РѕС‚Р°") return;
+                    if (centralOption == "РќРµ РёСЃСЃР»РµРґРѕРІР°РЅРѕ")
                         DrawUnexplored(g, bounds, pos);
                     else
                     {
-                        // Если изображение доступно, создаем массив пикселей
+                        // Р•СЃР»Рё РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґРѕСЃС‚СѓРїРЅРѕ, СЃРѕР·РґР°РµРј РјР°СЃСЃРёРІ РїРёРєСЃРµР»РµР№
                         int[,] bodyPixels = null;
                         if (icon != null)
                         {
                             bodyPixels = ConvertImageToPixelArray(icon);
 
-                            // Передаем параметры в DrawCentralCell
+                            // РџРµСЂРµРґР°РµРј РїР°СЂР°РјРµС‚СЂС‹ РІ DrawCentralCell
 
                             DrawCentralCell(g, bounds, leftMargin, rightMargin, brightnessLimit, bodyPixels);
                         }
@@ -3582,11 +3582,11 @@ private void SaveMap(string filename)
                 }
                 else
                 {
-                    // Если центральный объект не найден, рисуем вопросительный знак
+                    // Р•СЃР»Рё С†РµРЅС‚СЂР°Р»СЊРЅС‹Р№ РѕР±СЉРµРєС‚ РЅРµ РЅР°Р№РґРµРЅ, СЂРёСЃСѓРµРј РІРѕРїСЂРѕСЃРёС‚РµР»СЊРЅС‹Р№ Р·РЅР°Рє
                     Font questionFont = new Font("Arial", 24, FontStyle.Bold);
                     g.DrawString("?", questionFont, Brushes.White, new PointF(
-            bounds.X + bounds.Width / 2, // центр по горизонтали
-            bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
+            bounds.X + bounds.Width / 2, // С†РµРЅС‚СЂ РїРѕ РіРѕСЂРёР·РѕРЅС‚Р°Р»Рё
+            bounds.Y + bounds.Height / 2 + 1 // С†РµРЅС‚СЂ РїРѕ РІРµСЂС‚РёРєР°Р»Рё + СЃРјРµС‰РµРЅРёРµ РІРЅРёР· РЅР° 1 РїРёРєСЃРµР»СЊ
                                            ), new StringFormat()
                     {
                         Alignment = StringAlignment.Center,
@@ -3595,7 +3595,7 @@ private void SaveMap(string filename)
                 }
             }
 
-            // Визуализация значков сообщений на клетке
+            // Р’РёР·СѓР°Р»РёР·Р°С†РёСЏ Р·РЅР°С‡РєРѕРІ СЃРѕРѕР±С‰РµРЅРёР№ РЅР° РєР»РµС‚РєРµ
             if (messageStates.TryGetValue(pos, out var messages))
             {
                 if (messages.Item1) // topMessageCheck
@@ -3618,7 +3618,7 @@ private void SaveMap(string filename)
 
         }
 
-        // Вспомогательный метод для преобразования изображения в массив пикселей
+        // Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅС‹Р№ РјРµС‚РѕРґ РґР»СЏ РїСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёСЏ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ РІ РјР°СЃСЃРёРІ РїРёРєСЃРµР»РµР№
         private int[,] ConvertImageToPixelArray(Image image)
         {
             int width = image.Width;
@@ -3632,7 +3632,7 @@ private void SaveMap(string filename)
                     for (int y = 0; y < height; y++)
                     {
                         Color pixel = bitmap.GetPixel(x, y);
-                        pixels[x, y] = pixel.ToArgb(); // Преобразуем цвет в целое число
+                        pixels[x, y] = pixel.ToArgb(); // РџСЂРµРѕР±СЂР°Р·СѓРµРј С†РІРµС‚ РІ С†РµР»РѕРµ С‡РёСЃР»Рѕ
                     }
                 }
             }
@@ -3650,14 +3650,14 @@ private void SaveMap(string filename)
 
             Point pos = selectedPosition.Value;
 
-            // Готовим временный битмап для предварительного просмотра
+            // Р“РѕС‚РѕРІРёРј РІСЂРµРјРµРЅРЅС‹Р№ Р±РёС‚РјР°Рї РґР»СЏ РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅРѕРіРѕ РїСЂРѕСЃРјРѕС‚СЂР°
             Bitmap tempBitmap = new Bitmap(CellSize, CellSize);
             using (Graphics g = Graphics.FromImage(tempBitmap))
             {
                 PrepareCellImage(pos, g, new Rectangle(0, 0, CellSize, CellSize));
             }
 
-            // Масштабируем изображение для увеличения
+            // РњР°СЃС€С‚Р°Р±РёСЂСѓРµРј РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґР»СЏ СѓРІРµР»РёС‡РµРЅРёСЏ
             magnifierPictureBox.Image = ScaleImage(tempBitmap, magnifierPictureBox.ClientSize.Width, magnifierPictureBox.ClientSize.Height);
         }
 
@@ -3683,18 +3683,18 @@ private void SaveMap(string filename)
 
         private void DrawDoor(Graphics g, Rectangle bounds, Direction direction)
         {
-            int doorWidth = (bounds.Width / 3) + 1; // Ширина двери треть от всей ячейки
-            int doorHeight = (bounds.Height / 6) + 1; // Высоту уменьшаем вдвое
+            int doorWidth = (bounds.Width / 3) + 1; // РЁРёСЂРёРЅР° РґРІРµСЂРё С‚СЂРµС‚СЊ РѕС‚ РІСЃРµР№ СЏС‡РµР№РєРё
+            int doorHeight = (bounds.Height / 6) + 1; // Р’С‹СЃРѕС‚Сѓ СѓРјРµРЅСЊС€Р°РµРј РІРґРІРѕРµ
 
-            // Создаем временное изображение двери
+            // РЎРѕР·РґР°РµРј РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґРІРµСЂРё
             Bitmap doorImage = new Bitmap(doorWidth, doorHeight);
             using (Graphics imgG = Graphics.FromImage(doorImage))
             {
-                // Рисунок двери
+                // Р РёСЃСѓРЅРѕРє РґРІРµСЂРё
                 Rectangle doorRect = new Rectangle(0, 0, doorWidth, doorHeight);
-                imgG.FillRectangle(Brushes.Brown, doorRect); // Основание двери
+                imgG.FillRectangle(Brushes.Brown, doorRect); // РћСЃРЅРѕРІР°РЅРёРµ РґРІРµСЂРё
 
-                // Вертикальные черные полосы
+                // Р’РµСЂС‚РёРєР°Р»СЊРЅС‹Рµ С‡РµСЂРЅС‹Рµ РїРѕР»РѕСЃС‹
                 int numStripes = 2;
                 int stripeWidth = doorWidth / 10;
                 int gapBetweenStripes = ((doorWidth - (numStripes + 1) * stripeWidth) / ((numStripes + 1) + 1)) + 2;
@@ -3703,24 +3703,24 @@ private void SaveMap(string filename)
                 for (int i = 0; i < numStripes; i++)
                 {
                     int currentX = startX + i * (stripeWidth + gapBetweenStripes);
-                    imgG.FillRectangle(Brushes.Black, currentX, 0, stripeWidth, doorHeight + 1); // Чёрные полосы
+                    imgG.FillRectangle(Brushes.Black, currentX, 0, stripeWidth, doorHeight + 1); // Р§С‘СЂРЅС‹Рµ РїРѕР»РѕСЃС‹
                 }
 
-                // Горизонтальные стальные накладки
+                // Р“РѕСЂРёР·РѕРЅС‚Р°Р»СЊРЅС‹Рµ СЃС‚Р°Р»СЊРЅС‹Рµ РЅР°РєР»Р°РґРєРё
                 int steelPlateWidth = (doorWidth / 5) - 1;
                 int gapAboveBelow = (doorHeight / 4) + 2;
 
-                imgG.FillRectangle(Brushes.SteelBlue, 0, gapAboveBelow + 1, doorWidth + 1, steelPlateWidth); // Верхняя накладка
-                imgG.FillRectangle(Brushes.SteelBlue, 0, doorHeight - gapAboveBelow - steelPlateWidth - 1, doorWidth + 1, steelPlateWidth); // Нижняя накладка
+                imgG.FillRectangle(Brushes.SteelBlue, 0, gapAboveBelow + 1, doorWidth + 1, steelPlateWidth); // Р’РµСЂС…РЅСЏСЏ РЅР°РєР»Р°РґРєР°
+                imgG.FillRectangle(Brushes.SteelBlue, 0, doorHeight - gapAboveBelow - steelPlateWidth - 1, doorWidth + 1, steelPlateWidth); // РќРёР¶РЅСЏСЏ РЅР°РєР»Р°РґРєР°
 
-                // Добавляем дверную ручку справа под верхней накладкой
-                int handleX = doorWidth - 2; // Немного отступаем от края
-                int handleY = gapAboveBelow + steelPlateWidth + 1; // Ниже верхней накладки
-                imgG.FillRectangle(Brushes.Black, handleX, handleY, 1, 1); // Единая ручка размером 1x1 пиксель
+                // Р”РѕР±Р°РІР»СЏРµРј РґРІРµСЂРЅСѓСЋ СЂСѓС‡РєСѓ СЃРїСЂР°РІР° РїРѕРґ РІРµСЂС…РЅРµР№ РЅР°РєР»Р°РґРєРѕР№
+                int handleX = doorWidth - 2; // РќРµРјРЅРѕРіРѕ РѕС‚СЃС‚СѓРїР°РµРј РѕС‚ РєСЂР°СЏ
+                int handleY = gapAboveBelow + steelPlateWidth + 1; // РќРёР¶Рµ РІРµСЂС…РЅРµР№ РЅР°РєР»Р°РґРєРё
+                imgG.FillRectangle(Brushes.Black, handleX, handleY, 1, 1); // Р•РґРёРЅР°СЏ СЂСѓС‡РєР° СЂР°Р·РјРµСЂРѕРј 1x1 РїРёРєСЃРµР»СЊ
 
             }
 
-            // Рассчитываем положение двери на холсте
+            // Р Р°СЃСЃС‡РёС‚С‹РІР°РµРј РїРѕР»РѕР¶РµРЅРёРµ РґРІРµСЂРё РЅР° С…РѕР»СЃС‚Рµ
             Rectangle targetRect;
             switch (direction)
             {
@@ -3731,44 +3731,44 @@ private void SaveMap(string filename)
                     targetRect = new Rectangle(bounds.X + bounds.Width / 2 - doorWidth / 2, bounds.Bottom - doorHeight, doorWidth, doorHeight);
                     break;
                 case Direction.Left:
-                    // Поворачиваем дверь на 90 градусов против часовой стрелки
+                    // РџРѕРІРѕСЂР°С‡РёРІР°РµРј РґРІРµСЂСЊ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ РїСЂРѕС‚РёРІ С‡Р°СЃРѕРІРѕР№ СЃС‚СЂРµР»РєРё
                     doorImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
                     targetRect = new Rectangle(bounds.X, (bounds.Y + bounds.Height / 2 - doorHeight / 2) - 4, doorHeight, doorWidth);
                     break;
                 case Direction.Right:
-                    // Поворачиваем дверь на 90 градусов по часовой стрелке
+                    // РџРѕРІРѕСЂР°С‡РёРІР°РµРј РґРІРµСЂСЊ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ РїРѕ С‡Р°СЃРѕРІРѕР№ СЃС‚СЂРµР»РєРµ
                     doorImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
                     targetRect = new Rectangle(bounds.Right - doorHeight, (bounds.Y + bounds.Height / 2 - doorHeight / 2) - 4, doorHeight, doorWidth);
                     break;
                 default:
-                    return; // Неверное направление
+                    return; // РќРµРІРµСЂРЅРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Выводим итоговое изображение двери на экран
+            // Р’С‹РІРѕРґРёРј РёС‚РѕРіРѕРІРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ РґРІРµСЂРё РЅР° СЌРєСЂР°РЅ
             g.DrawImage(doorImage, targetRect);
         }
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
-            SubscribeEvents(); // Подписываемся на события
+            SubscribeEvents(); // РџРѕРґРїРёСЃС‹РІР°РµРјСЃСЏ РЅР° СЃРѕР±С‹С‚РёСЏ
         }
 
         private void SubscribeEvents()
         {
-            // Регистрация обработчиков для обычного набора комбобоксов
+            // Р РµРіРёСЃС‚СЂР°С†РёСЏ РѕР±СЂР°Р±РѕС‚С‡РёРєРѕРІ РґР»СЏ РѕР±С‹С‡РЅРѕРіРѕ РЅР°Р±РѕСЂР° РєРѕРјР±РѕР±РѕРєСЃРѕРІ
             topComboBox.SelectionChangeCommitted += WallComboBox_SelectionChanged;
             bottomComboBox.SelectionChangeCommitted += WallComboBox_SelectionChanged;
             leftComboBox.SelectionChangeCommitted += WallComboBox_SelectionChanged;
             rightComboBox.SelectionChangeCommitted += WallComboBox_SelectionChanged;
 
-            // Регистрация обработчиков для второго набора комбобоксов (проходов)
+            // Р РµРіРёСЃС‚СЂР°С†РёСЏ РѕР±СЂР°Р±РѕС‚С‡РёРєРѕРІ РґР»СЏ РІС‚РѕСЂРѕРіРѕ РЅР°Р±РѕСЂР° РєРѕРјР±РѕР±РѕРєСЃРѕРІ (РїСЂРѕС…РѕРґРѕРІ)
             passTopComboBox.SelectionChangeCommitted += PassageComboBox_SelectionChanged;
             passBottomComboBox.SelectionChangeCommitted += PassageComboBox_SelectionChanged;
             passLeftComboBox.SelectionChangeCommitted += PassageComboBox_SelectionChanged;
             passRightComboBox.SelectionChangeCommitted += PassageComboBox_SelectionChanged;
 
-            // Регистрация обработчиков для центрального комбобокса (телаCenterComboBox_SelectedIndexChanged ячейки)
+            // Р РµРіРёСЃС‚СЂР°С†РёСЏ РѕР±СЂР°Р±РѕС‚С‡РёРєРѕРІ РґР»СЏ С†РµРЅС‚СЂР°Р»СЊРЅРѕРіРѕ РєРѕРјР±РѕР±РѕРєСЃР° (С‚РµР»Р°CenterComboBox_SelectedIndexChanged СЏС‡РµР№РєРё)
             centerComboBox.SelectionChangeCommitted += CenterComboBox_SelectedIndexChanged;
         }
 
@@ -3778,17 +3778,17 @@ private void SaveMap(string filename)
             {
                 var position = GetPositionFromControl(key);
 
-                // Инициализация значения центра ячейки
-                centralOptions[position] = "Не исследовано";
+                // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ Р·РЅР°С‡РµРЅРёСЏ С†РµРЅС‚СЂР° СЏС‡РµР№РєРё
+                centralOptions[position] = "РќРµ РёСЃСЃР»РµРґРѕРІР°РЅРѕ";
 
-                // Инициализация состояний границ (старых чекбоксов)
+                // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ СЃРѕСЃС‚РѕСЏРЅРёР№ РіСЂР°РЅРёС† (СЃС‚Р°СЂС‹С… С‡РµРєР±РѕРєСЃРѕРІ)
                 closedStates[position] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
 
-                // Инициализация состояний новых чекбоксов (текстов)
+                // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ СЃРѕСЃС‚РѕСЏРЅРёР№ РЅРѕРІС‹С… С‡РµРєР±РѕРєСЃРѕРІ (С‚РµРєСЃС‚РѕРІ)
                 messageStates[position] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
 
-                // Инициализация прочих необходимых данных
-                borders[position] = new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
+                // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ РїСЂРѕС‡РёС… РЅРµРѕР±С…РѕРґРёРјС‹С… РґР°РЅРЅС‹С…
+                borders[position] = new Tuple<string, string, string, string>("РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°", "РџСѓСЃС‚РѕС‚Р°");
                 passageDict[position] = new Tuple<int, int, int, int>(0, 0, 0, 0);
 
                 notesPerCell[position] = "";
@@ -3797,7 +3797,7 @@ private void SaveMap(string filename)
                 isDangerStates[position] = false;
                 noMagicStates[position] = false;
 
-                // По умолчанию устанавливаем освещение "Светло"
+                // РџРѕ СѓРјРѕР»С‡Р°РЅРёСЋ СѓСЃС‚Р°РЅР°РІР»РёРІР°РµРј РѕСЃРІРµС‰РµРЅРёРµ "РЎРІРµС‚Р»Рѕ"
                 lightingLevels[position] = Lighting.Light;
 
              //   key.Invalidate();
@@ -3811,22 +3811,22 @@ private void SaveMap(string filename)
                 Point pos = selectedPosition.Value;
                 string previousCentralOption = centralOptions.TryGetValue(pos, out var prev) ? prev : "";
 
-                // Обновляем значение в словаре
+                // РћР±РЅРѕРІР»СЏРµРј Р·РЅР°С‡РµРЅРёРµ РІ СЃР»РѕРІР°СЂРµ
                 centralOptions[pos] = centerComboBox.SelectedItem.ToString();
 
-                // Проверка на изменение
+                // РџСЂРѕРІРµСЂРєР° РЅР° РёР·РјРµРЅРµРЅРёРµ
                 bool hasChanged = previousCentralOption != centralOptions[pos];
 
                 if (hasChanged) 
                 {
-                    // Получаем соответствующую кнопку по текущей позиции
+                    // РџРѕР»СѓС‡Р°РµРј СЃРѕРѕС‚РІРµС‚СЃС‚РІСѓСЋС‰СѓСЋ РєРЅРѕРїРєСѓ РїРѕ С‚РµРєСѓС‰РµР№ РїРѕР·РёС†РёРё
                     Button correspondingButton = gridButtons[pos.X, GridSize - 1 - (pos.Y)];
 
-                // Инвалидация кнопки приведет к повторному вызову метода Paint
+                // РРЅРІР°Р»РёРґР°С†РёСЏ РєРЅРѕРїРєРё РїСЂРёРІРµРґРµС‚ Рє РїРѕРІС‚РѕСЂРЅРѕРјСѓ РІС‹Р·РѕРІСѓ РјРµС‚РѕРґР° Paint
                 correspondingButton.Invalidate();
 
-                // Можно обновить UI или любые другие действия
-                UpdatePreview(); // Обновляем предпросмотр, если нужно
+                // РњРѕР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ UI РёР»Рё Р»СЋР±С‹Рµ РґСЂСѓРіРёРµ РґРµР№СЃС‚РІРёСЏ
+                UpdatePreview(); // РћР±РЅРѕРІР»СЏРµРј РїСЂРµРґРїСЂРѕСЃРјРѕС‚СЂ, РµСЃР»Рё РЅСѓР¶РЅРѕ
 
                        isMapModified = true;
                 }
@@ -3836,7 +3836,7 @@ private void SaveMap(string filename)
 
         private void DrawEnvelope(Graphics g, Rectangle bounds, Point location)
         {
-            // Шаблон конверта размером 7x7 пикселей
+            // РЁР°Р±Р»РѕРЅ РєРѕРЅРІРµСЂС‚Р° СЂР°Р·РјРµСЂРѕРј 7x7 РїРёРєСЃРµР»РµР№
             char[][] envelopeTemplate = new char[][]
             {
         new char[] {'.', '.', '.', '.', '.', '.', '.'},
@@ -3848,11 +3848,11 @@ private void SaveMap(string filename)
         new char[] {'.', '.', '.', '.', '.', '.', '.'}
             };
 
-            // Стартовая позиция конверта
+            // РЎС‚Р°СЂС‚РѕРІР°СЏ РїРѕР·РёС†РёСЏ РєРѕРЅРІРµСЂС‚Р°
             int xStart = location.X;
             int yStart = location.Y;
 
-            // Проходим по каждому элементу шаблона и рисуем пиксели
+            // РџСЂРѕС…РѕРґРёРј РїРѕ РєР°Р¶РґРѕРјСѓ СЌР»РµРјРµРЅС‚Сѓ С€Р°Р±Р»РѕРЅР° Рё СЂРёСЃСѓРµРј РїРёРєСЃРµР»Рё
             for (int y = 0; y < envelopeTemplate.Length; y++)
             {
                 for (int x = 0; x < envelopeTemplate[y].Length; x++)
@@ -3866,13 +3866,13 @@ private void SaveMap(string filename)
                         default: pixelColor = Color.Black; break;
                     }
 
-                    // Заполняем пиксел цветом
+                    // Р—Р°РїРѕР»РЅСЏРµРј РїРёРєСЃРµР» С†РІРµС‚РѕРј
                     g.FillRectangle(new SolidBrush(pixelColor), xStart + x, yStart + y, 1, 1);
                 }
             }
         }
 
-        ////// ниже все методы связанные с отрисовкой кирпичной и каменных стен
+        ////// РЅРёР¶Рµ РІСЃРµ РјРµС‚РѕРґС‹ СЃРІСЏР·Р°РЅРЅС‹Рµ СЃ РѕС‚СЂРёСЃРѕРІРєРѕР№ РєРёСЂРїРёС‡РЅРѕР№ Рё РєР°РјРµРЅРЅС‹С… СЃС‚РµРЅ
 
         private void UpAndDownDrawBrickWall(Graphics g, Rectangle bounds, Direction direction)
         {
@@ -4003,16 +4003,16 @@ private void SaveMap(string filename)
         private void DrawSwamp(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.swamp :
                 direction == Direction.Left ? Border_Pixels_Patterns.swamp :
                 direction == Direction.Right ? Border_Pixels_Patterns.swamp :
                 Border_Pixels_Patterns.swamp;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {2, Color.FromArgb(255, 0x17, 0x78, 0x33)}, // 
         {1, Color.FromArgb(255, 0x22, 0xB1, 0x4C)}, //
         {3, Color.FromArgb(255, 0xB8, 0x5B, 0x1C)},
@@ -4021,11 +4021,11 @@ private void SaveMap(string filename)
         {5, Color.FromArgb(255, 0xFF, 0xFF, 0xFF)}
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4041,81 +4041,81 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Bottom)
             {
                 exitWordBitmap.RotateFlip(RotateFlipType.Rotate180FlipY); // 
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawDesert(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.desert :
                 direction == Direction.Left ? Border_Pixels_Patterns.desert :
                 direction == Direction.Right ? Border_Pixels_Patterns.desert :
                 Border_Pixels_Patterns.desert;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.FromArgb(255, 0xFF, 0x7F, 0x27)}, // 
         {2, Color.FromArgb(255, 0x22, 0xB1, 0x4C)}, //
         {3, Color.FromArgb(255, 0xFF, 0xB7, 0x71)},
         {4, Color.FromArgb(255, 0xB8, 0x5B, 0x1C) }//
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4131,80 +4131,80 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Bottom)
             {
                 exitWordBitmap.RotateFlip(RotateFlipType.Rotate180FlipY); // 
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawWater(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.water :
                 direction == Direction.Left ? Border_Pixels_Patterns.water :
                 direction == Direction.Right ? Border_Pixels_Patterns.water :
                 Border_Pixels_Patterns.water;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.FromArgb(255, 0x3F, 0x48, 0xCC)}, // 
         {3, Color.FromArgb(255, 0x89, 0x8B, 0xFA)}, //
         {2, Color.FromArgb(255, 0x2C, 0x32, 0x8F)} //
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4220,79 +4220,79 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Bottom)
             {
                 exitWordBitmap.RotateFlip(RotateFlipType.Rotate180FlipY); // 
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawForestFir(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.fir :
                 direction == Direction.Left ? Border_Pixels_Patterns.fir :
                 direction == Direction.Right ? Border_Pixels_Patterns.fir :
                 Border_Pixels_Patterns.fir;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.ForestGreen}, // 
         {2, Color.Brown}, // 
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4308,75 +4308,75 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawForestOak(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.oak :
                 direction == Direction.Left ? Border_Pixels_Patterns.oak :
                 direction == Direction.Right ? Border_Pixels_Patterns.oak :
                 Border_Pixels_Patterns.oak;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.ForestGreen}, // 
         {2, Color.Brown}, // 
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4392,75 +4392,75 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawMountains(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.mountains :
                 direction == Direction.Left ? Border_Pixels_Patterns.mountains :
                 direction == Direction.Right ? Border_Pixels_Patterns.mountains :
                 Border_Pixels_Patterns.mountains;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.FromArgb(201, 100, 31)}, // 
         {2, Color.FromArgb(150, 75, 23)}, // 
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4476,76 +4476,76 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawSnowMountains(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.mountains_snow :
                 direction == Direction.Left ? Border_Pixels_Patterns.mountains_snow :
                 direction == Direction.Right ? Border_Pixels_Patterns.mountains_snow :
                 Border_Pixels_Patterns.mountains_snow;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.FromArgb(201, 100, 31)}, // 
         {2, Color.FromArgb(150, 75, 23)}, // 
         {3, Color.Snow}, //
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4561,76 +4561,76 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawForestSnowFir(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.fir_snow :
                 direction == Direction.Left ? Border_Pixels_Patterns.fir_snow :
                 direction == Direction.Right ? Border_Pixels_Patterns.fir_snow :
                 Border_Pixels_Patterns.fir_snow;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.ForestGreen}, // 
         {2, Color.Brown}, // 
                 {3, Color.Snow }
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4646,76 +4646,76 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
         private void DrawForestSnowOak(Graphics g, Rectangle bounds, Direction direction)
         {
 
-            // Выбор массива в зависимости от направления
+            // Р’С‹Р±РѕСЂ РјР°СЃСЃРёРІР° РІ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё РѕС‚ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             int[,] firPatternToUse = direction == Direction.Top ? Border_Pixels_Patterns.oak_snow :
                 direction == Direction.Left ? Border_Pixels_Patterns.oak_snow :
                 direction == Direction.Right ? Border_Pixels_Patterns.oak_snow :
                 Border_Pixels_Patterns.oak_snow;
 
-            // Цветовая палитра
+            // Р¦РІРµС‚РѕРІР°СЏ РїР°Р»РёС‚СЂР°
             Dictionary<int, Color> colorMap = new Dictionary<int, Color>()
     {
-        {0, Color.FromArgb(0,0, 0, 0) },               // Пустой пиксель
+        {0, Color.FromArgb(0,0, 0, 0) },               // РџСѓСЃС‚РѕР№ РїРёРєСЃРµР»СЊ
         {1, Color.ForestGreen}, // 
         {2, Color.Brown}, // 
         {3, Color.Snow}, // 
     };
 
-            // Рендер картинки
+            // Р РµРЅРґРµСЂ РєР°СЂС‚РёРЅРєРё
             Bitmap exitWordBitmap = new Bitmap(firPatternToUse.GetLength(1), firPatternToUse.GetLength(0));
             using (Graphics stairsGraphics = Graphics.FromImage(exitWordBitmap))
             {
-                // Отрисовка картинки на временное изображение
+                // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё РЅР° РІСЂРµРјРµРЅРЅРѕРµ РёР·РѕР±СЂР°Р¶РµРЅРёРµ
                 for (int y = 0; y < firPatternToUse.GetLength(0); y++)
                 {
                     for (int x = 0; x < firPatternToUse.GetLength(1); x++)
@@ -4731,50 +4731,50 @@ private void SaveMap(string filename)
 
             if (direction == Direction.Left)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // Поворот на 90 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY); // РџРѕРІРѕСЂРѕС‚ РЅР° 90 РіСЂР°РґСѓСЃРѕРІ
             }
             if (direction == Direction.Right)
             {
-                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // Поворот на 270 градусов
+                exitWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone); // РџРѕРІРѕСЂРѕС‚ РЅР° 270 РіСЂР°РґСѓСЃРѕРІ
             }
 
-            // Размещение изображения
+            // Р Р°Р·РјРµС‰РµРЅРёРµ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ
             Rectangle targetRect;
             switch (direction)
             {
                 case Direction.Top:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                          // начало сверху
+                        bounds.Y,                                          // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Bottom - exitWordBitmap.Height,                // начало снизу
+                        bounds.Bottom - exitWordBitmap.Height,                // РЅР°С‡Р°Р»Рѕ СЃРЅРёР·Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
                         bounds.X,
-                        bounds.Y,                                       // начало сверху
+                        bounds.Y,                                       // РЅР°С‡Р°Р»Рѕ СЃРІРµСЂС…Сѓ
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Right:
                     targetRect = new Rectangle(
-                        bounds.Right - exitWordBitmap.Width,                // начало справа
+                        bounds.Right - exitWordBitmap.Width,                // РЅР°С‡Р°Р»Рѕ СЃРїСЂР°РІР°
                         bounds.Y,
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 default:
-                    return; // недопустимое направление
+                    return; // РЅРµРґРѕРїСѓСЃС‚РёРјРѕРµ РЅР°РїСЂР°РІР»РµРЅРёРµ
             }
 
-            // Отрисовка картинки
+            // РћС‚СЂРёСЃРѕРІРєР° РєР°СЂС‚РёРЅРєРё
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
@@ -4794,70 +4794,70 @@ private void SaveMap(string filename)
             }
         }
 
-        // Добавляем переменную для временного хранения полного изображения узора
+        // Р”РѕР±Р°РІР»СЏРµРј РїРµСЂРµРјРµРЅРЅСѓСЋ РґР»СЏ РІСЂРµРјРµРЅРЅРѕРіРѕ С…СЂР°РЅРµРЅРёСЏ РїРѕР»РЅРѕРіРѕ РёР·РѕР±СЂР°Р¶РµРЅРёСЏ СѓР·РѕСЂР°
         private Bitmap fullStoneWallPattern;
 
         private void AddMossSpots(Graphics g, Rectangle bounds, Rectangle segmentBounds, Direction direction)
         {
             Random random = new Random();
 
-            // Количество пятен мха на участке стены
+            // РљРѕР»РёС‡РµСЃС‚РІРѕ РїСЏС‚РµРЅ РјС…Р° РЅР° СѓС‡Р°СЃС‚РєРµ СЃС‚РµРЅС‹
             int mossSpotCount = random.Next(5, 20);
 
             for (int i = 0; i < mossSpotCount; i++)
             {
-                // Случайные координаты центра пятна внутри области стены
+                // РЎР»СѓС‡Р°Р№РЅС‹Рµ РєРѕРѕСЂРґРёРЅР°С‚С‹ С†РµРЅС‚СЂР° РїСЏС‚РЅР° РІРЅСѓС‚СЂРё РѕР±Р»Р°СЃС‚Рё СЃС‚РµРЅС‹
                 float x = random.Next(segmentBounds.X, segmentBounds.Right);
                 float y = random.Next(segmentBounds.Y, segmentBounds.Bottom);
 
-                // Определяем оптимальный радиус пятна
-                float initialRadius = random.Next(1, 3); // Маленькие пятна для лучшего восприятия
+                // РћРїСЂРµРґРµР»СЏРµРј РѕРїС‚РёРјР°Р»СЊРЅС‹Р№ СЂР°РґРёСѓСЃ РїСЏС‚РЅР°
+                float initialRadius = random.Next(1, 3); // РњР°Р»РµРЅСЊРєРёРµ РїСЏС‚РЅР° РґР»СЏ Р»СѓС‡С€РµРіРѕ РІРѕСЃРїСЂРёСЏС‚РёСЏ
 
-                // Прямоугольник для анализа пересечения
+                // РџСЂСЏРјРѕСѓРіРѕР»СЊРЅРёРє РґР»СЏ Р°РЅР°Р»РёР·Р° РїРµСЂРµСЃРµС‡РµРЅРёСЏ
                 RectangleF ellipseRect = new RectangleF(x - initialRadius, y - initialRadius, initialRadius * 2, initialRadius * 2);
 
-                // Формирование пути для нужной формы
+                // Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ РїСѓС‚Рё РґР»СЏ РЅСѓР¶РЅРѕР№ С„РѕСЂРјС‹
                 GraphicsPath path = new GraphicsPath();
 
-                // Обрабатываем возможные пересечения границ
+                // РћР±СЂР°Р±Р°С‚С‹РІР°РµРј РІРѕР·РјРѕР¶РЅС‹Рµ РїРµСЂРµСЃРµС‡РµРЅРёСЏ РіСЂР°РЅРёС†
                 if (ellipseRect.IntersectsWith(segmentBounds))
                 {
-                    // Вершина (top) и дно (bottom) отличаются углом отсчёта
+                    // Р’РµСЂС€РёРЅР° (top) Рё РґРЅРѕ (bottom) РѕС‚Р»РёС‡Р°СЋС‚СЃСЏ СѓРіР»РѕРј РѕС‚СЃС‡С‘С‚Р°
                     if (direction == Direction.Top)
                     {
-                        path.AddArc(ellipseRect, 0, 180); // Полукруг сверху
+                        path.AddArc(ellipseRect, 0, 180); // РџРѕР»СѓРєСЂСѓРі СЃРІРµСЂС…Сѓ
                     }
                     else if (direction == Direction.Bottom)
                     {
-                        path.AddArc(ellipseRect, 180, 180); // Полукруг снизу
+                        path.AddArc(ellipseRect, 180, 180); // РџРѕР»СѓРєСЂСѓРі СЃРЅРёР·Сѓ
                     }
                     else if (direction == Direction.Left)
                     {
-                        path.AddArc(ellipseRect, 90, 180); // Полукруг слева
+                        path.AddArc(ellipseRect, 90, 180); // РџРѕР»СѓРєСЂСѓРі СЃР»РµРІР°
                     }
                     else if (direction == Direction.Right)
                     {
-                        path.AddArc(ellipseRect, 270, 180); // Полукруг справа
+                        path.AddArc(ellipseRect, 270, 180); // РџРѕР»СѓРєСЂСѓРі СЃРїСЂР°РІР°
                     }
                     else
                     {
-                        // Если пятно полностью внутри, используем полный круг
+                        // Р•СЃР»Рё РїСЏС‚РЅРѕ РїРѕР»РЅРѕСЃС‚СЊСЋ РІРЅСѓС‚СЂРё, РёСЃРїРѕР»СЊР·СѓРµРј РїРѕР»РЅС‹Р№ РєСЂСѓРі
                         path.AddEllipse(ellipseRect);
                     }
                 }
                 else
                 {
-                    // Если пятно не пересекает границы, рисуем полный круг
+                    // Р•СЃР»Рё РїСЏС‚РЅРѕ РЅРµ РїРµСЂРµСЃРµРєР°РµС‚ РіСЂР°РЅРёС†С‹, СЂРёСЃСѓРµРј РїРѕР»РЅС‹Р№ РєСЂСѓРі
                     path.AddEllipse(ellipseRect);
                 }
 
-                // Заливка с эффектом натуральных оттенков
+                // Р—Р°Р»РёРІРєР° СЃ СЌС„С„РµРєС‚РѕРј РЅР°С‚СѓСЂР°Р»СЊРЅС‹С… РѕС‚С‚РµРЅРєРѕРІ
                 using (Brush brush = new SolidBrush(Color.FromArgb(128, 0, 100, 0)))
                 {
                     g.FillPath(brush, path);
                 }
 
-                // Границы контура (не обязательно)
+                // Р“СЂР°РЅРёС†С‹ РєРѕРЅС‚СѓСЂР° (РЅРµ РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ)
                 using (Pen pen = new Pen(Color.Green))
                 {
                     g.DrawPath(pen, path);
@@ -4867,7 +4867,7 @@ private void SaveMap(string filename)
 
         private void DrawStoneWall(Graphics g, Rectangle bounds, Direction direction)
         {
-            // Генерируем узор единожды и храним его
+            // Р“РµРЅРµСЂРёСЂСѓРµРј СѓР·РѕСЂ РµРґРёРЅРѕР¶РґС‹ Рё С…СЂР°РЅРёРј РµРіРѕ
             if (fullStoneWallPattern == null)
             {
                 fullStoneWallPattern = new Bitmap(bounds.Width, bounds.Height);
@@ -4878,47 +4878,47 @@ private void SaveMap(string filename)
                 }
             }
 
-            // Основной сегмент узора
+            // РћСЃРЅРѕРІРЅРѕР№ СЃРµРіРјРµРЅС‚ СѓР·РѕСЂР°
             Rectangle upperSegmentTop = new Rectangle(0, 0, bounds.Width, (bounds.Height / 6) + 1);
             Rectangle upperSegmentBottom = new Rectangle(0, 1, bounds.Width, (bounds.Height / 6) + 1);
             Rectangle upperSegmentLeft = new Rectangle(0, -4, bounds.Width, (bounds.Height / 6) + 4);
             Rectangle upperSegmentRight = new Rectangle(0, 2, bounds.Width, (bounds.Height / 6) + 1);
 
-            // Матрица вращения для некоторых направлений
+            // РњР°С‚СЂРёС†Р° РІСЂР°С‰РµРЅРёСЏ РґР»СЏ РЅРµРєРѕС‚РѕСЂС‹С… РЅР°РїСЂР°РІР»РµРЅРёР№
             Matrix rotationMatrix = new Matrix();
 
-            // Первая задача — рисуем саму стену
+            // РџРµСЂРІР°СЏ Р·Р°РґР°С‡Р° вЂ” СЂРёСЃСѓРµРј СЃР°РјСѓ СЃС‚РµРЅСѓ
             if (direction == Direction.Top)
             {
-                // Верхняя часть (серый фон и узор сверху)
+                // Р’РµСЂС…РЅСЏСЏ С‡Р°СЃС‚СЊ (СЃРµСЂС‹Р№ С„РѕРЅ Рё СѓР·РѕСЂ СЃРІРµСЂС…Сѓ)
                 g.FillRectangle(Brushes.Gray, bounds.X, bounds.Y, bounds.Width, (bounds.Height / 6));
                 g.DrawImage(fullStoneWallPattern, bounds.X, bounds.Y, upperSegmentTop, GraphicsUnit.Pixel);
             }
             else if (direction == Direction.Bottom)
             {
-                // Нижняя часть (серый фон и узор снизу)
+                // РќРёР¶РЅСЏСЏ С‡Р°СЃС‚СЊ (СЃРµСЂС‹Р№ С„РѕРЅ Рё СѓР·РѕСЂ СЃРЅРёР·Сѓ)
                 g.FillRectangle(Brushes.Gray, bounds.X, bounds.Bottom - 1 - bounds.Height / 6, bounds.Width, (bounds.Height / 6) + 1);
                 g.DrawImage(fullStoneWallPattern, bounds.X, bounds.Bottom - 1 - bounds.Height / 6, upperSegmentBottom, GraphicsUnit.Pixel);
             }
             else if (direction == Direction.Right)
             {
-                // Режим Right: узор помещаем справа
+                // Р РµР¶РёРј Right: СѓР·РѕСЂ РїРѕРјРµС‰Р°РµРј СЃРїСЂР°РІР°
                 rotationMatrix.RotateAt(90, new PointF(bounds.Width / 2, bounds.Height / 2));
                 g.Transform = rotationMatrix;
                 g.DrawImage(fullStoneWallPattern, bounds.Right - bounds.Height, bounds.Y, upperSegmentRight, GraphicsUnit.Pixel);
             }
             else if (direction == Direction.Left)
             {
-                // Режим Left: узор помещаем слева
+                // Р РµР¶РёРј Left: СѓР·РѕСЂ РїРѕРјРµС‰Р°РµРј СЃР»РµРІР°
                 rotationMatrix.RotateAt(90, new PointF(bounds.Width / 2, bounds.Height / 2));
                 g.Transform = rotationMatrix;
                 g.DrawImage(fullStoneWallPattern, bounds.Right - bounds.Height, bounds.Y + 30, upperSegmentLeft, GraphicsUnit.Pixel);
             }
 
-            // Возвращаемся к исходной трансформации
+            // Р’РѕР·РІСЂР°С‰Р°РµРјСЃСЏ Рє РёСЃС…РѕРґРЅРѕР№ С‚СЂР°РЅСЃС„РѕСЂРјР°С†РёРё
             g.ResetTransform();
 
-            // Создание сегмента для направления
+            // РЎРѕР·РґР°РЅРёРµ СЃРµРіРјРµРЅС‚Р° РґР»СЏ РЅР°РїСЂР°РІР»РµРЅРёСЏ
             Rectangle segmentBounds;
 
             switch (direction)
@@ -4939,19 +4939,19 @@ private void SaveMap(string filename)
                     throw new ArgumentException("Invalid direction");
             }
 
-            // Наконец, добавляем мох НА ПОВЕРХНОСТЬ СТЕНЫ
+            // РќР°РєРѕРЅРµС†, РґРѕР±Р°РІР»СЏРµРј РјРѕС… РќРђ РџРћР’Р•Р РҐРќРћРЎРўР¬ РЎРўР•РќР«
             AddMossSpots(g, bounds, segmentBounds, direction);
         }
 
-        // Метод для генерации всего узора камня
+        // РњРµС‚РѕРґ РґР»СЏ РіРµРЅРµСЂР°С†РёРё РІСЃРµРіРѕ СѓР·РѕСЂР° РєР°РјРЅСЏ
         private void DrawFullStoneWall(Graphics g, Rectangle bounds, Direction direction)
         {
             Random random = new Random();
-            int rows = 6;           // Количество рядов
-            int columns = 10;       // Количество колонн
-            float overlapFactor = 0.45f; // Степень перекрытия между камнями
+            int rows = 6;           // РљРѕР»РёС‡РµСЃС‚РІРѕ СЂСЏРґРѕРІ
+            int columns = 10;       // РљРѕР»РёС‡РµСЃС‚РІРѕ РєРѕР»РѕРЅРЅ
+            float overlapFactor = 0.45f; // РЎС‚РµРїРµРЅСЊ РїРµСЂРµРєСЂС‹С‚РёСЏ РјРµР¶РґСѓ РєР°РјРЅСЏРјРё
 
-            // Средние размеры ячеек
+            // РЎСЂРµРґРЅРёРµ СЂР°Р·РјРµСЂС‹ СЏС‡РµРµРє
             float avgCellWidth = bounds.Width / columns;
             float avgCellHeight = bounds.Width / rows;
 
@@ -4959,41 +4959,41 @@ private void SaveMap(string filename)
             {
                 for (int c = 0; c < columns; c++)
                 {
-                    // Смещаем центры камней случайным образом
+                    // РЎРјРµС‰Р°РµРј С†РµРЅС‚СЂС‹ РєР°РјРЅРµР№ СЃР»СѓС‡Р°Р№РЅС‹Рј РѕР±СЂР°Р·РѕРј
                     float x = bounds.X + c * avgCellWidth + random.NextFloat(-avgCellWidth * overlapFactor, avgCellWidth * overlapFactor);
                     float y = bounds.Y + r * avgCellHeight + random.NextFloat(-avgCellHeight * overlapFactor, avgCellHeight * overlapFactor);
 
-                    // Размеры камней варьируют в небольшом диапазоне
+                    // Р Р°Р·РјРµСЂС‹ РєР°РјРЅРµР№ РІР°СЂСЊРёСЂСѓСЋС‚ РІ РЅРµР±РѕР»СЊС€РѕРј РґРёР°РїР°Р·РѕРЅРµ
                     float stoneWidth = random.NextFloat(avgCellWidth * 2.6f, avgCellWidth * 3.2f);
                     float stoneHeight = random.NextFloat(avgCellHeight * 2.6f, avgCellHeight * 3.2f);
 
-                    // Формируем полигон произвольной формы
+                    // Р¤РѕСЂРјРёСЂСѓРµРј РїРѕР»РёРіРѕРЅ РїСЂРѕРёР·РІРѕР»СЊРЅРѕР№ С„РѕСЂРјС‹
                     PointF[] points = GenerateIrregularShape(random, stoneWidth, stoneHeight);
 
-                    // Преобразование координат полигона
+                    // РџСЂРµРѕР±СЂР°Р·РѕРІР°РЅРёРµ РєРѕРѕСЂРґРёРЅР°С‚ РїРѕР»РёРіРѕРЅР°
                     GraphicsPath path = new GraphicsPath();
                     path.AddPolygon(points);
                     Matrix translationMatrix = new Matrix();
                     translationMatrix.Translate(x, y);
                     path.Transform(translationMatrix);
 
-                    // Рисуем полигон
+                    // Р РёСЃСѓРµРј РїРѕР»РёРіРѕРЅ
                     g.FillPath(Brushes.Gray, path);
                     g.DrawPath(Pens.Black, path);
                 }
             }
         }
 
-        // Генерация нерегулярной формы камня
+        // Р“РµРЅРµСЂР°С†РёСЏ РЅРµСЂРµРіСѓР»СЏСЂРЅРѕР№ С„РѕСЂРјС‹ РєР°РјРЅСЏ
         private PointF[] GenerateIrregularShape(Random random, float width, float height)
         {
-            int vertices = random.Next(5, 8); // Камни с разным числом вершин
+            int vertices = random.Next(5, 8); // РљР°РјРЅРё СЃ СЂР°Р·РЅС‹Рј С‡РёСЃР»РѕРј РІРµСЂС€РёРЅ
             PointF[] points = new PointF[vertices];
 
             for (int i = 0; i < vertices; i++)
             {
                 float angle = (float)i / vertices * 2 * (float)Math.PI;
-                float radius = random.NextFloat(width * 0.3f, width * 0.7f); // Асимметричность формы
+                float radius = random.NextFloat(width * 0.3f, width * 0.7f); // РђСЃРёРјРјРµС‚СЂРёС‡РЅРѕСЃС‚СЊ С„РѕСЂРјС‹
                 float x = (float)(Math.Sin(angle) * radius);
                 float y = (float)(Math.Cos(angle) * radius);
                 points[i] = new PointF(x, y);
@@ -5001,7 +5001,7 @@ private void SaveMap(string filename)
             return points;
         }
 
-        // Временная структура для хранения состояния ячейки
+        // Р’СЂРµРјРµРЅРЅР°СЏ СЃС‚СЂСѓРєС‚СѓСЂР° РґР»СЏ С…СЂР°РЅРµРЅРёСЏ СЃРѕСЃС‚РѕСЏРЅРёСЏ СЏС‡РµР№РєРё
         private struct CopiedCellInfo
         {
             public Tuple<string, string, string, string> Borders;
