@@ -23,6 +23,7 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+	<CodePage>65001</CodePage>
   </PropertyGroup>
 
   <ItemGroup>
