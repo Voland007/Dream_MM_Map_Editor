@@ -1386,6 +1386,11 @@ namespace MMMapEditor
                     this.Text = Path.GetFileNameWithoutExtension(filename);
                 }
             }
+            else
+            {
+                // Если метаданные отсутствуют или неполные, пишем только имя файла(имя карты)
+                this.Text = Path.GetFileNameWithoutExtension(filename);
+            }
 
 
             // Обновляем визуализацию формы
@@ -3563,8 +3568,8 @@ private void SaveMap(string filename)
                         }
                     }
 
-                    if (centralOption == "Пустота") return;
-                    if (centralOption == "Не исследовано")
+                    if (centralOption == "Пустота") { }
+                    else  if (centralOption == "Не исследовано")
                         DrawUnexplored(g, bounds, pos);
                     else
                     {
