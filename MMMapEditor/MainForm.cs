@@ -107,6 +107,7 @@ namespace MMMapEditor
         private Image mainMapImage;
         private ToolStripMenuItem fileMenuItem;
         private ToolStripMenuItem newMapItem, saveAsItem, loadItem, saveItem;
+        private ToolStripMenuItem draftLaboratoryItem; //экспериментальный пункт меню
         private ToolStripMenuItem changeToMapsDropdown;
         private ToolStripMenuItem settingMenuItem;
         private ToolStripMenuItem toolStripMenuItemManageObjects;
@@ -967,6 +968,11 @@ namespace MMMapEditor
             metadataItem.Click += MetadataItem_Click;
             fileMenuItem.DropDownItems.Add(metadataItem);
 
+            // Добавляем пункт "Draft_Laboratory" в меню "Карта"
+            ToolStripMenuItem draftLaboratoryItem = new ToolStripMenuItem("Draft_Laboratory");
+            draftLaboratoryItem.Click += DraftLaboratoryItem_Click;
+            fileMenuItem.DropDownItems.Add(draftLaboratoryItem);
+
             searchMenuItem = new ToolStripMenuItem("Поиск");
             onMapsSearchItem = new ToolStripMenuItem("По картам");
             onMapsSearchItem.Click += OnMapsSearchItem_Click;
@@ -1001,6 +1007,137 @@ namespace MMMapEditor
         {
             var searchForm = new SearchForm();
             searchForm.ShowDialog();
+        }
+
+        private void DraftLaboratoryItem_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.InitialDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                dialog.Filter = "Text Files (*.txt)|*.txt";
+                dialog.Title = "Select a text file to load as a laboratory draft";
+                dialog.DefaultExt = ".txt";
+
+                if (dialog.ShowDialog() == DialogResult.OK)
+                {
+                    string filename = dialog.FileName;
+                    LoadDraftLaboratory(filename);
+                }
+            }
+        }
+
+        private void LoadDraftLaboratory(string filename)
+        {
+            // Считываем весь файл целиком
+            string[] lines = File.ReadAllLines(filename);
+
+            // Проверяем количество строк и наличие данных
+            if (lines.Length != 16 || lines.Any(line => line.Split().Length != 16))
+            {
+                MessageBox.Show("The file does not match the expected format.");
+                return;
+            }
+
+            // Обрабатываем каждую клетку
+            for (int y = 0; y < 16; y++)
+            {
+                string[] cellValues = lines[y].Split();
+                for (int x = 0; x < 16; x++)
+                {
+                    ProcessCellDraft(x, y, cellValues[x]);
+                }
+            }
+
+            // Обновляем внешний вид интерфейса
+            foreach (var button in gridButtons)
+            {
+                button.Invalidate();
+            }
+
+            // Сообщаем пользователю о завершении процесса
+            MessageBox.Show("Laboratory successfully loaded.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void ProcessCellDraft(int x, int y, string hexValue)
+        {
+            // Преобразуем шестнадцатеричное значение в десятичное
+            int decimalValue = Convert.ToInt32(hexValue, 16);
+
+            // Получаем двоичное представление длины ровно 16 символов
+            string binaryRepresentation = Convert.ToString(decimalValue, 2).PadLeft(16, '0');
+
+            // Получаем позицию клетки
+            Point pos = new Point(x, y);
+
+            // Получаем текущие границы клетки
+            Tuple<string, string, string, string> currentBorders = borders[pos];
+            // Получаем текущие проходы клетки
+            Tuple<int, int, int, int> currentPassages = passageDict[pos];
+
+            // Проверяем нужные позиции и устанавливаем стены соответственно
+            if (binaryRepresentation[^1] == '1') // самый младший бит
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, currentBorders.Item2, "Кирпичная стена", currentBorders.Item4); // стена слева
+
+            if (binaryRepresentation[^3] == '1') // третий бит справа
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, "Кирпичная стена", currentBorders.Item3, currentBorders.Item4); // стена снизу
+
+            if (binaryRepresentation[^5] == '1') // пятый бит справа
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Кирпичная стена"); // стена справа
+
+            if (binaryRepresentation[^7] == '1') // седьмой бит справа
+                currentBorders = new Tuple<string, string, string, string>(
+                    "Кирпичная стена", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // стена сверху
+
+            // Дополнительные проверки для установки стен и проходов типа "дверь"
+            if (binaryRepresentation[^2] == '1' && binaryRepresentation[^1] == '0')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, currentBorders.Item2, "Кирпичная стена", currentBorders.Item4); // Стена слева
+                currentPassages = new Tuple<int, int, int, int>(
+                    currentPassages.Item1, currentPassages.Item2, 1, currentPassages.Item4); // Дверь слева
+            }
+
+            if (binaryRepresentation[^4] == '1' && binaryRepresentation[^3] == '0')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, "Кирпичная стена", currentBorders.Item3, currentBorders.Item4); // Стена снизу
+                currentPassages = new Tuple<int, int, int, int>(
+                    currentPassages.Item1, 1, currentPassages.Item3, currentPassages.Item4); // Дверь снизу
+            }
+
+            if (binaryRepresentation[^6] == '1' && binaryRepresentation[^5] == '0')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Кирпичная стена"); // Стена справа
+                currentPassages = new Tuple<int, int, int, int>(
+                    currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 1); // Дверь справа
+            }
+
+            if (binaryRepresentation[^8] == '1' && binaryRepresentation[^7] == '0')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    "Кирпичная стена", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // Стена сверху
+                currentPassages = new Tuple<int, int, int, int>(
+                    1, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4); // Дверь сверху
+            }
+
+            // Обновляем границы клетки
+            borders[pos] = currentBorders;
+            passageDict[pos] = currentPassages;
+
+            // Остальные параметры клеток устанавливаются стандартно
+            centralOptions[pos] = "Пустота";
+          //  passageDict[pos] = new Tuple<int, int, int, int>(0, 0, 0, 0);
+            closedStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+            messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+            notesPerCell[pos] = "";
+            imagesPerCell[pos] = null;
+            isDangerStates[pos] = false;
+            noMagicStates[pos] = false;
+            lightingLevels[pos] = Lighting.Light;
         }
 
         // Обработчик события пункта меню "Метаданные"
