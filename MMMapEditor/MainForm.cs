@@ -1032,19 +1032,21 @@ namespace MMMapEditor
             string[] lines = File.ReadAllLines(filename);
 
             // Проверяем количество строк и наличие данных
-            if (lines.Length != 16 || lines.Any(line => line.Split().Length != 16))
+            if (lines.Length != 32 || lines.Any(line => line.Split().Length != 16))
             {
-                MessageBox.Show("The file does not match the expected format.");
+                MessageBox.Show("Формат файла не соответствует ожидаемому.");
                 return;
             }
 
             // Обрабатываем каждую клетку
             for (int y = 0; y < 16; y++)
             {
-                string[] cellValues = lines[y].Split();
+                string[] cellValuesFirstLayer = lines[y].Split();
+                string[] cellValuesSecondLayer = lines[y + 16].Split();
+
                 for (int x = 0; x < 16; x++)
                 {
-                    ProcessCellDraft(x, y, cellValues[x]);
+                    ProcessCellDraft(x, y, cellValuesFirstLayer[x], cellValuesSecondLayer[x]);
                 }
             }
 
@@ -1055,16 +1057,18 @@ namespace MMMapEditor
             }
 
             // Сообщаем пользователю о завершении процесса
-            MessageBox.Show("Laboratory successfully loaded.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private void ProcessCellDraft(int x, int y, string hexValue)
+        private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer)
         {
             // Преобразуем шестнадцатеричное значение в десятичное
-            int decimalValue = Convert.ToInt32(hexValue, 16);
+            int firstDecimalValue = Convert.ToInt32(hexValueFirstLayer, 16);
+            int secondDecimalValue = Convert.ToInt32(hexValueSecondLayer, 16);
 
             // Получаем двоичное представление длины ровно 16 символов
-            string binaryRepresentation = Convert.ToString(decimalValue, 2).PadLeft(16, '0');
+            string firstBinaryRepresentation = Convert.ToString(firstDecimalValue, 2).PadLeft(16, '0');
+            string secondBinaryRepresentation = Convert.ToString(secondDecimalValue, 2).PadLeft(16, '0');
 
             // Получаем позицию клетки
             Point pos = new Point(x, y);
@@ -1073,65 +1077,100 @@ namespace MMMapEditor
             Tuple<string, string, string, string> currentBorders = borders[pos];
             // Получаем текущие проходы клетки
             Tuple<int, int, int, int> currentPassages = passageDict[pos];
+            // Получаем текущие состоянии и закрытых дверях
+            Tuple<bool, bool, bool, bool> currentClosedStates = closedStates[pos];
 
             // Проверяем нужные позиции и устанавливаем стены соответственно
-            if (binaryRepresentation[^1] == '1') // самый младший бит
+            if (firstBinaryRepresentation[^1] == '1') // самый младший бит
+            { 
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, currentBorders.Item2, "Кирпичная стена", currentBorders.Item4); // стена слева
+                if (secondBinaryRepresentation[^1] == '0')
+                    currentPassages = new Tuple<int, int, int, int>(
+                    currentPassages.Item1, currentPassages.Item2, 3, currentPassages.Item4);
+            }
 
-            if (binaryRepresentation[^3] == '1') // третий бит справа
+            if (firstBinaryRepresentation[^3] == '1') // третий бит справа
+            {
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, "Кирпичная стена", currentBorders.Item3, currentBorders.Item4); // стена снизу
+                if (secondBinaryRepresentation[^3] == '0')
+                    currentPassages = new Tuple<int, int, int, int>(
+                    currentPassages.Item1, 3, currentPassages.Item3, currentPassages.Item4);
+            }
 
-            if (binaryRepresentation[^5] == '1') // пятый бит справа
+            if (firstBinaryRepresentation[^5] == '1') // пятый бит справа
+            {
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Кирпичная стена"); // стена справа
+                if (secondBinaryRepresentation[^5] == '0')
+                    currentPassages = new Tuple<int, int, int, int>(
+                    currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 3);
+            }
 
-            if (binaryRepresentation[^7] == '1') // седьмой бит справа
+            if (firstBinaryRepresentation[^7] == '1') // седьмой бит справа
+            {
                 currentBorders = new Tuple<string, string, string, string>(
                     "Кирпичная стена", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // стена сверху
+                if (secondBinaryRepresentation[^7] == '0')
+                    currentPassages = new Tuple<int, int, int, int>(
+                    3, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
+            }
 
             // Дополнительные проверки для установки стен и проходов типа "дверь"
-            if (binaryRepresentation[^2] == '1' && binaryRepresentation[^1] == '0')
+            if (firstBinaryRepresentation[^2] == '1' && firstBinaryRepresentation[^1] == '0')
             {
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, currentBorders.Item2, "Кирпичная стена", currentBorders.Item4); // Стена слева
                 currentPassages = new Tuple<int, int, int, int>(
                     currentPassages.Item1, currentPassages.Item2, 1, currentPassages.Item4); // Дверь слева
+                if (secondBinaryRepresentation[^1] == '1')
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(currentClosedStates.Item1, currentClosedStates.Item2, true, currentClosedStates.Item4);
             }
 
-            if (binaryRepresentation[^4] == '1' && binaryRepresentation[^3] == '0')
+            if (firstBinaryRepresentation[^4] == '1' && firstBinaryRepresentation[^3] == '0')
             {
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, "Кирпичная стена", currentBorders.Item3, currentBorders.Item4); // Стена снизу
                 currentPassages = new Tuple<int, int, int, int>(
                     currentPassages.Item1, 1, currentPassages.Item3, currentPassages.Item4); // Дверь снизу
+                if (secondBinaryRepresentation[^3] == '1')
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(currentClosedStates.Item1, true, currentClosedStates.Item3, currentClosedStates.Item4);
             }
 
-            if (binaryRepresentation[^6] == '1' && binaryRepresentation[^5] == '0')
+            if (firstBinaryRepresentation[^6] == '1' && firstBinaryRepresentation[^5] == '0')
             {
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Кирпичная стена"); // Стена справа
                 currentPassages = new Tuple<int, int, int, int>(
                     currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 1); // Дверь справа
+                if (secondBinaryRepresentation[^5] == '1')
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(currentClosedStates.Item1, currentClosedStates.Item2, currentClosedStates.Item3, true);
             }
 
-            if (binaryRepresentation[^8] == '1' && binaryRepresentation[^7] == '0')
+            if (firstBinaryRepresentation[^8] == '1' && firstBinaryRepresentation[^7] == '0')
             {
                 currentBorders = new Tuple<string, string, string, string>(
                     "Кирпичная стена", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // Стена сверху
                 currentPassages = new Tuple<int, int, int, int>(
                     1, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4); // Дверь сверху
+                if (secondBinaryRepresentation[^7] == '1')
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
             }
+
+            //if (secondBinaryRepresentation[^8] == '1')
+            //{
+            //    centralOptions[pos] = "Случайная встреча";
+            //}
+            //else
+            centralOptions[pos] = "Пустота";
 
             // Обновляем границы клетки
             borders[pos] = currentBorders;
             passageDict[pos] = currentPassages;
+            closedStates[pos] = currentClosedStates;
 
             // Остальные параметры клеток устанавливаются стандартно
-            centralOptions[pos] = "Пустота";
-          //  passageDict[pos] = new Tuple<int, int, int, int>(0, 0, 0, 0);
-            closedStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
             messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
