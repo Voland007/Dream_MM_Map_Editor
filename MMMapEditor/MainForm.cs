@@ -1158,12 +1158,25 @@ namespace MMMapEditor
                     currentClosedStates = new Tuple<bool, bool, bool, bool>(true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
             }
 
-            //if (secondBinaryRepresentation[^8] == '1')
-            //{
-            //    centralOptions[pos] = "Случайная встреча";
-            //}
-            //else
-            centralOptions[pos] = "Пустота";
+            if (secondBinaryRepresentation[^4] == '1')
+                isDangerStates[pos] = true;
+            else isDangerStates[pos] = false;
+
+            if (secondBinaryRepresentation[^6] == '1')
+                lightingLevels[pos] = Lighting.Dark;
+            else lightingLevels[pos] = Lighting.Light;
+
+            if (secondBinaryRepresentation[^2] == '1')
+                noMagicStates[pos] = true;
+            else noMagicStates[pos] = false;
+
+            if (secondBinaryRepresentation[^8] == '1')
+            {
+                centralOptions[pos] = "Случайная встреча";
+            }
+            else
+                centralOptions[pos] = "Пустота";
+
 
             // Обновляем границы клетки
             borders[pos] = currentBorders;
@@ -1171,12 +1184,11 @@ namespace MMMapEditor
             closedStates[pos] = currentClosedStates;
 
             // Остальные параметры клеток устанавливаются стандартно
+            
             messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
-            isDangerStates[pos] = false;
-            noMagicStates[pos] = false;
-            lightingLevels[pos] = Lighting.Light;
+           
         }
 
         // Обработчик события пункта меню "Метаданные"
