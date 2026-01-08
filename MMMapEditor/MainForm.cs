@@ -27,6 +27,7 @@ using Newtonsoft.Json.Linq;
 using IniParser;
 using IniParser.Model;
 using IniParser.Parser;
+using System.Globalization;
 
 namespace MMMapEditor
 {
@@ -1031,14 +1032,25 @@ namespace MMMapEditor
             // Считываем весь файл целиком
             string[] lines = File.ReadAllLines(filename);
 
-            // Проверяем количество строк и наличие данных
-            if (lines.Length != 32 || lines.Any(line => line.Split().Length != 16))
+            // Минимальное количество строк — 32
+            if (lines.Length < 32)
             {
-                MessageBox.Show("Формат файла не соответствует ожидаемому.");
+                MessageBox.Show($"Файл содержит менее 32 строк ({lines.Length}).", "Ошибка формата файла");
                 return;
             }
 
-            // Обрабатываем каждую клетку
+            // Проверяем первые 32 строки на наличие ровно 16 значений
+            for (int i = 0; i < 32; i++)
+            {
+                string[] values = lines[i].Split();
+                if (values.Length != 16)
+                {
+                    MessageBox.Show($"Строка {i + 1}: найдено {values.Length} значений, ожидается 16.", "Ошибка формата файла");
+                    return;
+                }
+            }
+
+            // Обрабатываем обычные данные
             for (int y = 0; y < 16; y++)
             {
                 string[] cellValuesFirstLayer = lines[y].Split();
@@ -1050,7 +1062,10 @@ namespace MMMapEditor
                 }
             }
 
-            // Обновляем внешний вид интерфейса
+            // Теперь вызываем новый метод для обработки дополнительных строк
+            ProcessAdditionalCoordinates(lines);
+
+            // Обновляем интерфейс
             foreach (var button in gridButtons)
             {
                 button.Invalidate();
@@ -1058,6 +1073,47 @@ namespace MMMapEditor
 
             // Сообщаем пользователю о завершении процесса
             MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void ProcessAdditionalCoordinates(string[] lines)
+        {
+            if (lines.Length > 32)
+            {
+                // Читаем только 33-ю строку, содержащую количество пар
+                string countLine = lines[32].Trim(); // Чистим строку от лишних пробелов
+
+                // Проверяем, что строка не пустая
+                if (string.IsNullOrEmpty(countLine))
+                {
+                    MessageBox.Show("Ошибка: пустая строка.", "Ошибка формата файла");
+                    return;
+                }
+
+                // Преобразуем строку в элементы
+                string[] elements = countLine.Split();
+
+                // Первое значение — это количество пар
+                if (!int.TryParse(elements[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int countOfAdditionalPairs))
+                {
+                    MessageBox.Show($"Ошибка в первой дополнительной строке ('{elements[0]}'): невозможно преобразовать в шестнадцатеричное число.", "Ошибка формата файла");
+                    return;
+                }
+
+                // Перебираем элементы, начиная со второго (остальные элементы — это пары)
+                for (int i = 1; i < elements.Length; i++)
+                {
+                    // Преобразуем элемент в число
+                    int hexValue = Convert.ToInt32(elements[i], 16);
+
+                    // Выделяем Y и X из одного числа
+                    int coordY = (hexValue >> 4) & 0xF; // Старшие 4 бита — это Y
+                    int coordX = hexValue & 0xF; // Младшие 4 бита — это X
+
+                    // Заменяем центральный объект в соответствующей клетке
+                    Point newPos = new Point(coordX, coordY);
+                    centralOptions[newPos] = "AnyObject";
+                }
+            }
         }
 
         private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer)
