@@ -28,6 +28,8 @@ using IniParser;
 using IniParser.Model;
 using IniParser.Parser;
 using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace MMMapEditor
 {
@@ -1063,7 +1065,7 @@ namespace MMMapEditor
             }
 
             // Теперь вызываем новый метод для обработки дополнительных строк
-            ProcessAdditionalCoordinates(lines);
+            DefineCellObjectWithDirectionAndText(lines);
 
             // Обновляем интерфейс
             foreach (var button in gridButtons)
@@ -1075,43 +1077,125 @@ namespace MMMapEditor
             MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private void ProcessAdditionalCoordinates(string[] lines)
+        // Преобразует шестнадцатеричную строку в ASCII-текст
+        // Преобразует шестнадцатеричную строку в ASCII-текст
+        private string HexToAscii(string hex)
+        {
+            // Нормализуем строку, удаляя лишние пробелы и ненужные символы
+            hex = Regex.Replace(hex, @"\s+", "");
+
+            // Проверьте, что длина нормализованной строки делится на 2
+            if (hex.Length % 2 != 0)
+            {
+                throw new FormatException("Длина строки должна быть чётной!");
+            }
+
+            // Конвертировать строку в массив байтов
+            var bytes = new byte[hex.Length / 2];
+            for (int i = 0; i < hex.Length; i += 2)
+            {
+                bytes[i / 2] = Convert.ToByte(hex.Substring(i, 2), 16);
+            }
+
+            // Преобразуем байты в ASCII-текст
+            return Encoding.ASCII.GetString(bytes);
+        }
+
+        private void DefineCellObjectWithDirectionAndText(string[] lines)
         {
             if (lines.Length > 32)
             {
-                // Читаем только 33-ю строку, содержащую количество пар
-                string countLine = lines[32].Trim(); // Чистим строку от лишних пробелов
+                // 32-я строка: координаты
+                string coordinatesLine = lines[32].Trim();
+                string[] coordinateElements = coordinatesLine.Split();
 
-                // Проверяем, что строка не пустая
-                if (string.IsNullOrEmpty(countLine))
+                // 33-я строка: направления
+                string directionsLine = lines[33].Trim();
+                string[] directionElements = directionsLine.Split();
+
+                // 34-я строка: сообщения
+                string messagesLine = lines[34].Trim();
+                string[] messages = messagesLine.Split("00").Where(msg => msg != "").ToArray(); // Разделяем на фразы
+
+                // Преобразуем каждое сообщение из HEX в ASCII
+                for (int i = 0; i < messages.Length; i++)
                 {
-                    MessageBox.Show("Ошибка: пустая строка.", "Ошибка формата файла");
+                    messages[i] = HexToAscii(messages[i]);
+                }
+
+                // Первая цифра в первой строке — это общее количество пар
+                if (!int.TryParse(coordinateElements[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int totalPairs))
+                {
+                    MessageBox.Show($"Ошибка в первой строке ('{coordinateElements[0]}'): невозможно преобразовать в шестнадцатеричное число.", "Ошибка формата файла");
                     return;
                 }
 
-                // Преобразуем строку в элементы
-                string[] elements = countLine.Split();
-
-                // Первое значение — это количество пар
-                if (!int.TryParse(elements[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int countOfAdditionalPairs))
-                {
-                    MessageBox.Show($"Ошибка в первой дополнительной строке ('{elements[0]}'): невозможно преобразовать в шестнадцатеричное число.", "Ошибка формата файла");
-                    return;
-                }
-
-                // Перебираем элементы, начиная со второго (остальные элементы — это пары)
-                for (int i = 1; i < elements.Length; i++)
+                // Обрабатываем координаты и выставляем AnyObject
+                for (int i = 1; i < coordinateElements.Length; i++)
                 {
                     // Преобразуем элемент в число
-                    int hexValue = Convert.ToInt32(elements[i], 16);
+                    int hexCoord = Convert.ToInt32(coordinateElements[i], 16);
 
                     // Выделяем Y и X из одного числа
-                    int coordY = (hexValue >> 4) & 0xF; // Старшие 4 бита — это Y
-                    int coordX = hexValue & 0xF; // Младшие 4 бита — это X
+                    int coordY = (hexCoord >> 4) & 0xF; // Старшие 4 бита — это Y
+                    int coordX = hexCoord & 0xF; // Младшие 4 бита — это X
 
                     // Заменяем центральный объект в соответствующей клетке
                     Point newPos = new Point(coordX, coordY);
                     centralOptions[newPos] = "AnyObject";
+                }
+
+                // Обрабатываем направления и сообщения
+                for (int i = 0; i < directionElements.Length; i++)
+                {
+                    // Преобразуем элемент в число
+                    int hexDir = Convert.ToInt32(directionElements[i], 16);
+
+                    // Получаем четыре пары битов (для Top, Left, Bottom, Right)
+                    for (int k = 0; k < 4; k++)
+                    {
+                        int mask = 0x3 << (k * 2); // Битовая маска для конкретного направления
+
+                        // Проверяем, установлены ли оба бита
+                        if ((hexDir & mask) == mask)
+                        {
+                            Direction directionFlag;
+
+                            switch (k)
+                            {
+                                case 0: directionFlag = Direction.Bottom; break;
+                                case 1: directionFlag = Direction.Left; break;
+                                case 2: directionFlag = Direction.Right; break;
+                                case 3: directionFlag = Direction.Top; break;
+                                default: throw new Exception("Неправильный индекс.");
+                            }
+
+                            // Используем координаты из 32-й строки
+                            int hexCoord = Convert.ToInt32(coordinateElements[i + 1], 16); // Обратите внимание на "+1"
+                            int coordY = (hexCoord >> 4) & 0xF; // Старшие 4 бита — это Y
+                            int coordX = hexCoord & 0xF; // Младшие 4 бита — это X
+                            Point newPos = new Point(coordX, coordY);
+
+                            // Включаем флаг "сообщение" для соответствующего направления
+                            Tuple<bool, bool, bool, bool> messagesTuple = messageStates.TryGetValue(newPos, out var prevMsgs) ? prevMsgs : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                            switch (directionFlag)
+                            {
+                                case Direction.Top: messagesTuple = new Tuple<bool, bool, bool, bool>(true, messagesTuple.Item2, messagesTuple.Item3, messagesTuple.Item4); break;
+                                case Direction.Left: messagesTuple = new Tuple<bool, bool, bool, bool>(messagesTuple.Item1, true, messagesTuple.Item3, messagesTuple.Item4); break;
+                                case Direction.Bottom: messagesTuple = new Tuple<bool, bool, bool, bool>(messagesTuple.Item1, messagesTuple.Item2, true, messagesTuple.Item4); break;
+                                case Direction.Right: messagesTuple = new Tuple<bool, bool, bool, bool>(messagesTuple.Item1, messagesTuple.Item2, messagesTuple.Item3, true); break;
+                            }
+                            messageStates[newPos] = messagesTuple;
+
+                            // Добавляем соответствующее сообщение
+                            if (messages.Any())
+                            {
+                                string messagePhrase = messages.First();
+                                messages = messages.Skip(1).ToArray(); // Использованная фраза исключается
+                                notesPerCell[newPos] += messagePhrase + "\n";
+                            }
+                        }
+                    }
                 }
             }
         }
