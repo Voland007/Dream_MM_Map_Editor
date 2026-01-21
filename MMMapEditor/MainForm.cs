@@ -1017,9 +1017,9 @@ namespace MMMapEditor
             using (OpenFileDialog dialog = new OpenFileDialog())
             {
                 dialog.InitialDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                dialog.Filter = "Text Files (*.txt)|*.txt";
-                dialog.Title = "Select a text file to load as a laboratory draft";
-                dialog.DefaultExt = ".txt";
+                dialog.Filter = "OVR Files (*.ovr)|*.ovr|Text Files (*.txt)|*.txt|All files (*.*)|*.*";
+                dialog.Title = "Select a file to load as a laboratory draft";
+                dialog.DefaultExt = ".ovr";
 
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
@@ -1031,41 +1031,183 @@ namespace MMMapEditor
 
         private void LoadDraftLaboratory(string filename)
         {
-            // Считываем весь файл целиком
-            string[] lines = File.ReadAllLines(filename);
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            string fileExtension = Path.GetExtension(filename).ToUpper();
+            string[] lines;
 
-            // Минимальное количество строк — 32
-            if (lines.Length < 32)
+            if (fileExtension == ".OVR")
             {
-                MessageBox.Show($"Файл содержит менее 32 строк ({lines.Length}).", "Ошибка формата файла");
-                return;
-            }
+                // Для .OVR файлов создаем массив из 33 строк
+                lines = new string[33];
 
-            // Проверяем первые 32 строки на наличие ровно 16 значений
-            for (int i = 0; i < 32; i++)
-            {
-                string[] values = lines[i].Split();
-                if (values.Length != 16)
+                // Если это SORPIGAL.OVR, используем захардкоженные первые 32 строки
+                if (fileNameOnly == "SORPIGAL.OVR")
                 {
-                    MessageBox.Show($"Строка {i + 1}: найдено {values.Length} значений, ожидается 16.", "Ошибка формата файла");
+                    string[] first16Lines = {
+                "65 06 4C 44 8C 44 4C 04 0C 44 34 15 15 15 45 34",
+                "55 11 05 54 19 45 14 43 70 15 11 71 33 41 54 11",
+                "CD 30 11 47 00 74 01 44 44 50 C1 44 00 44 C4 70",
+                "55 11 41 14 D1 55 11 47 04 74 15 55 33 05 44 54",
+                "CD 00 DC 01 04 44 40 54 91 45 40 14 11 11 0D 54",
+                "55 11 05 40 10 07 24 46 08 64 D6 11 33 11 03 54",
+                "CD 30 51 95 11 43 50 15 13 45 44 50 11 51 01 54",
+                "15 41 C4 18 01 44 44 10 C1 44 4C 44 C0 44 10 15",
+                "41 04 14 11 11 0D 1C 01 44 44 44 44 44 14 31 11",
+                "37 41 50 33 51 41 90 51 65 26 56 65 16 51 11 51",
+                "41 0C 4C 40 C4 44 88 44 44 00 C4 C4 40 84 40 3C",
+                "55 21 56 15 05 54 19 45 14 11 45 14 07 18 15 11",
+                "65 12 45 10 11 87 00 B4 11 01 DC 11 C3 D0 11 11",
+                "55 21 56 11 11 59 D1 59 11 13 45 40 44 04 50 33",
+                "65 12 45 10 41 44 44 44 50 01 64 06 1C 11 55 11",
+                "55 61 56 51 45 64 46 44 54 D1 55 41 70 41 54 51"
+            };
+
+                    string[] second16Lines = {
+                "C5 05 44 44 84 44 44 04 04 44 14 15 95 15 C5 14",
+                "15 11 05 54 91 45 14 C1 50 15 11 11 11 01 54 11",
+                "81 10 11 45 00 14 01 44 44 10 41 44 00 44 44 50",
+                "51 11 41 14 51 DB 11 45 84 54 14 C5 10 01 44 54",
+                "85 00 D4 01 04 44 40 54 11 45 40 14 11 11 05 54",
+                "51 11 05 40 10 05 84 44 80 44 D4 11 11 11 01 54",
+                "C5 10 51 95 11 41 50 15 11 45 44 50 11 51 01 54",
+                "11 41 44 14 01 44 44 10 41 44 44 44 40 44 10 14",
+                "41 04 14 11 11 85 14 01 44 44 44 44 44 14 11 11",
+                "95 41 50 11 51 41 90 51 45 15 54 45 14 51 11 51",
+                "41 04 44 40 44 44 C4 44 44 00 44 44 40 84 40 14",
+                "95 11 54 11 29 FC 11 ED 3C 11 45 14 05 90 11 11",
+                "11 10 45 10 39 05 80 14 39 01 D4 11 41 50 11 11",
+                "45 11 54 11 39 5D 51 4D B9 11 45 40 44 04 50 11",
+                "11 10 45 10 69 6C 6C 2C 78 81 44 84 14 11 C5 10",
+                "D1 41 D4 51 C1 C4 44 44 54 51 54 41 50 41 54 51"
+            };
+
+                    // Копируем первые 32 строки
+                    Array.Copy(first16Lines, 0, lines, 0, 16);
+                    Array.Copy(second16Lines, 0, lines, 16, 16);
+                }
+                else
+                {
+                    // Для других .OVR файлов - первые 32 строки пока неизвестны
+                    for (int i = 0; i < 32; i++)
+                    {
+                        lines[i] = "";
+                    }
+                }
+
+                try
+                {
+                    // Читаем бинарный файл для получения строки 33 (данные объектов)
+                    byte[] fileData = File.ReadAllBytes(filename);
+                    int startAddress = 0x386; // Начало данных объектов
+
+                    if (fileData.Length < startAddress)
+                    {
+                        MessageBox.Show($"Файл слишком мал. Размер: {fileData.Length}, нужен адрес: {startAddress}", "Ошибка");
+                        lines[32] = "";
+                    }
+                    else
+                    {
+                        // Создаем строку со всеми данными начиная с startAddress
+                        StringBuilder dataLine = new StringBuilder();
+
+                        for (int i = startAddress; i < fileData.Length; i++)
+                        {
+                            if (i > startAddress) dataLine.Append(" ");
+                            dataLine.AppendFormat("{0:X2}", fileData[i]);
+                        }
+
+                        lines[32] = dataLine.ToString();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Ошибка при чтении бинарного файла: {ex.Message}", "Ошибка");
+                    lines[32] = "";
+                }
+            }
+            else
+            {
+                // Для текстовых файлов (.txt) используем старую логику
+                lines = File.ReadAllLines(filename);
+
+                // Минимальное количество строк — 32
+                if (lines.Length < 32)
+                {
+                    MessageBox.Show($"Файл содержит менее 32 строк ({lines.Length}).", "Ошибка формата файла");
                     return;
                 }
-            }
 
-            // Обрабатываем обычные данные
-            for (int y = 0; y < 16; y++)
-            {
-                string[] cellValuesFirstLayer = lines[y].Split();
-                string[] cellValuesSecondLayer = lines[y + 16].Split();
-
-                for (int x = 0; x < 16; x++)
+                // Проверяем первые 32 строки на наличие ровно 16 значений
+                for (int i = 0; i < 32; i++)
                 {
-                    ProcessCellDraft(x, y, cellValuesFirstLayer[x], cellValuesSecondLayer[x]);
+                    string[] values = lines[i].Split();
+                    if (values.Length != 16)
+                    {
+                        MessageBox.Show($"Строка {i + 1}: найдено {values.Length} значений, ожидается 16.", "Ошибка формата файла");
+                        return;
+                    }
+                }
+
+                // Для совместимости с новой логикой, если файл имеет 35 строк,
+                // объединяем строки 32-34 в одну
+                if (lines.Length >= 35)
+                {
+                    List<string> newLines = new List<string>();
+                    for (int i = 0; i < 32; i++)
+                    {
+                        newLines.Add(lines[i]);
+                    }
+
+                    // Объединяем строки 32, 33, 34 в одну
+                    string combinedLine = lines[32] + " " + lines[33] + " " + lines[34];
+                    newLines.Add(combinedLine);
+
+                    lines = newLines.ToArray();
+                }
+                else if (lines.Length == 33)
+                {
+                    // Уже в правильном формате (32 + 1)
+                    // Ничего не делаем
+                }
+                else if (lines.Length == 32)
+                {
+                    // Только 32 строки - добавляем пустую строку для данных
+                    List<string> newLines = new List<string>(lines);
+                    newLines.Add("");
+                    lines = newLines.ToArray();
                 }
             }
 
-            // Теперь вызываем новый метод для обработки дополнительных строк
-            DefineCellObjectWithDirectionAndText(lines);
+            // Шаг 1: Обрабатываем данные карты (строки 0-31)
+            for (int y = 0; y < 16; y++)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[y]) && !string.IsNullOrWhiteSpace(lines[y + 16]))
+                {
+                    string[] cellValuesFirstLayer = lines[y].Split();
+                    string[] cellValuesSecondLayer = lines[y + 16].Split();
+
+                    // Проверяем, что строки имеют правильное количество значений
+                    if (cellValuesFirstLayer.Length == 16 && cellValuesSecondLayer.Length == 16)
+                    {
+                        for (int x = 0; x < 16; x++)
+                        {
+                            ProcessCellDraft(x, y, cellValuesFirstLayer[x], cellValuesSecondLayer[x]);
+                        }
+                    }
+                }
+            }
+
+            // Шаг 2: Обрабатываем данные объектов с помощью нового анализатора
+            if (fileExtension == ".OVR")
+            {
+                // Для .OVR файлов используем новый анализатор
+                ProcessOvrObjectsWithAdvancedAnalyzer(filename);
+            }
+            else if (!string.IsNullOrWhiteSpace(lines[32]))
+            {
+                // Для текстовых файлов используем старую логику
+                ProcessObjectDataFromBinary(lines[32]);
+            }
 
             // Обновляем интерфейс
             foreach (var button in gridButtons)
@@ -1077,7 +1219,585 @@ namespace MMMapEditor
             MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        // Преобразует шестнадцатеричную строку в ASCII-текст
+        private void ProcessOvrObjectsWithAdvancedAnalyzer(string filename)
+        {
+            try
+            {
+                // Используем новый анализатор OVR файлов
+                var objects = OvrFileAnalyzer.AnalyzeOvrFile(filename);
+
+                // Обрабатываем объекты на карте
+                foreach (var obj in objects)
+                {
+                    Point pos = new Point(obj.X, obj.Y);
+
+                    // Устанавливаем центральный объект
+                    centralOptions[pos] = "AnyObject";
+
+                    // Устанавливаем направления с сообщениями
+                    var directionsWithMessages = obj.GetDirectionsWithMessages();
+
+                    // Получаем текущее состояние сообщений
+                    var currentMessages = messageStates.TryGetValue(pos, out var prev)
+                        ? prev
+                        : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+
+                    // Обновляем состояния сообщений
+                    bool top = currentMessages.Item1 || directionsWithMessages.Contains(Direction.Top);
+                    bool left = currentMessages.Item2 || directionsWithMessages.Contains(Direction.Left);
+                    bool bottom = currentMessages.Item3 || directionsWithMessages.Contains(Direction.Bottom);
+                    bool right = currentMessages.Item4 || directionsWithMessages.Contains(Direction.Right);
+
+                    messageStates[pos] = new Tuple<bool, bool, bool, bool>(top, left, bottom, right);
+
+                    // Определяем, нужно ли показывать префикс Path0
+                    bool hasMainPath = obj.PathTexts.ContainsKey(0) && obj.PathTexts[0].Count > 0;
+                    bool hasAlternativePaths = obj.PathTexts.Any(kvp => kvp.Key != 0 && kvp.Value.Count > 0);
+                    bool shouldShowPath0 = hasMainPath && hasAlternativePaths;
+
+                    // Добавляем тексты в заметки с правильной группировкой
+                    if (obj.PathTexts.Count > 0)
+                    {
+                        if (!notesPerCell.ContainsKey(pos))
+                            notesPerCell[pos] = "";
+
+                        // Сортируем пути по номеру
+                        var sortedPaths = obj.PathTexts
+                            .OrderBy(kvp => kvp.Key)
+                            .ToList();
+
+                        bool firstPath = true;
+                        int variantCounter = 1; // Общий счётчик вариантов
+
+                        foreach (var kvp in sortedPaths)
+                        {
+                            // Пропускаем пустые пути
+                            if (kvp.Value == null || kvp.Value.Count == 0)
+                                continue;
+
+                            // Добавляем разделитель между путями
+                            if (!firstPath)
+                            {
+                                notesPerCell[pos] += "\n";
+                            }
+                            firstPath = false;
+
+                            // Для Path0 добавляем префикс только если нужно
+                            if (kvp.Key == 0)
+                            {
+                                if (shouldShowPath0)
+                                {
+                                    notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
+                                    notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
+                                }
+                                
+                            }
+                            else
+                            {
+                                // Для всех альтернативных путей выводим последовательный номер
+                                notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
+                            }
+
+                            // Добавляем тексты этого пути
+                            var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
+                            foreach (var text in sortedTexts)
+                            {
+                                // Формат: "Text at 0xXXXX: "encoded_text""
+                                // Нужно: удалить "Text at 0xXXXX: " и оставить сам текст
+                                int colonIndex = text.IndexOf(':');
+                                if (colonIndex >= 0 && colonIndex + 1 < text.Length)
+                                {
+                                    string textPart = text.Substring(colonIndex + 1).Trim();
+
+                                    // Декодируем escape-последовательности
+                                    string decodedText = DecodeTextString(textPart);
+                                    if (!string.IsNullOrEmpty(decodedText))
+                                    {
+                                        // Убираем \r в конце
+                                        decodedText = decodedText.TrimEnd('\r');
+
+                                        // Выводим как есть, с возможными кавычками
+                                        notesPerCell[pos] += decodedText + "\n";
+                                    }
+                                }
+                            }
+                        }
+
+                        // Удаляем последний лишний перенос строки
+                        if (!string.IsNullOrEmpty(notesPerCell[pos]))
+                        {
+                            notesPerCell[pos] = notesPerCell[pos].TrimEnd('\n');
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Просто игнорируем
+            }
+        }
+
+        private void ApplyItalicSeaWaveStyle(RichTextBox rt, int startIndex, int length)
+        {
+            rt.Select(startIndex, length);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            rt.SelectionColor = Color.Orange; // Морская волна
+        }
+
+        private void ApplyBoldRedStyle(RichTextBox rt, int startIndex, int length)
+        {
+            rt.Select(startIndex, length);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            rt.SelectionColor = Color.FromArgb(0xB539FF);
+        }
+
+        private void UpdateNotesFormatting()
+        {
+            if (selectedPosition.HasValue)
+            {
+                Point pos = selectedPosition.Value;
+                string noteText = notesPerCell[pos];
+
+                // Очищаем выделение
+                notesTextBox.DeselectAll();
+
+                // Курсив и морская волна для фразы "Эта ячейка содержит различные варианты текста"
+                int introIndex = noteText.IndexOf("Эта ячейка содержит различные варианты текста");
+                if (introIndex >= 0)
+                {
+                    ApplyItalicSeaWaveStyle(notesTextBox, introIndex, "Эта ячейка содержит различные варианты текста".Length);
+                }
+
+                // Жирный и красный для "Вариант#"
+                MatchCollection matches = Regex.Matches(noteText, @"Вариант\d+:");
+                foreach (Match match in matches)
+                {
+                    ApplyBoldRedStyle(notesTextBox, match.Index, match.Length);
+                }
+            }
+        }
+
+        // Новый метод для обработки текстовых записей
+        private string ProcessTextEntry(string textEntry)
+        {
+            if (string.IsNullOrEmpty(textEntry))
+                return "";
+
+            // Формат из OvrFileAnalyzer: "Text at 0xXXXX: "encoded_text""
+            // Нужно: удалить "Text at 0xXXXX: " и декодировать
+
+            // Шаг 1: Находим двоеточие
+            int colonIndex = textEntry.IndexOf(':');
+            if (colonIndex < 0)
+                return textEntry; // Возвращаем как есть
+
+            // Шаг 2: Извлекаем текст после двоеточия
+            string textAfterColon = textEntry.Substring(colonIndex + 1).Trim();
+
+            // Шаг 3: Убираем кавычки если они есть
+            if (textAfterColon.Length >= 2 &&
+                textAfterColon.StartsWith("\"") &&
+                textAfterColon.EndsWith("\""))
+            {
+                textAfterColon = textAfterColon.Substring(1, textAfterColon.Length - 2);
+            }
+
+            // Шаг 4: Декодируем escape-последовательности
+            return DecodeTextString(textAfterColon);
+        }
+
+        // Метод для декодирования текста с escape-последовательностями
+        private string DecodeTextString(string encodedText)
+        {
+            if (string.IsNullOrEmpty(encodedText))
+                return "";
+
+            // Простая декодировка escape-последовательностей
+            return encodedText
+                .Replace("\\r", "\r")
+                .Replace("\\n", "\n")
+                .Replace("\\t", "\t")
+                .Replace("\\\"", "\"")
+                .Replace("\\\\", "\\");
+        }
+
+        // Вспомогательный метод для добавления текстов пути
+        private void AddTextsForPath(Point pos, HashSet<string> texts, string prefix)
+        {
+            if (texts == null || texts.Count == 0)
+                return;
+
+            var sortedTexts = texts.OrderBy(t => t).ToList();
+            foreach (var text in sortedTexts)
+            {
+                string cleanText = ExtractCleanTextFromEntry(text);
+                if (!string.IsNullOrEmpty(cleanText))
+                {
+                    string decodedText = DecodeTextString(cleanText);
+                    if (!string.IsNullOrEmpty(decodedText))
+                    {
+                        notesPerCell[pos] += prefix + decodedText + "\n";
+                    }
+                }
+            }
+        }
+
+        // Метод для группировки путей с одинаковыми наборами текстов
+        private Dictionary<int, HashSet<string>> GroupSimilarPaths(Dictionary<int, HashSet<string>> pathTexts)
+        {
+            var groupedPaths = new Dictionary<int, HashSet<string>>();
+            var processedSets = new List<HashSet<string>>();
+
+            // Сортируем пути по номеру для детерминированного результата
+            var sortedPaths = pathTexts.OrderBy(kvp => kvp.Key).ToList();
+
+            foreach (var kvp in sortedPaths)
+            {
+                bool foundGroup = false;
+
+                // Ищем группу с таким же набором текстов
+                for (int i = 0; i < processedSets.Count; i++)
+                {
+                    if (AreTextSetsEqual(processedSets[i], kvp.Value))
+                    {
+                        // Нашли существующую группу - используем минимальный номер пути из этой группы
+                        var existingGroup = groupedPaths.First(g => AreTextSetsEqual(g.Value, kvp.Value));
+
+                        // Если текущий путь имеет меньший номер, чем существующий в группе,
+                        // то мы должны были уже обработать его раньше (из-за сортировки),
+                        // поэтому просто пропускаем этот путь (он уже в группе)
+                        foundGroup = true;
+                        break;
+                    }
+                }
+
+                if (!foundGroup)
+                {
+                    // Создаем новую группу с этим уникальным набором текстов
+                    groupedPaths[kvp.Key] = kvp.Value;
+                    processedSets.Add(kvp.Value);
+                }
+            }
+
+            return groupedPaths;
+        }
+
+        // Метод для сравнения двух наборов текстов
+        private bool AreTextSetsEqual(HashSet<string> set1, HashSet<string> set2)
+        {
+            if (set1 == null || set2 == null) return false;
+            if (set1.Count != set2.Count) return false;
+
+            // Сортируем и сравниваем как строки
+            var sorted1 = set1.OrderBy(t => t).ToList();
+            var sorted2 = set2.OrderBy(t => t).ToList();
+
+            for (int i = 0; i < sorted1.Count; i++)
+            {
+                if (sorted1[i] != sorted2[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        // Метод для извлечения чистого текста из записи
+        private string ExtractCleanTextFromEntry(string textEntry)
+        {
+            if (string.IsNullOrEmpty(textEntry))
+                return "";
+
+            // Формат: "Text at 0xXXXX: "text""
+            // Ищем двоеточие и текст после него
+            int colonIndex = textEntry.IndexOf(':');
+            if (colonIndex >= 0 && colonIndex + 1 < textEntry.Length)
+            {
+                string textPart = textEntry.Substring(colonIndex + 1).Trim();
+
+                // Убираем кавычки если есть
+                if (textPart.StartsWith("\"") && textPart.EndsWith("\""))
+                {
+                    textPart = textPart.Substring(1, textPart.Length - 2);
+                }
+
+                return textPart;
+            }
+
+            // Если формат другой, возвращаем как есть
+            return textEntry;
+        }
+
+        private void ProcessObjectDataFromBinary(string dataLine)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(dataLine))
+                {
+                    Debug.WriteLine("Пустая строка данных");
+                    return;
+                }
+
+                // Старый способ обработки (для обратной совместимости)
+                string[] elements = dataLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                List<byte> dataBytes = new List<byte>();
+
+                foreach (string element in elements)
+                {
+                    if (byte.TryParse(element, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte b))
+                    {
+                        dataBytes.Add(b);
+                    }
+                }
+
+                if (dataBytes.Count == 0)
+                {
+                    Debug.WriteLine("Нет данных для обработки");
+                    return;
+                }
+
+                Debug.WriteLine($"Всего байт данных: {dataBytes.Count}");
+                Debug.WriteLine($"Первый байт: 0x{dataBytes[0]:X2} ({dataBytes[0]})");
+
+                int index = 0;
+
+                // 1. Первый байт - количество объектов
+                int numObjects = dataBytes[0];
+                index = 1;
+
+                Debug.WriteLine($"Количество объектов: {numObjects}");
+
+                // Проверяем, достаточно ли данных
+                if (dataBytes.Count < 1 + numObjects * 2)
+                {
+                    Debug.WriteLine($"Недостаточно данных. Требуется минимум {1 + numObjects * 2} байт, доступно {dataBytes.Count}");
+
+                    // Попробуем определить количество объектов по фактическим данным
+                    int actualObjects = 0;
+                    for (int i = 1; i < dataBytes.Count; i++)
+                    {
+                        byte b = dataBytes[i];
+                        int x = b & 0xF;
+                        int y = (b >> 4) & 0xF;
+
+                        if (x <= 15 && y <= 15)
+                        {
+                            actualObjects++;
+                        }
+                        else
+                        {
+                            break;
+                        }
+                    }
+
+                    numObjects = actualObjects;
+                    index = 1;
+                    Debug.WriteLine($"Фактическое количество объектов определено как: {numObjects}");
+                }
+
+                // 2. Читаем координаты
+                List<byte> coordinates = new List<byte>();
+                for (int i = 0; i < numObjects && index < dataBytes.Count; i++)
+                {
+                    coordinates.Add(dataBytes[index]);
+                    index++;
+                }
+
+                Debug.WriteLine($"Прочитано координат: {coordinates.Count}");
+
+                // 3. Читаем направления
+                List<byte> directions = new List<byte>();
+                for (int i = 0; i < numObjects && index < dataBytes.Count; i++)
+                {
+                    directions.Add(dataBytes[index]);
+                    index++;
+                }
+
+                Debug.WriteLine($"Прочитано направлений: {directions.Count}");
+
+                // 4. Пропускаем patch-коды (n * 2 байт)
+                int patchBytesToSkip = numObjects * 2;
+                if (index + patchBytesToSkip <= dataBytes.Count)
+                {
+                    Debug.WriteLine($"Пропускаем {patchBytesToSkip} байт patch-кодов");
+                    index += patchBytesToSkip;
+                }
+                else
+                {
+                    Debug.WriteLine($"Недостаточно данных для patch-кодов. Нужно {patchBytesToSkip}, доступно {dataBytes.Count - index}");
+                    index = dataBytes.Count;
+                }
+
+                // 5. Извлекаем тексты сообщений
+                List<string> messages = ExtractMessagesFromBytes(dataBytes, index);
+                Debug.WriteLine($"Извлечено сообщений: {messages.Count}");
+
+                // 6. Обрабатываем объекты
+                ProcessObjectsWithTexts(coordinates, directions, messages);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Ошибка в ProcessObjectDataFromBinary: {ex.Message}");
+                MessageBox.Show($"Ошибка при обработке данных объектов: {ex.Message}", "Ошибка");
+            }
+        }
+
+        private List<string> ExtractMessagesFromBytes(List<byte> dataBytes, int startIndex)
+        {
+            List<string> messages = new List<string>();
+            List<byte> currentMessageBytes = new List<byte>();
+
+            for (int i = startIndex; i < dataBytes.Count; i++)
+            {
+                byte b = dataBytes[i];
+
+                // Разделитель сообщений 0x00
+                if (b == 0x00)
+                {
+                    if (currentMessageBytes.Count > 0)
+                    {
+                        try
+                        {
+                            // Преобразуем байты в hex строку
+                            StringBuilder hexBuilder = new StringBuilder();
+                            foreach (byte msgByte in currentMessageBytes)
+                            {
+                                if (hexBuilder.Length > 0) hexBuilder.Append(" ");
+                                hexBuilder.AppendFormat("{0:X2}", msgByte);
+                            }
+
+                            string messageText = HexToAscii(hexBuilder.ToString());
+                            messages.Add(messageText);
+                            Debug.WriteLine($"Сообщение {messages.Count}: {messageText}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Ошибка преобразования сообщения: {ex.Message}");
+                            messages.Add($"[Ошибка преобразования]");
+                        }
+                        currentMessageBytes.Clear();
+                    }
+                }
+                else
+                {
+                    currentMessageBytes.Add(b);
+                }
+            }
+
+            // Добавляем последнее сообщение, если есть
+            if (currentMessageBytes.Count > 0)
+            {
+                try
+                {
+                    StringBuilder hexBuilder = new StringBuilder();
+                    foreach (byte msgByte in currentMessageBytes)
+                    {
+                        if (hexBuilder.Length > 0) hexBuilder.Append(" ");
+                        hexBuilder.AppendFormat("{0:X2}", msgByte);
+                    }
+
+                    string messageText = HexToAscii(hexBuilder.ToString());
+                    messages.Add(messageText);
+                }
+                catch { }
+            }
+
+            return messages;
+        }
+
+        private void ProcessObjectsWithTexts(List<byte> coordinates, List<byte> directions, List<string> messages)
+        {
+            int messageIndex = 0;
+            int processedObjects = 0;
+            int objectsWithMessages = 0;
+
+            for (int i = 0; i < coordinates.Count; i++)
+            {
+                byte coordByte = coordinates[i];
+                int coordY = (coordByte >> 4) & 0xF;
+                int coordX = coordByte & 0xF;
+
+                // Проверяем, что координаты в допустимом диапазоне (0-15)
+                if (coordX >= 0 && coordX < 16 && coordY >= 0 && coordY < 16)
+                {
+                    Point pos = new Point(coordX, coordY);
+
+                    // Заменяем центральный объект на "AnyObject"
+                    centralOptions[pos] = "AnyObject";
+                    processedObjects++;
+
+                    Debug.WriteLine($"Объект {i}: X={coordX}, Y={coordY}");
+
+                    // Обрабатываем направления, если есть
+                    if (i < directions.Count)
+                    {
+                        byte dirByte = directions[i];
+                        bool hasAnyMessage = false;
+
+                        Debug.WriteLine($"  Направления: 0x{dirByte:X2} (бинар: {Convert.ToString(dirByte, 2).PadLeft(8, '0')})");
+
+                        // Проверяем каждое направление (Top, Left, Bottom, Right)
+                        for (int k = 0; k < 4; k++)
+                        {
+                            int mask = 0x3 << (k * 2);
+                            bool hasMessage = (dirByte & mask) == mask;
+
+                            if (hasMessage)
+                            {
+                                hasAnyMessage = true;
+                                Direction directionFlag = k switch
+                                {
+                                    0 => Direction.Bottom,
+                                    1 => Direction.Left,
+                                    2 => Direction.Right,
+                                    3 => Direction.Top,
+                                    _ => throw new Exception("Неправильный индекс направления.")
+                                };
+
+                                Debug.WriteLine($"    Сообщение в направлении: {directionFlag}");
+
+                                // Устанавливаем флаг сообщения для направления
+                                var currentMessages = messageStates.TryGetValue(pos, out var prev)
+                                    ? prev
+                                    : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+
+                                var updatedMessages = directionFlag switch
+                                {
+                                    Direction.Top => new Tuple<bool, bool, bool, bool>(true, currentMessages.Item2, currentMessages.Item3, currentMessages.Item4),
+                                    Direction.Left => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, true, currentMessages.Item3, currentMessages.Item4),
+                                    Direction.Bottom => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, true, currentMessages.Item4),
+                                    Direction.Right => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, currentMessages.Item3, true),
+                                    _ => currentMessages
+                                };
+
+                                messageStates[pos] = updatedMessages;
+                            }
+                        }
+
+                        // Добавляем текст сообщения, если объект имеет сообщение
+                        if (hasAnyMessage && messageIndex < messages.Count)
+                        {
+                            if (!notesPerCell.ContainsKey(pos))
+                                notesPerCell[pos] = "";
+
+                            notesPerCell[pos] += messages[messageIndex] + "\n";
+                            objectsWithMessages++;
+                            Debug.WriteLine($"    Добавлено сообщение: {messages[messageIndex]}");
+                            messageIndex++;
+                        }
+                    }
+                }
+                else
+                {
+                    Debug.WriteLine($"Некорректные координаты объекта {i}: X={coordX}, Y={coordY}");
+                }
+            }
+
+            Debug.WriteLine($"Итоги обработки:");
+            Debug.WriteLine($"  Обработано объектов: {processedObjects}");
+            Debug.WriteLine($"  Объектов с сообщениями: {objectsWithMessages}");
+            Debug.WriteLine($"  Использовано сообщений: {messageIndex} из {messages.Count}");
+        }
+
         // Преобразует шестнадцатеричную строку в ASCII-текст
         private string HexToAscii(string hex)
         {
@@ -1101,102 +1821,200 @@ namespace MMMapEditor
             return Encoding.ASCII.GetString(bytes);
         }
 
+        //Временный костыль до тех пор пока я не разберусь в правильной логике; 
+        public static void TransformMessages(List<string> messages)
+        {
+            for (int i = 0; i < messages.Count; i++)
+            {
+                // Проверяем конец строки на символ '0D'
+                if (messages[i].EndsWith("0D"))
+                {
+                    // Сохраняем текст удаляемого элемента
+                    string removedText = messages[i];
+
+                    // Удаляем элемент из списка
+                    messages.RemoveAt(i);
+
+                    // Обновляем последующие элементы
+                    for (int j = 0; j < 3 && i + j < messages.Count; j++)
+                    {
+                        messages[i + j] = removedText + messages[i + j];
+                    }
+                }
+            }
+        }
+
         private void DefineCellObjectWithDirectionAndText(string[] lines)
         {
-            if (lines.Length > 32)
+            if (lines.Length > 34 && !string.IsNullOrWhiteSpace(lines[32]) && !string.IsNullOrWhiteSpace(lines[33]))
             {
-                // 32-я строка: координаты
-                string coordinatesLine = lines[32].Trim();
-                string[] coordinateElements = coordinatesLine.Split();
-
-                // 33-я строка: направления
-                string directionsLine = lines[33].Trim();
-                string[] directionElements = directionsLine.Split();
-
-                // 34-я строка: сообщения
-                string messagesLine = lines[34].Trim();
-                string[] messages = messagesLine.Split("00").Where(msg => msg != "").ToArray(); // Разделяем на фразы
-
-                // Преобразуем каждое сообщение из HEX в ASCII
-                for (int i = 0; i < messages.Length; i++)
+                try
                 {
-                    messages[i] = HexToAscii(messages[i]);
-                }
+                    // Строка 32 (индекс 32) - координаты
+                    string coordinatesLine = lines[32].Trim();
+                    string[] coordinateElements = coordinatesLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
 
-                // Первая цифра в первой строке — это общее количество пар
-                if (!int.TryParse(coordinateElements[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int totalPairs))
-                {
-                    MessageBox.Show($"Ошибка в первой строке ('{coordinateElements[0]}'): невозможно преобразовать в шестнадцатеричное число.", "Ошибка формата файла");
-                    return;
-                }
-
-                // Обрабатываем координаты и выставляем AnyObject
-                for (int i = 1; i < coordinateElements.Length; i++)
-                {
-                    // Преобразуем элемент в число
-                    int hexCoord = Convert.ToInt32(coordinateElements[i], 16);
-
-                    // Выделяем Y и X из одного числа
-                    int coordY = (hexCoord >> 4) & 0xF; // Старшие 4 бита — это Y
-                    int coordX = hexCoord & 0xF; // Младшие 4 бита — это X
-
-                    // Заменяем центральный объект в соответствующей клетке
-                    Point newPos = new Point(coordX, coordY);
-                    centralOptions[newPos] = "AnyObject";
-                }
-
-                // Обрабатываем направления и сообщения
-                for (int i = 0; i < directionElements.Length; i++)
-                {
-                    // Преобразуем элемент в число
-                    int hexDir = Convert.ToInt32(directionElements[i], 16);
-
-                    // Получаем четыре пары битов (для Top, Left, Bottom, Right)
-                    for (int k = 0; k < 4; k++)
+                    Debug.WriteLine($"Элементов координат: {coordinateElements.Length}");
+                    if (coordinateElements.Length > 0)
                     {
-                        int mask = 0x3 << (k * 2); // Битовая маска для конкретного направления
+                        Debug.WriteLine($"Первый элемент координат: {coordinateElements[0]}");
+                    }
 
-                        // Проверяем, установлены ли оба бита
-                        if ((hexDir & mask) == mask)
+                    // Строка 33 (индекс 33) - направления
+                    string directionsLine = lines[33].Trim();
+                    string[] directionElements = directionsLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    Debug.WriteLine($"Элементов направлений: {directionElements.Length}");
+
+                    // Строка 34 (индекс 34) - сообщения (может быть пустой)
+                    string messagesLine = lines.Length > 34 ? lines[34].Trim() : "";
+                    string[] messages = Array.Empty<string>();
+
+                    if (!string.IsNullOrWhiteSpace(messagesLine))
+                    {
+                        // Разделяем по "00", но нужно быть осторожным с пробелами
+                        messages = messagesLine.Split(new[] { "00" }, StringSplitOptions.RemoveEmptyEntries);
+
+                        // Преобразуем каждое сообщение из HEX в ASCII
+                        for (int i = 0; i < messages.Length; i++)
                         {
-                            Direction directionFlag;
-
-                            switch (k)
+                            try
                             {
-                                case 0: directionFlag = Direction.Bottom; break;
-                                case 1: directionFlag = Direction.Left; break;
-                                case 2: directionFlag = Direction.Right; break;
-                                case 3: directionFlag = Direction.Top; break;
-                                default: throw new Exception("Неправильный индекс.");
+                                messages[i] = HexToAscii(messages[i].Trim());
+                                Debug.WriteLine($"Сообщение {i}: {messages[i]}");
                             }
-
-                            // Используем координаты из 32-й строки
-                            int hexCoord = Convert.ToInt32(coordinateElements[i + 1], 16); // Обратите внимание на "+1"
-                            int coordY = (hexCoord >> 4) & 0xF; // Старшие 4 бита — это Y
-                            int coordX = hexCoord & 0xF; // Младшие 4 бита — это X
-                            Point newPos = new Point(coordX, coordY);
-
-                            // Включаем флаг "сообщение" для соответствующего направления
-                            Tuple<bool, bool, bool, bool> messagesTuple = messageStates.TryGetValue(newPos, out var prevMsgs) ? prevMsgs : new Tuple<bool, bool, bool, bool>(false, false, false, false);
-                            switch (directionFlag)
+                            catch (Exception ex)
                             {
-                                case Direction.Top: messagesTuple = new Tuple<bool, bool, bool, bool>(true, messagesTuple.Item2, messagesTuple.Item3, messagesTuple.Item4); break;
-                                case Direction.Left: messagesTuple = new Tuple<bool, bool, bool, bool>(messagesTuple.Item1, true, messagesTuple.Item3, messagesTuple.Item4); break;
-                                case Direction.Bottom: messagesTuple = new Tuple<bool, bool, bool, bool>(messagesTuple.Item1, messagesTuple.Item2, true, messagesTuple.Item4); break;
-                                case Direction.Right: messagesTuple = new Tuple<bool, bool, bool, bool>(messagesTuple.Item1, messagesTuple.Item2, messagesTuple.Item3, true); break;
-                            }
-                            messageStates[newPos] = messagesTuple;
-
-                            // Добавляем соответствующее сообщение
-                            if (messages.Any())
-                            {
-                                string messagePhrase = messages.First();
-                                messages = messages.Skip(1).ToArray(); // Использованная фраза исключается
-                                notesPerCell[newPos] += messagePhrase + "\n";
+                                Debug.WriteLine($"Ошибка преобразования сообщения {i}: {ex.Message}");
+                                messages[i] = $"[Ошибка: {messages[i].Trim()}]";
                             }
                         }
                     }
+
+                    if (coordinateElements.Length == 0 || directionElements.Length == 0)
+                    {
+                        Debug.WriteLine("Недостаточно данных в строках координат или направлений");
+                        return;
+                    }
+
+                    // Первая цифра в первой строке — это общее количество пар
+                    if (!int.TryParse(coordinateElements[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int totalPairs))
+                    {
+                        Debug.WriteLine($"Не удалось распарсить количество пар: '{coordinateElements[0]}'");
+                        return;
+                    }
+
+                    Debug.WriteLine($"Всего пар: {totalPairs}");
+                    Debug.WriteLine($"Координат: {coordinateElements.Length - 1} (должно быть {totalPairs * 2})");
+                    Debug.WriteLine($"Направлений: {directionElements.Length} (должно быть {totalPairs})");
+
+                    // Обрабатываем координаты и выставляем AnyObject
+                    int maxCoordIndex = Math.Min(coordinateElements.Length - 1, totalPairs * 2);
+                    for (int i = 1; i <= maxCoordIndex; i++)
+                    {
+                        try
+                        {
+                            int hexCoord = Convert.ToInt32(coordinateElements[i], 16);
+                            int coordY = (hexCoord >> 4) & 0xF; // Старшие 4 бита - Y
+                            int coordX = hexCoord & 0xF;        // Младшие 4 бита - X
+
+                            Debug.WriteLine($"Координата {i}: 0x{hexCoord:X2} -> X={coordX}, Y={coordY}");
+
+                            Point newPos = new Point(coordX, coordY);
+                            centralOptions[newPos] = "AnyObject";
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Ошибка обработки координаты {i}: {ex.Message}");
+                        }
+                    }
+
+                    // Обрабатываем направления и сообщения
+                    int messageIndex = 0;
+                    int maxDirIndex = Math.Min(directionElements.Length, totalPairs);
+
+                    for (int i = 0; i < maxDirIndex; i++)
+                    {
+                        try
+                        {
+                            int hexDir = Convert.ToInt32(directionElements[i], 16);
+                            Debug.WriteLine($"Направление {i}: 0x{hexDir:X2} (бинар: {Convert.ToString(hexDir, 2).PadLeft(8, '0')})");
+
+                            // Проверяем каждое направление (Top, Left, Bottom, Right)
+                            for (int k = 0; k < 4; k++)
+                            {
+                                int mask = 0x3 << (k * 2);
+                                bool hasMessage = (hexDir & mask) == mask;
+
+                                if (hasMessage)
+                                {
+                                    Direction directionFlag = k switch
+                                    {
+                                        0 => Direction.Bottom,
+                                        1 => Direction.Left,
+                                        2 => Direction.Right,
+                                        3 => Direction.Top,
+                                        _ => throw new Exception("Неправильный индекс направления.")
+                                    };
+
+                                    Debug.WriteLine($"  Направление {directionFlag} имеет сообщение (битовая маска {k})");
+
+                                    // Получаем соответствующие координаты
+                                    int coordIndex = i + 1; // +1 потому что 0-й элемент - количество пар
+                                    if (coordIndex < coordinateElements.Length)
+                                    {
+                                        int hexCoord = Convert.ToInt32(coordinateElements[coordIndex], 16);
+                                        int coordY = (hexCoord >> 4) & 0xF;
+                                        int coordX = hexCoord & 0xF;
+                                        Point newPos = new Point(coordX, coordY);
+
+                                        Debug.WriteLine($"  Ячейка: X={coordX}, Y={coordY}");
+
+                                        // Устанавливаем флаг сообщения для направления
+                                        var currentMessages = messageStates.TryGetValue(newPos, out var prev)
+                                            ? prev
+                                            : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+
+                                        var updatedMessages = directionFlag switch
+                                        {
+                                            Direction.Top => new Tuple<bool, bool, bool, bool>(true, currentMessages.Item2, currentMessages.Item3, currentMessages.Item4),
+                                            Direction.Left => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, true, currentMessages.Item3, currentMessages.Item4),
+                                            Direction.Bottom => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, true, currentMessages.Item4),
+                                            Direction.Right => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, currentMessages.Item3, true),
+                                            _ => currentMessages
+                                        };
+
+                                        messageStates[newPos] = updatedMessages;
+
+                                        // Добавляем текст сообщения, если есть
+                                        if (messageIndex < messages.Length)
+                                        {
+                                            if (!notesPerCell.ContainsKey(newPos))
+                                                notesPerCell[newPos] = "";
+
+                                            string messageToAdd = messages[messageIndex];
+                                            notesPerCell[newPos] += messageToAdd + "\n";
+                                            Debug.WriteLine($"  Добавлено сообщение: {messageToAdd}");
+                                            messageIndex++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Ошибка обработки направления {i}: {ex.Message}");
+                        }
+                    }
                 }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Общая ошибка в DefineCellObjectWithDirectionAndText: {ex.Message}");
+                }
+            }
+            else
+            {
+                Debug.WriteLine($"Недостаточно строк или пустые данные. lines.Length={lines.Length}, lines[32]={(lines.Length > 32 ? "не пусто" : "нет")}, lines[33]={(lines.Length > 33 ? "не пусто" : "нет")}");
             }
         }
 
@@ -2223,6 +3041,7 @@ private void SaveMap(string filename)
             }
 
             UpdatePreview(); // Обновляем предварительное изображение
+            UpdateNotesFormatting();
         }
 
         private Point ParseCurrentPosition()
@@ -5348,21 +6167,6 @@ private void SaveMap(string filename)
             public Image CellImage;
             public string Notes;
         };
-    }
-
-    enum Direction
-    {
-        Top,
-        Bottom,
-        Left,
-        Right
-    }
-
-    enum Lighting
-    {
-        Light,
-        Dark,
-        Darkness
     }
 
 
