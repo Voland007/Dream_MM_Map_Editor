@@ -1040,65 +1040,27 @@ namespace MMMapEditor
                 // Для .OVR файлов создаем массив из 33 строк
                 lines = new string[33];
 
-                // Если это SORPIGAL.OVR, используем захардкоженные первые 32 строки
-                if (fileNameOnly == "SORPIGAL.OVR")
+                // Проверяем, есть ли конфигурация для этого файла
+                if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
                 {
-                    string[] first16Lines = {
-                "65 06 4C 44 8C 44 4C 04 0C 44 34 15 15 15 45 34",
-                "55 11 05 54 19 45 14 43 70 15 11 71 33 41 54 11",
-                "CD 30 11 47 00 74 01 44 44 50 C1 44 00 44 C4 70",
-                "55 11 41 14 D1 55 11 47 04 74 15 55 33 05 44 54",
-                "CD 00 DC 01 04 44 40 54 91 45 40 14 11 11 0D 54",
-                "55 11 05 40 10 07 24 46 08 64 D6 11 33 11 03 54",
-                "CD 30 51 95 11 43 50 15 13 45 44 50 11 51 01 54",
-                "15 41 C4 18 01 44 44 10 C1 44 4C 44 C0 44 10 15",
-                "41 04 14 11 11 0D 1C 01 44 44 44 44 44 14 31 11",
-                "37 41 50 33 51 41 90 51 65 26 56 65 16 51 11 51",
-                "41 0C 4C 40 C4 44 88 44 44 00 C4 C4 40 84 40 3C",
-                "55 21 56 15 05 54 19 45 14 11 45 14 07 18 15 11",
-                "65 12 45 10 11 87 00 B4 11 01 DC 11 C3 D0 11 11",
-                "55 21 56 11 11 59 D1 59 11 13 45 40 44 04 50 33",
-                "65 12 45 10 41 44 44 44 50 01 64 06 1C 11 55 11",
-                "55 61 56 51 45 64 46 44 54 D1 55 41 70 41 54 51"
-            };
-
-                    string[] second16Lines = {
-                "C5 05 44 44 84 44 44 04 04 44 14 15 95 15 C5 14",
-                "15 11 05 54 91 45 14 C1 50 15 11 11 11 01 54 11",
-                "81 10 11 45 00 14 01 44 44 10 41 44 00 44 44 50",
-                "51 11 41 14 51 DB 11 45 84 54 14 C5 10 01 44 54",
-                "85 00 D4 01 04 44 40 54 11 45 40 14 11 11 05 54",
-                "51 11 05 40 10 05 84 44 80 44 D4 11 11 11 01 54",
-                "C5 10 51 95 11 41 50 15 11 45 44 50 11 51 01 54",
-                "11 41 44 14 01 44 44 10 41 44 44 44 40 44 10 14",
-                "41 04 14 11 11 85 14 01 44 44 44 44 44 14 11 11",
-                "95 41 50 11 51 41 90 51 45 15 54 45 14 51 11 51",
-                "41 04 44 40 44 44 C4 44 44 00 44 44 40 84 40 14",
-                "95 11 54 11 29 FC 11 ED 3C 11 45 14 05 90 11 11",
-                "11 10 45 10 39 05 80 14 39 01 D4 11 41 50 11 11",
-                "45 11 54 11 39 5D 51 4D B9 11 45 40 44 04 50 11",
-                "11 10 45 10 69 6C 6C 2C 78 81 44 84 14 11 C5 10",
-                "D1 41 D4 51 C1 C4 44 44 54 51 54 41 50 41 54 51"
-            };
-
-                    // Копируем первые 32 строки
-                    Array.Copy(first16Lines, 0, lines, 0, 16);
-                    Array.Copy(second16Lines, 0, lines, 16, 16);
+                    MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена.",
+                                  "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
                 }
-                else
-                {
-                    // Для других .OVR файлов - первые 32 строки пока неизвестны
-                    for (int i = 0; i < 32; i++)
-                    {
-                        lines[i] = "";
-                    }
-                }
+
+                var config = OvrFileConfigs.Configs[fileNameOnly];
+
+                // Используем конфигурацию из OvrFileConfigs
+                Array.Copy(config.First16Lines, 0, lines, 0, 16);
+                Array.Copy(config.Second16Lines, 0, lines, 16, 16);
 
                 try
                 {
                     // Читаем бинарный файл для получения строки 33 (данные объектов)
                     byte[] fileData = File.ReadAllBytes(filename);
-                    int startAddress = 0x386; // Начало данных объектов
+
+                    // Используем startAddress из конфигурации
+                    int startAddress = config.StartAddress;
 
                     if (fileData.Length < startAddress)
                     {
@@ -1223,8 +1185,20 @@ namespace MMMapEditor
         {
             try
             {
-                // Используем новый анализатор OVR файлов
-                var objects = OvrFileAnalyzer.AnalyzeOvrFile(filename);
+                string fileNameOnly = Path.GetFileName(filename).ToUpper();
+
+                // Проверяем наличие конфигурации
+                if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+                {
+                    MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена. Файл не будет обработан.",
+                                  "Предупреждение", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                var config = OvrFileConfigs.Configs[fileNameOnly];
+
+                // Используем конфигурационный анализатор
+                var objects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config);
 
                 // Обрабатываем объекты на карте
                 foreach (var obj in objects)
@@ -1290,7 +1264,6 @@ namespace MMMapEditor
                                     notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
                                     notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
                                 }
-                                
                             }
                             else
                             {
@@ -1333,7 +1306,8 @@ namespace MMMapEditor
             }
             catch (Exception ex)
             {
-                // Просто игнорируем
+                MessageBox.Show($"Ошибка при обработке OVR файла: {ex.Message}",
+                              "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

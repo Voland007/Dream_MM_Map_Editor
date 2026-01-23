@@ -27,9 +27,13 @@ namespace MMMapEditor
 {
     public class OvrFileAnalyzer
     {
-        // Константы для Sorpigal
-        private const ushort TEXT_BASE_ADDR = 0xC5EC;
-        private const ushort PATCH_BASE = 0x0B7F;
+        private readonly OvrFileConfig _config;
+
+        // Конструктор принимает обязательную конфигурацию
+        public OvrFileAnalyzer(OvrFileConfig config)
+        {
+            _config = config ?? throw new ArgumentNullException(nameof(config));
+        }
 
         // Структуры для анализа путей
         private class AlternativePath
@@ -101,10 +105,10 @@ namespace MMMapEditor
             public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         }
 
-        // Публичный метод для анализа OVR файла
-        public static List<OvrObject> AnalyzeOvrFile(string filename)
+        // Публичный статический метод для анализа OVR файла с конфигурацией
+        public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config)
         {
-            var analyzer = new OvrFileAnalyzer();
+            var analyzer = new OvrFileAnalyzer(config);
             return analyzer.InternalAnalyze(filename);
         }
 
@@ -120,8 +124,8 @@ namespace MMMapEditor
                     throw new InvalidOperationException("File too small to be a valid overlay");
                 }
 
-                // Чтение количества объектов (смещение 0x386)
-                fs.Seek(0x386, SeekOrigin.Begin);
+                // Используем конфигурационный startAddress
+                fs.Seek(_config.StartAddress, SeekOrigin.Begin);
                 byte numObjects = br.ReadByte();
 
                 // Чтение координат
@@ -135,7 +139,7 @@ namespace MMMapEditor
                 {
                     var obj = ProcessObject(br, i + 1, coordinates[i], directions[i], patchKeys[i]);
 
-                    // ФИЛЬТРАЦИЯ УНИКАЛЬНЫХ ПУТЕЙ ЗДЕСЬ
+                    // ФИЛЬТРАЦИЯ УНИКАЛЬНЫХ ПУТЕЙ
                     obj.PathTexts = FilterUniquePaths(obj.PathTexts);
 
                     objects.Add(obj);
@@ -198,7 +202,7 @@ namespace MMMapEditor
                 }
             }
 
-            // 5. ФИЛЬТРУЕМ уникальные пути (как в MMOvrAnalyzer)
+            // 5. ФИЛЬТРУЕМ уникальные пути
             ovrObject.PathTexts = FilterUniquePaths(ovrObject.PathTexts);
 
             return ovrObject;
@@ -318,7 +322,7 @@ namespace MMMapEditor
             }
         }
 
-        // Метод для фильтрации уникальных путей (как в MMOvrAnalyzer)
+        // Метод для фильтрации уникальных путей
         private Dictionary<int, HashSet<string>> FilterUniquePaths(Dictionary<int, HashSet<string>> allPathTexts)
         {
             var uniquePaths = new Dictionary<int, HashSet<string>>();
@@ -446,8 +450,6 @@ namespace MMMapEditor
                 return true;
             }
         }
-
-        // Остальные методы остаются практически без изменений, но с учетом изолированных трекеров регистров:
 
         private HashSet<string> AnalyzeIndirectTextPatterns(BinaryReader br, uint patchAddress)
         {
@@ -644,7 +646,7 @@ namespace MMMapEditor
         }
 
         private void FindTextsInInstruction(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
-    int depth, HashSet<string> output)
+            int depth, HashSet<string> output)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
@@ -658,7 +660,6 @@ namespace MMMapEditor
                 string text = ExtractText(br, textAddr);
                 if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                 {
-                    // НЕ добавляем кавычки! Оставляем текст как есть из файла
                     string textEntry = $"Text at 0x{textAddr:X4}: {text}";
                     output.Add(textEntry);
                 }
@@ -678,7 +679,6 @@ namespace MMMapEditor
                     string text = ExtractText(br, value);
                     if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                     {
-                        // НЕ добавляем кавычки!
                         string textEntry = $"Text at 0x{value:X4} (via {regNames[regField]}): {text}";
                         output.Add(textEntry);
                     }
@@ -694,7 +694,6 @@ namespace MMMapEditor
                 string text = ExtractText(br, immediateValue);
                 if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                 {
-                    // НЕ добавляем кавычки!
                     string textEntry = $"Text at 0x{immediateValue:X4}: {text}";
                     output.Add(textEntry);
                 }
@@ -707,13 +706,10 @@ namespace MMMapEditor
                 string text = ExtractText(br, immediateValue);
                 if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                 {
-                    // НЕ добавляем кавычки!
                     string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
                     output.Add(textEntry);
                 }
             }
-
-            // Блок 5 с ReadUInt16At удален, так как метод не определен
         }
 
         private void TrackRegisterOperations(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker, int depth)
@@ -764,8 +760,6 @@ namespace MMMapEditor
             }
         }
 
-        // Остальные вспомогательные методы остаются без изменений...
-
         private Tuple<byte, byte>[] ReadCoordinates(BinaryReader br, int count)
         {
             var coords = new Tuple<byte, byte>[count];
@@ -793,9 +787,10 @@ namespace MMMapEditor
             return keys;
         }
 
+        // Используем конфигурационный PatchBase
         private uint CalculatePatchAddress(ushort key)
         {
-            return (uint)(key + PATCH_BASE) & 0xFFFF;
+            return (uint)(key + _config.PatchBase) & 0xFFFF;
         }
 
         private byte[] ReadBytesAt(BinaryReader br, long position, int count)
@@ -825,11 +820,12 @@ namespace MMMapEditor
             return 0;
         }
 
+        // Используем конфигурационный TextBaseAddr
         private string ExtractText(BinaryReader br, ushort textAddress)
         {
             try
             {
-                long fileOffset = textAddress - TEXT_BASE_ADDR;
+                long fileOffset = textAddress - _config.TextBaseAddr;
 
                 if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
                 {
@@ -877,9 +873,8 @@ namespace MMMapEditor
             return sb.ToString();
         }
 
-        // Вспомогательные методы для линейного дизассемблирования остаются без изменений...
         private void ShowLinearDisassemblyAndCollectAlternativePaths(BinaryReader br, uint startAddress,
-    List<AlternativePath> alternativePaths, int objIndex)
+            List<AlternativePath> alternativePaths, int objIndex)
         {
             using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
             {
@@ -982,8 +977,8 @@ namespace MMMapEditor
         }
 
         private void ShowLinearDisassemblyWithAlternativeBranch(BinaryReader br, uint patchAddress,
-    uint jumpAddress, uint alternativeStartAddress, List<AlternativePath> localAlternativePaths,
-    int objIndex, int depth = 0, bool isMainAlternativeAnalysis = false)
+            uint jumpAddress, uint alternativeStartAddress, List<AlternativePath> localAlternativePaths,
+            int objIndex, int depth = 0, bool isMainAlternativeAnalysis = false)
         {
             using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
             {
@@ -1229,8 +1224,8 @@ namespace MMMapEditor
         }
 
         private void AnalyzeCallsWithNestedAlternativeBranch(BinaryReader br, uint patchAddress,
-    uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-    HashSet<string> foundTexts, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
+            uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
+            HashSet<string> foundTexts, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
         {
             if (depth > 5)
             {
