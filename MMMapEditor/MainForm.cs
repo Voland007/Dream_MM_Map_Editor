@@ -1034,114 +1034,71 @@ namespace MMMapEditor
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             string fileExtension = Path.GetExtension(filename).ToUpper();
-            string[] lines;
 
-            if (fileExtension == ".OVR")
+            if (fileExtension != ".OVR")
             {
-                // Для .OVR файлов создаем массив из 33 строк
-                lines = new string[33];
+                MessageBox.Show(
+                    "Ошибка: ожидается файл с расширением .OVR.",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error
+                );
+                return;
+            }
 
-                // Проверяем, есть ли конфигурация для этого файла
-                if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            // Определение общего количества строк (33 строки)
+            string[] lines = new string[33];
+
+            // Проверяем наличие конфигурации для данного файла
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Получаем конфигурационные данные
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+
+            // Копируем первую половину данных из конфигурации
+            Array.Copy(config.First16Lines, 0, lines, 0, 16);
+            // Копируем вторую половину данных из конфигурации
+            Array.Copy(config.Second16Lines, 0, lines, 16, 16);
+
+            try
+            {
+                // Читаем бинарный файл
+                byte[] fileData = File.ReadAllBytes(filename);
+
+                // Получаем стартовый адрес данных из конфигурации
+                int startAddress = config.StartAddress;
+
+                // Проверяем длину файла
+                if (fileData.Length < startAddress)
                 {
-                    MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена.",
-                                  "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return;
-                }
-
-                var config = OvrFileConfigs.Configs[fileNameOnly];
-
-                // Используем конфигурацию из OvrFileConfigs
-                Array.Copy(config.First16Lines, 0, lines, 0, 16);
-                Array.Copy(config.Second16Lines, 0, lines, 16, 16);
-
-                try
-                {
-                    // Читаем бинарный файл для получения строки 33 (данные объектов)
-                    byte[] fileData = File.ReadAllBytes(filename);
-
-                    // Используем startAddress из конфигурации
-                    int startAddress = config.StartAddress;
-
-                    if (fileData.Length < startAddress)
-                    {
-                        MessageBox.Show($"Файл слишком мал. Размер: {fileData.Length}, нужен адрес: {startAddress}", "Ошибка");
-                        lines[32] = "";
-                    }
-                    else
-                    {
-                        // Создаем строку со всеми данными начиная с startAddress
-                        StringBuilder dataLine = new StringBuilder();
-
-                        for (int i = startAddress; i < fileData.Length; i++)
-                        {
-                            if (i > startAddress) dataLine.Append(" ");
-                            dataLine.AppendFormat("{0:X2}", fileData[i]);
-                        }
-
-                        lines[32] = dataLine.ToString();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Ошибка при чтении бинарного файла: {ex.Message}", "Ошибка");
+                    MessageBox.Show($"Файл слишком мал. Длина файла: {fileData.Length}, требуемый адрес: {startAddress}.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     lines[32] = "";
                 }
+                else
+                {
+                    // Формируем строку данных объектов
+                    StringBuilder dataLine = new StringBuilder();
+
+                    for (int i = startAddress; i < fileData.Length; i++)
+                    {
+                        if (i > startAddress) dataLine.Append(" ");
+                        dataLine.AppendFormat("{0:X2}", fileData[i]);
+                    }
+
+                    lines[32] = dataLine.ToString();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                // Для текстовых файлов (.txt) используем старую логику
-                lines = File.ReadAllLines(filename);
-
-                // Минимальное количество строк — 32
-                if (lines.Length < 32)
-                {
-                    MessageBox.Show($"Файл содержит менее 32 строк ({lines.Length}).", "Ошибка формата файла");
-                    return;
-                }
-
-                // Проверяем первые 32 строки на наличие ровно 16 значений
-                for (int i = 0; i < 32; i++)
-                {
-                    string[] values = lines[i].Split();
-                    if (values.Length != 16)
-                    {
-                        MessageBox.Show($"Строка {i + 1}: найдено {values.Length} значений, ожидается 16.", "Ошибка формата файла");
-                        return;
-                    }
-                }
-
-                // Для совместимости с новой логикой, если файл имеет 35 строк,
-                // объединяем строки 32-34 в одну
-                if (lines.Length >= 35)
-                {
-                    List<string> newLines = new List<string>();
-                    for (int i = 0; i < 32; i++)
-                    {
-                        newLines.Add(lines[i]);
-                    }
-
-                    // Объединяем строки 32, 33, 34 в одну
-                    string combinedLine = lines[32] + " " + lines[33] + " " + lines[34];
-                    newLines.Add(combinedLine);
-
-                    lines = newLines.ToArray();
-                }
-                else if (lines.Length == 33)
-                {
-                    // Уже в правильном формате (32 + 1)
-                    // Ничего не делаем
-                }
-                else if (lines.Length == 32)
-                {
-                    // Только 32 строки - добавляем пустую строку для данных
-                    List<string> newLines = new List<string>(lines);
-                    newLines.Add("");
-                    lines = newLines.ToArray();
-                }
+                MessageBox.Show($"Ошибка при чтении бинарного файла: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                lines[32] = "";
             }
 
-            // Шаг 1: Обрабатываем данные карты (строки 0-31)
+            // Основной цикл обработки данных карты
             for (int y = 0; y < 16; y++)
             {
                 if (!string.IsNullOrWhiteSpace(lines[y]) && !string.IsNullOrWhiteSpace(lines[y + 16]))
@@ -1149,7 +1106,7 @@ namespace MMMapEditor
                     string[] cellValuesFirstLayer = lines[y].Split();
                     string[] cellValuesSecondLayer = lines[y + 16].Split();
 
-                    // Проверяем, что строки имеют правильное количество значений
+                    // Проверяем правильность полученных данных
                     if (cellValuesFirstLayer.Length == 16 && cellValuesSecondLayer.Length == 16)
                     {
                         for (int x = 0; x < 16; x++)
@@ -1160,28 +1117,22 @@ namespace MMMapEditor
                 }
             }
 
-            // Шаг 2: Обрабатываем данные объектов с помощью нового анализатора
-            if (fileExtension == ".OVR")
+            // Если имеется строка с объектом, обрабатываем ее отдельно
+            if (!string.IsNullOrWhiteSpace(lines[32]))
             {
-                // Для .OVR файлов используем новый анализатор
                 ProcessOvrObjectsWithAdvancedAnalyzer(filename);
-
-                // После анализа объектов считываем координаты опасной клетки
-                ReadMostDangerousCell(filename);
-            }
-            else if (!string.IsNullOrWhiteSpace(lines[32]))
-            {
-                // Для текстовых файлов используем старую логику
-                ProcessObjectDataFromBinary(lines[32]);
             }
 
-            // Обновляем интерфейс
+            // Читаем самую опасную клетку (если такая указана)
+            ReadMostDangerousCell(filename);
+
+            // Перерисовываем интерфейс
             foreach (var button in gridButtons)
             {
                 button.Invalidate();
             }
 
-            // Сообщаем пользователю о завершении процесса
+            // Информационное сообщение о завершении загрузки
             MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
@@ -1572,120 +1523,6 @@ namespace MMMapEditor
 
             // Если формат другой, возвращаем как есть
             return textEntry;
-        }
-
-        private void ProcessObjectDataFromBinary(string dataLine)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(dataLine))
-                {
-                    Debug.WriteLine("Пустая строка данных");
-                    return;
-                }
-
-                // Старый способ обработки (для обратной совместимости)
-                string[] elements = dataLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                List<byte> dataBytes = new List<byte>();
-
-                foreach (string element in elements)
-                {
-                    if (byte.TryParse(element, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte b))
-                    {
-                        dataBytes.Add(b);
-                    }
-                }
-
-                if (dataBytes.Count == 0)
-                {
-                    Debug.WriteLine("Нет данных для обработки");
-                    return;
-                }
-
-                Debug.WriteLine($"Всего байт данных: {dataBytes.Count}");
-                Debug.WriteLine($"Первый байт: 0x{dataBytes[0]:X2} ({dataBytes[0]})");
-
-                int index = 0;
-
-                // 1. Первый байт - количество объектов
-                int numObjects = dataBytes[0];
-                index = 1;
-
-                Debug.WriteLine($"Количество объектов: {numObjects}");
-
-                // Проверяем, достаточно ли данных
-                if (dataBytes.Count < 1 + numObjects * 2)
-                {
-                    Debug.WriteLine($"Недостаточно данных. Требуется минимум {1 + numObjects * 2} байт, доступно {dataBytes.Count}");
-
-                    // Попробуем определить количество объектов по фактическим данным
-                    int actualObjects = 0;
-                    for (int i = 1; i < dataBytes.Count; i++)
-                    {
-                        byte b = dataBytes[i];
-                        int x = b & 0xF;
-                        int y = (b >> 4) & 0xF;
-
-                        if (x <= 15 && y <= 15)
-                        {
-                            actualObjects++;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-
-                    numObjects = actualObjects;
-                    index = 1;
-                    Debug.WriteLine($"Фактическое количество объектов определено как: {numObjects}");
-                }
-
-                // 2. Читаем координаты
-                List<byte> coordinates = new List<byte>();
-                for (int i = 0; i < numObjects && index < dataBytes.Count; i++)
-                {
-                    coordinates.Add(dataBytes[index]);
-                    index++;
-                }
-
-                Debug.WriteLine($"Прочитано координат: {coordinates.Count}");
-
-                // 3. Читаем направления
-                List<byte> directions = new List<byte>();
-                for (int i = 0; i < numObjects && index < dataBytes.Count; i++)
-                {
-                    directions.Add(dataBytes[index]);
-                    index++;
-                }
-
-                Debug.WriteLine($"Прочитано направлений: {directions.Count}");
-
-                // 4. Пропускаем patch-коды (n * 2 байт)
-                int patchBytesToSkip = numObjects * 2;
-                if (index + patchBytesToSkip <= dataBytes.Count)
-                {
-                    Debug.WriteLine($"Пропускаем {patchBytesToSkip} байт patch-кодов");
-                    index += patchBytesToSkip;
-                }
-                else
-                {
-                    Debug.WriteLine($"Недостаточно данных для patch-кодов. Нужно {patchBytesToSkip}, доступно {dataBytes.Count - index}");
-                    index = dataBytes.Count;
-                }
-
-                // 5. Извлекаем тексты сообщений
-                List<string> messages = ExtractMessagesFromBytes(dataBytes, index);
-                Debug.WriteLine($"Извлечено сообщений: {messages.Count}");
-
-                // 6. Обрабатываем объекты
-                ProcessObjectsWithTexts(coordinates, directions, messages);
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"Ошибка в ProcessObjectDataFromBinary: {ex.Message}");
-                MessageBox.Show($"Ошибка при обработке данных объектов: {ex.Message}", "Ошибка");
-            }
         }
 
         private List<string> ExtractMessagesFromBytes(List<byte> dataBytes, int startIndex)
