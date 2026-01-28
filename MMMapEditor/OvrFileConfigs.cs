@@ -122,8 +122,9 @@ namespace MMMapEditor
             public int StartAddress { get; set; }
             public string[] First16Lines { get; set; }
             public string[] Second16Lines { get; set; }
-            public int TextBaseAddr { get; set; } // добавляем новое свойство
-            public int PatchBase { get; set; } // добавляем новое свойство
-        }
+            public int TextBaseAddr { get; set; } 
+            public int PatchBase { get; set; }
+        public int MostDangerousCell => StartAddress - 24;
+    }
 
 }

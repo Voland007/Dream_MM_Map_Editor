@@ -125,6 +125,7 @@ namespace MMMapEditor
         private LocalizedDirectionsForm localizedDirectionsForm; // Новые свойства для управления формой настроек
         private string mapSector = ""; 
         private string surface = "";
+        private Point? mostDangerousCell; //флаг для поментки опасной клетки
 
 
         public MainForm()
@@ -1164,6 +1165,9 @@ namespace MMMapEditor
             {
                 // Для .OVR файлов используем новый анализатор
                 ProcessOvrObjectsWithAdvancedAnalyzer(filename);
+
+                // После анализа объектов считываем координаты опасной клетки
+                ReadMostDangerousCell(filename);
             }
             else if (!string.IsNullOrWhiteSpace(lines[32]))
             {
@@ -1179,6 +1183,57 @@ namespace MMMapEditor
 
             // Сообщаем пользователю о завершении процесса
             MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void ReadMostDangerousCell(string filename)
+        {
+            // Получаем конфигурацию для файла
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int mostDangerousCellAddress = config.MostDangerousCell;
+
+            // Читаем файл
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            // Проверяем длину файла
+            if (mostDangerousCellAddress + 1 >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес mostDangerousCell выходит за пределы файла.");
+                return;
+            }
+
+            // Читаем координаты X и Y
+            byte x = fileData[mostDangerousCellAddress];
+            byte y = fileData[mostDangerousCellAddress + 1];
+
+            // Координаты сохраняются в пределах от 0 до 15 включительно
+            int coordX = x & 0xF;
+            int coordY = y & 0xF;
+
+            // Преобразуем в точку
+            Point dangerousPoint = new Point(coordX, coordY);
+
+            // Запоминаем координаты самой опасной клетки
+            mostDangerousCell = dangerousPoint;
+
+            // Добавляем заметку обычной текстовой информацией
+            if (notesPerCell.TryGetValue(dangerousPoint, out var currentNotes))
+            {
+                notesPerCell[dangerousPoint] =
+                    "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!\n" +
+                    currentNotes;
+            }
+            else
+            {
+                notesPerCell[dangerousPoint] =
+                    "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!";
+            }
         }
 
         private void ProcessOvrObjectsWithAdvancedAnalyzer(string filename)
@@ -1315,7 +1370,7 @@ namespace MMMapEditor
         {
             rt.Select(startIndex, length);
             rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
-            rt.SelectionColor = Color.Orange; // Морская волна
+            rt.SelectionColor = Color.Orange; // Цвет шрифта для служебной информации
         }
 
         private void ApplyBoldRedStyle(RichTextBox rt, int startIndex, int length)
@@ -1347,6 +1402,24 @@ namespace MMMapEditor
                 foreach (Match match in matches)
                 {
                     ApplyBoldRedStyle(notesTextBox, match.Index, match.Length);
+                }
+
+                // Проверяем, является ли данная клетка самой опасной
+                if (mostDangerousCell.HasValue && pos == mostDangerousCell.Value)
+                {
+                    // Находим важную строку (предполагается, что она находится в первой строке)
+                    int importantStart = noteText.IndexOf("ВНИМАНИЕ!");
+                    if (importantStart >= 0)
+                    {
+                        // Вычисляем конец строки
+                        int importantEnd = noteText.IndexOf("\n", importantStart);
+                        if (importantEnd < 0) importantEnd = noteText.Length;
+
+                        // Выделяем и оформляем особое внимание
+                        notesTextBox.Select(importantStart, importantEnd - importantStart);
+                        notesTextBox.SelectionColor = Color.FromArgb(0xFF3824); // Цвет текста предупреждающего о самой опасной клетке
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+                    }
                 }
             }
         }
