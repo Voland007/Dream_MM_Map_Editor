@@ -126,6 +126,7 @@ namespace MMMapEditor
         private string mapSector = ""; 
         private string surface = "";
         private Point? mostDangerousCell; //флаг для поментки опасной клетки
+        private Point? mostPeacefulCell; // флаг для пометки безопасной клетки
 
 
         public MainForm()
@@ -1123,8 +1124,11 @@ namespace MMMapEditor
                 ProcessOvrObjectsWithAdvancedAnalyzer(filename);
             }
 
-            // Читаем самую опасную клетку (если такая указана)
+            // Читаем самую опасную клетку
             ReadMostDangerousCell(filename);
+
+            // Читаем самую безопасную клетку
+            ReadMostPeacefulCell(filename);
 
             // Перерисовываем интерфейс
             foreach (var button in gridButtons)
@@ -1134,6 +1138,57 @@ namespace MMMapEditor
 
             // Информационное сообщение о завершении загрузки
             MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void ReadMostPeacefulCell(string filename)
+        {
+            // Получаем конфигурацию для файла
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int mostPeacefulCellAddress = config.MostPeacefulCell;
+
+            // Читаем файл
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            // Проверяем длину файла
+            if (mostPeacefulCellAddress + 1 >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес mostPeacefulCell выходит за пределы файла.");
+                return;
+            }
+
+            // Читаем координаты X и Y
+            byte x = fileData[mostPeacefulCellAddress];
+            byte y = fileData[mostPeacefulCellAddress + 1];
+
+            // Координаты сохраняются в пределах от 0 до 15 включительно
+            int coordX = x & 0xF;
+            int coordY = y & 0xF;
+
+            // Преобразуем в точку
+            Point peacefulPoint = new Point(coordX, coordY);
+
+            // Запоминаем координаты самой безопасной клетки
+            mostPeacefulCell = peacefulPoint;
+
+            // Добавляем заметку обычным текстом салатовго цвета
+            if (notesPerCell.TryGetValue(peacefulPoint, out var currentNotes))
+            {
+                notesPerCell[peacefulPoint] =
+                    "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!\n" +
+                    currentNotes;
+            }
+            else
+            {
+                notesPerCell[peacefulPoint] =
+                    "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!";
+            }
         }
 
         private void ReadMostDangerousCell(string filename)
@@ -1359,16 +1414,34 @@ namespace MMMapEditor
                 if (mostDangerousCell.HasValue && pos == mostDangerousCell.Value)
                 {
                     // Находим важную строку (предполагается, что она находится в первой строке)
-                    int importantStart = noteText.IndexOf("ВНИМАНИЕ!");
+                    int importantStart = noteText.IndexOf("ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
                     if (importantStart >= 0)
                     {
                         // Вычисляем конец строки
                         int importantEnd = noteText.IndexOf("\n", importantStart);
                         if (importantEnd < 0) importantEnd = noteText.Length;
 
-                        // Выделяем и оформляем особое внимание
+                        // Выделяем и оформляем важное сообщение красным цветом
                         notesTextBox.Select(importantStart, importantEnd - importantStart);
-                        notesTextBox.SelectionColor = Color.FromArgb(0xFF3824); // Цвет текста предупреждающего о самой опасной клетке
+                        notesTextBox.SelectionColor = Color.FromArgb(0xFF3824); // Красный цвет предупреждения
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+                    }
+                }
+
+                // Проверяем, является ли данная клетка самой безопасной
+                if (mostPeacefulCell.HasValue && pos == mostPeacefulCell.Value)
+                {
+                    // Находим важную строку (предполагается, что она находится в первой строке)
+                    int importantStart = noteText.IndexOf("ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                    if (importantStart >= 0)
+                    {
+                        // Вычисляем конец строки
+                        int importantEnd = noteText.IndexOf("\n", importantStart);
+                        if (importantEnd < 0) importantEnd = noteText.Length;
+
+                        // Выделяем и оформляем важное сообщение зеленым цветом
+                        notesTextBox.Select(importantStart, importantEnd - importantStart);
+                        notesTextBox.SelectionColor = Color.LimeGreen; // Салатовый цвет
                         notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
                     }
                 }

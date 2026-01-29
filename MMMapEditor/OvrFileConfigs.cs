@@ -125,6 +125,7 @@ namespace MMMapEditor
             public int TextBaseAddr { get; set; } 
             public int PatchBase { get; set; }
         public int MostDangerousCell => StartAddress - 24;
+        public int MostPeacefulCell => StartAddress - 27;
     }
 
 }
