@@ -126,6 +126,13 @@ namespace MMMapEditor
             public int PatchBase { get; set; }
         public int MostDangerousCell => StartAddress - 24;
         public int MostPeacefulCell => StartAddress - 27;
+        public int MonsterPower => StartAddress - 17;
+        public int MonsterLevel => StartAddress - 3;
+        public int MonsterBatchCount => StartAddress - 16;
+        public int SurfaceX => StartAddress - 8;
+        public int SurfaceY => StartAddress - 7;
+        public int SectorMapLetter => StartAddress - 15;
+        public int SectorMapDigit => StartAddress - 14; 
     }
 
 }

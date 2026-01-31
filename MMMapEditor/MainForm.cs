@@ -1124,11 +1124,31 @@ namespace MMMapEditor
                 ProcessOvrObjectsWithAdvancedAnalyzer(filename);
             }
 
-            // Читаем самую опасную клетку
-            ReadMostDangerousCell(filename);
+            // Читаем самые опасные и безопасные клетки
+            Point? mostDangerousCell = ReadMostDangerousCell(filename);
+            Point? mostPeacefulCell = ReadMostPeacefulCell(filename);
 
-            // Читаем самую безопасную клетку
-            ReadMostPeacefulCell(filename);
+            // Читаем характеристики монстров
+            byte monsterPower = ReadMonsterPower(filename);
+            byte monsterLevel = ReadMonsterLevel(filename);
+            byte monsterBatchCount = ReadMonsterBatchCount(filename);
+
+            // Читаем координаты поверхности
+            Tuple<byte, byte> surfaceCoords = ReadSurfaceCoordinates(filename);
+
+            // Читаем глобальный сектор карты
+            string sectorMap = ReadSectorMap(filename);
+
+            // Формируем сообщение для отображения
+            string message =
+                $"Самая опасная клетка: {mostDangerousCell}\n" +
+                $"Самая безопасная клетка: {mostPeacefulCell}\n\n" +
+                $"Сила монстров: {monsterPower}\n" +
+                $"Уровень монстров: {monsterLevel}\n" +
+                $"Количество монстров в группе: {monsterBatchCount}\n\n" +
+                $"MAP SECTOR: {sectorMap[0]}-{sectorMap[1]}\n" +
+                $"SURFACE: X = {surfaceCoords.Item1} Y = {surfaceCoords.Item2}";
+
 
             // Перерисовываем интерфейс
             foreach (var button in gridButtons)
@@ -1136,18 +1156,164 @@ namespace MMMapEditor
                 button.Invalidate();
             }
 
+            // Выводим сообщение в всплывающем окне
+            MessageBox.Show(
+                message,
+                "Данные успешно загружены",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+
+            
+
             // Информационное сообщение о завершении загрузки
-            MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            //MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private void ReadMostPeacefulCell(string filename)
+        private byte ReadMonsterPower(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return 0;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int monsterPowerAddress = config.MonsterPower;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (monsterPowerAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес MonsterPower выходит за пределы файла.");
+                return 0;
+            }
+
+            byte power = fileData[monsterPowerAddress];
+            Console.WriteLine($"Сила монстра: {power}");
+            return power;
+        }
+
+        private byte ReadMonsterLevel(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return 0;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int monsterLevelAddress = config.MonsterLevel;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (monsterLevelAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес MonsterLevel выходит за пределы файла.");
+                return 0;
+            }
+
+            byte level = fileData[monsterLevelAddress];
+            Console.WriteLine($"Уровень монстра: {level}");
+            return level;
+        }
+
+        private byte ReadMonsterBatchCount(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return 0;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int batchCountAddress = config.MonsterBatchCount;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (batchCountAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес MonsterBatchCount выходит за пределы файла.");
+                return 0;
+            }
+
+            byte count = fileData[batchCountAddress];
+            Console.WriteLine($"Количество монстров в партии: {count}");
+            return count;
+        }
+
+        private Tuple<byte, byte> ReadSurfaceCoordinates(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return null;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int surfaceXAddress = config.SurfaceX;
+            int surfaceYAddress = config.SurfaceY;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (surfaceXAddress >= fileData.Length || surfaceYAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адреса Surface выходят за пределы файла.");
+                return null;
+            }
+
+            byte x = fileData[surfaceXAddress];
+            byte y = fileData[surfaceYAddress];
+
+            Console.WriteLine($"Поверхностные координаты: X={x}, Y={y}");
+            return Tuple.Create(x, y);
+        }
+
+        private string ReadSectorMap(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return null;
+            }
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            int sectorMapHighAddress = config.SectorMapLetter;
+            int sectorMapLowAddress = config.SectorMapDigit;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (sectorMapHighAddress >= fileData.Length || sectorMapLowAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адреса глобального сектора выходят за пределы файла.");
+                return null;
+            }
+
+            byte highByte = fileData[sectorMapHighAddress];
+            byte lowByte = fileData[sectorMapLowAddress];
+
+            // Применяем шифрующую формулу
+            char highChar = (char)(highByte - 0xC1 + 65);
+            char lowChar = (char)(lowByte - 0xB1 + 49);
+
+            string sectorMap = $"{highChar}{lowChar}";
+            Console.WriteLine($"Глобальный сектор карты: {sectorMap}");
+            return sectorMap;
+        }
+
+        private Point? ReadMostPeacefulCell(string filename)
         {
             // Получаем конфигурацию для файла
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
-                return;
+                return null;
             }
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
@@ -1160,7 +1326,7 @@ namespace MMMapEditor
             if (mostPeacefulCellAddress + 1 >= fileData.Length)
             {
                 Console.WriteLine($"Адрес mostPeacefulCell выходит за пределы файла.");
-                return;
+                return  null;
             }
 
             // Читаем координаты X и Y
@@ -1189,16 +1355,17 @@ namespace MMMapEditor
                 notesPerCell[peacefulPoint] =
                     "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!";
             }
+            return peacefulPoint;
         }
 
-        private void ReadMostDangerousCell(string filename)
+        private Point? ReadMostDangerousCell(string filename)
         {
             // Получаем конфигурацию для файла
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
-                return;
+                return null;
             }
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
@@ -1211,7 +1378,7 @@ namespace MMMapEditor
             if (mostDangerousCellAddress + 1 >= fileData.Length)
             {
                 Console.WriteLine($"Адрес mostDangerousCell выходит за пределы файла.");
-                return;
+                return null;
             }
 
             // Читаем координаты X и Y
@@ -1240,6 +1407,7 @@ namespace MMMapEditor
                 notesPerCell[dangerousPoint] =
                     "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!";
             }
+            return dangerousPoint;
         }
 
         private void ProcessOvrObjectsWithAdvancedAnalyzer(string filename)
@@ -6125,6 +6293,5 @@ private void SaveMap(string filename)
             public string Notes;
         };
     }
-
 
 }
