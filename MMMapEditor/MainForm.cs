@@ -1027,6 +1027,8 @@ namespace MMMapEditor
                 {
                     string filename = dialog.FileName;
                     LoadDraftLaboratory(filename);
+                    lastSavedFilename = "";
+                    UpdateWindowTitle();
                 }
             }
         }
@@ -1141,14 +1143,14 @@ namespace MMMapEditor
 
             // Формируем сообщение для отображения
             string message =
+                $"Название файла: {Path.GetFileName(filename)}\n" +
+                $"MAP SECTOR: {sectorMap}\n" +
+                $"SURFACE: X = {surfaceCoords.Item1} Y = {surfaceCoords.Item2}\n\n" +
                 $"Самая опасная клетка: {mostDangerousCell}\n" +
                 $"Самая безопасная клетка: {mostPeacefulCell}\n\n" +
                 $"Сила монстров: {monsterPower}\n" +
                 $"Уровень монстров: {monsterLevel}\n" +
-                $"Количество монстров в группе: {monsterBatchCount}\n\n" +
-                $"MAP SECTOR: {sectorMap[0]}-{sectorMap[1]}\n" +
-                $"SURFACE: X = {surfaceCoords.Item1} Y = {surfaceCoords.Item2}";
-
+                $"Количество монстров в группе: {monsterBatchCount}";
 
             // Перерисовываем интерфейс
             foreach (var button in gridButtons)
@@ -1159,12 +1161,10 @@ namespace MMMapEditor
             // Выводим сообщение в всплывающем окне
             MessageBox.Show(
                 message,
-                "Данные успешно загружены",
+                "Оверлейные данные успешно загружены",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information
             );
-
-            
 
             // Информационное сообщение о завершении загрузки
             //MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1270,6 +1270,8 @@ namespace MMMapEditor
             byte y = fileData[surfaceYAddress];
 
             Console.WriteLine($"Поверхностные координаты: X={x}, Y={y}");
+
+            surface = "X = " + x.ToString() + " Y = " + y.ToString();
             return Tuple.Create(x, y);
         }
 
@@ -1301,8 +1303,10 @@ namespace MMMapEditor
             char highChar = (char)(highByte - 0xC1 + 65);
             char lowChar = (char)(lowByte - 0xB1 + 49);
 
-            string sectorMap = $"{highChar}{lowChar}";
+            string sectorMap = $"{highChar}-{lowChar}";
             Console.WriteLine($"Глобальный сектор карты: {sectorMap}");
+
+            mapSector = sectorMap;
             return sectorMap;
         }
 
@@ -2283,24 +2287,28 @@ namespace MMMapEditor
                 mapSector = metadataForm.SelectedMapSector;
                 surface = metadataForm.SelectedSurface;
 
-                // Обновляем заголовок окна
-                if (string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
-                {
-                    this.Text = Path.GetFileNameWithoutExtension(lastSavedFilename);
-                }
-                else if (string.IsNullOrEmpty(mapSector))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - SURFACE: {surface}";
-                }
-                else if (string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}";
-                }
-                else
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
-                }
+                UpdateWindowTitle();
+            }
+        }
 
+        private void UpdateWindowTitle()
+        {
+            // Обновляем заголовок окна
+            if (string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
+            {
+                this.Text = Path.GetFileNameWithoutExtension(lastSavedFilename);
+            }
+            else if (string.IsNullOrEmpty(mapSector))
+            {
+                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - SURFACE: {surface}";
+            }
+            else if (string.IsNullOrEmpty(surface))
+            {
+                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}";
+            }
+            else
+            {
+                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
             }
         }
 
@@ -2639,23 +2647,7 @@ namespace MMMapEditor
                 mapSector = (string)data.MetaData.MapSector;
                 surface = (string)data.MetaData.Surface;
 
-                // Устанавливаем заголовок окна
-                if (!string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - MAP SECTOR: {mapSector}";
-                }
-                else if (string.IsNullOrEmpty(mapSector) && !string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - SURFACE: {surface}";
-                }
-                else if (!string.IsNullOrEmpty(mapSector) && !string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
-                }
-                else
-                {
-                    this.Text = Path.GetFileNameWithoutExtension(filename);
-                }
+                UpdateWindowTitle();
             }
             else
             {
@@ -2693,9 +2685,8 @@ namespace MMMapEditor
                     filename = dialog.FileName;
                     SaveMap(filename);
 
-                    // Меняем заголовок окна на имя файла
-                    this.Text = Path.GetFileNameWithoutExtension(filename);
                     lastSavedFilename = filename; // Запоминаем путь к файлу
+                    UpdateWindowTitle();
 
                     // Показываем уведомление о завершении
                     MessageBox.Show("Карта успешно сохранена", "Сохранение выполнено", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -2748,7 +2739,8 @@ private void SaveMap(string filename)
             // Сериализуем данные и сохраняем в файл
             string jsonContent = JsonConvert.SerializeObject(mapData, Newtonsoft.Json.Formatting.Indented);
             File.WriteAllText(filename, jsonContent);
-    }
+
+        }
 
     // Обработчик клика по пункту "Создать новую(карту)"
     private void NewMapItem_Click(object sender, EventArgs e)
