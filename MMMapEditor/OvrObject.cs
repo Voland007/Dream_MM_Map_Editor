@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿namespace MMMapEditor
+namespace MMMapEditor
 {
     public class OvrObject
     {
@@ -24,6 +24,10 @@
 
         // Словарь для хранения текстов по путям: путь -> список текстов
         public Dictionary<int, HashSet<string>> PathTexts { get; set; } = new Dictionary<int, HashSet<string>>();
+
+        // Новые свойства для информации о монстрах
+        public byte? MonsterPower { get; set; }
+        public byte? MonsterLevel { get; set; }
 
         // Свойство, которое говорит, нужно ли показывать префикс Path0
         public bool ShouldShowPath0

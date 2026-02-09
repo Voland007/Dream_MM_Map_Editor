@@ -1,20 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -56,6 +40,22 @@ namespace MMMapEditor
             {
                 registers[reg.ToUpper()] = value;
                 registerSources[reg.ToUpper()] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
+
+                // Если устанавливаем значение для AX, также устанавливаем для AL и AH
+                if (reg.ToUpper() == "AX")
+                {
+                    registers["AL"] = (byte)(value & 0xFF);
+                    registers["AH"] = (byte)(value >> 8);
+                }
+                // Если устанавливаем значение для CH (часть CX)
+                else if (reg.ToUpper() == "CH")
+                {
+                    if (registers.TryGetValue("CX", out ushort cxValue))
+                    {
+                        cxValue = (ushort)((cxValue & 0x00FF) | (value << 8));
+                        registers["CX"] = cxValue;
+                    }
+                }
             }
 
             public bool TryGetRegisterValue(string reg, out ushort value)
@@ -103,6 +103,8 @@ namespace MMMapEditor
         {
             public HashSet<string> FoundTexts { get; set; } = new HashSet<string>();
             public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
+            public byte? MonsterPower { get; set; }
+            public byte? MonsterLevel { get; set; }
         }
 
         // Публичный статический метод для анализа OVR файла с конфигурацией
@@ -167,8 +169,14 @@ namespace MMMapEditor
 
             // 2. Анализируем основной путь (Path0) с ИЗОЛИРОВАННЫМ трекером регистров
             var mainRegisterTracker = new RegisterTracker();
-            var mainPathTexts = AnalyzeMainPath(br, patchAddress, mainRegisterTracker);
-            ovrObject.PathTexts[0] = mainPathTexts;
+            var mainPathAnalysis = AnalyzeMainPath(br, patchAddress, mainRegisterTracker, ovrObject);
+            ovrObject.PathTexts[0] = mainPathAnalysis.FoundTexts;
+
+            // Сохраняем информацию о монстрах из основного пути
+            if (mainPathAnalysis.MonsterPower.HasValue)
+                ovrObject.MonsterPower = mainPathAnalysis.MonsterPower.Value;
+            if (mainPathAnalysis.MonsterLevel.HasValue)
+                ovrObject.MonsterLevel = mainPathAnalysis.MonsterLevel.Value;
 
             // 3. Глобальный набор для отслеживания уже проанализированных путей
             var globallyAnalyzedPaths = new HashSet<string>();
@@ -194,6 +202,12 @@ namespace MMMapEditor
                     // Сохраняем тексты этого пути
                     ovrObject.PathTexts[currentPathNumber] = pathResult.FoundTexts;
 
+                    // Сохраняем информацию о монстрах из альтернативного пути (приоритет по порядку)
+                    if (pathResult.MonsterPower.HasValue)
+                        ovrObject.MonsterPower = pathResult.MonsterPower.Value;
+                    if (pathResult.MonsterLevel.HasValue)
+                        ovrObject.MonsterLevel = pathResult.MonsterLevel.Value;
+
                     // Сохраняем вложенные пути рекурсивно
                     SaveNestedPathsRecursively(ovrObject.PathTexts, pathResult.NestedPaths, ref currentPathNumber);
 
@@ -209,22 +223,24 @@ namespace MMMapEditor
         }
 
         // Метод для анализа основного пути
-        private HashSet<string> AnalyzeMainPath(BinaryReader br, uint patchAddress, RegisterTracker registerTracker)
+        private PathAnalysisResult AnalyzeMainPath(BinaryReader br, uint patchAddress,
+            RegisterTracker registerTracker, OvrObject currentObject)
         {
-            var foundTexts = new HashSet<string>();
+            var result = new PathAnalysisResult();
 
             // 1. Анализируем косвенные пути загрузки текста
             var indirectTexts = AnalyzeIndirectTextPatterns(br, patchAddress);
             foreach (var text in indirectTexts)
             {
-                foundTexts.Add(text);
+                result.FoundTexts.Add(text);
             }
 
             // 2. Анализируем CALL инструкции
             var analyzedCalls = new HashSet<uint>();
-            AnalyzeCallsWithFullDisassembly(br, patchAddress, analyzedCalls, foundTexts, registerTracker, 0);
+            AnalyzeCallsWithFullDisassembly(br, patchAddress, analyzedCalls, result,
+                registerTracker, currentObject, 0);
 
-            return foundTexts;
+            return result;
         }
 
         // Метод для анализа альтернативного пути
@@ -256,12 +272,12 @@ namespace MMMapEditor
             if (IsNestedPath(jumpAddress, alternativeStartAddress))
             {
                 AnalyzeCallsWithNestedAlternativeBranch(br, patchAddress, jumpAddress, alternativeStartAddress,
-                    analyzedCalls, result.FoundTexts, registerTracker, 0, new HashSet<string>());
+                    analyzedCalls, result, registerTracker, 0, new HashSet<string>());
             }
             else
             {
                 AnalyzeCallsWithAlternativeBranch(br, patchAddress, jumpAddress, alternativeStartAddress,
-                    analyzedCalls, result.FoundTexts, registerTracker, 0, 0);
+                    analyzedCalls, result, registerTracker, 0, 0);
             }
 
             // 3. Анализируем косвенные пути загрузки текста
@@ -492,7 +508,7 @@ namespace MMMapEditor
         }
 
         private void AnalyzeCallsWithFullDisassembly(BinaryReader br, uint address, HashSet<uint> analyzedAddresses,
-            HashSet<string> foundTexts, RegisterTracker registerTracker, int depth)
+            PathAnalysisResult result, RegisterTracker registerTracker, OvrObject currentObject, int depth)
         {
             if (depth > 5) return;
             if (analyzedAddresses.Contains(address)) return;
@@ -524,7 +540,8 @@ namespace MMMapEditor
                         if (instructionsShown >= MAX_INSTRUCTIONS) break;
                         instructionsShown++;
 
-                        FindTextsInInstruction(insn, br, registerTracker, depth, foundTexts);
+                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                         TrackRegisterOperations(insn, br, registerTracker, depth);
 
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
@@ -536,7 +553,7 @@ namespace MMMapEditor
                             if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
                             {
                                 AnalyzeCallsWithFullDisassembly(br, callTarget, analyzedAddresses,
-                                    foundTexts, registerTracker, depth + 1);
+                                    result, registerTracker, currentObject, depth + 1);
                             }
                         }
 
@@ -561,7 +578,7 @@ namespace MMMapEditor
 
         private void AnalyzeCallsWithAlternativeBranch(BinaryReader br, uint patchAddress,
             uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-            HashSet<string> foundTexts, RegisterTracker registerTracker, int depth, int callDepth = 0)
+            PathAnalysisResult result, RegisterTracker registerTracker, int depth, int callDepth = 0)
         {
             const int MAX_CALL_DEPTH = 5;
             if (depth > MAX_CALL_DEPTH) return;
@@ -594,7 +611,8 @@ namespace MMMapEditor
                         if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
                         instructionsShown++;
 
-                        FindTextsInInstruction(insn, br, registerTracker, depth, foundTexts);
+                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                         TrackRegisterOperations(insn, br, registerTracker, depth);
 
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
@@ -613,7 +631,7 @@ namespace MMMapEditor
                             if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
                             {
                                 AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0, analyzedAddresses,
-                                    foundTexts, registerTracker, depth + 1, callDepth + 1);
+                                    result, registerTracker, depth + 1, callDepth + 1);
                             }
                         }
 
@@ -712,6 +730,113 @@ namespace MMMapEditor
             }
         }
 
+        private void FindMonsterStatChanges(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
+            int depth, PathAnalysisResult result)
+        {
+            byte[] instructionBytes = insn.Bytes;
+            uint address = (uint)insn.Address;
+
+            // Проверка записи в [0xc96f] - сила монстров
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
+            {
+                byte monsterPower = instructionBytes[4];
+                result.MonsterPower = monsterPower;
+            }
+
+            // Проверка записи в [0xc961] - уровень монстров
+            else if (instructionBytes.Length >= 5 &&
+                     instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                     instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
+            {
+                byte monsterLevel = instructionBytes[4];
+                result.MonsterLevel = monsterLevel;
+            }
+
+            // Проверка записи через регистры
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E)
+            {
+                ushort targetAddr = BitConverter.ToUInt16(instructionBytes, 2);
+
+                if (targetAddr == 0xC96F || targetAddr == 0xC961)
+                {
+                    // Определяем, какой регистр используется
+                    byte modRM = instructionBytes[1];
+                    byte regField = (byte)((modRM >> 3) & 0x07);
+
+                    if (regField == 5) // CH регистр
+                    {
+                        if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                        {
+                            if (targetAddr == 0xC96F)
+                                result.MonsterPower = (byte)regValue;
+                            else
+                                result.MonsterLevel = (byte)regValue;
+                        }
+                    }
+                }
+            }
+
+            // Дополнительные проверки для разных форм записи
+            else if (instructionBytes.Length >= 3)
+            {
+                // MOV [C96F], AL
+                if (instructionBytes[0] == 0xA2 &&
+                    instructionBytes[1] == 0x6F && instructionBytes[2] == 0xC9)
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                    {
+                        result.MonsterPower = (byte)alValue;
+                    }
+                }
+                // MOV [C961], AL
+                else if (instructionBytes[0] == 0xA2 &&
+                         instructionBytes[1] == 0x61 && instructionBytes[2] == 0xC9)
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                    {
+                        result.MonsterLevel = (byte)alValue;
+                    }
+                }
+            }
+
+            // Проверка записи через другие регистры (MOV [C96F], CL и т.д.)
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x0E)
+            {
+                ushort targetAddr = BitConverter.ToUInt16(instructionBytes, 2);
+
+                if (targetAddr == 0xC96F || targetAddr == 0xC961)
+                {
+                    byte modRM = instructionBytes[1];
+                    byte regField = (byte)((modRM >> 3) & 0x07);
+                    string[] regNames = { "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+
+                    if (regField >= 1 && regField <= 7) // CL, DL, BL, AH, CH, DH, BH
+                    {
+                        string regName = "";
+                        if (regField == 1) regName = "CL";
+                        else if (regField == 2) regName = "DL";
+                        else if (regField == 3) regName = "BL";
+                        else if (regField == 4) regName = "AH";
+                        else if (regField == 5) regName = "CH";
+                        else if (regField == 6) regName = "DH";
+                        else if (regField == 7) regName = "BH";
+
+                        if (!string.IsNullOrEmpty(regName) && registerTracker.TryGetRegisterValue(regName, out ushort regValue))
+                        {
+                            if (targetAddr == 0xC96F)
+                                result.MonsterPower = (byte)regValue;
+                            else
+                                result.MonsterLevel = (byte)regValue;
+                        }
+                    }
+                }
+            }
+        }
+
         private void TrackRegisterOperations(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker, int depth)
         {
             byte[] instructionBytes = insn.Bytes;
@@ -755,6 +880,43 @@ namespace MMMapEditor
                     {
                         registerTracker.TrackPartialRegisterOperation(fullReg, regName, immediateValue,
                             address, $"MOV {regName}, 0x{immediateValue:X2}");
+                    }
+                }
+            }
+
+            // Отслеживание записей в [0xc96f] и [0xc961]
+            if (instructionBytes.Length >= 4 &&
+                ((instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                  instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9) ||  // MOV [C96F], CH
+                 (instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                  instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9) ||  // MOV [C961], CH
+                 (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                  instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9) ||  // MOV byte [C96F], imm8
+                 (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                  instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)))   // MOV byte [C961], imm8
+            {
+                byte value = 0;
+                string target = instructionBytes[2] == 0x6F ? "C96F" : "C961";
+
+                // Если запись непосредственного значения
+                if (instructionBytes[0] == 0xC6 && instructionBytes.Length >= 5)
+                {
+                    value = instructionBytes[4];
+                    registerTracker.SetRegisterValue($"MEM_{target}", value, address,
+                        $"MOV [{target}], {value}");
+                }
+                // Если запись из регистра
+                else if (instructionBytes[0] == 0x88)
+                {
+                    // CH регистр имеет код 101 в modRM
+                    if ((instructionBytes[1] & 0x38) >> 3 == 5) // CH
+                    {
+                        if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                        {
+                            value = (byte)regValue;
+                            registerTracker.SetRegisterValue($"MEM_{target}", value, address,
+                                $"MOV [{target}], CH (value: {value})");
+                        }
                     }
                 }
             }
@@ -1225,7 +1387,7 @@ namespace MMMapEditor
 
         private void AnalyzeCallsWithNestedAlternativeBranch(BinaryReader br, uint patchAddress,
             uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-            HashSet<string> foundTexts, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
+            PathAnalysisResult result, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
         {
             if (depth > 5)
             {
@@ -1293,7 +1455,8 @@ namespace MMMapEditor
                         if (mnemonic.StartsWith("CALL"))
                         {
                             // Ищем тексты в инструкции CALL
-                            FindTextsInInstruction(insn, br, registerTracker, depth, foundTexts);
+                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                             TrackRegisterOperations(insn, br, registerTracker, depth);
 
                             uint callTarget = GetInstructionTargetAddress(insn, fileLength);
@@ -1301,7 +1464,7 @@ namespace MMMapEditor
                             {
                                 // Анализируем подпрограмму
                                 AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
-                                    analyzedAddresses, foundTexts, registerTracker, depth + 1, 0);
+                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
                             }
 
                             currentAddress = (uint)(insn.Address + insn.Bytes.Length);
@@ -1312,7 +1475,8 @@ namespace MMMapEditor
                         else if (mnemonic.StartsWith("J") && !mnemonic.StartsWith("JMP") && !mnemonic.StartsWith("JECXZ"))
                         {
                             // Ищем тексты в этом переходе
-                            FindTextsInInstruction(insn, br, registerTracker, depth, foundTexts);
+                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                             TrackRegisterOperations(insn, br, registerTracker, depth);
 
                             // Переходим по этому переходу (предполагаем, что он выполняется)
@@ -1337,7 +1501,8 @@ namespace MMMapEditor
                         else
                         {
                             // Обычные инструкции - ищем тексты
-                            FindTextsInInstruction(insn, br, registerTracker, depth, foundTexts);
+                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                             TrackRegisterOperations(insn, br, registerTracker, depth);
 
                             currentAddress = (uint)(insn.Address + insn.Bytes.Length);
@@ -1358,20 +1523,20 @@ namespace MMMapEditor
                 {
                     // Анализируем выполнение от jumpAddress до конца
                     AnalyzeSpecificJumpExecutionWithFullCollection(br, jumpAddress, alternativeStartAddress,
-                        analyzedAddresses, foundTexts, registerTracker, depth, "");
+                        analyzedAddresses, result, registerTracker, depth, "");
                 }
                 else
                 {
                     // Попробуем анализировать напрямую от jumpAddress
                     AnalyzeSpecificJumpExecutionWithFullCollection(br, jumpAddress, alternativeStartAddress,
-                        analyzedAddresses, foundTexts, registerTracker, depth, "");
+                        analyzedAddresses, result, registerTracker, depth, "");
                 }
             }
         }
 
         // Вспомогательный метод для анализа конкретного перехода
         private void AnalyzeSpecificJumpExecutionWithFullCollection(BinaryReader br, uint jumpAddress, uint alternativeStartAddress,
-            HashSet<uint> analyzedAddresses, HashSet<string> foundTexts, RegisterTracker registerTracker, int depth, string prefix)
+            HashSet<uint> analyzedAddresses, PathAnalysisResult result, RegisterTracker registerTracker, int depth, string prefix)
         {
             if (analyzedAddresses.Contains(jumpAddress))
                 return;
@@ -1406,7 +1571,8 @@ namespace MMMapEditor
                         instructionsShown++;
 
                         // Ищем тексты и добавляем их в список
-                        FindTextsInInstruction(insn, br, registerTracker, depth, foundTexts);
+                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                         TrackRegisterOperations(insn, br, registerTracker, depth);
 
                         string mnemonic = insn.Mnemonic.ToUpper();
@@ -1448,7 +1614,7 @@ namespace MMMapEditor
                             {
                                 // Анализируем подпрограмму
                                 AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
-                                    analyzedAddresses, foundTexts, registerTracker, depth + 1, 0);
+                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
                             }
                         }
 

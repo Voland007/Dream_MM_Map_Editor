@@ -1430,6 +1430,24 @@ namespace MMMapEditor
 
                 var config = OvrFileConfigs.Configs[fileNameOnly];
 
+                // Получаем дефолтные значения силы и уровня монстров
+                byte defaultMonsterPower = 0;
+                byte defaultMonsterLevel = 0;
+
+                // Читаем дефолтные значения из файла
+                try
+                {
+                    byte[] fileData = File.ReadAllBytes(filename);
+                    if (config.MonsterPower < fileData.Length)
+                        defaultMonsterPower = fileData[config.MonsterPower];
+                    if (config.MonsterLevel < fileData.Length)
+                        defaultMonsterLevel = fileData[config.MonsterLevel];
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка чтения дефолтных значений монстров: {ex.Message}");
+                }
+
                 // Используем конфигурационный анализатор
                 var objects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config);
 
@@ -1438,7 +1456,7 @@ namespace MMMapEditor
                 {
                     Point pos = new Point(obj.X, obj.Y);
 
-                    // Устанавливаем центральный объект
+                    // Заменяем центральный объект на "AnyObject"
                     centralOptions[pos] = "AnyObject";
 
                     // Устанавливаем направления с сообщениями
@@ -1462,11 +1480,57 @@ namespace MMMapEditor
                     bool hasAlternativePaths = obj.PathTexts.Any(kvp => kvp.Key != 0 && kvp.Value.Count > 0);
                     bool shouldShowPath0 = hasMainPath && hasAlternativePaths;
 
+                    // Добавляем информацию о монстрах в заметки (в самом начале)
+                    bool hasMonsterInfo = false;
+                    string monsterInfoText = "";
+
+                    if (obj.MonsterPower.HasValue)
+                    {
+                        byte newPower = obj.MonsterPower.Value;
+                        if (newPower > defaultMonsterPower)
+                        {
+                            monsterInfoText += $"Сила монстров увеличивается с {defaultMonsterPower} до {newPower}\n";
+                        }
+                        else if (newPower < defaultMonsterPower)
+                        {
+                            monsterInfoText += $"Сила монстров уменьшается с {defaultMonsterPower} до {newPower}\n";
+                        }
+                        else
+                        {
+                            monsterInfoText += $"Сила монстров остаётся прежней: {newPower}\n";
+                        }
+                        hasMonsterInfo = true;
+                    }
+
+                    if (obj.MonsterLevel.HasValue)
+                    {
+                        byte newLevel = obj.MonsterLevel.Value;
+                        if (newLevel > defaultMonsterLevel)
+                        {
+                            monsterInfoText += $"Уровень монстров увеличивается с {defaultMonsterLevel} до {newLevel}\n";
+                        }
+                        else if (newLevel < defaultMonsterLevel)
+                        {
+                            monsterInfoText += $"Уровень монстров уменьшается с {defaultMonsterLevel} до {newLevel}\n";
+                        }
+                        else
+                        {
+                            monsterInfoText += $"Уровень монстров остаётся прежним: {newLevel}\n";
+                        }
+                        hasMonsterInfo = true;
+                    }
+
                     // Добавляем тексты в заметки с правильной группировкой
                     if (obj.PathTexts.Count > 0)
                     {
                         if (!notesPerCell.ContainsKey(pos))
                             notesPerCell[pos] = "";
+
+                        // Добавляем информацию о монстрах в начало заметки
+                        if (hasMonsterInfo)
+                        {
+                            notesPerCell[pos] = monsterInfoText + "\n" + notesPerCell[pos];
+                        }
 
                         // Сортируем пути по номеру
                         var sortedPaths = obj.PathTexts
@@ -1535,6 +1599,14 @@ namespace MMMapEditor
                             notesPerCell[pos] = notesPerCell[pos].TrimEnd('\n');
                         }
                     }
+                    else if (hasMonsterInfo)
+                    {
+                        // Если нет текстов, но есть информация о монстрах
+                        if (!notesPerCell.ContainsKey(pos))
+                            notesPerCell[pos] = "";
+
+                        notesPerCell[pos] = monsterInfoText.TrimEnd('\n') + notesPerCell[pos];
+                    }
                 }
             }
             catch (Exception ex)
@@ -1567,6 +1639,7 @@ namespace MMMapEditor
 
                 // Очищаем выделение
                 notesTextBox.DeselectAll();
+                notesTextBox.Text = noteText;
 
                 // Курсив и морская волна для фразы "Эта ячейка содержит различные варианты текста"
                 int introIndex = noteText.IndexOf("Эта ячейка содержит различные варианты текста");
@@ -1617,6 +1690,48 @@ namespace MMMapEditor
                         notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
                     }
                 }
+
+                // Форматирование для сообщений о монстрах
+                FormatMonsterInfoText(notesTextBox, noteText);
+            }
+        }
+
+        private void FormatMonsterInfoText(RichTextBox rt, string noteText)
+        {
+            // Ищем сообщения о силе монстров (более тёмный светло-голубой #87CEFA = RGB(135, 206, 250))
+            var powerMatches = Regex.Matches(noteText, @"Сила монстров (увеличивается|уменьшается|остаётся прежней) с \d+ до \d+");
+            foreach (Match match in powerMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(135, 206, 250); // #87CEFA - светло-голубой для силы
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Ищем сообщения об уровне монстров (более светлый светло-голубой #B0E0E6 = RGB(176, 224, 230))
+            var levelMatches = Regex.Matches(noteText, @"Уровень монстров (увеличивается|уменьшается|остаётся прежним) с \d+ до \d+");
+            foreach (Match match in levelMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(176, 224, 230); // #B0E0E6 - светло-голубой для уровня
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Также ищем альтернативные формулировки для силы монстров
+            var powerAltMatches = Regex.Matches(noteText, @"Сила монстров остаётся прежней: \d+");
+            foreach (Match match in powerAltMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(135, 206, 250);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Альтернативные формулировки для уровня монстров
+            var levelAltMatches = Regex.Matches(noteText, @"Уровень монстров остаётся прежним: \d+");
+            foreach (Match match in levelAltMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(176, 224, 230);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
         }
 
