@@ -1480,26 +1480,28 @@ namespace MMMapEditor
                     bool hasAlternativePaths = obj.PathTexts.Any(kvp => kvp.Key != 0 && kvp.Value.Count > 0);
                     bool shouldShowPath0 = hasMainPath && hasAlternativePaths;
 
-                    // Добавляем информацию о монстрах в заметки (в самом начале)
-                    bool hasMonsterInfo = false;
-                    string monsterInfoText = "";
+                    // ---- ИНФОРМАЦИЯ О МОНСТРАХ - РАЗДЕЛЕНИЕ НА ДВЕ КАТЕГОРИИ ----
+
+                    // 1. Информация об изменении силы и уровня монстров (статистики)
+                    bool hasMonsterStatChanges = false;
+                    string monsterStatText = "";
 
                     if (obj.MonsterPower.HasValue)
                     {
                         byte newPower = obj.MonsterPower.Value;
                         if (newPower > defaultMonsterPower)
                         {
-                            monsterInfoText += $"Сила монстров увеличивается с {defaultMonsterPower} до {newPower}\n";
+                            monsterStatText += $"Сила монстров увеличивается с {defaultMonsterPower} до {newPower}\n";
                         }
                         else if (newPower < defaultMonsterPower)
                         {
-                            monsterInfoText += $"Сила монстров уменьшается с {defaultMonsterPower} до {newPower}\n";
+                            monsterStatText += $"Сила монстров уменьшается с {defaultMonsterPower} до {newPower}\n";
                         }
                         else
                         {
-                            monsterInfoText += $"Сила монстров остаётся прежней: {newPower}\n";
+                            monsterStatText += $"Сила монстров остаётся прежней: {newPower}\n";
                         }
-                        hasMonsterInfo = true;
+                        hasMonsterStatChanges = true;
                     }
 
                     if (obj.MonsterLevel.HasValue)
@@ -1507,87 +1509,120 @@ namespace MMMapEditor
                         byte newLevel = obj.MonsterLevel.Value;
                         if (newLevel > defaultMonsterLevel)
                         {
-                            monsterInfoText += $"Уровень монстров увеличивается с {defaultMonsterLevel} до {newLevel}\n";
+                            monsterStatText += $"Уровень монстров увеличивается с {defaultMonsterLevel} до {newLevel}\n";
                         }
                         else if (newLevel < defaultMonsterLevel)
                         {
-                            monsterInfoText += $"Уровень монстров уменьшается с {defaultMonsterLevel} до {newLevel}\n";
+                            monsterStatText += $"Уровень монстров уменьшается с {defaultMonsterLevel} до {newLevel}\n";
                         }
                         else
                         {
-                            monsterInfoText += $"Уровень монстров остаётся прежним: {newLevel}\n";
+                            monsterStatText += $"Уровень монстров остаётся прежним: {newLevel}\n";
                         }
-                        hasMonsterInfo = true;
+                        hasMonsterStatChanges = true;
+                    }
+
+                    // 2. Информация о битве с монстрами (конкретные враги)
+                    bool hasMonsterBattle = false;
+                    string monsterBattleText = "";
+
+                    if (obj.HasBattleInfo)
+                    {
+                        string battleDesc = obj.GetBattleDescription();
+                        if (!string.IsNullOrEmpty(battleDesc))
+                        {
+                            monsterBattleText += battleDesc + "\n";
+                            hasMonsterBattle = true;
+
+                            // Дополнительная информация о монстре, если доступна
+                            var monsterInfo = obj.GetBattleMonsterInfo();
+                            if (monsterInfo != null)
+                            {
+                                // Можно добавить характеристики монстра, если нужно
+                                // monsterBattleText += $"  HP: {monsterInfo.HP}, Атака: {monsterInfo.Attack}\n";
+                            }
+                        }
                     }
 
                     // Добавляем тексты в заметки с правильной группировкой
-                    if (obj.PathTexts.Count > 0)
+                    if (obj.PathTexts.Count > 0 || hasMonsterStatChanges || hasMonsterBattle)
                     {
                         if (!notesPerCell.ContainsKey(pos))
                             notesPerCell[pos] = "";
 
-                        // Добавляем информацию о монстрах в начало заметки
-                        if (hasMonsterInfo)
+                        // Собираем ВСЮ информацию о монстрах в правильном порядке
+                        StringBuilder monsterInfoBuilder = new StringBuilder();
+
+                        // СНАЧАЛА информация о битве (конкретные враги) - как наиболее важная
+                        if (hasMonsterBattle)
                         {
-                            notesPerCell[pos] = monsterInfoText + "\n" + notesPerCell[pos];
+                            monsterInfoBuilder.Append(monsterBattleText);
                         }
 
-                        // Сортируем пути по номеру
-                        var sortedPaths = obj.PathTexts
-                            .OrderBy(kvp => kvp.Key)
-                            .ToList();
-
-                        bool firstPath = true;
-                        int variantCounter = 1; // Общий счётчик вариантов
-
-                        foreach (var kvp in sortedPaths)
+                        // ПОТОМ информация об изменении статистик
+                        if (hasMonsterStatChanges)
                         {
-                            // Пропускаем пустые пути
-                            if (kvp.Value == null || kvp.Value.Count == 0)
-                                continue;
+                            monsterInfoBuilder.Append(monsterStatText);
+                        }
 
-                            // Добавляем разделитель между путями
-                            if (!firstPath)
-                            {
-                                notesPerCell[pos] += "\n";
-                            }
-                            firstPath = false;
+                        // Добавляем информацию о монстрах в начало заметки
+                        if (monsterInfoBuilder.Length > 0)
+                        {
+                            notesPerCell[pos] = monsterInfoBuilder.ToString() + "\n" + notesPerCell[pos];
+                        }
 
-                            // Для Path0 добавляем префикс только если нужно
-                            if (kvp.Key == 0)
+                        // Добавляем тексты путей
+                        if (obj.PathTexts.Count > 0)
+                        {
+                            // Сортируем пути по номеру
+                            var sortedPaths = obj.PathTexts
+                                .OrderBy(kvp => kvp.Key)
+                                .ToList();
+
+                            bool firstPath = true;
+                            int variantCounter = 1;
+
+                            foreach (var kvp in sortedPaths)
                             {
-                                if (shouldShowPath0)
+                                // Пропускаем пустые пути
+                                if (kvp.Value == null || kvp.Value.Count == 0)
+                                    continue;
+
+                                // Добавляем разделитель между путями
+                                if (!firstPath)
                                 {
-                                    notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
+                                    notesPerCell[pos] += "\n";
+                                }
+                                firstPath = false;
+
+                                // Для Path0 добавляем префикс только если нужно
+                                if (kvp.Key == 0)
+                                {
+                                    if (shouldShowPath0)
+                                    {
+                                        notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
+                                        notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
+                                    }
+                                }
+                                else
+                                {
                                     notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
                                 }
-                            }
-                            else
-                            {
-                                // Для всех альтернативных путей выводим последовательный номер
-                                notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
-                            }
 
-                            // Добавляем тексты этого пути
-                            var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
-                            foreach (var text in sortedTexts)
-                            {
-                                // Формат: "Text at 0xXXXX: "encoded_text""
-                                // Нужно: удалить "Text at 0xXXXX: " и оставить сам текст
-                                int colonIndex = text.IndexOf(':');
-                                if (colonIndex >= 0 && colonIndex + 1 < text.Length)
+                                // Добавляем тексты этого пути
+                                var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
+                                foreach (var text in sortedTexts)
                                 {
-                                    string textPart = text.Substring(colonIndex + 1).Trim();
-
-                                    // Декодируем escape-последовательности
-                                    string decodedText = DecodeTextString(textPart);
-                                    if (!string.IsNullOrEmpty(decodedText))
+                                    int colonIndex = text.IndexOf(':');
+                                    if (colonIndex >= 0 && colonIndex + 1 < text.Length)
                                     {
-                                        // Убираем \r в конце
-                                        decodedText = decodedText.TrimEnd('\r');
-
-                                        // Выводим как есть, с возможными кавычками
-                                        notesPerCell[pos] += decodedText + "\n";
+                                        string textPart = text.Substring(colonIndex + 1).Trim();
+                                        string decodedText = DecodeTextString(textPart);
+                                        if (!string.IsNullOrEmpty(decodedText))
+                                        {
+                                            decodedText = decodedText.TrimEnd('\r');
+                                            notesPerCell[pos] += decodedText + "\n";
+                                        }
                                     }
                                 }
                             }
@@ -1599,15 +1634,22 @@ namespace MMMapEditor
                             notesPerCell[pos] = notesPerCell[pos].TrimEnd('\n');
                         }
                     }
-                    else if (hasMonsterInfo)
-                    {
-                        // Если нет текстов, но есть информация о монстрах
-                        if (!notesPerCell.ContainsKey(pos))
-                            notesPerCell[pos] = "";
-
-                        notesPerCell[pos] = monsterInfoText.TrimEnd('\n') + notesPerCell[pos];
-                    }
                 }
+
+                // Перерисовываем интерфейс
+                foreach (var button in gridButtons)
+                {
+                    button.Invalidate();
+                }
+
+                // Обновляем форматирование, если есть выделенная ячейка
+                if (selectedPosition.HasValue)
+                {
+                    UpdateNotesFormatting();
+                }
+
+                // Информационное сообщение о завершении загрузки
+                // MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -1630,73 +1672,8 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(0xB539FF);
         }
 
-        private void UpdateNotesFormatting()
-        {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
-                string noteText = notesPerCell[pos];
-
-                // Очищаем выделение
-                notesTextBox.DeselectAll();
-                notesTextBox.Text = noteText;
-
-                // Курсив и морская волна для фразы "Эта ячейка содержит различные варианты текста"
-                int introIndex = noteText.IndexOf("Эта ячейка содержит различные варианты текста");
-                if (introIndex >= 0)
-                {
-                    ApplyItalicSeaWaveStyle(notesTextBox, introIndex, "Эта ячейка содержит различные варианты текста".Length);
-                }
-
-                // Жирный и красный для "Вариант#"
-                MatchCollection matches = Regex.Matches(noteText, @"Вариант\d+:");
-                foreach (Match match in matches)
-                {
-                    ApplyBoldRedStyle(notesTextBox, match.Index, match.Length);
-                }
-
-                // Проверяем, является ли данная клетка самой опасной
-                if (mostDangerousCell.HasValue && pos == mostDangerousCell.Value)
-                {
-                    // Находим важную строку (предполагается, что она находится в первой строке)
-                    int importantStart = noteText.IndexOf("ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
-                    if (importantStart >= 0)
-                    {
-                        // Вычисляем конец строки
-                        int importantEnd = noteText.IndexOf("\n", importantStart);
-                        if (importantEnd < 0) importantEnd = noteText.Length;
-
-                        // Выделяем и оформляем важное сообщение красным цветом
-                        notesTextBox.Select(importantStart, importantEnd - importantStart);
-                        notesTextBox.SelectionColor = Color.FromArgb(0xFF3824); // Красный цвет предупреждения
-                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
-                    }
-                }
-
-                // Проверяем, является ли данная клетка самой безопасной
-                if (mostPeacefulCell.HasValue && pos == mostPeacefulCell.Value)
-                {
-                    // Находим важную строку (предполагается, что она находится в первой строке)
-                    int importantStart = noteText.IndexOf("ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
-                    if (importantStart >= 0)
-                    {
-                        // Вычисляем конец строки
-                        int importantEnd = noteText.IndexOf("\n", importantStart);
-                        if (importantEnd < 0) importantEnd = noteText.Length;
-
-                        // Выделяем и оформляем важное сообщение зеленым цветом
-                        notesTextBox.Select(importantStart, importantEnd - importantStart);
-                        notesTextBox.SelectionColor = Color.LimeGreen; // Салатовый цвет
-                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
-                    }
-                }
-
-                // Форматирование для сообщений о монстрах
-                FormatMonsterInfoText(notesTextBox, noteText);
-            }
-        }
-
-        private void FormatMonsterInfoText(RichTextBox rt, string noteText)
+        // ПЕРЕИМЕНОВАННЫЙ МЕТОД: теперь только для силы и уровня монстров
+        private void FormatMonsterStatChanges(RichTextBox rt, string noteText)
         {
             // Ищем сообщения о силе монстров (более тёмный светло-голубой #87CEFA = RGB(135, 206, 250))
             var powerMatches = Regex.Matches(noteText, @"Сила монстров (увеличивается|уменьшается|остаётся прежней) с \d+ до \d+");
@@ -1732,6 +1709,192 @@ namespace MMMapEditor
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(176, 224, 230);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+        }
+
+        /// <summary>
+        /// Форматирование информации о битве с конкретными монстрами
+        /// </summary>
+        private void FormatMonsterBattleInfo(RichTextBox rt, string noteText)
+        {
+            // Разбиваем текст на строки для анализа чётности
+            var lines = noteText.Split('\n');
+            int lineIndex = 0;
+            int currentPos = 0;
+
+            // Формат: "Битва: Имя монстра"
+            var singleMatches = Regex.Matches(noteText, @"^Битва: ([^\n]+?)(?:\s+x\d+)?$", RegexOptions.Multiline);
+            foreach (Match match in singleMatches)
+            {
+                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
+                Color lineColor = isEven ? Color.FromArgb(255, 140, 0) : Color.FromArgb(255, 180, 80);
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = lineColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+            }
+
+            // Формат: "Битва: Имя монстра xN"
+            var multiMatches = Regex.Matches(noteText, @"^Битва: (.+?) x(\d+)$", RegexOptions.Multiline);
+            foreach (Match match in multiMatches)
+            {
+                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
+                Color lineColor = isEven ? Color.FromArgb(255, 140, 0) : Color.FromArgb(255, 180, 80);
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = lineColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+
+                var countGroup = match.Groups[2];
+                rt.Select(match.Index + countGroup.Index, countGroup.Length);
+                rt.SelectionColor = isEven ? Color.FromArgb(255, 200, 0) : Color.FromArgb(255, 220, 100);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Формат: "Битва: Имя монстра x? (Random count)"
+            var randomMatches = Regex.Matches(noteText, @"^Битва: (.+?) x\? \(Random count\)$", RegexOptions.Multiline);
+            foreach (Match match in randomMatches)
+            {
+                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
+                Color lineColor = isEven ? Color.FromArgb(255, 140, 0) : Color.FromArgb(255, 180, 80);
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = lineColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+            }
+
+            // Формат: "Битва с группой монстров:"
+            var groupHeaderMatches = Regex.Matches(noteText, @"^Битва с группой монстров:$", RegexOptions.Multiline);
+            foreach (Match match in groupHeaderMatches)
+            {
+                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
+                Color lineColor = isEven ? Color.LightYellow : Color.FromArgb(255, 180, 80);
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = lineColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
+            // Формат: "  • Имя монстра xN"
+            var bulletMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x\d+)$", RegexOptions.Multiline);
+            foreach (Match match in bulletMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(240, 31, 111);  // Ярко-розовый для всей строки
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                var countMatch = Regex.Match(match.Value, @"x(\d+)$");
+                if (countMatch.Success)
+                {
+                    int countIndex = match.Index + match.Value.LastIndexOf('x');
+                    rt.Select(countIndex, countMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для числа
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+            }
+
+            // Формат: "  • Имя монстра x? (Random count)"
+            var bulletRandomMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x\? \(Random count\))$", RegexOptions.Multiline);
+            foreach (Match match in bulletRandomMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 71, 151);  // Розовый для всей строки
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                int xPos = match.Value.IndexOf("x?");
+                if (xPos >= 0)
+                {
+                    rt.Select(match.Index + xPos, match.Length - xPos);
+                    rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для "x? (Random count)"
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+            }
+
+        }
+
+        /// <summary>
+        /// Вспомогательный метод для определения номера строки по позиции в тексте
+        /// </summary>
+        private int GetLineNumber(string text, int position)
+        {
+            int lineNumber = 0;
+            int currentPos = 0;
+
+            while (currentPos < position && currentPos < text.Length)
+            {
+                int nextNewLine = text.IndexOf('\n', currentPos);
+                if (nextNewLine == -1) break;
+
+                if (position <= nextNewLine)
+                    break;
+
+                currentPos = nextNewLine + 1;
+                lineNumber++;
+            }
+
+            return lineNumber;
+        }
+
+        private void UpdateNotesFormatting()
+        {
+            if (selectedPosition.HasValue)
+            {
+                Point pos = selectedPosition.Value;
+                string noteText = notesPerCell[pos];
+
+                // Очищаем выделение
+                notesTextBox.DeselectAll();
+                notesTextBox.Text = noteText;
+
+                // Курсив и морская волна для фразы "Эта ячейка содержит различные варианты текста"
+                int introIndex = noteText.IndexOf("Эта ячейка содержит различные варианты текста");
+                if (introIndex >= 0)
+                {
+                    ApplyItalicSeaWaveStyle(notesTextBox, introIndex, "Эта ячейка содержит различные варианты текста".Length);
+                }
+
+                // Жирный и красный для "Вариант#"
+                MatchCollection matches = Regex.Matches(noteText, @"Вариант\d+:");
+                foreach (Match match in matches)
+                {
+                    ApplyBoldRedStyle(notesTextBox, match.Index, match.Length);
+                }
+
+                // Проверяем, является ли данная клетка самой опасной
+                if (mostDangerousCell.HasValue && pos == mostDangerousCell.Value)
+                {
+                    int importantStart = noteText.IndexOf("ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                    if (importantStart >= 0)
+                    {
+                        int importantEnd = noteText.IndexOf("\n", importantStart);
+                        if (importantEnd < 0) importantEnd = noteText.Length;
+
+                        notesTextBox.Select(importantStart, importantEnd - importantStart);
+                        notesTextBox.SelectionColor = Color.FromArgb(0xFF3824);
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+                    }
+                }
+
+                // Проверяем, является ли данная клетка самой безопасной
+                if (mostPeacefulCell.HasValue && pos == mostPeacefulCell.Value)
+                {
+                    int importantStart = noteText.IndexOf("ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                    if (importantStart >= 0)
+                    {
+                        int importantEnd = noteText.IndexOf("\n", importantStart);
+                        if (importantEnd < 0) importantEnd = noteText.Length;
+
+                        notesTextBox.Select(importantStart, importantEnd - importantStart);
+                        notesTextBox.SelectionColor = Color.LimeGreen;
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+                    }
+                }
+
+                // Форматирование для силы и уровня монстров
+                FormatMonsterStatChanges(notesTextBox, noteText);
+
+                // НОВОЕ: Форматирование для информации о битве с монстрами
+                FormatMonsterBattleInfo(notesTextBox, noteText);
             }
         }
 

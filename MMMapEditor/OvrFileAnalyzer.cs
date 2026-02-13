@@ -1,19 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -22,6 +6,7 @@ using System.Text;
 using System.Globalization;
 using Gee.External.Capstone;
 using Gee.External.Capstone.X86;
+using System.Diagnostics;
 
 namespace MMMapEditor
 {
@@ -29,13 +14,11 @@ namespace MMMapEditor
     {
         private readonly OvrFileConfig _config;
 
-        // Конструктор принимает обязательную конфигурацию
         public OvrFileAnalyzer(OvrFileConfig config)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
         }
 
-        // Структуры для анализа путей
         private class AlternativePath
         {
             public int ObjectIndex { get; set; }
@@ -46,7 +29,6 @@ namespace MMMapEditor
             public int PathNumber { get; set; }
         }
 
-        // Класс для отслеживания регистров (должен быть ИЗОЛИРОВАН для каждого пути)
         private class RegisterTracker
         {
             private Dictionary<string, ushort> registers = new Dictionary<string, ushort>();
@@ -54,21 +36,43 @@ namespace MMMapEditor
 
             public void SetRegisterValue(string reg, ushort value, uint address, string instruction)
             {
-                registers[reg.ToUpper()] = value;
-                registerSources[reg.ToUpper()] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
+                string regUpper = reg.ToUpper();
+                registers[regUpper] = value;
+                registerSources[regUpper] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
 
-                // Если устанавливаем значение для AX, также устанавливаем для AL и AH
-                if (reg.ToUpper() == "AX")
+                if (regUpper == "AX")
                 {
                     registers["AL"] = (byte)(value & 0xFF);
                     registers["AH"] = (byte)(value >> 8);
                 }
-                // Если устанавливаем значение для CH (часть CX)
-                else if (reg.ToUpper() == "CH")
+                else if (regUpper == "CX")
+                {
+                    registers["CL"] = (byte)(value & 0xFF);
+                    registers["CH"] = (byte)(value >> 8);
+                }
+                else if (regUpper == "DX")
+                {
+                    registers["DL"] = (byte)(value & 0xFF);
+                    registers["DH"] = (byte)(value >> 8);
+                }
+                else if (regUpper == "BX")
+                {
+                    registers["BL"] = (byte)(value & 0xFF);
+                    registers["BH"] = (byte)(value >> 8);
+                }
+                else if (regUpper == "CH")
                 {
                     if (registers.TryGetValue("CX", out ushort cxValue))
                     {
                         cxValue = (ushort)((cxValue & 0x00FF) | (value << 8));
+                        registers["CX"] = cxValue;
+                    }
+                }
+                else if (regUpper == "CL")
+                {
+                    if (registers.TryGetValue("CX", out ushort cxValue))
+                    {
+                        cxValue = (ushort)((cxValue & 0xFF00) | value);
                         registers["CX"] = cxValue;
                     }
                 }
@@ -109,21 +113,80 @@ namespace MMMapEditor
                             currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
                         }
                         registers[fullRegUpper] = currentValue;
+                        registers[partialRegUpper] = value;
+                    }
+                }
+                else if (partialRegUpper == "CL" || partialRegUpper == "CH")
+                {
+                    if (fullRegUpper == "CX")
+                    {
+                        if (partialRegUpper == "CL")
+                        {
+                            currentValue = (ushort)((currentValue & 0xFF00) | value);
+                        }
+                        else if (partialRegUpper == "CH")
+                        {
+                            currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
+                        }
+                        registers[fullRegUpper] = currentValue;
+                        registers[partialRegUpper] = value;
+                    }
+                }
+                else if (partialRegUpper == "DL" || partialRegUpper == "DH")
+                {
+                    if (fullRegUpper == "DX")
+                    {
+                        if (partialRegUpper == "DL")
+                        {
+                            currentValue = (ushort)((currentValue & 0xFF00) | value);
+                        }
+                        else if (partialRegUpper == "DH")
+                        {
+                            currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
+                        }
+                        registers[fullRegUpper] = currentValue;
+                        registers[partialRegUpper] = value;
+                    }
+                }
+                else if (partialRegUpper == "BL" || partialRegUpper == "BH")
+                {
+                    if (fullRegUpper == "BX")
+                    {
+                        if (partialRegUpper == "BL")
+                        {
+                            currentValue = (ushort)((currentValue & 0xFF00) | value);
+                        }
+                        else if (partialRegUpper == "BH")
+                        {
+                            currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
+                        }
+                        registers[fullRegUpper] = currentValue;
+                        registers[partialRegUpper] = value;
                     }
                 }
             }
         }
 
-        // Класс для хранения результатов анализа пути
         private class PathAnalysisResult
         {
             public HashSet<string> FoundTexts { get; set; } = new HashSet<string>();
             public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
             public byte? MonsterPower { get; set; }
             public byte? MonsterLevel { get; set; }
+            public byte? MonsterIndex1 { get; set; }
+            public byte? MonsterIndex2 { get; set; }
+
+            // Новые поля для анализа циклов
+            public Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> BattleMonsterEntries { get; set; }
+                = new Dictionary<int, (byte, byte, bool)>();
+
+            public bool IsInLoop { get; set; } = false;        // Находимся ли мы внутри цикла
+            public uint LoopStartAddress { get; set; } = 0;    // Адрес начала цикла
+            public int LoopIteration { get; set; } = 0;        // Текущая итерация цикла
+            public bool IsIndeterminateLoop { get; set; } = false; // Цикл с неизвестной границей
+            public int LoopIterationCount { get; set; } = 0;
         }
 
-        // Публичный статический метод для анализа OVR файла с конфигурацией
         public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config)
         {
             var analyzer = new OvrFileAnalyzer(config);
@@ -142,24 +205,17 @@ namespace MMMapEditor
                     throw new InvalidOperationException("File too small to be a valid overlay");
                 }
 
-                // Используем конфигурационный startAddress
                 fs.Seek(_config.StartAddress, SeekOrigin.Begin);
                 byte numObjects = br.ReadByte();
 
-                // Чтение координат
                 var coordinates = ReadCoordinates(br, numObjects);
-                // Чтение направлений
                 var directions = ReadDirections(br, numObjects);
-                // Чтение patch-ключей
                 var patchKeys = ReadPatchKeys(br, numObjects);
 
                 for (int i = 0; i < numObjects; i++)
                 {
                     var obj = ProcessObject(br, i + 1, coordinates[i], directions[i], patchKeys[i]);
-
-                    // ФИЛЬТРАЦИЯ УНИКАЛЬНЫХ ПУТЕЙ
                     obj.PathTexts = FilterUniquePaths(obj.PathTexts);
-
                     objects.Add(obj);
                 }
             }
@@ -168,7 +224,7 @@ namespace MMMapEditor
         }
 
         private OvrObject ProcessObject(BinaryReader br, int objIndex, Tuple<byte, byte> coords,
-                                       byte direction, ushort patchKey)
+                               byte direction, ushort patchKey)
         {
             var ovrObject = new OvrObject
             {
@@ -183,7 +239,7 @@ namespace MMMapEditor
             var alternativePaths = new List<AlternativePath>();
             ShowLinearDisassemblyAndCollectAlternativePaths(br, patchAddress, alternativePaths, objIndex);
 
-            // 2. Анализируем основной путь (Path0) с ИЗОЛИРОВАННЫМ трекером регистров
+            // 2. Анализируем основной путь (Path0)
             var mainRegisterTracker = new RegisterTracker();
             var mainPathAnalysis = AnalyzeMainPath(br, patchAddress, mainRegisterTracker, ovrObject);
             ovrObject.PathTexts[0] = mainPathAnalysis.FoundTexts;
@@ -194,10 +250,28 @@ namespace MMMapEditor
             if (mainPathAnalysis.MonsterLevel.HasValue)
                 ovrObject.MonsterLevel = mainPathAnalysis.MonsterLevel.Value;
 
+            // Сохраняем монстров из ОСНОВНОГО пути
+            bool isMainPathIndeterminate = mainPathAnalysis.IsIndeterminateLoop;
+            foreach (var entry in mainPathAnalysis.BattleMonsterEntries.OrderBy(e => e.Key))
+            {
+                if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                {
+                    // В ProcessObject, при добавлении монстров:
+
+                    ovrObject.AddBattleMonster(
+                        entry.Key,
+                        entry.Value.val1,
+                        entry.Value.val2,
+                        entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)  // ✅
+                    );
+                    Debug.WriteLine($"  [PROCESS] MAIN: BX={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}, indeterminate={isMainPathIndeterminate || entry.Value.isIndeterminate}");
+                }
+            }
+
             // 3. Глобальный набор для отслеживания уже проанализированных путей
             var globallyAnalyzedPaths = new HashSet<string>();
 
-            // 4. Анализируем все альтернативные пути с НОВЫМ трекером для каждого
+            // 4. Анализируем все альтернативные пути
             int currentPathNumber = 1;
             foreach (var path in alternativePaths)
             {
@@ -208,50 +282,93 @@ namespace MMMapEditor
                 {
                     globallyAnalyzedPaths.Add(globalPathKey);
 
-                    // СОЗДАЕМ НОВЫЙ трекер регистров для этого пути
                     var pathRegisterTracker = new RegisterTracker();
-
-                    // Анализируем альтернативный путь
                     var pathResult = AnalyzeAlternativePath(br, patchAddress, path.Address, path.TargetAddress,
                         objIndex, currentPathNumber, new HashSet<string>(), pathRegisterTracker, 0);
 
-                    // Сохраняем тексты этого пути
                     ovrObject.PathTexts[currentPathNumber] = pathResult.FoundTexts;
 
-                    // Сохраняем информацию о монстрах из альтернативного пути (приоритет по порядку)
+                    // Сохраняем информацию о монстрах из альтернативного пути
                     if (pathResult.MonsterPower.HasValue)
                         ovrObject.MonsterPower = pathResult.MonsterPower.Value;
                     if (pathResult.MonsterLevel.HasValue)
                         ovrObject.MonsterLevel = pathResult.MonsterLevel.Value;
 
-                    // Сохраняем вложенные пути рекурсивно
-                    SaveNestedPathsRecursively(ovrObject.PathTexts, pathResult.NestedPaths, ref currentPathNumber);
+                    // ============ ВАЖНО: Сохраняем монстров из АЛЬТЕРНАТИВНОГО пути ============
+                    // НЕ перезаписываем существующих монстров с флагом false на true!
+                    bool isAltPathIndeterminate = pathResult.IsIndeterminateLoop;
+                    foreach (var entry in pathResult.BattleMonsterEntries.OrderBy(e => e.Key))
+                    {
+                        if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                        {
+                            // Проверяем, есть ли уже такой монстр
+                            var existingMonster = ovrObject.BattleMonsters.FirstOrDefault(m => m.Index == entry.Key);
 
+                            if (existingMonster != null)
+                            {
+                                // Монстр уже существует - НЕ меняем его IsIndeterminate на true, если он уже false
+                                // Просто логируем
+                                Debug.WriteLine($"  [PROCESS] ALT SKIP: BX={entry.Key} уже существует, IsIndeterminate={existingMonster.IsIndeterminate}, новое значение={isAltPathIndeterminate || entry.Value.isIndeterminate}");
+                            }
+                            else
+                            {
+                                // Новый монстр - добавляем
+                                ovrObject.AddBattleMonster(
+                                    entry.Key,
+                                    entry.Value.val1,
+                                    entry.Value.val2,
+                                    isAltPathIndeterminate || entry.Value.isIndeterminate
+                                );
+                                Debug.WriteLine($"  [PROCESS] ALT ADD: BX={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}, indeterminate={isAltPathIndeterminate || entry.Value.isIndeterminate}");
+                            }
+                        }
+                    }
+                    // =========================================================================
+
+                    SaveNestedPathsRecursively(ovrObject.PathTexts, pathResult.NestedPaths, ref currentPathNumber);
                     path.Analyzed = true;
                     currentPathNumber++;
                 }
             }
 
-            // 5. ФИЛЬТРУЕМ уникальные пути
+            // 5. Фильтруем уникальные пути
             ovrObject.PathTexts = FilterUniquePaths(ovrObject.PathTexts);
+
+            // 6. Для обратной совместимости устанавливаем MonsterIndex1/2 из первого монстра
+            if (ovrObject.BattleMonsters.Count > 0)
+            {
+                var first = ovrObject.BattleMonsters.OrderBy(m => m.Index).First();
+                ovrObject.MonsterIndex1 = first.MonsterIndex1;
+                ovrObject.MonsterIndex2 = first.MonsterIndex2;
+            }
 
             return ovrObject;
         }
 
-        // Метод для анализа основного пути
         private PathAnalysisResult AnalyzeMainPath(BinaryReader br, uint patchAddress,
-            RegisterTracker registerTracker, OvrObject currentObject)
+     RegisterTracker registerTracker, OvrObject currentObject)
         {
+            // НОВЫЙ РЕЗУЛЬТАТ - ВСЕГДА С ЧИСТОГО ЛИСТА
             var result = new PathAnalysisResult();
 
-            // 1. Анализируем косвенные пути загрузки текста
+            // ЯВНО СБРАСЫВАЕМ ВСЕ СОСТОЯНИЯ
+            result.IsIndeterminateLoop = false;
+            result.LoopStartAddress = 0;
+            result.BattleMonsterEntries.Clear();
+            result.FoundTexts.Clear();
+            result.MonsterPower = null;
+            result.MonsterLevel = null;
+            result.MonsterIndex1 = null;
+            result.MonsterIndex2 = null;
+
+            // Анализируем косвенные пути загрузки текста
             var indirectTexts = AnalyzeIndirectTextPatterns(br, patchAddress);
             foreach (var text in indirectTexts)
             {
                 result.FoundTexts.Add(text);
             }
 
-            // 2. Анализируем CALL инструкции
+            // Анализируем CALL инструкции
             var analyzedCalls = new HashSet<uint>();
             AnalyzeCallsWithFullDisassembly(br, patchAddress, analyzedCalls, result,
                 registerTracker, currentObject, 0);
@@ -259,13 +376,24 @@ namespace MMMapEditor
             return result;
         }
 
-        // Метод для анализа альтернативного пути
         private PathAnalysisResult AnalyzeAlternativePath(BinaryReader br, uint patchAddress, uint jumpAddress,
-            uint alternativeStartAddress, int objIndex, int pathIndex, HashSet<string> alreadyAnalyzedPaths,
-            RegisterTracker registerTracker, int recursionDepth)
+    uint alternativeStartAddress, int objIndex, int pathIndex, HashSet<string> alreadyAnalyzedPaths,
+    RegisterTracker registerTracker, int recursionDepth)
         {
             const int MAX_RECURSION_DEPTH = 3;
+
+            // НОВЫЙ РЕЗУЛЬТАТ - ВСЕГДА С ЧИСТОГО ЛИСТА
             var result = new PathAnalysisResult();
+
+            // ЯВНО СБРАСЫВАЕМ ВСЕ СОСТОЯНИЯ
+            result.IsIndeterminateLoop = false;
+            result.LoopStartAddress = 0;
+            result.BattleMonsterEntries.Clear();
+            result.FoundTexts.Clear();
+            result.MonsterPower = null;
+            result.MonsterLevel = null;
+            result.MonsterIndex1 = null;
+            result.MonsterIndex2 = null;
 
             if (recursionDepth > MAX_RECURSION_DEPTH) return result;
 
@@ -303,7 +431,7 @@ namespace MMMapEditor
                 result.FoundTexts.Add(text);
             }
 
-            // 4. Анализируем ВЛОЖЕННЫЕ альтернативные пути (Path11, Path12 и т.д.)
+            // 4. Анализируем ВЛОЖЕННЫЕ альтернативные пути
             if (localAlternativePaths.Count > 0 && recursionDepth < MAX_RECURSION_DEPTH)
             {
                 for (int i = 0; i < localAlternativePaths.Count; i++)
@@ -334,19 +462,16 @@ namespace MMMapEditor
             return result;
         }
 
-        // Метод для сохранения вложенных путей рекурсивно
         private void SaveNestedPathsRecursively(Dictionary<int, HashSet<string>> allPathTexts,
             Dictionary<int, PathAnalysisResult> nestedPaths, ref int nextPathNumber)
         {
             foreach (var kvp in nestedPaths.OrderBy(x => x.Key))
             {
-                // Проверяем, не существует ли уже путь с таким номером
                 if (!allPathTexts.ContainsKey(kvp.Key))
                 {
                     allPathTexts[kvp.Key] = kvp.Value.FoundTexts;
                 }
 
-                // Рекурсивно сохраняем вложенные пути следующего уровня
                 if (kvp.Value.NestedPaths.Count > 0)
                 {
                     SaveNestedPathsRecursively(allPathTexts, kvp.Value.NestedPaths, ref nextPathNumber);
@@ -354,24 +479,19 @@ namespace MMMapEditor
             }
         }
 
-        // Метод для фильтрации уникальных путей
         private Dictionary<int, HashSet<string>> FilterUniquePaths(Dictionary<int, HashSet<string>> allPathTexts)
         {
             var uniquePaths = new Dictionary<int, HashSet<string>>();
             var processedTextSets = new List<HashSet<string>>();
 
-            // Сортируем пути по номеру
             var sortedPaths = allPathTexts.OrderBy(kvp => kvp.Key).ToList();
 
             foreach (var kvp in sortedPaths)
             {
-                // Пропускаем пустые пути
                 if (kvp.Value == null || kvp.Value.Count == 0)
                     continue;
 
                 bool isUnique = true;
-
-                // Проверяем, есть ли такой же набор текстов среди уже обработанных
                 foreach (var existingSet in processedTextSets)
                 {
                     if (AreTextSetsEqual(existingSet, kvp.Value))
@@ -391,7 +511,6 @@ namespace MMMapEditor
             return uniquePaths;
         }
 
-        // Сравнение двух наборов текстов
         private bool AreTextSetsEqual(HashSet<string> set1, HashSet<string> set2)
         {
             if (set1 == null || set2 == null) return false;
@@ -409,7 +528,6 @@ namespace MMMapEditor
             return true;
         }
 
-        // Проверка доступности вложенного перехода из альтернативного пути
         private bool IsTransitionReachableFromAlternativePath(BinaryReader br, uint patchAddress,
             uint mainJumpAddress, uint alternativeStartAddress, uint nestedJumpAddress)
         {
@@ -436,7 +554,6 @@ namespace MMMapEditor
                         {
                             string mnemonicUpper = insn.Mnemonic.ToUpper();
 
-                            // Если встретили безусловный переход или RET
                             if (mnemonicUpper == "JMP" || mnemonicUpper == "RET" || mnemonicUpper == "RETF")
                             {
                                 if (mnemonicUpper == "JMP")
@@ -453,13 +570,11 @@ namespace MMMapEditor
                                 }
                             }
 
-                            // Если достигли адреса перехода - он доступен
                             if ((uint)insn.Address >= nestedJumpAddress)
                             {
                                 return true;
                             }
 
-                            // Проверяем другие условные переходы
                             if (mnemonicUpper.StartsWith("J") && !mnemonicUpper.StartsWith("JMP"))
                             {
                                 uint jumpTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
@@ -481,6 +596,116 @@ namespace MMMapEditor
             {
                 return true;
             }
+        }
+
+        private Tuple<byte, byte>[] ReadCoordinates(BinaryReader br, int count)
+        {
+            var coords = new Tuple<byte, byte>[count];
+            for (int i = 0; i < count; i++)
+            {
+                byte coordByte = br.ReadByte();
+                byte y = (byte)(coordByte >> 4);
+                byte x = (byte)(coordByte & 0x0F);
+                coords[i] = Tuple.Create(x, y);
+            }
+            return coords;
+        }
+
+        private byte[] ReadDirections(BinaryReader br, int count)
+        {
+            var directions = new byte[count];
+            for (int i = 0; i < count; i++) directions[i] = br.ReadByte();
+            return directions;
+        }
+
+        private ushort[] ReadPatchKeys(BinaryReader br, int count)
+        {
+            var keys = new ushort[count];
+            for (int i = 0; i < count; i++) keys[i] = br.ReadUInt16();
+            return keys;
+        }
+
+        private uint CalculatePatchAddress(ushort key)
+        {
+            return (uint)(key + _config.PatchBase) & 0xFFFF;
+        }
+
+        private byte[] ReadBytesAt(BinaryReader br, long position, int count)
+        {
+            long originalPos = br.BaseStream.Position;
+            br.BaseStream.Position = position;
+            byte[] data = br.ReadBytes(count);
+            br.BaseStream.Position = originalPos;
+            return data;
+        }
+
+        private uint GetInstructionTargetAddress(X86Instruction insn, long fileLength)
+        {
+            string operand = insn.Operand ?? "";
+            int hexIndex = operand.IndexOf("0x", StringComparison.OrdinalIgnoreCase);
+            if (hexIndex >= 0)
+            {
+                string hexPart = operand.Substring(hexIndex + 2);
+                hexPart = new string(hexPart.TakeWhile(c =>
+                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')).ToArray());
+
+                if (uint.TryParse(hexPart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint targetAddr))
+                {
+                    return targetAddr;
+                }
+            }
+            return 0;
+        }
+
+        private string ExtractText(BinaryReader br, ushort textAddress)
+        {
+            try
+            {
+                long fileOffset = textAddress - _config.TextBaseAddr;
+
+                if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
+                {
+                    return $"Cannot locate text (offset: 0x{fileOffset:X})";
+                }
+
+                long originalPos = br.BaseStream.Position;
+                br.BaseStream.Position = fileOffset;
+
+                var bytes = new List<byte>();
+                byte b;
+                int maxLength = 250;
+
+                while ((b = br.ReadByte()) != 0 && bytes.Count < maxLength)
+                {
+                    bytes.Add(b);
+                }
+
+                br.BaseStream.Position = originalPos;
+
+                if (bytes.Count == 0) return "(empty string)";
+
+                return DecodeText(bytes.ToArray());
+            }
+            catch (Exception ex)
+            {
+                return $"Error reading text: {ex.Message}";
+            }
+        }
+
+        private string DecodeText(byte[] bytes)
+        {
+            var sb = new StringBuilder();
+            foreach (byte b in bytes)
+            {
+                if (b == 0x0D) sb.Append("\\r");
+                else if (b == 0x0A) sb.Append("\\n");
+                else if (b == 0x09) sb.Append("\\t");
+                else if (b >= 0x20 && b <= 0x7E) sb.Append((char)b);
+                else if (b == 0x22) sb.Append("\\\"");
+                else if (b == 0x5C) sb.Append("\\\\");
+                else sb.Append($"\\x{b:X2}");
+            }
+            return sb.ToString();
         }
 
         private HashSet<string> AnalyzeIndirectTextPatterns(BinaryReader br, uint patchAddress)
@@ -558,6 +783,7 @@ namespace MMMapEditor
 
                         FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
                         FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
                         TrackRegisterOperations(insn, br, registerTracker, depth);
 
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
@@ -593,10 +819,12 @@ namespace MMMapEditor
         }
 
         private void AnalyzeCallsWithAlternativeBranch(BinaryReader br, uint patchAddress,
-            uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-            PathAnalysisResult result, RegisterTracker registerTracker, int depth, int callDepth = 0)
+    uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
+    PathAnalysisResult result, RegisterTracker registerTracker, int depth, int callDepth = 0)
         {
             const int MAX_CALL_DEPTH = 5;
+            const int MAX_LOOP_ITERATIONS = 8; // Разумный предел для моделирования цикла
+
             if (depth > MAX_CALL_DEPTH) return;
             if (analyzedAddresses.Contains(patchAddress)) return;
             analyzedAddresses.Add(patchAddress);
@@ -609,10 +837,13 @@ namespace MMMapEditor
                 capstone.DisassembleSyntax = DisassembleSyntax.Intel;
 
                 uint currentAddress = patchAddress;
-                const int MAX_INSTRUCTIONS = 50;
+                const int MAX_INSTRUCTIONS = 100;
                 int instructionsShown = 0;
                 bool jumpTaken = false;
                 bool shouldStop = false;
+
+                // Счетчик итераций цикла для текущего пути
+                int loopIterationCount = 0;
 
                 while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS && !shouldStop)
                 {
@@ -627,13 +858,17 @@ namespace MMMapEditor
                         if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
                         instructionsShown++;
 
-                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                        TrackRegisterOperations(insn, br, registerTracker, depth);
-
+                        byte[] instructionBytes = insn.Bytes;
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
                         uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
+                        // Поиск текстов, статистик монстров, информации о битве и отслеживание регистров
+                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                        TrackRegisterOperations(insn, br, registerTracker, depth);
+
+                        // ============ ОБРАБОТКА УСЛОВНОГО ПЕРЕХОДА (ОСНОВНОЙ) ============
                         if (insn.Address == jumpAddress && !jumpTaken)
                         {
                             jumpTaken = true;
@@ -641,6 +876,65 @@ namespace MMMapEditor
                             break;
                         }
 
+                        // ============ ОБРАБОТКА ЦИКЛА С МОНСТРАМИ ============
+                        // ВАЖНО: Реагируем ТОЛЬКО на CMP BL, [0x3c1d] - это цикл с монстрами
+                        if ((mnemonicUpper == "JC" || mnemonicUpper == "JB") &&
+                            instructionBytes.Length >= 4 &&
+                            instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E && // CMP BL, [addr]
+                            instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)   // [0x3c1d] - ТОЛЬКО ЭТОТ!
+                        {
+                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+
+                            // Переход назад - обнаружен цикл с монстрами
+                            if (jumpTarget < currentAddress)
+                            {
+                                // Устанавливаем флаг цикла с неизвестной границей
+                                result.IsIndeterminateLoop = true;
+                                result.LoopStartAddress = jumpTarget;
+
+                                // Увеличиваем BL (имитируем INC BL в конце цикла)
+                                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                                {
+                                    byte newValue = (byte)(blValue + 1);
+                                    registerTracker.TrackPartialRegisterOperation("BX", "BL", newValue,
+                                        (uint)insn.Address, "INC BL (monster cycle)");
+
+                                    loopIterationCount++;
+                                    Debug.WriteLine($"  [MONSTER CYCLE] Итерация {loopIterationCount}, BL={blValue} -> {newValue}");
+                                }
+
+                                // Продолжаем моделировать цикл (но не бесконечно)
+                                if (loopIterationCount < MAX_LOOP_ITERATIONS)
+                                {
+                                    currentAddress = jumpTarget;
+                                    break;
+                                }
+                                else
+                                {
+                                    Debug.WriteLine($"  [MONSTER CYCLE] Достигнут лимит итераций ({MAX_LOOP_ITERATIONS})");
+                                    shouldStop = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        // ============ ОБРАБОТКА ДРУГИХ УСЛОВНЫХ ПЕРЕХОДОВ ============
+                        // Сюда попадают ВСЕ остальные CMP/JC, включая CMP BL, [0x3bc0] из первого цикла
+                        else if (mnemonicUpper.StartsWith("J") &&
+                                 !mnemonicUpper.StartsWith("JMP") &&
+                                 !mnemonicUpper.StartsWith("JECXZ"))
+                        {
+                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                            if (jumpTarget != 0 && jumpTarget < fileLength)
+                            {
+                                // Для остальных условных переходов просто продолжаем линейно
+                                // НЕ устанавливаем флаг цикла
+                                currentAddress = nextAddress;
+                                break;
+                            }
+                        }
+
+                        // ============ ОБРАБОТКА CALL ============
                         if (mnemonicUpper.StartsWith("CALL"))
                         {
                             uint callTarget = GetInstructionTargetAddress(insn, fileLength);
@@ -651,12 +945,14 @@ namespace MMMapEditor
                             }
                         }
 
+                        // ============ ОБРАБОТКА ВОЗВРАТА ============
                         if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
                         {
                             shouldStop = true;
                             break;
                         }
 
+                        // ============ ОБРАБОТКА БЕЗУСЛОВНОГО ПЕРЕХОДА ============
                         if (mnemonicUpper == "JMP")
                         {
                             uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
@@ -673,382 +969,196 @@ namespace MMMapEditor
                             }
                         }
 
+                        // По умолчанию - переходим к следующей инструкции
                         currentAddress = nextAddress;
                     }
                 }
             }
         }
 
-        private void FindTextsInInstruction(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
-            int depth, HashSet<string> output)
+        private void AnalyzeCallsWithNestedAlternativeBranch(BinaryReader br, uint patchAddress,
+            uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
+            PathAnalysisResult result, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
         {
-            byte[] instructionBytes = insn.Bytes;
-            uint address = (uint)insn.Address;
+            if (depth > 5) return;
 
-            // 1. Прямая запись: MOV [3BD4], XXXX
-            if (instructionBytes.Length >= 6 &&
-                instructionBytes[0] == 0xC7 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0xD4 && instructionBytes[3] == 0x3B)
+            if (alreadyAnalyzedConditions == null)
+                alreadyAnalyzedConditions = new HashSet<string>();
+
+            long fileLength = br.BaseStream.Length;
+
+            string pathKey = $"{patchAddress:X4}_{jumpAddress:X4}_{alternativeStartAddress:X4}_{depth}";
+            if (alreadyAnalyzedConditions.Contains(pathKey)) return;
+            alreadyAnalyzedConditions.Add(pathKey);
+
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
             {
-                ushort textAddr = BitConverter.ToUInt16(instructionBytes, 4);
-                string text = ExtractText(br, textAddr);
-                if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
-                {
-                    string textEntry = $"Text at 0x{textAddr:X4}: {text}";
-                    output.Add(textEntry);
-                }
-            }
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
 
-            // 2. Запись через регистр: MOV [3BD4], AX
-            else if (instructionBytes.Length >= 4 &&
-                     instructionBytes[0] == 0x89 && instructionBytes[1] == 0x06 &&
-                     instructionBytes[2] == 0xD4 && instructionBytes[3] == 0x3B)
-            {
-                byte modRM = instructionBytes[1];
-                byte regField = (byte)((modRM >> 3) & 0x07);
-                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+                uint currentAddress = patchAddress;
+                bool reachedJumpAddress = false;
+                int maxSteps = 100;
+                int stepsTaken = 0;
 
-                if (regField < regNames.Length && registerTracker.TryGetRegisterValue(regNames[regField], out ushort value))
+                while (currentAddress < jumpAddress && currentAddress < fileLength && stepsTaken < maxSteps)
                 {
-                    string text = ExtractText(br, value);
-                    if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                    stepsTaken++;
+
+                    string positionKey = $"{currentAddress:X4}_{jumpAddress:X4}";
+                    if (alreadyAnalyzedConditions.Contains(positionKey)) break;
+                    alreadyAnalyzedConditions.Add(positionKey);
+
+                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
+                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
+                    var instructions = capstone.Disassemble(chunk, currentAddress);
+
+                    if (instructions == null || instructions.Length == 0) break;
+
+                    bool processedInstruction = false;
+                    foreach (var insn in instructions)
                     {
-                        string textEntry = $"Text at 0x{value:X4} (via {regNames[regField]}): {text}";
-                        output.Add(textEntry);
-                    }
-                }
-            }
-
-            // 3. Загрузка значения в 16-битный регистр
-            else if (instructionBytes.Length >= 3 &&
-                     (instructionBytes[0] & 0xF8) == 0xB8 &&
-                     instructionBytes[0] != 0xBC && instructionBytes[0] != 0xBD)
-            {
-                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
-                string text = ExtractText(br, immediateValue);
-                if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
-                {
-                    string textEntry = $"Text at 0x{immediateValue:X4}: {text}";
-                    output.Add(textEntry);
-                }
-            }
-
-            // 4. Загрузка значения в BP: MOV BP, imm16
-            else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xBD)
-            {
-                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
-                string text = ExtractText(br, immediateValue);
-                if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
-                {
-                    string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
-                    output.Add(textEntry);
-                }
-            }
-        }
-
-        private void FindMonsterStatChanges(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
-            int depth, PathAnalysisResult result)
-        {
-            byte[] instructionBytes = insn.Bytes;
-            uint address = (uint)insn.Address;
-
-            // Проверка записи в [0xc96f] - сила монстров
-            if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
-            {
-                byte monsterPower = instructionBytes[4];
-                result.MonsterPower = monsterPower;
-            }
-
-            // Проверка записи в [0xc961] - уровень монстров
-            else if (instructionBytes.Length >= 5 &&
-                     instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                     instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
-            {
-                byte monsterLevel = instructionBytes[4];
-                result.MonsterLevel = monsterLevel;
-            }
-
-            // Проверка записи через регистры
-            else if (instructionBytes.Length >= 4 &&
-                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E)
-            {
-                ushort targetAddr = BitConverter.ToUInt16(instructionBytes, 2);
-
-                if (targetAddr == 0xC96F || targetAddr == 0xC961)
-                {
-                    // Определяем, какой регистр используется
-                    byte modRM = instructionBytes[1];
-                    byte regField = (byte)((modRM >> 3) & 0x07);
-
-                    if (regField == 5) // CH регистр
-                    {
-                        if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                        if ((uint)insn.Address >= jumpAddress)
                         {
-                            if (targetAddr == 0xC96F)
-                                result.MonsterPower = (byte)regValue;
+                            reachedJumpAddress = true;
+                            break;
+                        }
+
+                        string mnemonic = insn.Mnemonic.ToUpper();
+
+                        if (mnemonic.StartsWith("CALL"))
+                        {
+                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                            FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                            TrackRegisterOperations(insn, br, registerTracker, depth);
+
+                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
+                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
+                            {
+                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
+                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
+                            }
+
+                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
+                            processedInstruction = true;
+                            break;
+                        }
+                        else if (mnemonic.StartsWith("J") && !mnemonic.StartsWith("JMP") && !mnemonic.StartsWith("JECXZ"))
+                        {
+                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                            FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                            TrackRegisterOperations(insn, br, registerTracker, depth);
+
+                            uint target = GetInstructionTargetAddress(insn, fileLength);
+
+                            if (alreadyAnalyzedConditions.Contains($"{target:X4}_visited"))
+                            {
+                                currentAddress = (uint)(insn.Address + insn.Bytes.Length);
+                            }
                             else
-                                result.MonsterLevel = (byte)regValue;
+                            {
+                                alreadyAnalyzedConditions.Add($"{target:X4}_visited");
+                                currentAddress = target;
+                            }
+
+                            processedInstruction = true;
+                            break;
                         }
-                    }
-                }
-            }
-
-            // Дополнительные проверки для разных форм записи
-            else if (instructionBytes.Length >= 3)
-            {
-                // MOV [C96F], AL
-                if (instructionBytes[0] == 0xA2 &&
-                    instructionBytes[1] == 0x6F && instructionBytes[2] == 0xC9)
-                {
-                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
-                    {
-                        result.MonsterPower = (byte)alValue;
-                    }
-                }
-                // MOV [C961], AL
-                else if (instructionBytes[0] == 0xA2 &&
-                         instructionBytes[1] == 0x61 && instructionBytes[2] == 0xC9)
-                {
-                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
-                    {
-                        result.MonsterLevel = (byte)alValue;
-                    }
-                }
-            }
-
-            // Проверка записи через другие регистры (MOV [C96F], CL и т.д.)
-            else if (instructionBytes.Length >= 4 &&
-                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x0E)
-            {
-                ushort targetAddr = BitConverter.ToUInt16(instructionBytes, 2);
-
-                if (targetAddr == 0xC96F || targetAddr == 0xC961)
-                {
-                    byte modRM = instructionBytes[1];
-                    byte regField = (byte)((modRM >> 3) & 0x07);
-                    string[] regNames = { "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
-
-                    if (regField >= 1 && regField <= 7) // CL, DL, BL, AH, CH, DH, BH
-                    {
-                        string regName = "";
-                        if (regField == 1) regName = "CL";
-                        else if (regField == 2) regName = "DL";
-                        else if (regField == 3) regName = "BL";
-                        else if (regField == 4) regName = "AH";
-                        else if (regField == 5) regName = "CH";
-                        else if (regField == 6) regName = "DH";
-                        else if (regField == 7) regName = "BH";
-
-                        if (!string.IsNullOrEmpty(regName) && registerTracker.TryGetRegisterValue(regName, out ushort regValue))
+                        else
                         {
-                            if (targetAddr == 0xC96F)
-                                result.MonsterPower = (byte)regValue;
-                            else
-                                result.MonsterLevel = (byte)regValue;
+                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                            FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                            TrackRegisterOperations(insn, br, registerTracker, depth);
+
+                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
+                            processedInstruction = true;
+                            break;
                         }
                     }
+
+                    if (!processedInstruction) break;
+                    if (reachedJumpAddress) break;
                 }
+
+                AnalyzeSpecificJumpExecutionWithFullCollection(br, jumpAddress, alternativeStartAddress,
+                    analyzedAddresses, result, registerTracker, depth, "");
             }
         }
 
-        private void TrackRegisterOperations(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker, int depth)
+        private void AnalyzeSpecificJumpExecutionWithFullCollection(BinaryReader br, uint jumpAddress, uint alternativeStartAddress,
+            HashSet<uint> analyzedAddresses, PathAnalysisResult result, RegisterTracker registerTracker, int depth, string prefix)
         {
-            byte[] instructionBytes = insn.Bytes;
-            uint address = (uint)insn.Address;
+            if (analyzedAddresses.Contains(jumpAddress)) return;
+            analyzedAddresses.Add(jumpAddress);
 
-            // Загрузка непосредственного значения в 16-битный регистр
-            if (instructionBytes.Length >= 3 && (instructionBytes[0] & 0xF8) == 0xB8)
+            long fileLength = br.BaseStream.Length;
+
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
             {
-                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
-                byte opcode = instructionBytes[0];
-                byte regIndex = (byte)(opcode - 0xB8);
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
 
-                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
-                if (regIndex < regNames.Length)
-                {
-                    registerTracker.SetRegisterValue(regNames[regIndex], immediateValue, address,
-                        $"MOV {regNames[regIndex]}, 0x{immediateValue:X4}");
-                }
-            }
-            // Загрузка непосредственного значения в 8-битный регистр
-            else if (instructionBytes.Length >= 2 && (instructionBytes[0] & 0xF8) == 0xB0)
-            {
-                byte immediateValue = instructionBytes[1];
-                byte opcode = instructionBytes[0];
-                byte regIndex = (byte)(opcode - 0xB0);
+                uint currentAddress = jumpAddress;
+                const int MAX_INSTRUCTIONS = 50;
+                int instructionsShown = 0;
+                bool jumpExecuted = false;
 
-                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-                if (regIndex < regNames8.Length)
+                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
                 {
-                    string regName = regNames8[regIndex];
-                    string fullReg = regName switch
+                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
+                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
+                    var instructions = capstone.Disassemble(chunk, currentAddress);
+
+                    if (instructions == null || instructions.Length == 0) break;
+
+                    foreach (var insn in instructions)
                     {
-                        "AL" or "AH" => "AX",
-                        "CL" or "CH" => "CX",
-                        "DL" or "DH" => "DX",
-                        "BL" or "BH" => "BX",
-                        _ => ""
-                    };
+                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
+                        instructionsShown++;
 
-                    if (!string.IsNullOrEmpty(fullReg))
-                    {
-                        registerTracker.TrackPartialRegisterOperation(fullReg, regName, immediateValue,
-                            address, $"MOV {regName}, 0x{immediateValue:X2}");
-                    }
-                }
-            }
+                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                        TrackRegisterOperations(insn, br, registerTracker, depth);
 
-            // Отслеживание записей в [0xc96f] и [0xc961]
-            if (instructionBytes.Length >= 4 &&
-                ((instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
-                  instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9) ||  // MOV [C96F], CH
-                 (instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
-                  instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9) ||  // MOV [C961], CH
-                 (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                  instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9) ||  // MOV byte [C96F], imm8
-                 (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                  instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)))   // MOV byte [C961], imm8
-            {
-                byte value = 0;
-                string target = instructionBytes[2] == 0x6F ? "C96F" : "C961";
+                        string mnemonic = insn.Mnemonic.ToUpper();
+                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
-                // Если запись непосредственного значения
-                if (instructionBytes[0] == 0xC6 && instructionBytes.Length >= 5)
-                {
-                    value = instructionBytes[4];
-                    registerTracker.SetRegisterValue($"MEM_{target}", value, address,
-                        $"MOV [{target}], {value}");
-                }
-                // Если запись из регистра
-                else if (instructionBytes[0] == 0x88)
-                {
-                    // CH регистр имеет код 101 в modRM
-                    if ((instructionBytes[1] & 0x38) >> 3 == 5) // CH
-                    {
-                        if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                        if (insn.Address == jumpAddress && !jumpExecuted)
                         {
-                            value = (byte)regValue;
-                            registerTracker.SetRegisterValue($"MEM_{target}", value, address,
-                                $"MOV [{target}], CH (value: {value})");
+                            jumpExecuted = true;
+                            currentAddress = alternativeStartAddress;
+                            break;
                         }
+
+                        if (mnemonic == "RET" || mnemonic == "RETF") return;
+
+                        if (mnemonic == "JMP")
+                        {
+                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                            if (jumpTarget >= fileLength) return;
+                            if (jumpTarget < fileLength && jumpTarget != 0)
+                            {
+                                currentAddress = jumpTarget;
+                                break;
+                            }
+                        }
+
+                        if (mnemonic.StartsWith("CALL"))
+                        {
+                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
+                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
+                            {
+                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
+                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
+                            }
+                        }
+
+                        currentAddress = nextAddress;
                     }
                 }
             }
-        }
-
-        private Tuple<byte, byte>[] ReadCoordinates(BinaryReader br, int count)
-        {
-            var coords = new Tuple<byte, byte>[count];
-            for (int i = 0; i < count; i++)
-            {
-                byte coordByte = br.ReadByte();
-                byte y = (byte)(coordByte >> 4);
-                byte x = (byte)(coordByte & 0x0F);
-                coords[i] = Tuple.Create(x, y);
-            }
-            return coords;
-        }
-
-        private byte[] ReadDirections(BinaryReader br, int count)
-        {
-            var directions = new byte[count];
-            for (int i = 0; i < count; i++) directions[i] = br.ReadByte();
-            return directions;
-        }
-
-        private ushort[] ReadPatchKeys(BinaryReader br, int count)
-        {
-            var keys = new ushort[count];
-            for (int i = 0; i < count; i++) keys[i] = br.ReadUInt16();
-            return keys;
-        }
-
-        // Используем конфигурационный PatchBase
-        private uint CalculatePatchAddress(ushort key)
-        {
-            return (uint)(key + _config.PatchBase) & 0xFFFF;
-        }
-
-        private byte[] ReadBytesAt(BinaryReader br, long position, int count)
-        {
-            long originalPos = br.BaseStream.Position;
-            br.BaseStream.Position = position;
-            byte[] data = br.ReadBytes(count);
-            br.BaseStream.Position = originalPos;
-            return data;
-        }
-
-        private uint GetInstructionTargetAddress(X86Instruction insn, long fileLength)
-        {
-            string operand = insn.Operand ?? "";
-            int hexIndex = operand.IndexOf("0x", StringComparison.OrdinalIgnoreCase);
-            if (hexIndex >= 0)
-            {
-                string hexPart = operand.Substring(hexIndex + 2);
-                hexPart = new string(hexPart.TakeWhile(c =>
-                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')).ToArray());
-
-                if (uint.TryParse(hexPart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint targetAddr))
-                {
-                    return targetAddr;
-                }
-            }
-            return 0;
-        }
-
-        // Используем конфигурационный TextBaseAddr
-        private string ExtractText(BinaryReader br, ushort textAddress)
-        {
-            try
-            {
-                long fileOffset = textAddress - _config.TextBaseAddr;
-
-                if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
-                {
-                    return $"Cannot locate text (offset: 0x{fileOffset:X})";
-                }
-
-                long originalPos = br.BaseStream.Position;
-                br.BaseStream.Position = fileOffset;
-
-                var bytes = new List<byte>();
-                byte b;
-                int maxLength = 250;
-
-                while ((b = br.ReadByte()) != 0 && bytes.Count < maxLength)
-                {
-                    bytes.Add(b);
-                }
-
-                br.BaseStream.Position = originalPos;
-
-                if (bytes.Count == 0) return "(empty string)";
-
-                // Декодируем и возвращаем как есть
-                return DecodeText(bytes.ToArray());
-            }
-            catch (Exception ex)
-            {
-                return $"Error reading text: {ex.Message}";
-            }
-        }
-
-        private string DecodeText(byte[] bytes)
-        {
-            var sb = new StringBuilder();
-            foreach (byte b in bytes)
-            {
-                if (b == 0x0D) sb.Append("\\r");
-                else if (b == 0x0A) sb.Append("\\n");
-                else if (b == 0x09) sb.Append("\\t");
-                else if (b >= 0x20 && b <= 0x7E) sb.Append((char)b);
-                else if (b == 0x22) sb.Append("\\\"");
-                else if (b == 0x5C) sb.Append("\\\\");
-                else sb.Append($"\\x{b:X2}");
-            }
-            return sb.ToString();
         }
 
         private void ShowLinearDisassemblyAndCollectAlternativePaths(BinaryReader br, uint startAddress,
@@ -1067,14 +1177,10 @@ namespace MMMapEditor
 
                 while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
                 {
-                    // Проверяем, не посещали ли мы этот адрес слишком много раз
                     if (processedAddresses.ContainsKey(currentAddress))
                     {
                         processedAddresses[currentAddress]++;
-                        if (processedAddresses[currentAddress] > 2)
-                        {
-                            break;
-                        }
+                        if (processedAddresses[currentAddress] > 2) break;
                     }
                     else
                     {
@@ -1086,20 +1192,16 @@ namespace MMMapEditor
 
                     var instructions = capstone.Disassemble(chunk, currentAddress);
 
-                    if (instructions == null || instructions.Length == 0)
-                        break;
+                    if (instructions == null || instructions.Length == 0) break;
 
                     foreach (var insn in instructions)
                     {
-                        if (instructionsShown >= MAX_INSTRUCTIONS)
-                            break;
-
+                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
                         instructionsShown++;
 
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
                         uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
-                        // В основном пути собираем ВСЕ альтернативные пути
                         if (mnemonicUpper.StartsWith("J") &&
                             !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ"))
                         {
@@ -1115,7 +1217,6 @@ namespace MMMapEditor
                                     Analyzed = false
                                 };
 
-                                // Проверяем, нет ли уже такого пути в списке
                                 bool alreadyExists = alternativePaths.Any(p =>
                                     p.Address == altPath.Address && p.TargetAddress == altPath.TargetAddress);
 
@@ -1126,18 +1227,12 @@ namespace MMMapEditor
                             }
                         }
 
-                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
-                        {
-                            return;
-                        }
+                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF") return;
 
                         if (mnemonicUpper == "JMP")
                         {
                             uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (jumpTarget >= fileLength)
-                            {
-                                return;
-                            }
+                            if (jumpTarget >= fileLength) return;
 
                             if (jumpTarget < fileLength && jumpTarget != 0)
                             {
@@ -1163,25 +1258,20 @@ namespace MMMapEditor
                 capstone.DisassembleSyntax = DisassembleSyntax.Intel;
 
                 long fileLength = br.BaseStream.Length;
-                uint currentAddress = patchAddress; // НАЧИНАЕМ С НАЧАЛА ПАТЧА!
+                uint currentAddress = patchAddress;
                 int instructionsShown = 0;
                 const int MAX_INSTRUCTIONS = 100;
 
-                // Улучшенная система отслеживания адресов для предотвращения циклов
                 var processedAddresses = new Dictionary<uint, int>();
                 bool jumpTaken = false;
                 bool shouldStop = false;
 
                 while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS && !shouldStop)
                 {
-                    // Проверяем, не посещали ли мы этот адрес слишком много раз
                     if (processedAddresses.ContainsKey(currentAddress))
                     {
                         processedAddresses[currentAddress]++;
-                        if (processedAddresses[currentAddress] > 3) // Максимум 3 посещения
-                        {
-                            break;
-                        }
+                        if (processedAddresses[currentAddress] > 3) break;
                     }
                     else
                     {
@@ -1193,20 +1283,16 @@ namespace MMMapEditor
 
                     var instructions = capstone.Disassemble(chunk, currentAddress);
 
-                    if (instructions == null || instructions.Length == 0)
-                        break;
+                    if (instructions == null || instructions.Length == 0) break;
 
                     foreach (var insn in instructions)
                     {
-                        if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop)
-                            break;
-
+                        if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
                         instructionsShown++;
 
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
                         uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
-                        // Если это тот самый условный переход - идем по альтернативной ветке
                         if (insn.Address == jumpAddress && !jumpTaken)
                         {
                             jumpTaken = true;
@@ -1214,7 +1300,6 @@ namespace MMMapEditor
                             break;
                         }
 
-                        // В альтернативном пути находим ВСЕ условные переходы и добавляем их как альтернативные пути
                         if (jumpTaken && mnemonicUpper.StartsWith("J") &&
                             !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ") &&
                             insn.Address != jumpAddress)
@@ -1259,7 +1344,6 @@ namespace MMMapEditor
                         {
                             uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
 
-                            // Проверяем JMP на циклические ссылки
                             if (processedAddresses.ContainsKey(jumpTarget))
                             {
                                 if (jumpTarget >= patchAddress && jumpTarget < currentAddress)
@@ -1305,26 +1389,19 @@ namespace MMMapEditor
 
                 while (currentAddress < br.BaseStream.Length && instructionCount < MAX_INSTRUCTIONS)
                 {
-                    if (visitedAddresses.Contains(currentAddress))
-                    {
-                        // Обнаружен цикл
-                        break;
-                    }
-
+                    if (visitedAddresses.Contains(currentAddress)) break;
                     visitedAddresses.Add(currentAddress);
 
                     int bytesToRead = (int)Math.Min(32, br.BaseStream.Length - currentAddress);
                     byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
 
                     var instructions = capstone.Disassemble(chunk, currentAddress);
-                    if (instructions == null || instructions.Length == 0)
-                        break;
+                    if (instructions == null || instructions.Length == 0) break;
 
                     bool processedInstruction = false;
                     foreach (var insn in instructions)
                     {
-                        if (instructionCount >= MAX_INSTRUCTIONS)
-                            break;
+                        if (instructionCount >= MAX_INSTRUCTIONS) break;
 
                         path.Add(insn);
                         instructionCount++;
@@ -1333,7 +1410,6 @@ namespace MMMapEditor
                         string mnemonicUpper = insn.Mnemonic.ToUpper();
                         uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
-                        // Обрабатываем переходы
                         if (mnemonicUpper == "JMP")
                         {
                             uint jumpTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
@@ -1345,7 +1421,6 @@ namespace MMMapEditor
                                 }
                                 else
                                 {
-                                    // JMP за пределами файла - останавливаемся
                                     return path;
                                 }
                             }
@@ -1357,20 +1432,18 @@ namespace MMMapEditor
                         }
                         else if (mnemonicUpper.StartsWith("J") && !mnemonicUpper.StartsWith("JMP"))
                         {
-                            // Для условных переходов - идем по основному пути (не берем альтернативный)
                             currentAddress = nextAddress;
                             break;
                         }
                         else if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
                         {
-                            return path; // Конец подпрограммы
+                            return path;
                         }
                         else if (mnemonicUpper.StartsWith("CALL"))
                         {
                             uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
                             if (callTarget != 0 && callTarget < br.BaseStream.Length)
                             {
-                                // Анализируем подпрограмму, но ограничиваем глубину
                                 if (path.Count < MAX_INSTRUCTIONS / 2)
                                 {
                                     var subroutinePath = ReconstructExecutionPath(br, callTarget);
@@ -1386,8 +1459,7 @@ namespace MMMapEditor
                         }
                     }
 
-                    if (!processedInstruction)
-                        break;
+                    if (!processedInstruction) break;
                 }
             }
 
@@ -1396,248 +1468,827 @@ namespace MMMapEditor
 
         private bool IsNestedPath(uint jumpAddress, uint alternativeStartAddress)
         {
-            return jumpAddress != 0 &&
-                   alternativeStartAddress > jumpAddress &&
-                   jumpAddress > 0x0090;
+            return jumpAddress != 0 && alternativeStartAddress > jumpAddress && jumpAddress > 0x0090;
         }
 
-        private void AnalyzeCallsWithNestedAlternativeBranch(BinaryReader br, uint patchAddress,
-            uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-            PathAnalysisResult result, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
+        private void FindTextsInInstruction(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
+            int depth, HashSet<string> output)
         {
-            if (depth > 5)
-            {
-                return;
-            }
+            byte[] instructionBytes = insn.Bytes;
+            uint address = (uint)insn.Address;
 
-            // Инициализируем набор уже проанализированных условий, если его нет
-            if (alreadyAnalyzedConditions == null)
+            if (instructionBytes.Length >= 6 &&
+                instructionBytes[0] == 0xC7 && instructionBytes[1] == 0x06 &&
+                instructionBytes[2] == 0xD4 && instructionBytes[3] == 0x3B)
             {
-                alreadyAnalyzedConditions = new HashSet<string>();
+                ushort textAddr = BitConverter.ToUInt16(instructionBytes, 4);
+                string text = ExtractText(br, textAddr);
+                if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                {
+                    string textEntry = $"Text at 0x{textAddr:X4}: {text}";
+                    output.Add(textEntry);
+                }
             }
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x89 && instructionBytes[1] == 0x06 &&
+                     instructionBytes[2] == 0xD4 && instructionBytes[3] == 0x3B)
+            {
+                byte modRM = instructionBytes[1];
+                byte regField = (byte)((modRM >> 3) & 0x07);
+                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
 
+                if (regField < regNames.Length && registerTracker.TryGetRegisterValue(regNames[regField], out ushort value))
+                {
+                    string text = ExtractText(br, value);
+                    if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                    {
+                        string textEntry = $"Text at 0x{value:X4} (via {regNames[regField]}): {text}";
+                        output.Add(textEntry);
+                    }
+                }
+            }
+            else if (instructionBytes.Length >= 3 &&
+                     (instructionBytes[0] & 0xF8) == 0xB8 &&
+                     instructionBytes[0] != 0xBC && instructionBytes[0] != 0xBD)
+            {
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                string text = ExtractText(br, immediateValue);
+                if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                {
+                    string textEntry = $"Text at 0x{immediateValue:X4}: {text}";
+                    output.Add(textEntry);
+                }
+            }
+            else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xBD)
+            {
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                string text = ExtractText(br, immediateValue);
+                if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                {
+                    string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
+                    output.Add(textEntry);
+                }
+            }
+        }
+
+        private void FindMonsterStatChanges(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
+            int depth, PathAnalysisResult result)
+        {
+            byte[] instructionBytes = insn.Bytes;
+            uint address = (uint)insn.Address;
+
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
+            {
+                byte monsterPower = instructionBytes[4];
+                result.MonsterPower = monsterPower;
+            }
+            else if (instructionBytes.Length >= 5 &&
+                     instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                     instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
+            {
+                byte monsterLevel = instructionBytes[4];
+                result.MonsterLevel = monsterLevel;
+            }
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E)
+            {
+                ushort targetAddr = BitConverter.ToUInt16(instructionBytes, 2);
+
+                if (targetAddr == 0xC96F || targetAddr == 0xC961)
+                {
+                    byte modRM = instructionBytes[1];
+                    byte regField = (byte)((modRM >> 3) & 0x07);
+
+                    if (regField == 5)
+                    {
+                        if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                        {
+                            if (targetAddr == 0xC96F)
+                                result.MonsterPower = (byte)regValue;
+                            else
+                                result.MonsterLevel = (byte)regValue;
+                        }
+                    }
+                }
+            }
+            else if (instructionBytes.Length >= 3)
+            {
+                if (instructionBytes[0] == 0xA2 &&
+                    instructionBytes[1] == 0x6F && instructionBytes[2] == 0xC9)
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                    {
+                        result.MonsterPower = (byte)alValue;
+                    }
+                }
+                else if (instructionBytes[0] == 0xA2 &&
+                         instructionBytes[1] == 0x61 && instructionBytes[2] == 0xC9)
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                    {
+                        result.MonsterLevel = (byte)alValue;
+                    }
+                }
+            }
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x0E)
+            {
+                ushort targetAddr = BitConverter.ToUInt16(instructionBytes, 2);
+
+                if (targetAddr == 0xC96F || targetAddr == 0xC961)
+                {
+                    byte modRM = instructionBytes[1];
+                    byte regField = (byte)((modRM >> 3) & 0x07);
+
+                    if (regField >= 1 && regField <= 7)
+                    {
+                        string regName = regField switch
+                        {
+                            1 => "CL",
+                            2 => "DL",
+                            3 => "BL",
+                            4 => "AH",
+                            5 => "CH",
+                            6 => "DH",
+                            7 => "BH",
+                            _ => ""
+                        };
+
+                        if (!string.IsNullOrEmpty(regName) && registerTracker.TryGetRegisterValue(regName, out ushort regValue))
+                        {
+                            if (targetAddr == 0xC96F)
+                                result.MonsterPower = (byte)regValue;
+                            else
+                                result.MonsterLevel = (byte)regValue;
+                        }
+                    }
+                }
+            }
+        }
+
+        private void FindMonsterBattleInfo(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
+    int depth, PathAnalysisResult result)
+        {
+            byte[] instructionBytes = insn.Bytes;
+            uint address = (uint)insn.Address;
+            string mnemonicUpper = insn.Mnemonic.ToUpper();
             long fileLength = br.BaseStream.Length;
 
-            // Создаем ключ для этого конкретного пути анализа
-            string pathKey = $"{patchAddress:X4}_{jumpAddress:X4}_{alternativeStartAddress:X4}_{depth}";
-            if (alreadyAnalyzedConditions.Contains(pathKey))
+            // ============ ОБНАРУЖЕНИЕ ЦИКЛА С МОНСТРАМИ ============
+            // Проверяем CMP BL, [0x3c1d] - это конкретный паттерн цикла с монстрами
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E && // CMP BL, [addr]
+                instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)   // [0x3c1d]
             {
-                return;
-            }
-            alreadyAnalyzedConditions.Add(pathKey);
+                result.IsIndeterminateLoop = true;
+                result.LoopStartAddress = address;
 
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                // 1. Сначала анализируем, как достичь jumpAddress (с начала патча!)
-                uint currentAddress = patchAddress; // НАЧИНАЕМ С НАЧАЛА ПАТЧА!
-                bool reachedJumpAddress = false;
-                int maxSteps = 100;
-                int stepsTaken = 0;
-
-                // Анализируем путь до jumpAddress с ограничением по количеству шагов
-                while (currentAddress < jumpAddress && currentAddress < fileLength && stepsTaken < maxSteps)
+                // ============ ВАЖНО: РЕТРОАКТИВНО ПОМЕЧАЕМ ВСЕ СУЩЕСТВУЮЩИЕ ЗАПИСИ ============
+                // Проходим по всем уже сохранённым монстрам
+                foreach (var key in result.BattleMonsterEntries.Keys.ToList())
                 {
-                    stepsTaken++;
-
-                    // Создаем ключ для текущей позиции
-                    string positionKey = $"{currentAddress:X4}_{jumpAddress:X4}";
-                    if (alreadyAnalyzedConditions.Contains(positionKey))
+                    if (key > 0) // Только BX > 0
                     {
-                        break;
+                        var entry = result.BattleMonsterEntries[key];
+                        result.BattleMonsterEntries[key] = (entry.val1, entry.val2, true);
+                        Debug.WriteLine($"  [BATTLE] РЕТРОАКТИВНО: BX={key} помечен как indeterminate");
                     }
-                    alreadyAnalyzedConditions.Add(positionKey);
+                }
+                // ========================================================================
 
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
+                Debug.WriteLine($"  [BATTLE] ОБНАРУЖЕН ЦИКЛ МОНСТРОВ: CMP BL, [0x3c1d] по адресу 0x{address:X4}");
+                Debug.WriteLine($"  [BATTLE] Все записи с BX>0 помечены как indeterminate");
+            }
 
-                    if (instructions == null || instructions.Length == 0)
-                        break;
-
-                    bool processedInstruction = false;
-                    foreach (var insn in instructions)
+            // ============ ИНДЕКСИРОВАННАЯ ЗАПИСЬ: MOV [BX + 0x3C58], AL ============
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x88 &&
+                instructionBytes[1] == 0x87 &&
+                instructionBytes[2] == 0x58 && instructionBytes[3] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
                     {
-                        if ((uint)insn.Address >= jumpAddress)
+                        byte val1 = (byte)alValue;
+
+                        // КЛЮЧЕВАЯ ЛОГИКА: 
+                        // BX = 0 -> всегда determinate (запись ДО цикла)
+                        // BX > 0 И цикл с неизвестной границей обнаружен -> indeterminate
+                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+
+                        if (result.BattleMonsterEntries.ContainsKey(bxValue))
                         {
-                            reachedJumpAddress = true;
-                            break;
-                        }
-
-                        string mnemonic = insn.Mnemonic.ToUpper();
-
-                        // Если это CALL - анализируем подпрограмму
-                        if (mnemonic.StartsWith("CALL"))
-                        {
-                            // Ищем тексты в инструкции CALL
-                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                            TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
-                            {
-                                // Анализируем подпрограмму
-                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
-                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
-                            }
-
-                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            processedInstruction = true;
-                            break;
-                        }
-                        // Если это условный переход, отмечаем его как необходимое условие
-                        else if (mnemonic.StartsWith("J") && !mnemonic.StartsWith("JMP") && !mnemonic.StartsWith("JECXZ"))
-                        {
-                            // Ищем тексты в этом переходе
-                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                            TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                            // Переходим по этому переходу (предполагаем, что он выполняется)
-                            uint target = GetInstructionTargetAddress(insn, fileLength);
-
-                            // Проверяем, не ведет ли переход к уже обработанному адресу
-                            if (alreadyAnalyzedConditions.Contains($"{target:X4}_visited"))
-                            {
-                                // Вместо перехода продолжаем линейно
-                                currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            }
-                            else
-                            {
-                                // Отмечаем целевой адрес как посещенный
-                                alreadyAnalyzedConditions.Add($"{target:X4}_visited");
-                                currentAddress = target;
-                            }
-
-                            processedInstruction = true;
-                            break;
+                            var existing = result.BattleMonsterEntries[bxValue];
+                            result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
                         }
                         else
                         {
-                            // Обычные инструкции - ищем тексты
-                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                            TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            processedInstruction = true;
-                            break;
+                            result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                         }
+
+                        Debug.WriteLine($"  [BATTLE] [BX+3C58] BX={bxValue}, AL={val1}, Indeterminate={isIndeterminate}, IsIndeterminateLoop={result.IsIndeterminateLoop}");
+                    }
+                }
+            }
+
+            // ============ ИНДЕКСИРОВАННАЯ ЗАПИСЬ: MOV [BX + 0x3C29], CL ============
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 &&
+                     instructionBytes[1] == 0x8F &&
+                     instructionBytes[2] == 0x29 && instructionBytes[3] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    if (registerTracker.TryGetRegisterValue("CL", out ushort clValue))
+                    {
+                        byte val2 = (byte)clValue;
+
+                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+
+                        if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                        {
+                            var existing = result.BattleMonsterEntries[bxValue];
+                            result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                        }
+                        else
+                        {
+                            result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                        }
+
+                        Debug.WriteLine($"  [BATTLE] [BX+3C29] BX={bxValue}, CL={val2}, Indeterminate={isIndeterminate}, IsIndeterminateLoop={result.IsIndeterminateLoop}");
+                    }
+                }
+            }
+
+            // ============ ИНДЕКСИРОВАННАЯ ЗАПИСЬ: MOV [BX + 0x3C58], DL ============
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 &&
+                     instructionBytes[1] == 0x97 &&
+                     instructionBytes[2] == 0x58 && instructionBytes[3] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    if (registerTracker.TryGetRegisterValue("DL", out ushort dlValue))
+                    {
+                        byte val1 = (byte)dlValue;
+
+                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+
+                        if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                        {
+                            var existing = result.BattleMonsterEntries[bxValue];
+                            result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                        }
+                        else
+                        {
+                            result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                        }
+
+                        Debug.WriteLine($"  [BATTLE] [BX+3C58] BX={bxValue}, DL={val1}, Indeterminate={isIndeterminate}");
+                    }
+                }
+            }
+
+            // ============ ИНДЕКСИРОВАННАЯ ЗАПИСЬ: MOV [BX + 0x3C29], DL ============
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 &&
+                     instructionBytes[1] == 0x97 &&
+                     instructionBytes[2] == 0x29 && instructionBytes[3] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    if (registerTracker.TryGetRegisterValue("DL", out ushort dlValue))
+                    {
+                        byte val2 = (byte)dlValue;
+
+                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+
+                        if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                        {
+                            var existing = result.BattleMonsterEntries[bxValue];
+                            result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                        }
+                        else
+                        {
+                            result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                        }
+
+                        Debug.WriteLine($"  [BATTLE] [BX+3C29] BX={bxValue}, DL={val2}, Indeterminate={isIndeterminate}");
+                    }
+                }
+            }
+
+            // ============ ИНДЕКСИРОВАННАЯ ЗАПИСЬ: MOV [BX + 0x3C58], BL ============
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 &&
+                     instructionBytes[1] == 0x9F &&
+                     instructionBytes[2] == 0x58 && instructionBytes[3] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                    {
+                        byte val1 = (byte)blValue;
+
+                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+
+                        if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                        {
+                            var existing = result.BattleMonsterEntries[bxValue];
+                            result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                        }
+                        else
+                        {
+                            result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                        }
+
+                        Debug.WriteLine($"  [BATTLE] [BX+3C58] BX={bxValue}, BL={val1}, Indeterminate={isIndeterminate}");
+                    }
+                }
+            }
+
+            // ============ ИНДЕКСИРОВАННАЯ ЗАПИСЬ: MOV [BX + 0x3C29], BL ============
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 &&
+                     instructionBytes[1] == 0x9F &&
+                     instructionBytes[2] == 0x29 && instructionBytes[3] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                    {
+                        byte val2 = (byte)blValue;
+
+                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+
+                        if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                        {
+                            var existing = result.BattleMonsterEntries[bxValue];
+                            result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                        }
+                        else
+                        {
+                            result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                        }
+
+                        Debug.WriteLine($"  [BATTLE] [BX+3C29] BX={bxValue}, BL={val2}, Indeterminate={isIndeterminate}");
+                    }
+                }
+            }
+
+            // ============ ПРЯМАЯ ЗАПИСЬ: MOV [3C58], AL ============
+            else if (instructionBytes.Length >= 3 &&
+                     instructionBytes[0] == 0xA2 &&
+                     instructionBytes[1] == 0x58 && instructionBytes[2] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                {
+                    result.MonsterIndex1 = (byte)alValue;
+
+                    int bxValue = 0;
+                    bool isIndeterminate = false; // Прямая запись - всегда BX=0, всегда determinate
+
+                    if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                    {
+                        var existing = result.BattleMonsterEntries[bxValue];
+                        result.BattleMonsterEntries[bxValue] = ((byte)alValue, existing.val2, isIndeterminate);
+                    }
+                    else
+                    {
+                        result.BattleMonsterEntries[bxValue] = ((byte)alValue, 0, isIndeterminate);
                     }
 
-                    if (!processedInstruction)
-                        break;
-
-                    if (reachedJumpAddress)
-                        break;
+                    Debug.WriteLine($"  [BATTLE] [3C58] AL={alValue} (прямая запись, BX=0, determinate)");
                 }
+            }
 
-                // 2. Теперь анализируем код начиная с jumpAddress (если достигли его)
-                if (reachedJumpAddress)
+            // ============ ПРЯМАЯ ЗАПИСЬ: MOV [3C29], AL ============
+            else if (instructionBytes.Length >= 3 &&
+                     instructionBytes[0] == 0xA2 &&
+                     instructionBytes[1] == 0x29 && instructionBytes[2] == 0x3C)
+            {
+                if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
                 {
-                    // Анализируем выполнение от jumpAddress до конца
-                    AnalyzeSpecificJumpExecutionWithFullCollection(br, jumpAddress, alternativeStartAddress,
-                        analyzedAddresses, result, registerTracker, depth, "");
-                }
-                else
-                {
-                    // Попробуем анализировать напрямую от jumpAddress
-                    AnalyzeSpecificJumpExecutionWithFullCollection(br, jumpAddress, alternativeStartAddress,
-                        analyzedAddresses, result, registerTracker, depth, "");
+                    result.MonsterIndex2 = (byte)alValue;
+
+                    int bxValue = 0;
+                    bool isIndeterminate = false; // Прямая запись - всегда BX=0, всегда determinate
+
+                    if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                    {
+                        var existing = result.BattleMonsterEntries[bxValue];
+                        result.BattleMonsterEntries[bxValue] = (existing.val1, (byte)alValue, isIndeterminate);
+                    }
+                    else
+                    {
+                        result.BattleMonsterEntries[bxValue] = (0, (byte)alValue, isIndeterminate);
+                    }
+
+                    Debug.WriteLine($"  [BATTLE] [3C29] AL={alValue} (прямая запись, BX=0, determinate)");
                 }
             }
         }
 
-        // Вспомогательный метод для анализа конкретного перехода
-        private void AnalyzeSpecificJumpExecutionWithFullCollection(BinaryReader br, uint jumpAddress, uint alternativeStartAddress,
-            HashSet<uint> analyzedAddresses, PathAnalysisResult result, RegisterTracker registerTracker, int depth, string prefix)
+        private void TrackRegisterOperations(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker, int depth)
         {
-            if (analyzedAddresses.Contains(jumpAddress))
-                return;
+            byte[] instructionBytes = insn.Bytes;
+            uint address = (uint)insn.Address;
 
-            analyzedAddresses.Add(jumpAddress);
+            #region Загрузка непосредственных значений в регистры
 
-            long fileLength = br.BaseStream.Length;
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            if (instructionBytes.Length >= 3 && (instructionBytes[0] & 0xF8) == 0xB8)
             {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                byte opcode = instructionBytes[0];
+                byte regIndex = (byte)(opcode - 0xB8);
 
-                uint currentAddress = jumpAddress;
-                const int MAX_INSTRUCTIONS = 50;
-                int instructionsShown = 0;
-                bool jumpExecuted = false;
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
+                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+                if (regIndex < regNames.Length)
                 {
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
+                    registerTracker.SetRegisterValue(regNames[regIndex], immediateValue, address,
+                        $"MOV {regNames[regIndex]}, 0x{immediateValue:X4}");
+                }
+            }
+            else if (instructionBytes.Length >= 2 && (instructionBytes[0] & 0xF8) == 0xB0)
+            {
+                byte immediateValue = instructionBytes[1];
+                byte opcode = instructionBytes[0];
+                byte regIndex = (byte)(opcode - 0xB0);
 
-                    if (instructions == null || instructions.Length == 0)
-                        break;
-
-                    foreach (var insn in instructions)
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                if (regIndex < regNames8.Length)
+                {
+                    string regName = regNames8[regIndex];
+                    string fullReg = regName switch
                     {
-                        if (instructionsShown >= MAX_INSTRUCTIONS)
-                            break;
+                        "AL" or "AH" => "AX",
+                        "CL" or "CH" => "CX",
+                        "DL" or "DH" => "DX",
+                        "BL" or "BH" => "BX",
+                        _ => ""
+                    };
 
-                        instructionsShown++;
-
-                        // Ищем тексты и добавляем их в список
-                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                        TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                        string mnemonic = insn.Mnemonic.ToUpper();
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        // Если это наш целевой переход - выполняем его
-                        if (insn.Address == jumpAddress && !jumpExecuted)
-                        {
-                            jumpExecuted = true;
-                            currentAddress = alternativeStartAddress;
-                            break;
-                        }
-
-                        // Проверяем конец выполнения
-                        if (mnemonic == "RET" || mnemonic == "RETF")
-                        {
-                            return;
-                        }
-
-                        if (mnemonic == "JMP")
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (jumpTarget >= fileLength)
-                            {
-                                return;
-                            }
-
-                            if (jumpTarget < fileLength && jumpTarget != 0)
-                            {
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-                        }
-
-                        if (mnemonic.StartsWith("CALL"))
-                        {
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
-                            {
-                                // Анализируем подпрограмму
-                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
-                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
-                            }
-                        }
-
-                        currentAddress = nextAddress;
+                    if (!string.IsNullOrEmpty(fullReg))
+                    {
+                        registerTracker.TrackPartialRegisterOperation(fullReg, regName, immediateValue,
+                            address, $"MOV {regName}, 0x{immediateValue:X2}");
                     }
                 }
             }
+
+            #endregion
+
+            #region Специфические загрузки для конкретных регистров
+
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xBB)
+            {
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                registerTracker.SetRegisterValue("BX", immediateValue, address,
+                    $"MOV BX, 0x{immediateValue:X4}");
+            }
+
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xBD)
+            {
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                registerTracker.SetRegisterValue("BP", immediateValue, address,
+                    $"MOV BP, 0x{immediateValue:X4}");
+            }
+
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xBE)
+            {
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                registerTracker.SetRegisterValue("SI", immediateValue, address,
+                    $"MOV SI, 0x{immediateValue:X4}");
+            }
+
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xBF)
+            {
+                ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
+                registerTracker.SetRegisterValue("DI", immediateValue, address,
+                    $"MOV DI, 0x{immediateValue:X4}");
+            }
+
+            #endregion
+
+            #region Частичные загрузки в младшие/старшие байты регистров
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xB3)
+            {
+                byte immediateValue = instructionBytes[1];
+                registerTracker.TrackPartialRegisterOperation("BX", "BL", immediateValue,
+                    address, $"MOV BL, 0x{immediateValue:X2}");
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xB7)
+            {
+                byte immediateValue = instructionBytes[1];
+                registerTracker.TrackPartialRegisterOperation("BX", "BH", immediateValue,
+                    address, $"MOV BH, 0x{immediateValue:X2}");
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xB1)
+            {
+                byte immediateValue = instructionBytes[1];
+                registerTracker.TrackPartialRegisterOperation("CX", "CL", immediateValue,
+                    address, $"MOV CL, 0x{immediateValue:X2}");
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xB5)
+            {
+                byte immediateValue = instructionBytes[1];
+                registerTracker.TrackPartialRegisterOperation("CX", "CH", immediateValue,
+                    address, $"MOV CH, 0x{immediateValue:X2}");
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xB0)
+            {
+                byte immediateValue = instructionBytes[1];
+                registerTracker.TrackPartialRegisterOperation("AX", "AL", immediateValue,
+                    address, $"MOV AL, 0x{immediateValue:X2}");
+            }
+
+            #endregion
+
+            #region Арифметические операции с регистрами
+
+            if (instructionBytes.Length >= 2 &&
+                instructionBytes[0] == 0xFE &&
+                instructionBytes[1] == 0xC3)
+            {
+                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                {
+                    byte newValue = (byte)(blValue + 1);
+                    registerTracker.TrackPartialRegisterOperation("BX", "BL", newValue,
+                        address, "INC BL");
+                }
+            }
+
+            if (instructionBytes.Length >= 2 &&
+                instructionBytes[0] == 0xFE &&
+                instructionBytes[1] == 0xC7)
+            {
+                if (registerTracker.TryGetRegisterValue("BH", out ushort bhValue))
+                {
+                    byte newValue = (byte)(bhValue + 1);
+                    registerTracker.TrackPartialRegisterOperation("BX", "BH", newValue,
+                        address, "INC BH");
+                }
+            }
+
+            if (instructionBytes.Length >= 1 &&
+                instructionBytes[0] == 0x43)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    ushort newValue = (ushort)(bxValue + 1);
+                    registerTracker.SetRegisterValue("BX", newValue, address,
+                        $"INC BX: {bxValue} -> {newValue}");
+                }
+            }
+
+            if (instructionBytes.Length >= 2 &&
+                instructionBytes[0] == 0xFE &&
+                instructionBytes[1] == 0xCB)
+            {
+                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                {
+                    byte newValue = (byte)(blValue - 1);
+                    registerTracker.TrackPartialRegisterOperation("BX", "BL", newValue,
+                        address, "DEC BL");
+                }
+            }
+
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0x80 &&
+                instructionBytes[1] == 0xC3)
+            {
+                byte addValue = instructionBytes[2];
+                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                {
+                    byte newValue = (byte)(blValue + addValue);
+                    registerTracker.TrackPartialRegisterOperation("BX", "BL", newValue,
+                        address, $"ADD BL, 0x{addValue:X2}");
+                }
+            }
+
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0x80 &&
+                instructionBytes[1] == 0xEB)
+            {
+                byte subValue = instructionBytes[2];
+                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                {
+                    byte newValue = (byte)(blValue - subValue);
+                    registerTracker.TrackPartialRegisterOperation("BX", "BL", newValue,
+                        address, $"SUB BL, 0x{subValue:X2}");
+                }
+            }
+
+            if (instructionBytes.Length >= 2 &&
+                instructionBytes[0] == 0xD0 &&
+                instructionBytes[1] == 0xE0)
+            {
+                if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                {
+                    byte newValue = (byte)(alValue << 1);
+                    registerTracker.TrackPartialRegisterOperation("AX", "AL", newValue,
+                        address, "SHL AL, 1");
+                }
+            }
+
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x81 &&
+                instructionBytes[1] == 0xE5 &&
+                instructionBytes[2] == 0xFF &&
+                instructionBytes[3] == 0x00)
+            {
+                if (registerTracker.TryGetRegisterValue("BP", out ushort bpValue))
+                {
+                    ushort newValue = (ushort)(bpValue & 0xFF);
+                    registerTracker.SetRegisterValue("BP", newValue, address,
+                        $"AND BP, 0xFF: {bpValue:X4} -> {newValue:X4}");
+                }
+            }
+
+            #endregion
+
+            #region Операции сравнения
+
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0x3A &&
+                instructionBytes[1] == 0x1E)
+            {
+                ushort addr = BitConverter.ToUInt16(instructionBytes, 2);
+                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                {
+                    // Не меняем значение регистра, только логируем
+                }
+            }
+
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0x80 &&
+                instructionBytes[1] == 0xFB)
+            {
+                byte cmpValue = instructionBytes[2];
+                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                {
+                    // Не меняем значение регистра, только логируем
+                }
+            }
+
+            #endregion
+
+            #region Отслеживание записей в память (сила и уровень монстров)
+
+            if (instructionBytes.Length >= 4)
+            {
+                if (instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                    instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
+                {
+                    if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                    {
+                        registerTracker.SetRegisterValue("MEM_C96F", (byte)regValue, address,
+                            $"MOV [C96F], CH (value: {regValue})");
+                    }
+                }
+                else if (instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                         instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
+                {
+                    if (registerTracker.TryGetRegisterValue("CH", out ushort regValue))
+                    {
+                        registerTracker.SetRegisterValue("MEM_C961", (byte)regValue, address,
+                            $"MOV [C961], CH (value: {regValue})");
+                    }
+                }
+                else if (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                         instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
+                {
+                    if (instructionBytes.Length >= 5)
+                    {
+                        byte value = instructionBytes[4];
+                        registerTracker.SetRegisterValue("MEM_C96F", value, address,
+                            $"MOV [C96F], {value}");
+                    }
+                }
+                else if (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                         instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
+                {
+                    if (instructionBytes.Length >= 5)
+                    {
+                        byte value = instructionBytes[4];
+                        registerTracker.SetRegisterValue("MEM_C961", value, address,
+                            $"MOV [C961], {value}");
+                    }
+                }
+            }
+
+            #endregion
+
+            #region Отслеживание записей в память (индексы монстров для битвы)
+
+            if (instructionBytes.Length >= 4)
+            {
+                if (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                    instructionBytes[2] == 0x58 && instructionBytes[3] == 0x3C)
+                {
+                    if (instructionBytes.Length >= 5)
+                    {
+                        byte value = instructionBytes[4];
+                        registerTracker.SetRegisterValue("MEM_3C58", value, address,
+                            $"MOV [3C58], {value}");
+                    }
+                }
+                else if (instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                         instructionBytes[2] == 0x29 && instructionBytes[3] == 0x3C)
+                {
+                    if (instructionBytes.Length >= 5)
+                    {
+                        byte value = instructionBytes[4];
+                        registerTracker.SetRegisterValue("MEM_3C29", value, address,
+                            $"MOV [3C29], {value}");
+                    }
+                }
+                else if (instructionBytes[0] == 0xA2 &&
+                         instructionBytes[1] == 0x58 && instructionBytes[2] == 0x3C)
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                    {
+                        registerTracker.SetRegisterValue("MEM_3C58", (byte)alValue, address,
+                            $"MOV [3C58], AL (value: {alValue})");
+                    }
+                }
+                else if (instructionBytes[0] == 0xA2 &&
+                         instructionBytes[1] == 0x29 && instructionBytes[2] == 0x3C)
+                {
+                    if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
+                    {
+                        registerTracker.SetRegisterValue("MEM_3C29", (byte)alValue, address,
+                            $"MOV [3C29], AL (value: {alValue})");
+                    }
+                }
+            }
+
+            #endregion
+
+            #region Пересылки между регистрами
+
+            if (instructionBytes.Length >= 2 &&
+                instructionBytes[0] == 0x8B &&
+                (instructionBytes[1] & 0xC0) == 0xC0)
+            {
+                byte modRM = instructionBytes[1];
+                byte destReg = (byte)((modRM >> 3) & 0x07);
+                byte srcReg = (byte)(modRM & 0x07);
+
+                string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+
+                if (destReg < regNames16.Length && srcReg < regNames16.Length)
+                {
+                    if (registerTracker.TryGetRegisterValue(regNames16[srcReg], out ushort srcValue))
+                    {
+                        registerTracker.SetRegisterValue(regNames16[destReg], srcValue, address,
+                            $"MOV {regNames16[destReg]}, {regNames16[srcReg]} (0x{srcValue:X4})");
+                    }
+                }
+            }
+
+            if (instructionBytes.Length >= 2 &&
+                instructionBytes[0] == 0x8A &&
+                (instructionBytes[1] & 0xC0) == 0xC0)
+            {
+                byte modRM = instructionBytes[1];
+                byte destReg = (byte)((modRM >> 3) & 0x07);
+                byte srcReg = (byte)(modRM & 0x07);
+
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                if (destReg < regNames8.Length && srcReg < regNames8.Length)
+                {
+                    if (registerTracker.TryGetRegisterValue(regNames8[srcReg], out ushort srcValue))
+                    {
+                        string destFullReg = regNames8[destReg] switch
+                        {
+                            "AL" or "AH" => "AX",
+                            "CL" or "CH" => "CX",
+                            "DL" or "DH" => "DX",
+                            "BL" or "BH" => "BX",
+                            _ => ""
+                        };
+
+                        if (!string.IsNullOrEmpty(destFullReg))
+                        {
+                            registerTracker.TrackPartialRegisterOperation(destFullReg, regNames8[destReg],
+                                (byte)srcValue, address,
+                                $"MOV {regNames8[destReg]}, {regNames8[srcReg]} (0x{srcValue:X2})");
+                        }
+                    }
+                }
+            }
+
+            #endregion
         }
     }
 }
