@@ -1533,14 +1533,6 @@ namespace MMMapEditor
                         {
                             monsterBattleText += battleDesc + "\n";
                             hasMonsterBattle = true;
-
-                            // Дополнительная информация о монстре, если доступна
-                            var monsterInfo = obj.GetBattleMonsterInfo();
-                            if (monsterInfo != null)
-                            {
-                                // Можно добавить характеристики монстра, если нужно
-                                // monsterBattleText += $"  HP: {monsterInfo.HP}, Атака: {monsterInfo.Attack}\n";
-                            }
                         }
                     }
 
@@ -1767,11 +1759,8 @@ namespace MMMapEditor
             var groupHeaderMatches = Regex.Matches(noteText, @"^Битва с группой монстров:$", RegexOptions.Multiline);
             foreach (Match match in groupHeaderMatches)
             {
-                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
-                Color lineColor = isEven ? Color.LightYellow : Color.FromArgb(255, 180, 80);
-
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = lineColor;
+                rt.SelectionColor = Color.LightYellow;  
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
             }
 
@@ -1789,7 +1778,7 @@ namespace MMMapEditor
                     int countIndex = match.Index + match.Value.LastIndexOf('x');
                     rt.Select(countIndex, countMatch.Length);
                     rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для числа
-                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
                 }
             }
 
@@ -1806,7 +1795,7 @@ namespace MMMapEditor
                 {
                     rt.Select(match.Index + xPos, match.Length - xPos);
                     rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для "x? (Random count)"
-                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
                 }
             }
 

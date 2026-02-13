@@ -272,15 +272,13 @@ namespace MMMapEditor
             {
                 if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
                 {
-                    // В ProcessObject, при добавлении монстров:
-
                     ovrObject.AddBattleMonster(
                         entry.Key,
                         entry.Value.val1,
                         entry.Value.val2,
-                        entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)  // ✅
+                        entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)
                     );
-                    Debug.WriteLine($"  [PROCESS] MAIN: BX={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}, indeterminate={isMainPathIndeterminate || entry.Value.isIndeterminate}");
+                    Debug.WriteLine($"  [PROCESS] MAIN: BX={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}, indeterminate={entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)}");
                 }
             }
 
@@ -310,8 +308,7 @@ namespace MMMapEditor
                     if (pathResult.MonsterLevel.HasValue)
                         ovrObject.MonsterLevel = pathResult.MonsterLevel.Value;
 
-                    // ============ ВАЖНО: Сохраняем монстров из АЛЬТЕРНАТИВНОГО пути ============
-                    // НЕ перезаписываем существующих монстров с флагом false на true!
+                    // Сохраняем монстров из АЛЬТЕРНАТИВНОГО пути
                     bool isAltPathIndeterminate = pathResult.IsIndeterminateLoop;
                     foreach (var entry in pathResult.BattleMonsterEntries.OrderBy(e => e.Key))
                     {
@@ -322,24 +319,20 @@ namespace MMMapEditor
 
                             if (existingMonster != null)
                             {
-                                // Монстр уже существует - НЕ меняем его IsIndeterminate на true, если он уже false
-                                // Просто логируем
-                                Debug.WriteLine($"  [PROCESS] ALT SKIP: BX={entry.Key} уже существует, IsIndeterminate={existingMonster.IsIndeterminate}, новое значение={isAltPathIndeterminate || entry.Value.isIndeterminate}");
+                                Debug.WriteLine($"  [PROCESS] ALT SKIP: BX={entry.Key} уже существует, IsIndeterminate={existingMonster.IsIndeterminate}");
                             }
                             else
                             {
-                                // Новый монстр - добавляем
                                 ovrObject.AddBattleMonster(
                                     entry.Key,
                                     entry.Value.val1,
                                     entry.Value.val2,
-                                    isAltPathIndeterminate || entry.Value.isIndeterminate
+                                    entry.Key > 0 && (isAltPathIndeterminate || entry.Value.isIndeterminate)
                                 );
-                                Debug.WriteLine($"  [PROCESS] ALT ADD: BX={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}, indeterminate={isAltPathIndeterminate || entry.Value.isIndeterminate}");
+                                Debug.WriteLine($"  [PROCESS] ALT ADD: BX={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}, indeterminate={entry.Key > 0 && (isAltPathIndeterminate || entry.Value.isIndeterminate)}");
                             }
                         }
                     }
-                    // =========================================================================
 
                     SaveNestedPathsRecursively(ovrObject.PathTexts, pathResult.NestedPaths, ref currentPathNumber);
                     path.Analyzed = true;
@@ -349,14 +342,6 @@ namespace MMMapEditor
 
             // 5. Фильтруем уникальные пути
             ovrObject.PathTexts = FilterUniquePaths(ovrObject.PathTexts);
-
-            // 6. Для обратной совместимости устанавливаем MonsterIndex1/2 из первого монстра
-            if (ovrObject.BattleMonsters.Count > 0)
-            {
-                var first = ovrObject.BattleMonsters.OrderBy(m => m.Index).First();
-                ovrObject.MonsterIndex1 = first.MonsterIndex1;
-                ovrObject.MonsterIndex2 = first.MonsterIndex2;
-            }
 
             return ovrObject;
         }
