@@ -1434,7 +1434,6 @@ namespace MMMapEditor
                 byte defaultMonsterPower = 0;
                 byte defaultMonsterLevel = 0;
 
-                // Читаем дефолтные значения из файла
                 try
                 {
                     byte[] fileData = File.ReadAllBytes(filename);
@@ -1448,183 +1447,177 @@ namespace MMMapEditor
                     Console.WriteLine($"Ошибка чтения дефолтных значений монстров: {ex.Message}");
                 }
 
-                // Используем конфигурационный анализатор
-                var objects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config);
+                // Используем новый универсальный анализатор
+                var allObjects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config, centralOptions);
 
-                // Обрабатываем объекты на карте
-                foreach (var obj in objects)
+                // Обрабатываем все объекты
+                foreach (var obj in allObjects)
                 {
                     Point pos = new Point(obj.X, obj.Y);
 
-                    // Заменяем центральный объект на "AnyObject"
-                    centralOptions[pos] = "AnyObject";
-
-                    // Устанавливаем направления с сообщениями
-                    var directionsWithMessages = obj.GetDirectionsWithMessages();
-
-                    // Получаем текущее состояние сообщений
-                    var currentMessages = messageStates.TryGetValue(pos, out var prev)
-                        ? prev
-                        : new Tuple<bool, bool, bool, bool>(false, false, false, false);
-
-                    // Обновляем состояния сообщений
-                    bool top = currentMessages.Item1 || directionsWithMessages.Contains(Direction.Top);
-                    bool left = currentMessages.Item2 || directionsWithMessages.Contains(Direction.Left);
-                    bool bottom = currentMessages.Item3 || directionsWithMessages.Contains(Direction.Bottom);
-                    bool right = currentMessages.Item4 || directionsWithMessages.Contains(Direction.Right);
-
-                    messageStates[pos] = new Tuple<bool, bool, bool, bool>(top, left, bottom, right);
-
-                    // Определяем, нужно ли показывать префикс Path0
-                    bool hasMainPath = obj.PathTexts.ContainsKey(0) && obj.PathTexts[0].Count > 0;
-                    bool hasAlternativePaths = obj.PathTexts.Any(kvp => kvp.Key != 0 && kvp.Value.Count > 0);
-                    bool shouldShowPath0 = hasMainPath && hasAlternativePaths;
-
-                    // ---- ИНФОРМАЦИЯ О МОНСТРАХ - РАЗДЕЛЕНИЕ НА ДВЕ КАТЕГОРИИ ----
-
-                    // 1. Информация об изменении силы и уровня монстров (статистики)
-                    bool hasMonsterStatChanges = false;
-                    string monsterStatText = "";
-
-                    if (obj.MonsterPower.HasValue)
+                    // Проверяем текущее состояние клетки
+                    if (centralOptions.TryGetValue(pos, out string existingOption))
                     {
-                        byte newPower = obj.MonsterPower.Value;
-                        if (newPower > defaultMonsterPower)
+                        // Если на клетке уже AnyObject из таблицы - ничего не делаем
+                        if (existingOption == "AnyObject")
                         {
-                            monsterStatText += $"Сила монстров увеличивается с {defaultMonsterPower} до {newPower}\n";
-                        }
-                        else if (newPower < defaultMonsterPower)
-                        {
-                            monsterStatText += $"Сила монстров уменьшается с {defaultMonsterPower} до {newPower}\n";
-                        }
-                        else
-                        {
-                            monsterStatText += $"Сила монстров остаётся прежней: {newPower}\n";
-                        }
-                        hasMonsterStatChanges = true;
-                    }
-
-                    if (obj.MonsterLevel.HasValue)
-                    {
-                        byte newLevel = obj.MonsterLevel.Value;
-                        if (newLevel > defaultMonsterLevel)
-                        {
-                            monsterStatText += $"Уровень монстров увеличивается с {defaultMonsterLevel} до {newLevel}\n";
-                        }
-                        else if (newLevel < defaultMonsterLevel)
-                        {
-                            monsterStatText += $"Уровень монстров уменьшается с {defaultMonsterLevel} до {newLevel}\n";
-                        }
-                        else
-                        {
-                            monsterStatText += $"Уровень монстров остаётся прежним: {newLevel}\n";
-                        }
-                        hasMonsterStatChanges = true;
-                    }
-
-                    // 2. Информация о битве с монстрами (конкретные враги)
-                    bool hasMonsterBattle = false;
-                    string monsterBattleText = "";
-
-                    if (obj.HasBattleInfo)
-                    {
-                        string battleDesc = obj.GetBattleDescription();
-                        if (!string.IsNullOrEmpty(battleDesc))
-                        {
-                            monsterBattleText += battleDesc + "\n";
-                            hasMonsterBattle = true;
-                        }
-                    }
-
-                    // Добавляем тексты в заметки с правильной группировкой
-                    if (obj.PathTexts.Count > 0 || hasMonsterStatChanges || hasMonsterBattle)
-                    {
-                        if (!notesPerCell.ContainsKey(pos))
-                            notesPerCell[pos] = "";
-
-                        // Собираем ВСЮ информацию о монстрах в правильном порядке
-                        StringBuilder monsterInfoBuilder = new StringBuilder();
-
-                        // СНАЧАЛА информация о битве (конкретные враги) - как наиболее важная
-                        if (hasMonsterBattle)
-                        {
-                            monsterInfoBuilder.Append(monsterBattleText);
+                            Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) уже имеет AnyObject из таблицы, пропускаем");
+                            continue;
                         }
 
-                        // ПОТОМ информация об изменении статистик
-                        if (hasMonsterStatChanges)
+                        // Если на клетке "Случайная встреча" - заменяем на AnyObjectSpec
+                        if (existingOption == "Случайная встреча")
                         {
-                            monsterInfoBuilder.Append(monsterStatText);
-                        }
+                            Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) имеет 'Случайная встреча' - заменяем на AnyObjectSpec");
 
-                        // Добавляем информацию о монстрах в начало заметки
-                        if (monsterInfoBuilder.Length > 0)
-                        {
-                            notesPerCell[pos] = monsterInfoBuilder.ToString() + "\n" + notesPerCell[pos];
-                        }
+                            centralOptions[pos] = "AnyObjectSpec";
 
-                        // Добавляем тексты путей
-                        if (obj.PathTexts.Count > 0)
-                        {
-                            // Сортируем пути по номеру
-                            var sortedPaths = obj.PathTexts
-                                .OrderBy(kvp => kvp.Key)
-                                .ToList();
+                            // Устанавливаем направления с сообщениями
+                            var directionsWithMessages = obj.GetDirectionsWithMessages();
 
-                            bool firstPath = true;
-                            int variantCounter = 1;
+                            var currentMessages = messageStates.TryGetValue(pos, out var prev)
+                                ? prev
+                                : new Tuple<bool, bool, bool, bool>(false, false, false, false);
 
-                            foreach (var kvp in sortedPaths)
+                            bool top = currentMessages.Item1 || directionsWithMessages.Contains(Direction.Top);
+                            bool left = currentMessages.Item2 || directionsWithMessages.Contains(Direction.Left);
+                            bool bottom = currentMessages.Item3 || directionsWithMessages.Contains(Direction.Bottom);
+                            bool right = currentMessages.Item4 || directionsWithMessages.Contains(Direction.Right);
+
+                            messageStates[pos] = new Tuple<bool, bool, bool, bool>(top, left, bottom, right);
+
+                            // Определяем, нужно ли показывать префикс Path0
+                            bool hasMainPath = obj.PathTexts != null &&
+                                               obj.PathTexts.ContainsKey(0) &&
+                                               obj.PathTexts[0] != null &&
+                                               obj.PathTexts[0].Count > 0;
+
+                            bool hasAlternativePaths = obj.PathTexts != null &&
+                                                       obj.PathTexts.Any(kvp => kvp.Key != 0 && kvp.Value != null && kvp.Value.Count > 0);
+
+                            bool shouldShowPath0 = hasMainPath && hasAlternativePaths;
+
+                            // ---- ИНФОРМАЦИЯ О МОНСТРАХ ----
+                            bool hasMonsterStatChanges = false;
+                            string monsterStatText = "";
+
+                            if (obj.MonsterPower.HasValue)
                             {
-                                // Пропускаем пустые пути
-                                if (kvp.Value == null || kvp.Value.Count == 0)
-                                    continue;
-
-                                // Добавляем разделитель между путями
-                                if (!firstPath)
-                                {
-                                    notesPerCell[pos] += "\n";
-                                }
-                                firstPath = false;
-
-                                // Для Path0 добавляем префикс только если нужно
-                                if (kvp.Key == 0)
-                                {
-                                    if (shouldShowPath0)
-                                    {
-                                        notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
-                                        notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
-                                    }
-                                }
+                                byte newPower = obj.MonsterPower.Value;
+                                if (newPower > defaultMonsterPower)
+                                    monsterStatText += $"Сила монстров увеличивается с {defaultMonsterPower} до {newPower}\n";
+                                else if (newPower < defaultMonsterPower)
+                                    monsterStatText += $"Сила монстров уменьшается с {defaultMonsterPower} до {newPower}\n";
                                 else
-                                {
-                                    notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
-                                }
+                                    monsterStatText += $"Сила монстров остаётся прежней: {newPower}\n";
+                                hasMonsterStatChanges = true;
+                            }
 
-                                // Добавляем тексты этого пути
-                                var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
-                                foreach (var text in sortedTexts)
+                            if (obj.MonsterLevel.HasValue)
+                            {
+                                byte newLevel = obj.MonsterLevel.Value;
+                                if (newLevel > defaultMonsterLevel)
+                                    monsterStatText += $"Уровень монстров увеличивается с {defaultMonsterLevel} до {newLevel}\n";
+                                else if (newLevel < defaultMonsterLevel)
+                                    monsterStatText += $"Уровень монстров уменьшается с {defaultMonsterLevel} до {newLevel}\n";
+                                else
+                                    monsterStatText += $"Уровень монстров остаётся прежним: {newLevel}\n";
+                                hasMonsterStatChanges = true;
+                            }
+
+                            bool hasMonsterBattle = false;
+                            string monsterBattleText = "";
+
+                            if (obj.HasBattleInfo)
+                            {
+                                string battleDesc = obj.GetBattleDescription();
+                                if (!string.IsNullOrEmpty(battleDesc))
                                 {
-                                    int colonIndex = text.IndexOf(':');
-                                    if (colonIndex >= 0 && colonIndex + 1 < text.Length)
+                                    monsterBattleText += battleDesc + "\n";
+                                    hasMonsterBattle = true;
+                                }
+                            }
+
+                            // Добавляем тексты в заметки
+                            bool hasAnyTexts = obj.PathTexts != null && obj.PathTexts.Count > 0;
+
+                            if (hasAnyTexts || hasMonsterStatChanges || hasMonsterBattle)
+                            {
+                                if (!notesPerCell.ContainsKey(pos))
+                                    notesPerCell[pos] = "";
+
+                                StringBuilder monsterInfoBuilder = new StringBuilder();
+
+                                if (hasMonsterBattle)
+                                    monsterInfoBuilder.Append(monsterBattleText);
+
+                                if (hasMonsterStatChanges)
+                                    monsterInfoBuilder.Append(monsterStatText);
+
+                                if (monsterInfoBuilder.Length > 0)
+                                    notesPerCell[pos] = monsterInfoBuilder.ToString() + "\n" + notesPerCell[pos];
+
+                                if (hasAnyTexts)
+                                {
+                                    var sortedPaths = obj.PathTexts
+                                        .OrderBy(kvp => kvp.Key)
+                                        .ToList();
+
+                                    bool firstPath = true;
+                                    int variantCounter = 1;
+
+                                    foreach (var kvp in sortedPaths)
                                     {
-                                        string textPart = text.Substring(colonIndex + 1).Trim();
-                                        string decodedText = DecodeTextString(textPart);
-                                        if (!string.IsNullOrEmpty(decodedText))
+                                        if (kvp.Value == null || kvp.Value.Count == 0)
+                                            continue;
+
+                                        if (!firstPath)
+                                            notesPerCell[pos] += "\n";
+                                        firstPath = false;
+
+                                        if (kvp.Key == 0)
                                         {
-                                            decodedText = decodedText.TrimEnd('\r');
-                                            notesPerCell[pos] += decodedText + "\n";
+                                            if (shouldShowPath0)
+                                            {
+                                                notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
+                                                notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
+                                            }
+                                        }
+                                        else
+                                        {
+                                            notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
+                                        }
+
+                                        var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
+                                        foreach (var text in sortedTexts)
+                                        {
+                                            int colonIndex = text.IndexOf(':');
+                                            if (colonIndex >= 0 && colonIndex + 1 < text.Length)
+                                            {
+                                                string textPart = text.Substring(colonIndex + 1).Trim();
+                                                string decodedText = DecodeTextString(textPart);
+                                                if (!string.IsNullOrEmpty(decodedText))
+                                                {
+                                                    decodedText = decodedText.TrimEnd('\r');
+                                                    notesPerCell[pos] += decodedText + "\n";
+                                                }
+                                            }
                                         }
                                     }
                                 }
+
+                                if (!string.IsNullOrEmpty(notesPerCell[pos]))
+                                    notesPerCell[pos] = notesPerCell[pos].TrimEnd('\n');
                             }
                         }
-
-                        // Удаляем последний лишний перенос строки
-                        if (!string.IsNullOrEmpty(notesPerCell[pos]))
+                        else
                         {
-                            notesPerCell[pos] = notesPerCell[pos].TrimEnd('\n');
+                            Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) имеет '{existingOption}', не заменяем");
                         }
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) не имеет записи в centralOptions, пропускаем");
                     }
                 }
 
@@ -1634,14 +1627,14 @@ namespace MMMapEditor
                     button.Invalidate();
                 }
 
-                // Обновляем форматирование, если есть выделенная ячейка
                 if (selectedPosition.HasValue)
                 {
                     UpdateNotesFormatting();
                 }
 
-                // Информационное сообщение о завершении загрузки
-                // MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                // Информационное сообщение о количестве найденных объектов
+                MessageBox.Show($"Загружено объектов из анализа кода: {allObjects.Count}",
+                               "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
