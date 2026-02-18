@@ -1458,7 +1458,7 @@ namespace MMMapEditor
                     // Проверяем текущее состояние клетки
                     if (centralOptions.TryGetValue(pos, out string existingOption))
                     {
-                        // Если на клетке уже AnyObject из таблицы - ничего не делаем
+                        // Если на клетке уже AnyObject из таблицы - НЕ ТРОГАЕМ ТЕКСТ
                         if (existingOption == "AnyObject")
                         {
                             Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) уже имеет AnyObject из таблицы, пропускаем");
@@ -1469,6 +1469,9 @@ namespace MMMapEditor
                         if (existingOption == "Случайная встреча")
                         {
                             Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) имеет 'Случайная встреча' - заменяем на AnyObjectSpec");
+
+                            // Сохраняем существующие заметки, если они есть
+                            string existingNotes = notesPerCell.TryGetValue(pos, out var notes) ? notes : "";
 
                             centralOptions[pos] = "AnyObjectSpec";
 
@@ -1525,6 +1528,7 @@ namespace MMMapEditor
                                 hasMonsterStatChanges = true;
                             }
 
+                            // ---- ИНФОРМАЦИЯ О ПОЛНОСТЬЮ ОПРЕДЕЛЁННЫХ БИТВАХ ----
                             bool hasMonsterBattle = false;
                             string monsterBattleText = "";
 
@@ -1538,76 +1542,103 @@ namespace MMMapEditor
                                 }
                             }
 
-                            // Добавляем тексты в заметки
-                            bool hasAnyTexts = obj.PathTexts != null && obj.PathTexts.Count > 0;
+                            // ---- ИНФОРМАЦИЯ О ЧАСТИЧНО ОПРЕДЕЛЁННЫХ БИТВАХ ----
+                            bool hasPartialBattles = false;
+                            string partialBattleText = "";
 
-                            if (hasAnyTexts || hasMonsterStatChanges || hasMonsterBattle)
+                            if (obj.HasPartiallyDefinedBattles)
                             {
-                                if (!notesPerCell.ContainsKey(pos))
-                                    notesPerCell[pos] = "";
-
-                                StringBuilder monsterInfoBuilder = new StringBuilder();
-
-                                if (hasMonsterBattle)
-                                    monsterInfoBuilder.Append(monsterBattleText);
-
-                                if (hasMonsterStatChanges)
-                                    monsterInfoBuilder.Append(monsterStatText);
-
-                                if (monsterInfoBuilder.Length > 0)
-                                    notesPerCell[pos] = monsterInfoBuilder.ToString() + "\n" + notesPerCell[pos];
-
-                                if (hasAnyTexts)
+                                string battleDesc = obj.GetBattleDescription();
+                                if (!string.IsNullOrEmpty(battleDesc))
                                 {
-                                    var sortedPaths = obj.PathTexts
-                                        .OrderBy(kvp => kvp.Key)
-                                        .ToList();
+                                    partialBattleText += battleDesc + "\n";
+                                    hasPartialBattles = true;
+                                }
+                            }
 
-                                    bool firstPath = true;
-                                    int variantCounter = 1;
+                            // ---- ТЕКСТОВЫЕ СООБЩЕНИЯ ----
+                            bool hasAnyTexts = obj.PathTexts != null && obj.PathTexts.Count > 0;
+                            string textsText = "";
 
-                                    foreach (var kvp in sortedPaths)
+                            if (hasAnyTexts)
+                            {
+                                var sortedPaths = obj.PathTexts
+                                    .OrderBy(kvp => kvp.Key)
+                                    .ToList();
+
+                                bool firstPath = true;
+                                int variantCounter = 1;
+
+                                foreach (var kvp in sortedPaths)
+                                {
+                                    if (kvp.Value == null || kvp.Value.Count == 0)
+                                        continue;
+
+                                    if (!firstPath)
+                                        textsText += "\n";
+                                    firstPath = false;
+
+                                    if (kvp.Key == 0)
                                     {
-                                        if (kvp.Value == null || kvp.Value.Count == 0)
-                                            continue;
-
-                                        if (!firstPath)
-                                            notesPerCell[pos] += "\n";
-                                        firstPath = false;
-
-                                        if (kvp.Key == 0)
+                                        if (shouldShowPath0)
                                         {
-                                            if (shouldShowPath0)
-                                            {
-                                                notesPerCell[pos] += $"Эта ячейка содержит различные варианты текста:\n";
-                                                notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
-                                            }
+                                            textsText += $"Эта ячейка содержит различные варианты текста:\n";
+                                            textsText += $"Вариант{variantCounter++}:\n";
                                         }
-                                        else
-                                        {
-                                            notesPerCell[pos] += $"Вариант{variantCounter++}:\n";
-                                        }
+                                    }
+                                    else
+                                    {
+                                        textsText += $"Вариант{variantCounter++}:\n";
+                                    }
 
-                                        var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
-                                        foreach (var text in sortedTexts)
+                                    var sortedTexts = kvp.Value.OrderBy(t => t).ToList();
+                                    foreach (var text in sortedTexts)
+                                    {
+                                        int colonIndex = text.IndexOf(':');
+                                        if (colonIndex >= 0 && colonIndex + 1 < text.Length)
                                         {
-                                            int colonIndex = text.IndexOf(':');
-                                            if (colonIndex >= 0 && colonIndex + 1 < text.Length)
+                                            string textPart = text.Substring(colonIndex + 1).Trim();
+                                            string decodedText = DecodeTextString(textPart);
+                                            if (!string.IsNullOrEmpty(decodedText))
                                             {
-                                                string textPart = text.Substring(colonIndex + 1).Trim();
-                                                string decodedText = DecodeTextString(textPart);
-                                                if (!string.IsNullOrEmpty(decodedText))
-                                                {
-                                                    decodedText = decodedText.TrimEnd('\r');
-                                                    notesPerCell[pos] += decodedText + "\n";
-                                                }
+                                                decodedText = decodedText.TrimEnd('\r');
+                                                textsText += decodedText + "\n";
                                             }
                                         }
                                     }
                                 }
+                            }
 
-                                if (!string.IsNullOrEmpty(notesPerCell[pos]))
-                                    notesPerCell[pos] = notesPerCell[pos].TrimEnd('\n');
+                            // Собираем все заметки в правильном порядке
+                            StringBuilder newNotes = new StringBuilder();
+
+                            // Сначала информация о монстрах (битвы)
+                            if (hasMonsterBattle)
+                                newNotes.Append(monsterBattleText);
+
+                            // Потом изменения статистики
+                            if (hasMonsterStatChanges)
+                                newNotes.Append(monsterStatText);
+
+                            // Потом частично определённые битвы
+                            if (hasPartialBattles)
+                                newNotes.Append(partialBattleText);
+
+                            // Потом текстовые сообщения
+                            if (!string.IsNullOrEmpty(textsText))
+                                newNotes.Append(textsText);
+
+                            // Сохраняем заметки, если они есть
+                            if (newNotes.Length > 0)
+                            {
+                                notesPerCell[pos] = newNotes.ToString().TrimEnd('\n');
+                                Debug.WriteLine($"    Добавлены заметки для ({obj.X},{obj.Y}): {newNotes.ToString().Replace("\n", "\\n")}");
+                            }
+                            else
+                            {
+                                // Если нет новых заметок, оставляем старые
+                                notesPerCell[pos] = existingNotes;
+                                Debug.WriteLine($"    Нет заметок для ({obj.X},{obj.Y})");
                             }
                         }
                         else
@@ -1634,7 +1665,7 @@ namespace MMMapEditor
 
                 // Информационное сообщение о количестве найденных объектов
                 MessageBox.Show($"Загружено объектов из анализа кода: {allObjects.Count}",
-                               "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                               "Отладочная информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
@@ -1642,6 +1673,7 @@ namespace MMMapEditor
                               "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
+
 
         private void ApplyItalicSeaWaveStyle(RichTextBox rt, int startIndex, int length)
         {
@@ -1875,11 +1907,122 @@ namespace MMMapEditor
                 // Форматирование для силы и уровня монстров
                 FormatMonsterStatChanges(notesTextBox, noteText);
 
-                // НОВОЕ: Форматирование для информации о битве с монстрами
+                // Форматирование для информации о битве с монстрами
                 FormatMonsterBattleInfo(notesTextBox, noteText);
+
+                // НОВОЕ: Форматирование для частично определённых битв
+                FormatPartiallyDefinedBattles(notesTextBox, noteText);
             }
         }
 
+        /// <summary>
+        /// Форматирование для частично определённых битв
+        /// </summary>
+        private void FormatPartiallyDefinedBattles(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            // Ищем заголовки "Частично определённая битва"
+            var headerMatches = Regex.Matches(noteText, @"Частично определённая битва[^\n]*");
+            foreach (Match match in headerMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 165, 0); // Оранжевый
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
+            // Ищем варианты монстров (• Вариант X: Имя монстра)
+            var variantMatches = Regex.Matches(noteText, @"  • Вариант \d+: [^\n]*");
+            foreach (Match match in variantMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(180, 230, 255); // Светло-голубой
+
+                // Выделяем номер варианта жирным
+                int colonIndex = match.Value.IndexOf(':');
+                if (colonIndex > 0)
+                {
+                    rt.Select(match.Index, colonIndex + 1);
+                    rt.SelectionColor = Color.FromArgb(100, 200, 255);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                // Сбрасываем выделение
+                rt.Select(match.Index + match.Length, 0);
+            }
+
+            // Ищем информацию о загрузке из таблиц [Загрузка из таблиц для BX=X]:
+            var tableHeaderMatches = Regex.Matches(noteText, @"\[Загрузка из таблиц для BX=\d+\]:");
+            foreach (Match match in tableHeaderMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.Gray;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            // Ищем строки с адресами таблиц (• CDA9+ → 3C58: 0xXX из [XXXX])
+            var tableAddrMatches = Regex.Matches(noteText, @"    • (CDA9\+|CDB1\+) → 3C[0-9A-F]{2}: 0x[0-9A-F]{2} from \[[0-9A-F]{4}\]");
+            foreach (Match match in tableAddrMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.DarkGray;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                // Выделяем адрес жирным
+                int addrIndex = match.Value.LastIndexOf('[');
+                if (addrIndex >= 0)
+                {
+                    rt.Select(match.Index + addrIndex, match.Length - addrIndex);
+                    rt.SelectionColor = Color.Gray;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+            }
+
+            // Ищем информацию о неполной загрузке
+            var incompleteMatches = Regex.Matches(noteText, @"Неполная загрузка из таблиц \(BX=\d+\):");
+            foreach (Match match in incompleteMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 140, 0); // Тёмно-оранжевый
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Ищем строки с описанием таблиц в неполной загрузке
+            var tableDescMatches = Regex.Matches(noteText, @"  • Загружено из (CDA9\+|CDB1\+) → сохранено в 3C[0-9A-F]{2}\+");
+            foreach (Match match in tableDescMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(200, 200, 100); // Желтоватый
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            // Ищем строки с конкретными значениями регистров
+            var regValueMatches = Regex.Matches(noteText, @"    (AL|CL|DL|BL|AH|CH|DH|BH) = 0x[0-9A-F]{2} из \[[0-9A-F]{4}\] \([^\)]+\)");
+            foreach (Match match in regValueMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.LightGreen;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                // Выделяем значение жирным
+                int equalIndex = match.Value.IndexOf('=');
+                if (equalIndex >= 0)
+                {
+                    int valueStart = match.Index + equalIndex + 1;
+                    int valueEnd = match.Value.IndexOf(' ', equalIndex);
+                    if (valueEnd > 0)
+                    {
+                        rt.Select(valueStart, valueEnd - equalIndex - 1);
+                        rt.SelectionColor = Color.White;
+                        rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                    }
+                }
+            }
+
+            // Сбрасываем выделение
+            rt.Select(0, 0);
+        }
+        
         // Новый метод для обработки текстовых записей
         private string ProcessTextEntry(string textEntry)
         {

@@ -15,8 +15,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace MMMapEditor
 {
@@ -38,11 +40,83 @@ namespace MMMapEditor
 
         #endregion
 
-        #region Информация о битве (новое)
+        #region Информация о битве (полностью определённые)
 
         public List<BattleMonster> BattleMonsters { get; set; } = new List<BattleMonster>();
         public bool HasBattleInfo => BattleMonsters.Count > 0;
         public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue;
+
+        #endregion
+
+        #region Информация о частично определённых битвах
+
+        public List<PartiallyDefinedBattle> PartiallyDefinedBattles { get; set; } = new List<PartiallyDefinedBattle>();
+        public bool HasPartiallyDefinedBattles => PartiallyDefinedBattles.Count > 0;
+
+        #endregion
+
+        #region Информация о загрузке из таблиц (неполные паттерны)
+
+        /// <summary>
+        /// Флаг наличия загрузки из таблиц (даже если не найдена полная пара)
+        /// </summary>
+        public bool HasAnyTableLoad { get; set; } = false;
+
+        /// <summary>
+        /// Информация о загруженных значениях из таблиц
+        /// </summary>
+        public class LoadedValueInfo
+        {
+            public int BxIndex { get; set; }
+            public string RegName { get; set; }
+            public byte Value { get; set; }
+            public ushort SourceAddr { get; set; }
+            public bool IsFirstTable { get; set; } // true для CDA9+, false для CDB1+
+            public bool IsSaved { get; set; } // true если значение было сохранено
+
+            public override string ToString()
+            {
+                string tableName = IsFirstTable ? "CDA9+" : "CDB1+";
+                string savedStatus = IsSaved ? "сохранено" : "загружено";
+                return $"{RegName} = 0x{Value:X2} из [{SourceAddr:X4}] ({tableName}, {savedStatus})";
+            }
+        }
+
+        private List<LoadedValueInfo> _loadedValues = new List<LoadedValueInfo>();
+        public IReadOnlyList<LoadedValueInfo> LoadedValues => _loadedValues.AsReadOnly();
+
+        /// <summary>
+        /// Добавляет информацию о загруженном значении из таблицы
+        /// </summary>
+        public void AddLoadedValue(int bxIndex, string regName, byte value, ushort sourceAddr, bool isFirstTable, bool isSaved = false)
+        {
+            // Проверяем, не добавляли ли уже такое значение
+            if (!_loadedValues.Any(v => v.BxIndex == bxIndex &&
+                                        v.RegName == regName &&
+                                        v.SourceAddr == sourceAddr))
+            {
+                _loadedValues.Add(new LoadedValueInfo
+                {
+                    BxIndex = bxIndex,
+                    RegName = regName,
+                    Value = value,
+                    SourceAddr = sourceAddr,
+                    IsFirstTable = isFirstTable,
+                    IsSaved = isSaved
+                });
+                HasAnyTableLoad = true;
+            }
+        }
+
+        /// <summary>
+        /// Получает список загруженных значений, сгруппированных по BX индексу
+        /// </summary>
+        public Dictionary<int, List<LoadedValueInfo>> GetGroupedLoadedValues()
+        {
+            return _loadedValues
+                .GroupBy(v => v.BxIndex)
+                .ToDictionary(g => g.Key, g => g.OrderBy(v => v.IsFirstTable).ToList());
+        }
 
         #endregion
 
@@ -104,7 +178,7 @@ namespace MMMapEditor
 
         #endregion
 
-        #region Методы для работы с множественными монстрами
+        #region Методы для работы с множественными монстрами (полностью определённые)
 
         public void AddBattleMonster(int index, byte val1, byte val2, bool isIndeterminate = false)
         {
@@ -138,6 +212,39 @@ namespace MMMapEditor
                 .ToList();
         }
 
+        #endregion
+
+        #region Методы для работы с частично определёнными битвами
+
+        public void AddPartiallyDefinedBattle(int bxIndex, byte rangeStart1, byte rangeEnd1, byte rangeStart2, byte rangeEnd2)
+        {
+            // Проверяем, не существует ли уже такая запись
+            if (!PartiallyDefinedBattles.Any(p => p.BxIndex == bxIndex &&
+                                                   p.RangeStart1 == rangeStart1 &&
+                                                   p.RangeEnd1 == rangeEnd1 &&
+                                                   p.RangeStart2 == rangeStart2 &&
+                                                   p.RangeEnd2 == rangeEnd2))
+            {
+                PartiallyDefinedBattles.Add(new PartiallyDefinedBattle
+                {
+                    BxIndex = bxIndex,
+                    RangeStart1 = rangeStart1,
+                    RangeEnd1 = rangeEnd1,
+                    RangeStart2 = rangeStart2,
+                    RangeEnd2 = rangeEnd2
+                });
+            }
+        }
+
+        public List<PartiallyDefinedBattle> GetPartiallyDefinedBattles()
+        {
+            return PartiallyDefinedBattles.OrderBy(p => p.BxIndex).ToList();
+        }
+
+        #endregion
+
+        #region Методы для получения описаний
+
         private string CleanMonsterName(string name)
         {
             if (string.IsNullOrEmpty(name)) return name;
@@ -147,39 +254,17 @@ namespace MMMapEditor
                 char.IsPunctuation(c)).ToArray()).Trim();
         }
 
-        public string GetBattleDescription()
+        // Вспомогательный метод для DistinctBy
+        private IEnumerable<T> DistinctBy<T, TKey>(IEnumerable<T> source, Func<T, TKey> keySelector)
         {
-            if (BattleMonsters.Count > 0)
+            HashSet<TKey> seenKeys = new HashSet<TKey>();
+            foreach (T element in source)
             {
-                var grouped = GetGroupedBattleMonsters();
-                grouped = grouped.OrderBy(g => g.Indices.Min()).ToList();
-
-                if (grouped.Count == 1)
+                if (seenKeys.Add(keySelector(element)))
                 {
-                    var g = grouped[0];
-                    string cleanName = CleanMonsterName(g.MonsterName);
-
-                    if (g.IsIndeterminate)
-                        return $"Битва: {cleanName} x? (Random count)";
-                    else if (g.Count == 1)
-                        return $"Битва: {cleanName}";
-                    else
-                        return $"Битва: {cleanName} x{g.Count}";
-                }
-                else
-                {
-                    var result = "Битва с группой монстров:\n";
-                    foreach (var g in grouped)
-                    {
-                        string cleanName = CleanMonsterName(g.MonsterName);
-                        result += g.IsIndeterminate
-                            ? $"  • {cleanName} x? (Random count)\n"
-                            : $"  • {cleanName} x{g.Count}\n";
-                    }
-                    return result.TrimEnd('\n');
+                    yield return element;
                 }
             }
-            return null;
         }
 
         public string GetMonsterPowerDescription(byte defaultPower)
@@ -200,31 +285,329 @@ namespace MMMapEditor
             return $"Уровень монстров остаётся прежним: {newLevel}";
         }
 
+        /// <summary>
+        /// Полное описание битвы (все типы)
+        /// </summary>
+        public string GetBattleDescription()
+        {
+            var descriptions = new List<string>();
+
+            // Используем HashSet для отслеживания уже добавленных описаний
+            var addedDescriptions = new HashSet<string>();
+
+            // ===== ПОЛНОСТЬЮ ОПРЕДЕЛЁННЫЕ БИТВЫ =====
+            if (BattleMonsters.Count > 0)
+            {
+                var grouped = GetGroupedBattleMonsters();
+                grouped = grouped.OrderBy(g => g.Indices.Min()).ToList();
+
+                if (grouped.Count == 1)
+                {
+                    var g = grouped[0];
+                    string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
+                    string desc;
+
+                    if (g.IsIndeterminate)
+                        desc = $"Битва: {cleanName} x? (Random count)";
+                    else if (g.Count == 1)
+                        desc = $"Битва: {cleanName}";
+                    else
+                        desc = $"Битва: {cleanName} x{g.Count}";
+
+                    if (!addedDescriptions.Contains(desc))
+                    {
+                        descriptions.Add(desc);
+                        addedDescriptions.Add(desc);
+                    }
+                }
+                else
+                {
+                    var result = "Битва с группой монстров:";
+                    foreach (var g in grouped)
+                    {
+                        string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
+                        result += g.IsIndeterminate
+                            ? $"\n  • {cleanName} x? (Random count)"
+                            : $"\n  • {cleanName} x{g.Count}";
+                    }
+
+                    if (!addedDescriptions.Contains(result))
+                    {
+                        descriptions.Add(result);
+                        addedDescriptions.Add(result);
+                    }
+                }
+            }
+
+            // ===== ЧАСТИЧНО ОПРЕДЕЛЁННЫЕ БИТВЫ =====
+            if (PartiallyDefinedBattles.Count > 0)
+            {
+                // Группируем частичные битвы по диапазону BX индексов
+                var firstBattle = PartiallyDefinedBattles[0];
+
+                // Проверяем, являются ли все битвы частью одного цикла
+                bool isSequential = true;
+                int minBx = PartiallyDefinedBattles.Min(b => b.BxIndex);
+                int maxBx = PartiallyDefinedBattles.Max(b => b.BxIndex);
+
+                for (int i = minBx; i <= maxBx; i++)
+                {
+                    if (!PartiallyDefinedBattles.Any(b => b.BxIndex == i))
+                    {
+                        isSequential = false;
+                        break;
+                    }
+                }
+
+                if (isSequential && PartiallyDefinedBattles.Count > 1)
+                {
+                    // Это последовательность из цикла - объединяем в одну запись
+                    var monsters = new List<PossibleMonster>();
+
+                    // Собираем всех монстров из всех частичных битв
+                    foreach (var battle in PartiallyDefinedBattles.OrderBy(b => b.BxIndex))
+                    {
+                        monsters.AddRange(battle.GetPossibleMonsters());
+                    }
+
+                    if (monsters.Count > 0)
+                    {
+                        string result;
+
+                        if (monsters.Count == 1)
+                        {
+                            string cleanName = CleanMonsterNameForDisplay(monsters[0].MonsterName);
+                            result = $"Частично определённая битва: {cleanName}";
+                        }
+                        else
+                        {
+                            result = $"Частично определённая битва (BX={minBx}-{maxBx}, {monsters.Count} вариантов):";
+
+                            // Показываем все варианты (их обычно 8)
+                            for (int i = 0; i < monsters.Count; i++)
+                            {
+                                string cleanName = CleanMonsterNameForDisplay(monsters[i].MonsterName);
+                                result += $"\n  • Вариант {i + 1}: {cleanName}";
+                            }
+                        }
+
+                        if (!addedDescriptions.Contains(result))
+                        {
+                            descriptions.Add(result);
+                            addedDescriptions.Add(result);
+                        }
+                    }
+                }
+                else
+                {
+                    // Обычная обработка - каждая частичная битва отдельно
+                    foreach (var battle in PartiallyDefinedBattles.OrderBy(b => b.BxIndex))
+                    {
+                        string battleKey = $"Partial_{battle.BxIndex}";
+                        if (addedDescriptions.Contains(battleKey))
+                            continue;
+
+                        addedDescriptions.Add(battleKey);
+
+                        var monsters = battle.GetPossibleMonsters();
+
+                        if (monsters.Count == 1)
+                        {
+                            string cleanName = CleanMonsterNameForDisplay(monsters[0].MonsterName);
+                            string desc = $"Частично определённая битва: {cleanName}";
+
+                            if (!addedDescriptions.Contains(desc))
+                            {
+                                descriptions.Add(desc);
+                                addedDescriptions.Add(desc);
+                            }
+                        }
+                        else if (monsters.Count > 0)
+                        {
+                            string result = $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов):";
+
+                            int displayCount = Math.Min(monsters.Count, 10);
+                            for (int i = 0; i < displayCount; i++)
+                            {
+                                string cleanName = CleanMonsterNameForDisplay(monsters[i].MonsterName);
+                                result += $"\n  • Вариант {i + 1}: {cleanName}";
+                            }
+
+                            if (monsters.Count > displayCount)
+                            {
+                                result += $"\n  • ... и ещё {monsters.Count - displayCount} вариантов";
+                            }
+
+                            if (!addedDescriptions.Contains(result))
+                            {
+                                descriptions.Add(result);
+                                addedDescriptions.Add(result);
+                            }
+                        }
+                        else
+                        {
+                            string desc = $"Частично определённая битва (BX={battle.BxIndex}, диапазоны: [{battle.RangeStart1:X2}-{battle.RangeEnd1:X2}] + [{battle.RangeStart2:X2}-{battle.RangeEnd2:X2}])";
+                            if (!addedDescriptions.Contains(desc))
+                            {
+                                descriptions.Add(desc);
+                                addedDescriptions.Add(desc);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ===== ИНФОРМАЦИЯ О ЗАГРУЗКЕ ИЗ ТАБЛИЦ =====
+            if (HasAnyTableLoad && _loadedValues.Count > 0 && PartiallyDefinedBattles.Count == 0)
+            {
+                var grouped = GetGroupedLoadedValues();
+
+                foreach (var group in grouped.OrderBy(g => g.Key))
+                {
+                    int bxIndex = group.Key;
+                    var values = group.Value;
+
+                    string loadKey = $"Load_{bxIndex}";
+                    if (addedDescriptions.Contains(loadKey))
+                        continue;
+
+                    addedDescriptions.Add(loadKey);
+
+                    bool hasFirstTable = values.Any(v => v.IsFirstTable);
+                    bool hasSecondTable = values.Any(v => !v.IsFirstTable);
+
+                    string desc = "";
+
+                    if (hasFirstTable && !hasSecondTable)
+                    {
+                        desc = $"Неполная загрузка из таблиц (BX={bxIndex}):\n";
+                        desc += $"  • Загружено из CDA9+ → сохранено в 3C58+\n";
+                        desc += $"  • Загрузка из CDB1+ не найдена\n";
+
+                        foreach (var val in DistinctBy(values.Where(v => v.IsFirstTable), v => v.SourceAddr))
+                        {
+                            string status = val.IsSaved ? "сохранено" : "загружено (не сохранено)";
+                            desc += $"    {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
+                        }
+                    }
+                    else if (!hasFirstTable && hasSecondTable)
+                    {
+                        desc = $"Неполная загрузка из таблиц (BX={bxIndex}):\n";
+                        desc += $"  • Загружено из CDB1+ → сохранено в 3C29+\n";
+                        desc += $"  • Загрузка из CDA9+ не найдена\n";
+
+                        foreach (var val in DistinctBy(values.Where(v => !v.IsFirstTable), v => v.SourceAddr))
+                        {
+                            string status = val.IsSaved ? "сохранено" : "загружено (не сохранено)";
+                            desc += $"    {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
+                        }
+                    }
+                    else if (hasFirstTable && hasSecondTable)
+                    {
+                        desc = $"Неполная загрузка из обеих таблиц (BX={bxIndex}):\n";
+
+                        var firstVals = DistinctBy(values.Where(v => v.IsFirstTable), v => v.SourceAddr).ToList();
+                        var secondVals = DistinctBy(values.Where(v => !v.IsFirstTable), v => v.SourceAddr).ToList();
+
+                        foreach (var val in firstVals)
+                        {
+                            string status = val.IsSaved ? "сохранено" : "не сохранено";
+                            desc += $"  • {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
+                        }
+
+                        foreach (var val in secondVals)
+                        {
+                            string status = val.IsSaved ? "сохранено" : "не сохранено";
+                            desc += $"  • {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(desc) && !addedDescriptions.Contains(desc))
+                    {
+                        descriptions.Add(desc.TrimEnd('\n'));
+                        addedDescriptions.Add(desc);
+                    }
+                }
+            }
+
+            return descriptions.Count > 0 ? string.Join("\n", descriptions) : null;
+        }
+
+        // Вспомогательный метод для очистки имени монстра при отображении
+        private string CleanMonsterNameForDisplay(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return name;
+
+            // Оставляем только английские буквы, пробелы и базовые знаки препинания
+            var clean = new StringBuilder();
+            foreach (char c in name)
+            {
+                if ((c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') ||
+                    c == ' ' || c == '-' || c == '\'' || c == '.')
+                {
+                    clean.Append(c);
+                }
+            }
+
+            // Убираем лишние пробелы
+            string result = clean.ToString().Trim();
+            result = Regex.Replace(result, @"\s+", " ");
+
+            return result;
+        }
+
         public string GetFullMonsterDescription(byte defaultPower, byte defaultLevel)
         {
             var descriptions = new List<string>();
+
             var powerDesc = GetMonsterPowerDescription(defaultPower);
             if (powerDesc != null) descriptions.Add(powerDesc);
+
             var levelDesc = GetMonsterLevelDescription(defaultLevel);
             if (levelDesc != null) descriptions.Add(levelDesc);
+
             var battleDesc = GetBattleDescription();
             if (battleDesc != null) descriptions.Add(battleDesc);
+
             return descriptions.Count > 0 ? string.Join("\n", descriptions) : null;
         }
 
         public bool HasAnyInfo =>
             (PathTexts != null && PathTexts.Any(kvp => kvp.Value != null && kvp.Value.Count > 0)) ||
             HasMonsterStatChanges ||
-            HasBattleInfo;
-
-        public override string ToString() =>
-            $"OvrObject [X={X}, Y={Y}, Dir=0x{DirectionByte:X2}, Paths={NonEmptyPathsCount}, " +
-            $"Power={(MonsterPower.HasValue ? MonsterPower.Value.ToString() : "none")}, " +
-            $"Level={(MonsterLevel.HasValue ? MonsterLevel.Value.ToString() : "none")}, " +
-            $"BattleMonsters={BattleMonsters.Count}]";
+            HasBattleInfo ||
+            HasPartiallyDefinedBattles ||
+            HasAnyTableLoad;
 
         #endregion
+
+        public override string ToString()
+        {
+            var parts = new List<string>
+            {
+                $"OvrObject [X={X}, Y={Y}, Dir=0x{DirectionByte:X2}, Paths={NonEmptyPathsCount}"
+            };
+
+            if (MonsterPower.HasValue)
+                parts.Add($"Power={MonsterPower.Value}");
+            else
+                parts.Add("Power=none");
+
+            if (MonsterLevel.HasValue)
+                parts.Add($"Level={MonsterLevel.Value}");
+            else
+                parts.Add("Level=none");
+
+            parts.Add($"BattleMonsters={BattleMonsters.Count}");
+            parts.Add($"PartiallyDefined={PartiallyDefinedBattles.Count}");
+            parts.Add($"TableLoad={HasAnyTableLoad}");
+
+            return string.Join(", ", parts) + "]";
+        }
     }
+
+    #region Классы для полностью определённых битв
 
     public class BattleMonster
     {
@@ -263,4 +646,165 @@ namespace MMMapEditor
             return IsIndeterminate ? $"{cleanName} x?" : $"{cleanName} x{Count}";
         }
     }
+
+    #endregion
+
+    #region Классы для частично определённых битв
+
+    /// <summary>
+    /// Представляет частично определённую битву, где значения берутся из диапазонов
+    /// CDA9-CDB0 (первый байт) и CDB1-CDB8 (второй байт)
+    /// </summary>
+    public class PartiallyDefinedBattle
+    {
+        /// <summary>
+        /// Индекс BX (смещение в массивах)
+        /// </summary>
+        public int BxIndex { get; set; }
+
+        /// <summary>
+        /// Начало диапазона для первого байта (обычно CDA9+)
+        /// </summary>
+        public byte RangeStart1 { get; set; }
+
+        /// <summary>
+        /// Конец диапазона для первого байта (обычно CDB0)
+        /// </summary>
+        public byte RangeEnd1 { get; set; }
+
+        /// <summary>
+        /// Начало диапазона для второго байта (обычно CDB1+)
+        /// </summary>
+        public byte RangeStart2 { get; set; }
+
+        /// <summary>
+        /// Конец диапазона для второго байта (обычно CDB8)
+        /// </summary>
+        public byte RangeEnd2 { get; set; }
+
+        /// <summary>
+        /// Генерирует список возможных монстров из диапазона
+        /// </summary>
+        public List<PossibleMonster> GetPossibleMonsters()
+        {
+            var result = new List<PossibleMonster>();
+
+            Debug.WriteLine($"      GetPossibleMonsters: диапазоны [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]");
+
+            for (byte val1 = RangeStart1; val1 <= RangeEnd1; val1++)
+            {
+                for (byte val2 = RangeStart2; val2 <= RangeEnd2; val2++)
+                {
+                    // Для частично определённых битв формула может быть другой
+                    // Пробуем разные варианты:
+
+                    // Вариант 1: как в полностью определённых битвах
+                    int monsterId1 = val1 + 16 * val2 - 17;
+
+                    // Вариант 2: без вычитания 17
+                    int monsterId2 = val1 + 16 * val2;
+
+                    // Вариант 3: с другим смещением
+                    int monsterId3 = val1 + 16 * val2 - 1;
+
+                    Debug.WriteLine($"        val1={val1:X2}, val2={val2:X2} -> ID1={monsterId1}, ID2={monsterId2}, ID3={monsterId3}");
+
+                    // Проверяем все варианты
+                    if (monsterId1 >= 0 && monsterId1 < 256)
+                    {
+                        string monsterName = MonsterDatabase.GetMonsterName(monsterId1);
+                        if (!string.IsNullOrEmpty(monsterName))
+                        {
+                            result.Add(new PossibleMonster
+                            {
+                                Val1 = val1,
+                                Val2 = val2,
+                                MonsterId = monsterId1,
+                                MonsterName = monsterName
+                            });
+                            Debug.WriteLine($"          Добавлен (вариант 1): {monsterName} (ID={monsterId1})");
+                        }
+                    }
+                    else if (monsterId2 >= 0 && monsterId2 < 256)
+                    {
+                        string monsterName = MonsterDatabase.GetMonsterName(monsterId2);
+                        if (!string.IsNullOrEmpty(monsterName))
+                        {
+                            result.Add(new PossibleMonster
+                            {
+                                Val1 = val1,
+                                Val2 = val2,
+                                MonsterId = monsterId2,
+                                MonsterName = monsterName
+                            });
+                            Debug.WriteLine($"          Добавлен (вариант 2): {monsterName} (ID={monsterId2})");
+                        }
+                    }
+                    else if (monsterId3 >= 0 && monsterId3 < 256)
+                    {
+                        string monsterName = MonsterDatabase.GetMonsterName(monsterId3);
+                        if (!string.IsNullOrEmpty(monsterName))
+                        {
+                            result.Add(new PossibleMonster
+                            {
+                                Val1 = val1,
+                                Val2 = val2,
+                                MonsterId = monsterId3,
+                                MonsterName = monsterName
+                            });
+                            Debug.WriteLine($"          Добавлен (вариант 3): {monsterName} (ID={monsterId3})");
+                        }
+                    }
+                }
+            }
+
+            Debug.WriteLine($"      Найдено монстров: {result.Count}");
+            return result;
+        }
+
+        /// <summary>
+        /// Проверяет, является ли диапазон полным (охватывает все возможные значения)
+        /// </summary>
+        public bool IsFullRange =>
+            RangeStart1 == 0 && RangeEnd1 == 255 &&
+            RangeStart2 == 0 && RangeEnd2 == 255;
+
+        /// <summary>
+        /// Количество возможных комбинаций
+        /// </summary>
+        public int PossibleCombinations => (RangeEnd1 - RangeStart1 + 1) * (RangeEnd2 - RangeStart2 + 1);
+
+        public override string ToString()
+        {
+            var monsters = GetPossibleMonsters();
+            if (monsters.Count == 1)
+                return $"Частично определён: {monsters[0].MonsterName}";
+            else if (monsters.Count > 0)
+                return $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}])";
+            else
+                return $"Частично определён: пустой диапазон";
+        }
+    }
+
+    /// <summary>
+    /// Представляет одного возможного монстра из диапазона
+    /// </summary>
+    public class PossibleMonster
+    {
+        public byte Val1 { get; set; }
+        public byte Val2 { get; set; }
+        public int MonsterId { get; set; }
+        public string MonsterName { get; set; }
+
+        public override string ToString()
+        {
+            string cleanName = new string(MonsterName.Where(c =>
+                char.IsLetterOrDigit(c) ||
+                char.IsWhiteSpace(c) ||
+                char.IsPunctuation(c)).ToArray()).Trim();
+            return $"{cleanName} (0x{Val1:X2}, 0x{Val2:X2})";
+        }
+    }
+
+    #endregion
 }
