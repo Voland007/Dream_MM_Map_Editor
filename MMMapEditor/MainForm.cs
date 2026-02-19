@@ -1928,7 +1928,7 @@ namespace MMMapEditor
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(255, 165, 0); // Оранжевый
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
             // Ищем варианты монстров (• Вариант X: Имя монстра)
@@ -2572,12 +2572,18 @@ namespace MMMapEditor
 
             // Проверяем нужные позиции и устанавливаем стены соответственно
             if (firstBinaryRepresentation[^1] == '1') // самый младший бит
-            { 
+            {
                 currentBorders = new Tuple<string, string, string, string>(
                     currentBorders.Item1, currentBorders.Item2, "Кирпичная стена", currentBorders.Item4); // стена слева
                 if (secondBinaryRepresentation[^1] == '0')
                     currentPassages = new Tuple<int, int, int, int>(
                     currentPassages.Item1, currentPassages.Item2, 3, currentPassages.Item4);
+            }
+            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены, но во втором слое есть - ставим Барьер
+            else if (firstBinaryRepresentation[^1] == '0' && secondBinaryRepresentation[^1] == '1')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, currentBorders.Item2, "Барьер", currentBorders.Item4); // барьер слева
             }
 
             if (firstBinaryRepresentation[^3] == '1') // третий бит справа
@@ -2588,6 +2594,12 @@ namespace MMMapEditor
                     currentPassages = new Tuple<int, int, int, int>(
                     currentPassages.Item1, 3, currentPassages.Item3, currentPassages.Item4);
             }
+            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены снизу, но во втором слое есть - ставим Барьер
+            else if (firstBinaryRepresentation[^3] == '0' && secondBinaryRepresentation[^3] == '1')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, "Барьер", currentBorders.Item3, currentBorders.Item4); // барьер снизу
+            }
 
             if (firstBinaryRepresentation[^5] == '1') // пятый бит справа
             {
@@ -2597,6 +2609,12 @@ namespace MMMapEditor
                     currentPassages = new Tuple<int, int, int, int>(
                     currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 3);
             }
+            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены справа, но во втором слое есть - ставим Барьер
+            else if (firstBinaryRepresentation[^5] == '0' && secondBinaryRepresentation[^5] == '1')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Барьер"); // барьер справа
+            }
 
             if (firstBinaryRepresentation[^7] == '1') // седьмой бит справа
             {
@@ -2605,6 +2623,12 @@ namespace MMMapEditor
                 if (secondBinaryRepresentation[^7] == '0')
                     currentPassages = new Tuple<int, int, int, int>(
                     3, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
+            }
+            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены сверху, но во втором слое есть - ставим Барьер
+            else if (firstBinaryRepresentation[^7] == '0' && secondBinaryRepresentation[^7] == '1')
+            {
+                currentBorders = new Tuple<string, string, string, string>(
+                    "Барьер", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // барьер сверху
             }
 
             // Дополнительные проверки для установки стен и проходов типа "дверь"
@@ -2674,11 +2698,10 @@ namespace MMMapEditor
             closedStates[pos] = currentClosedStates;
 
             // Остальные параметры клеток устанавливаются стандартно
-            
+
             messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
-           
         }
 
         // Обработчик события пункта меню "Метаданные"

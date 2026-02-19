@@ -381,7 +381,7 @@ namespace MMMapEditor
                         }
                         else
                         {
-                            result = $"Частично определённая битва (BX={minBx}-{maxBx}, {monsters.Count} вариантов):";
+                            result = $"Частично определённая битва. {monsters.Count} вариант(ов):";
 
                             // Показываем все варианты (их обычно 8)
                             for (int i = 0; i < monsters.Count; i++)

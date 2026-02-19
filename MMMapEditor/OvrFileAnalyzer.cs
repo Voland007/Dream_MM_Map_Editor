@@ -1838,188 +1838,188 @@ namespace MMMapEditor
             }
         }
 
-        private void AnalyzeCallsWithAlternativeBranch(BinaryReader br, uint patchAddress,
-     uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-     PathAnalysisResult result, RegisterTracker registerTracker, int depth, int callDepth = 0)
+       private void AnalyzeCallsWithAlternativeBranch(BinaryReader br, uint patchAddress,
+    uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
+    PathAnalysisResult result, RegisterTracker registerTracker, int depth, int callDepth = 0)
+{
+    const int MAX_CALL_DEPTH = 5;
+    const int MAX_LOOP_ITERATIONS = 8;
+
+    if (depth > MAX_CALL_DEPTH) return;
+    if (analyzedAddresses.Contains(patchAddress)) return;
+    analyzedAddresses.Add(patchAddress);
+
+    long fileLength = br.BaseStream.Length;
+    if (patchAddress >= fileLength) return;
+
+    using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+    {
+        capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+
+        uint currentAddress = patchAddress;
+        const int MAX_INSTRUCTIONS = 100;
+        int instructionsShown = 0;
+        bool jumpTaken = false;
+        bool shouldStop = false;
+
+        int loopIterationCount = 0;
+        bool loopDetected = false;
+
+        // Убрана HashSet для отслеживания посещённых адресов в этом методе,
+        // так как это блокировало вложенные пути
+        var visitedInThisPath = new HashSet<uint>();
+
+        while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS && !shouldStop)
         {
-            const int MAX_CALL_DEPTH = 5;
-            const int MAX_LOOP_ITERATIONS = 8;
-
-            if (depth > MAX_CALL_DEPTH) return;
-            if (analyzedAddresses.Contains(patchAddress)) return;
-            analyzedAddresses.Add(patchAddress);
-
-            long fileLength = br.BaseStream.Length;
-            if (patchAddress >= fileLength) return;
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            // Смягчена проверка: если адрес уже посещался, но это не цикл, всё равно анализируем
+            if (visitedInThisPath.Contains(currentAddress) && !loopDetected)
             {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+                // Просто логируем, но не прерываем
+                Debug.WriteLine($"    Повторное посещение адреса 0x{currentAddress:X4}, продолжаем анализ...");
+            }
+            visitedInThisPath.Add(currentAddress);
 
-                uint currentAddress = patchAddress;
-                const int MAX_INSTRUCTIONS = 100;
-                int instructionsShown = 0;
-                bool jumpTaken = false;
-                bool shouldStop = false;
+            int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
+            byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
 
-                int loopIterationCount = 0;
-                bool loopDetected = false;
+            var instructions = capstone.Disassemble(chunk, currentAddress);
+            if (instructions == null || instructions.Length == 0) break;
 
-                // Убрана HashSet для отслеживания посещённых адресов в этом методе,
-                // так как это блокировало вложенные пути
-                var visitedInThisPath = new HashSet<uint>();
+            foreach (var insn in instructions)
+            {
+                if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
+                instructionsShown++;
 
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS && !shouldStop)
+                byte[] instructionBytes = insn.Bytes;
+                string mnemonicUpper = insn.Mnemonic.ToUpper();
+                uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
+
+                // Поиск текстов, изменений статистики монстров и информации о битве
+                FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
+                FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                TrackRegisterOperations(insn, br, registerTracker, depth);
+
+                // Если дошли до адреса условного перехода и переход ещё не был выполнен
+                if (insn.Address == jumpAddress && !jumpTaken)
                 {
-                    // Смягчена проверка: если адрес уже посещался, но это не цикл, всё равно анализируем
-                    if (visitedInThisPath.Contains(currentAddress) && !loopDetected)
+                    Debug.WriteLine($"      Достигнут целевой переход по адресу 0x{insn.Address:X4}, переходим на 0x{alternativeStartAddress:X4}");
+                    jumpTaken = true;
+                    currentAddress = alternativeStartAddress;
+                    break;
+                }
+
+                // ===== ОБНАРУЖЕНИЕ ЦИКЛА =====
+                if ((mnemonicUpper == "JC" || mnemonicUpper == "JB") &&
+                    instructionBytes.Length >= 4 &&
+                    instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
+                    instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
+                {
+                    uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+
+                    // Проверяем, что это переход назад (цикл)
+                    if (jumpTarget < currentAddress)
                     {
-                        // Просто логируем, но не прерываем
-                        Debug.WriteLine($"    Повторное посещение адреса 0x{currentAddress:X4}, продолжаем анализ...");
-                    }
-                    visitedInThisPath.Add(currentAddress);
-
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
-                        instructionsShown++;
-
-                        byte[] instructionBytes = insn.Bytes;
-                        string mnemonicUpper = insn.Mnemonic.ToUpper();
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        // Поиск текстов, изменений статистики монстров и информации о битве
-                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                        TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                        // Если дошли до адреса условного перехода и переход ещё не был выполнен
-                        if (insn.Address == jumpAddress && !jumpTaken)
+                        if (!result.IsIndeterminateLoop)
                         {
-                            Debug.WriteLine($"      Достигнут целевой переход по адресу 0x{insn.Address:X4}, переходим на 0x{alternativeStartAddress:X4}");
-                            jumpTaken = true;
-                            currentAddress = alternativeStartAddress;
+                            result.IsIndeterminateLoop = true;
+                            result.IsInLoop = true;
+                            result.LoopStartAddress = jumpTarget;
+                            loopDetected = true;
+                        }
+
+                        loopIterationCount++;
+                        result.LoopIterationCount = loopIterationCount;
+
+                        string blValueStr = "unknown";
+                        if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
+                        {
+                            blValueStr = $"0x{blValue:X2}";
+                        }
+
+                        Debug.WriteLine($"    ИТЕРАЦИЯ ЦИКЛА {loopIterationCount} по адресу 0x{insn.Address:X4} (BL={blValueStr})");
+
+                        if (loopIterationCount < MAX_LOOP_ITERATIONS)
+                        {
+                            currentAddress = jumpTarget;
                             break;
                         }
-
-                        // ===== ОБНАРУЖЕНИЕ ЦИКЛА =====
-                        if ((mnemonicUpper == "JC" || mnemonicUpper == "JB") &&
-                            instructionBytes.Length >= 4 &&
-                            instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
-                            instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
+                        else
                         {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-
-                            // Проверяем, что это переход назад (цикл)
-                            if (jumpTarget < currentAddress)
-                            {
-                                if (!result.IsIndeterminateLoop)
-                                {
-                                    result.IsIndeterminateLoop = true;
-                                    result.IsInLoop = true;
-                                    result.LoopStartAddress = jumpTarget;
-                                    loopDetected = true;
-                                }
-
-                                loopIterationCount++;
-                                result.LoopIterationCount = loopIterationCount;
-
-                                string blValueStr = "unknown";
-                                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
-                                {
-                                    blValueStr = $"0x{blValue:X2}";
-                                }
-
-                                Debug.WriteLine($"    ИТЕРАЦИЯ ЦИКЛА {loopIterationCount} по адресу 0x{insn.Address:X4} (BL={blValueStr})");
-
-                                if (loopIterationCount < MAX_LOOP_ITERATIONS)
-                                {
-                                    currentAddress = jumpTarget;
-                                    break;
-                                }
-                                else
-                                {
-                                    Debug.WriteLine($"    Достигнут лимит итераций цикла ({MAX_LOOP_ITERATIONS}), останавливаемся");
-                                    shouldStop = true;
-                                    break;
-                                }
-                            }
-                        }
-                        else if (mnemonicUpper.StartsWith("J") &&
-                                 !mnemonicUpper.StartsWith("JMP") &&
-                                 !mnemonicUpper.StartsWith("JECXZ"))
-                        {
-                            // Обычный условный переход - не следуем по нему, продолжаем линейно
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (jumpTarget != 0 && jumpTarget < fileLength)
-                            {
-                                // Просто логируем
-                                Debug.WriteLine($"      Условный переход {mnemonicUpper} к 0x{jumpTarget:X4} (игнорируем, продолжаем линейно)");
-                            }
-                            currentAddress = nextAddress;
-                            break;
-                        }
-
-                        // Обработка вызовов подпрограмм
-                        if (mnemonicUpper.StartsWith("CALL"))
-                        {
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
-                            {
-                                Debug.WriteLine($"      Анализ подпрограммы по адресу 0x{callTarget:X4}");
-                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0, analyzedAddresses,
-                                    result, registerTracker, depth + 1, callDepth + 1);
-                            }
-                            currentAddress = nextAddress;
-                            break;
-                        }
-
-                        // Возврат из подпрограммы
-                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
-                        {
-                            Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
+                            Debug.WriteLine($"    Достигнут лимит итераций цикла ({MAX_LOOP_ITERATIONS}), останавливаемся");
                             shouldStop = true;
                             break;
                         }
+                    }
+                }
+                else if (mnemonicUpper.StartsWith("J") &&
+                         !mnemonicUpper.StartsWith("JMP") &&
+                         !mnemonicUpper.StartsWith("JECXZ"))
+                {
+                    // Обычный условный переход - не следуем по нему, продолжаем линейно
+                    uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                    if (jumpTarget != 0 && jumpTarget < fileLength)
+                    {
+                        // Просто логируем
+                        Debug.WriteLine($"      Условный переход {mnemonicUpper} к 0x{jumpTarget:X4} (игнорируем, продолжаем линейно)");
+                    }
+                    currentAddress = nextAddress;
+                    break;
+                }
 
-                        // Безусловный переход
-                        if (mnemonicUpper == "JMP")
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                // Обработка вызовов подпрограмм
+                if (mnemonicUpper.StartsWith("CALL"))
+                {
+                    uint callTarget = GetInstructionTargetAddress(insn, fileLength);
+                    if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
+                    {
+                        Debug.WriteLine($"      Анализ подпрограммы по адресу 0x{callTarget:X4}");
+                        AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0, analyzedAddresses,
+                            result, registerTracker, depth + 1, callDepth + 1);
+                    }
+                    currentAddress = nextAddress;
+                    break;
+                }
 
-                            if (jumpTarget >= fileLength)
-                            {
-                                Debug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
-                                shouldStop = true;
-                                break;
-                            }
+                // Возврат из подпрограммы
+                if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
+                {
+                    Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
+                    shouldStop = true;
+                    break;
+                }
 
-                            if (jumpTarget < fileLength && jumpTarget != 0)
-                            {
-                                Debug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-                        }
+                // Безусловный переход
+                if (mnemonicUpper == "JMP")
+                {
+                    uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
 
-                        // По умолчанию - переходим к следующей инструкции
-                        currentAddress = nextAddress;
+                    if (jumpTarget >= fileLength)
+                    {
+                        Debug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
+                        shouldStop = true;
+                        break;
+                    }
+
+                    if (jumpTarget < fileLength && jumpTarget != 0)
+                    {
+                        Debug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
+                        currentAddress = jumpTarget;
+                        break;
                     }
                 }
 
-                if (loopDetected)
-                {
-                    Debug.WriteLine($"    ЦИКЛ ЗАВЕРШЁН: всего итераций = {loopIterationCount}");
-                }
+                // По умолчанию - переходим к следующей инструкции
+                currentAddress = nextAddress;
             }
         }
+
+        if (loopDetected)
+        {
+            Debug.WriteLine($"    ЦИКЛ ЗАВЕРШЁН: всего итераций = {loopIterationCount}");
+        }
+    }
+}
 
         private void AnalyzeCallsWithNestedAlternativeBranch(BinaryReader br, uint patchAddress,
             uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
