@@ -31,6 +31,8 @@ namespace MMMapEditor
         public byte DirectionByte { get; set; }
         public Dictionary<int, HashSet<string>> PathTexts { get; set; } = new Dictionary<int, HashSet<string>>();
 
+        public bool IsFromTable { get; set; } = false;
+
         #endregion
 
         #region Характеристики монстров (статистики)
