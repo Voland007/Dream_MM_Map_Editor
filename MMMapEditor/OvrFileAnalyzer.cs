@@ -27,6 +27,12 @@ namespace MMMapEditor
 {
     public class OvrFileAnalyzer
     {
+        private class JumpCondition
+        {
+            public string Type { get; set; }
+            public uint Target { get; set; }
+        }
+
         private readonly OvrFileConfig _config;
 
         public OvrFileAnalyzer(OvrFileConfig config)
@@ -383,6 +389,67 @@ namespace MMMapEditor
             public byte LinearEnd { get; set; }
             public CoordType CoordType { get; set; } = CoordType.Unknown;
         }
+
+        // ========== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ УМЕНЬШЕНИЯ ДУБЛИРОВАНИЯ ==========
+
+        // Единый метод для чтения и дизассемблирования блока кода
+        private byte[] ReadCodeBlock(BinaryReader br, uint address, out X86Instruction[] instructions)
+        {
+            long fileLength = br.BaseStream.Length;
+            if (address >= fileLength)
+            {
+                instructions = null;
+                return null;
+            }
+
+            int bytesToRead = (int)Math.Min(32, fileLength - address);
+            byte[] chunk = ReadBytesAt(br, address, bytesToRead);
+
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            {
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+                instructions = capstone.Disassemble(chunk, address);
+            }
+
+            return chunk;
+        }
+
+        // Вспомогательный метод для получения адреса перехода
+        private uint GetJumpTarget(X86Instruction insn)
+        {
+            return GetInstructionTargetAddress(insn, 0xFFFF);
+        }
+
+        // Вспомогательный метод для проверки инструкции возврата
+        private bool IsReturnInstruction(string mnemonic)
+        {
+            string upper = mnemonic?.ToUpper() ?? "";
+            return upper == "RET" || upper == "RETF" || upper == "RETN" ||
+                   upper == "IRET" || upper == "IRETD";
+        }
+
+        // Вспомогательный метод для проверки, является ли инструкция условным переходом
+        private bool IsConditionalJump(X86Instruction insn, out uint target)
+        {
+            target = 0;
+            string mnemonic = insn.Mnemonic?.ToUpper() ?? "";
+
+            string[] conditionalJumps = {
+                "JZ", "JE", "JNZ", "JNE", "JB", "JNAE", "JC",
+                "JNB", "JAE", "JNC", "JBE", "JNA", "JA", "JNBE",
+                "JL", "JNGE", "JGE", "JNL", "JLE", "JNG", "JG", "JNLE",
+                "JP", "JPE", "JNP", "JPO", "JCXZ", "JECXZ"
+            };
+
+            if (conditionalJumps.Contains(mnemonic))
+            {
+                target = GetJumpTarget(insn);
+                return target != 0;
+            }
+            return false;
+        }
+
+        // ========== ОРИГИНАЛЬНЫЕ МЕТОДЫ С МИНИМАЛЬНЫМИ ИЗМЕНЕНИЯМИ ==========
 
         public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config, Dictionary<Point, string> existingCentralOptions)
         {
@@ -1741,10 +1808,7 @@ namespace MMMapEditor
 
                 while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
                 {
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0) break;
 
                     foreach (var insn in instructions)
@@ -1795,7 +1859,7 @@ namespace MMMapEditor
                             }
                         }
 
-                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF") return;
+                        if (IsReturnInstruction(mnemonicUpper)) return;
 
                         if (mnemonicUpper == "JMP")
                         {
@@ -1856,10 +1920,7 @@ namespace MMMapEditor
                     }
                     visitedInThisPath.Add(currentAddress);
 
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
 
                     // Если не удалось дизассемблировать инструкцию
                     if (instructions == null || instructions.Length == 0)
@@ -1867,7 +1928,7 @@ namespace MMMapEditor
                         Debug.WriteLine($"      НЕ УДАЛОСЬ ДИЗАССЕМБЛИРОВАТЬ ИНСТРУКЦИЮ по адресу 0x{currentAddress:X4}");
 
                         // Проверяем, может быть это JMP, который Capstone не распознал?
-                        if (chunk.Length >= 3 && chunk[0] == 0xE9)
+                        if (chunk != null && chunk.Length >= 3 && chunk[0] == 0xE9)
                         {
                             ushort jumpOffset = (ushort)(chunk[1] | (chunk[2] << 8));
                             uint jumpTarget = (uint)(currentAddress + 3 + (short)jumpOffset);
@@ -1924,7 +1985,7 @@ namespace MMMapEditor
                         // ========== ОБРАБОТКА ИНСТРУКЦИЙ ПЕРЕХОДА ==========
 
                         // RET - возврат из подпрограммы
-                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF" || mnemonicUpper == "RETN")
+                        if (IsReturnInstruction(mnemonicUpper))
                         {
                             if (returnAddressStack.Count > 0)
                             {
@@ -1938,23 +1999,6 @@ namespace MMMapEditor
                             {
                                 // Если стек пуст, это конец всей цепочки вызовов
                                 Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути (стек пуст)");
-                                return;
-                            }
-                        }
-
-                        // IRET - возврат из прерывания (тоже возврат)
-                        if (mnemonicUpper == "IRET" || mnemonicUpper == "IRETD")
-                        {
-                            if (returnAddressStack.Count > 0)
-                            {
-                                uint returnAddress = returnAddressStack.Pop();
-                                Debug.WriteLine($"      IRET на 0x{insn.Address:X4} - возврат в 0x{returnAddress:X4}");
-                                currentAddress = returnAddress;
-                                break;
-                            }
-                            else
-                            {
-                                Debug.WriteLine($"      IRET на 0x{insn.Address:X4} - конец пути");
                                 return;
                             }
                         }
@@ -2290,10 +2334,7 @@ namespace MMMapEditor
                     if (alreadyAnalyzedConditions.Contains(positionKey)) break;
                     alreadyAnalyzedConditions.Add(positionKey);
 
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
-
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0) break;
 
                     bool processedInstruction = false;
@@ -2388,10 +2429,7 @@ namespace MMMapEditor
 
                 while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
                 {
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
-
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0) break;
 
                     foreach (var insn in instructions)
@@ -2414,7 +2452,7 @@ namespace MMMapEditor
                             break;
                         }
 
-                        if (mnemonic == "RET" || mnemonic == "RETF") return;
+                        if (IsReturnInstruction(mnemonic)) return;
 
                         if (mnemonic == "JMP")
                         {
@@ -2469,11 +2507,7 @@ namespace MMMapEditor
                         processedAddresses[currentAddress] = 1;
                     }
 
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
-
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0) break;
 
                     foreach (var insn in instructions)
@@ -2487,7 +2521,7 @@ namespace MMMapEditor
                         if (mnemonicUpper.StartsWith("J") &&
                             !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ"))
                         {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                            uint jumpTarget = GetJumpTarget(insn);
                             if (jumpTarget != 0 && jumpTarget < fileLength)
                             {
                                 var altPath = new AlternativePath
@@ -2509,11 +2543,11 @@ namespace MMMapEditor
                             }
                         }
 
-                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF") return;
+                        if (IsReturnInstruction(mnemonicUpper)) return;
 
                         if (mnemonicUpper == "JMP")
                         {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                            uint jumpTarget = GetJumpTarget(insn);
                             if (jumpTarget >= fileLength) return;
 
                             if (jumpTarget < fileLength && jumpTarget != 0)
@@ -2560,11 +2594,7 @@ namespace MMMapEditor
                         processedAddresses[currentAddress] = 1;
                     }
 
-                    int bytesToRead = (int)Math.Min(32, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
-
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0) break;
 
                     foreach (var insn in instructions)
@@ -2586,7 +2616,7 @@ namespace MMMapEditor
                             !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ") &&
                             insn.Address != jumpAddress)
                         {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                            uint jumpTarget = GetJumpTarget(insn);
 
                             if (jumpTarget != 0 && jumpTarget < fileLength)
                             {
@@ -2616,7 +2646,7 @@ namespace MMMapEditor
                             }
                         }
 
-                        if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
+                        if (IsReturnInstruction(mnemonicUpper))
                         {
                             shouldStop = true;
                             break;
@@ -2624,7 +2654,7 @@ namespace MMMapEditor
 
                         if (mnemonicUpper == "JMP")
                         {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+                            uint jumpTarget = GetJumpTarget(insn);
 
                             if (processedAddresses.ContainsKey(jumpTarget))
                             {
@@ -2674,10 +2704,7 @@ namespace MMMapEditor
                     if (visitedAddresses.Contains(currentAddress)) break;
                     visitedAddresses.Add(currentAddress);
 
-                    int bytesToRead = (int)Math.Min(32, br.BaseStream.Length - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0) break;
 
                     bool processedInstruction = false;
@@ -2694,7 +2721,7 @@ namespace MMMapEditor
 
                         if (mnemonicUpper == "JMP")
                         {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
+                            uint jumpTarget = GetJumpTarget(insn);
                             if (jumpTarget != 0)
                             {
                                 if (jumpTarget < br.BaseStream.Length)
@@ -2717,13 +2744,13 @@ namespace MMMapEditor
                             currentAddress = nextAddress;
                             break;
                         }
-                        else if (mnemonicUpper == "RET" || mnemonicUpper == "RETF")
+                        else if (IsReturnInstruction(mnemonicUpper))
                         {
                             return path;
                         }
                         else if (mnemonicUpper.StartsWith("CALL"))
                         {
-                            uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
+                            uint callTarget = GetJumpTarget(insn);
                             if (callTarget != 0 && callTarget < br.BaseStream.Length)
                             {
                                 if (path.Count < MAX_INSTRUCTIONS / 2)
@@ -3983,10 +4010,7 @@ namespace MMMapEditor
 
                 while (currentAddress < fileLength)
                 {
-                    int bytesToRead = (int)Math.Min(64, fileLength - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                    var disassembled = capstone.Disassemble(chunk, currentAddress);
+                    var chunk = ReadCodeBlock(br, currentAddress, out var disassembled);
                     if (disassembled == null || disassembled.Length == 0)
                     {
                         currentAddress++;
@@ -4203,10 +4227,7 @@ namespace MMMapEditor
                             break;
                         visitedAddresses.Add(addr);
 
-                        int bytesToRead = (int)Math.Min(32, br.BaseStream.Length - addr);
-                        byte[] chunk = ReadBytesAt(br, addr, bytesToRead);
-                        var instructions = capstone.Disassemble(chunk, addr);
-
+                        var chunk = ReadCodeBlock(br, addr, out var instructions);
                         if (instructions == null || instructions.Length == 0)
                         {
                             addr++;
@@ -4260,7 +4281,7 @@ namespace MMMapEditor
                             }
 
                             // RET - конец пути
-                            if (mnemonic == "RET" || mnemonic == "RETF")
+                            if (IsReturnInstruction(mnemonic))
                             {
                                 addr = (uint)(insn.Address + insn.Bytes.Length);
                                 break;
@@ -4358,10 +4379,7 @@ namespace MMMapEditor
                         break;
                     state.VisitedAddresses.Add(currentAddress);
 
-                    int bytesToRead = (int)Math.Min(32, br.BaseStream.Length - currentAddress);
-                    byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-                    var instructions = capstone.Disassemble(chunk, currentAddress);
-
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
                     if (instructions == null || instructions.Length == 0)
                     {
                         currentAddress++;
@@ -4415,7 +4433,7 @@ namespace MMMapEditor
                         string mnemonic = insn.Mnemonic.ToUpper();
 
                         // RET - конец пути
-                        if (mnemonic == "RET" || mnemonic == "RETF")
+                        if (IsReturnInstruction(mnemonic))
                         {
                             Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
                             result.HasSignificantCode = hasSignificantCodeInPath;
@@ -4483,12 +4501,6 @@ namespace MMMapEditor
                 Type = mnemonic,
                 Target = GetInstructionTargetAddress(insn, 0xFFFF)
             };
-        }
-
-        private class JumpCondition
-        {
-            public string Type { get; set; }
-            public uint Target { get; set; }
         }
 
         private CodeEmulationResult MergeResults(CodeEmulationResult r1, CodeEmulationResult r2)
@@ -4619,23 +4631,6 @@ namespace MMMapEditor
                 case "BL": return bytes.Length >= 2 && bytes[0] == 0xB3; // MOV BL, imm
                 default: return false;
             }
-        }
-
-        private bool IsConditionalJump(X86Instruction insn, out uint target)
-        {
-            target = 0;
-            string mnemonic = insn.Mnemonic.ToUpper();
-
-            // Список условных переходов
-            string[] jumps = { "JZ", "JE", "JNZ", "JNE", "JB", "JNAE", "JC",
-                               "JNB", "JAE", "JNC", "JBE", "JNA", "JA", "JNBE" };
-
-            if (jumps.Contains(mnemonic))
-            {
-                target = GetInstructionTargetAddress(insn, 0xFFFF);
-                return target != 0;
-            }
-            return false;
         }
 
         private void TrackRegisters(X86Instruction insn, Dictionary<string, ushort> registers)
