@@ -49,15 +49,16 @@ namespace MMMapEditor
             public uint TargetAddress { get; set; }
             public bool Analyzed { get; set; }
             public int PathNumber { get; set; }
+            public byte? CompareValue { get; set; }
+            public string CompareRegister { get; set; }
         }
 
-        // Тип координаты
         private enum CoordType
         {
             Unknown,
-            XCoord,      // Адрес 0x3C38
-            YCoord,      // Адрес 0x3C39
-            FullCoord    // Адрес 0x3C3A
+            XCoord,
+            YCoord,
+            FullCoord
         }
 
         // Вспомогательный класс для отслеживания регистров
@@ -254,12 +255,30 @@ namespace MMMapEditor
                     }
                 }
             }
+
+            public RegisterTracker Clone()
+            {
+                var clone = new RegisterTracker();
+                foreach (var kvp in registers)
+                {
+                    clone.registers[kvp.Key] = kvp.Value;
+                }
+                foreach (var kvp in registerSources)
+                {
+                    clone.registerSources[kvp.Key] = kvp.Value;
+                }
+                foreach (var kvp in registerSources2)
+                {
+                    clone.registerSources2[kvp.Key] = kvp.Value;
+                }
+                return clone;
+            }
         }
 
-        // Вспомогательный класс для результатов анализа пути
         private class PathAnalysisResult
         {
             public HashSet<string> FoundTexts { get; set; } = new HashSet<string>();
+            public HashSet<string> ContextTexts { get; set; } = new HashSet<string>(); // тексты из вызывающего кода
             public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
             public byte? MonsterPower { get; set; }
             public byte? MonsterLevel { get; set; }
@@ -275,20 +294,24 @@ namespace MMMapEditor
             public int LoopIteration { get; set; } = 0;
             public bool IsIndeterminateLoop { get; set; } = false;
             public int LoopIterationCount { get; set; } = 0;
+            public bool IsTerminated { get; set; } = false;
+            public bool HasSignificantCode { get; set; } = false;
+            public List<AlternativePath> AlternativePaths { get; set; } = new List<AlternativePath>();
+
+            // Адрес первой инструкции, которая загрузила локальный текст
+            public uint FirstLocalTextAddress { get; set; } = uint.MaxValue;
         }
 
-        // Класс для хранения информации о частичной битве
         private class PartialBattleInfo
         {
             public int BxIndex { get; set; }
-            public ushort DestAddr { get; set; } // 0x3C58 или 0x3C29
+            public ushort DestAddr { get; set; }
             public string SrcReg { get; set; }
             public byte SrcRegValue { get; set; }
-            public bool IsFromTable { get; set; } // true если загружено из CDA9/CDB1
-            public ushort? SourceTableAddr { get; set; } // адрес в таблице, если известно
+            public bool IsFromTable { get; set; }
+            public ushort? SourceTableAddr { get; set; }
         }
 
-        // Класс для хранения информации об обращении к памяти
         private class MemoryAccess
         {
             public uint Address { get; set; }
@@ -308,19 +331,17 @@ namespace MMMapEditor
             Unknown
         }
 
-        // Класс для хранения результата выполнения целого макроса
         private class MacroExecutionResult
         {
             public Dictionary<ConditionRange, CodeEmulationResult> BranchResults { get; set; } = new Dictionary<ConditionRange, CodeEmulationResult>();
             public CodeEmulationResult CommonResult { get; set; } = new CodeEmulationResult();
         }
 
-        // Класс для описания диапазона условия
         private class ConditionRange
         {
             public byte Min { get; set; }
             public byte Max { get; set; }
-            public bool IsX { get; set; } // true для X, false для Y
+            public bool IsX { get; set; }
 
             public bool Matches(byte value)
             {
@@ -347,7 +368,6 @@ namespace MMMapEditor
             }
         }
 
-        // Класс для описания пути выполнения
         private class ExecutionPath
         {
             public uint StartAddress { get; set; }
@@ -355,7 +375,6 @@ namespace MMMapEditor
             public uint SourceAddress { get; set; }
         }
 
-        // Класс для хранения состояния выполнения
         private class ExecutionState
         {
             public Dictionary<string, ushort> Registers { get; set; } = new Dictionary<string, ushort>();
@@ -365,7 +384,6 @@ namespace MMMapEditor
             public ConditionRange CurrentCondition { get; set; }
         }
 
-        // Класс для результата эмуляции кода
         private class CodeEmulationResult
         {
             public HashSet<string> Texts { get; set; } = new HashSet<string>();
@@ -376,7 +394,6 @@ namespace MMMapEditor
             public bool HasSignificantCode { get; set; }
         }
 
-        // Класс для хранения информации о сравнении координат
         private class CoordinateComparison
         {
             public uint CompareAddress { get; set; }
@@ -390,9 +407,8 @@ namespace MMMapEditor
             public CoordType CoordType { get; set; } = CoordType.Unknown;
         }
 
-        // ========== НОВЫЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ УМЕНЬШЕНИЯ ДУБЛИРОВАНИЯ ==========
+        // ========== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ==========
 
-        // Единый метод для чтения и дизассемблирования блока кода
         private byte[] ReadCodeBlock(BinaryReader br, uint address, out X86Instruction[] instructions)
         {
             long fileLength = br.BaseStream.Length;
@@ -414,13 +430,33 @@ namespace MMMapEditor
             return chunk;
         }
 
-        // Вспомогательный метод для получения адреса перехода
+        private bool TryDisassembleNext(BinaryReader br, uint address, out X86Instruction instruction)
+        {
+            instruction = null;
+            long fileLength = br.BaseStream.Length;
+            if (address >= fileLength) return false;
+
+            int bytesToRead = (int)Math.Min(16, fileLength - address);
+            byte[] chunk = ReadBytesAt(br, address, bytesToRead);
+
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            {
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+                var instructions = capstone.Disassemble(chunk, address);
+                if (instructions != null && instructions.Length > 0)
+                {
+                    instruction = instructions[0];
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private uint GetJumpTarget(X86Instruction insn)
         {
             return GetInstructionTargetAddress(insn, 0xFFFF);
         }
 
-        // Вспомогательный метод для проверки инструкции возврата
         private bool IsReturnInstruction(string mnemonic)
         {
             string upper = mnemonic?.ToUpper() ?? "";
@@ -428,7 +464,6 @@ namespace MMMapEditor
                    upper == "IRET" || upper == "IRETD";
         }
 
-        // Вспомогательный метод для проверки, является ли инструкция условным переходом
         private bool IsConditionalJump(X86Instruction insn, out uint target)
         {
             target = 0;
@@ -449,395 +484,150 @@ namespace MMMapEditor
             return false;
         }
 
-        // ========== ОРИГИНАЛЬНЫЕ МЕТОДЫ С МИНИМАЛЬНЫМИ ИЗМЕНЕНИЯМИ ==========
-
-        public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config, Dictionary<Point, string> existingCentralOptions)
+        private bool IsCompareWithImmediate(X86Instruction insn, out byte immValue, out string reg)
         {
-            var analyzer = new OvrFileAnalyzer(config);
-            return analyzer.InternalAnalyze(filename, existingCentralOptions);
-        }
+            immValue = 0;
+            reg = "";
 
-        // ========== ОСНОВНОЙ МЕТОД АНАЛИЗА ==========
+            byte[] bytes = insn.Bytes;
 
-        private List<OvrObject> InternalAnalyze(string filename, Dictionary<Point, string> existingCentralOptions)
-        {
-            var objects = new List<OvrObject>();
-
-            using (var fs = new FileStream(filename, FileMode.Open, FileAccess.Read))
-            using (var br = new BinaryReader(fs))
+            if (bytes.Length >= 2 && bytes[0] == 0x3C)
             {
-                if (fs.Length < 0x400)
-                {
-                    throw new InvalidOperationException("File too small to be a valid overlay");
-                }
-
-                // === 1. ОРИГИНАЛЬНАЯ ЛОГИКА: объекты из таблицы [C973+] ===
-                fs.Seek(_config.StartAddress, SeekOrigin.Begin);
-                byte numObjects = br.ReadByte();
-
-                var coordinates = ReadCoordinates(br, numObjects);
-                var directions = ReadDirections(br, numObjects);
-                var patchKeys = ReadPatchKeys(br, numObjects);
-
-                // СОЗДАЁМ HashSet КООРДИНАТ ИЗ ТАБЛИЦЫ
-                var tableObjectCoords = new HashSet<string>();
-
-                for (int i = 0; i < numObjects; i++)
-                {
-                    var obj = ProcessObject(br, i + 1, coordinates[i], directions[i], patchKeys[i]);
-                    obj.IsFromTable = true;
-                    objects.Add(obj);
-
-                    string coordKey = $"{obj.X},{obj.Y}";
-                    tableObjectCoords.Add(coordKey);
-                    Debug.WriteLine($"  Табличный объект добавлен: ({obj.X},{obj.Y})");
-                }
-
-                // Диагностика объектов из таблицы
-                Debug.WriteLine($"\nОбъекты из таблицы [C973+]:");
-                foreach (var obj in objects.Where(o => o.IsFromTable))
-                {
-                    Debug.WriteLine($"  Объект X={obj.X}, Y={obj.Y}: {obj.PathTexts.Count} путей (IsFromTable={obj.IsFromTable})");
-                }
-
-                // === 2. НОВАЯ ЛОГИКА: поиск макросов в коде ===
-                fs.Seek(0, SeekOrigin.Begin);
-
-                // Дизассемблируем всё для анализа
-                var allInstructions = DisassembleAll(br);
-
-                // Находим все сравнения координат
-                var comparisons = FindAllCoordinateComparisons(br, allInstructions);
-
-                Debug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
-
-                // Для каждого сравнения анализируем код по адресу перехода
-                foreach (var comparison in comparisons)
-                {
-                    Debug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
-
-                    // Определяем тип координаты
-                    bool isX = (comparison.CoordType == CoordType.XCoord);
-                    bool isY = (comparison.CoordType == CoordType.YCoord);
-                    bool isFull = (comparison.CoordType == CoordType.FullCoord);
-
-                    // Декодируем координаты для полного типа
-                    byte targetX = 0;
-                    byte targetY = 0;
-                    if (isFull)
-                    {
-                        targetX = (byte)(comparison.Value & 0x0F);
-                        targetY = (byte)(comparison.Value >> 4);
-                        Debug.WriteLine($"  Полная координата: X={targetX}, Y={targetY} (значение 0x{comparison.Value:X2})");
-                    }
-
-                    // Диагностика типа макроса
-                    Debug.WriteLine($"  Тип макроса: {(isFull ? "ПОЛНЫЕ КООРДИНАТЫ" : isX ? "X-координата" : "Y-координата")}");
-
-                    // === НАЧАЛО ОРИГИНАЛЬНОГО БЛОКА АНАЛИЗА ПУТЕЙ ===
-                    // Создаём временный объект для сбора данных
-                    var tempObject = new OvrObject
-                    {
-                        X = 0,
-                        Y = 0,
-                        DirectionByte = 0
-                    };
-
-                    // Находим все альтернативные пути
-                    var alternativePaths = new List<AlternativePath>();
-                    ShowLinearDisassemblyAndCollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
-
-                    // СПИСОК ДЛЯ ХРАНЕНИЯ РЕЗУЛЬТАТОВ ВСЕХ ПУТЕЙ
-                    var allPathResults = new List<PathAnalysisResult>();
-
-                    // Анализируем основной путь
-                    var registerTracker = new RegisterTracker();
-                    var mainPathAnalysis = AnalyzeMainPath(br, comparison.JumpTarget, registerTracker, tempObject);
-                    allPathResults.Add(mainPathAnalysis);
-
-                    bool mainPathHasPattern = mainPathAnalysis.HasPartialBattlePattern;
-
-                    // Собираем все тексты и монстров
-                    var allTexts = new HashSet<string>(mainPathAnalysis.FoundTexts);
-                    byte? monsterPower = mainPathAnalysis.MonsterPower;
-                    byte? monsterLevel = mainPathAnalysis.MonsterLevel;
-                    var battleMonsters = new Dictionary<int, (byte val1, byte val2, bool isIndeterminate)>();
-                    var partialBattles = new List<PartiallyDefinedBattle>();
-                    bool anyPathHasPattern = mainPathHasPattern;
-                    var allPartialBattleInfo = new List<PartialBattleInfo>();
-
-                    foreach (var entry in mainPathAnalysis.BattleMonsterEntries)
-                    {
-                        battleMonsters[entry.Key] = (entry.Value.val1, entry.Value.val2, entry.Value.isIndeterminate);
-                    }
-
-                    foreach (var partial in mainPathAnalysis.PartialBattles)
-                    {
-                        partialBattles.Add(partial);
-                    }
-
-                    foreach (var info in mainPathAnalysis.PartialBattleInfo)
-                    {
-                        allPartialBattleInfo.Add(info);
-                    }
-
-                    // Анализируем альтернативные пути
-                    int pathNumber = 1;
-                    var analyzedPaths = new HashSet<string>();
-
-                    foreach (var path in alternativePaths)
-                    {
-                        if (path.Analyzed) continue;
-
-                        string pathKey = $"{comparison.JumpTarget:X4}_{path.Address:X4}_{path.TargetAddress:X4}";
-                        if (analyzedPaths.Contains(pathKey)) continue;
-                        analyzedPaths.Add(pathKey);
-
-                        Debug.WriteLine($"  Анализ альтернативного пути {pathNumber} -> 0x{path.TargetAddress:X4}");
-
-                        var pathRegisterTracker = new RegisterTracker();
-                        var pathResult = AnalyzeAlternativePath(br, comparison.JumpTarget, path.Address, path.TargetAddress,
-                            0, pathNumber, new HashSet<string>(), pathRegisterTracker, 0);
-
-                        allPathResults.Add(pathResult);
-
-                        if (pathResult.HasPartialBattlePattern)
-                        {
-                            anyPathHasPattern = true;
-                        }
-
-                        foreach (var text in pathResult.FoundTexts)
-                        {
-                            allTexts.Add(text);
-                            Debug.WriteLine($"    Найден текст: {text}");
-                        }
-
-                        if (pathResult.MonsterPower.HasValue)
-                        {
-                            monsterPower = pathResult.MonsterPower;
-                            Debug.WriteLine($"    Сила монстров: {pathResult.MonsterPower}");
-                        }
-
-                        if (pathResult.MonsterLevel.HasValue)
-                        {
-                            monsterLevel = pathResult.MonsterLevel;
-                            Debug.WriteLine($"    Уровень монстров: {pathResult.MonsterLevel}");
-                        }
-
-                        foreach (var entry in pathResult.BattleMonsterEntries)
-                        {
-                            if (!battleMonsters.ContainsKey(entry.Key))
-                            {
-                                battleMonsters[entry.Key] = (entry.Value.val1, entry.Value.val2, entry.Value.isIndeterminate);
-                                Debug.WriteLine($"    Монстр: index={entry.Key}, val1={entry.Value.val1}, val2={entry.Value.val2}");
-                            }
-                        }
-
-                        foreach (var partial in pathResult.PartialBattles)
-                        {
-                            if (!partialBattles.Any(p => p.BxIndex == partial.BxIndex))
-                            {
-                                partialBattles.Add(partial);
-                                Debug.WriteLine($"    Частично определённая битва: BX={partial.BxIndex}, диапазоны [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}]");
-                            }
-                        }
-
-                        foreach (var info in pathResult.PartialBattleInfo)
-                        {
-                            if (!allPartialBattleInfo.Any(i => i.BxIndex == info.BxIndex &&
-                                                               i.SrcReg == info.SrcReg &&
-                                                               i.SourceTableAddr == info.SourceTableAddr))
-                            {
-                                allPartialBattleInfo.Add(info);
-                                Debug.WriteLine($"    ДОБАВЛЕНО ЗНАЧЕНИЕ В ОБЪЕКТ: BX={info.BxIndex}, {info.SrcReg}=0x{info.SrcRegValue:X2} из [{info.SourceTableAddr:X4}]");
-                            }
-                        }
-
-                        path.Analyzed = true;
-                        pathNumber++;
-                    }
-                    // === КОНЕЦ ОРИГИНАЛЬНОГО БЛОКА АНАЛИЗА ПУТЕЙ ===
-
-                    // Определяем, есть ли значимый код
-                    bool hasSignificantCode = allTexts.Count > 0 ||
-                                              monsterPower.HasValue ||
-                                              monsterLevel.HasValue ||
-                                              battleMonsters.Count > 0 ||
-                                              partialBattles.Count > 0 ||
-                                              anyPathHasPattern ||
-                                              allPartialBattleInfo.Count > 0;
-
-                    // Для макросов JE/JZ считаем их значимыми по умолчанию
-                    if (!comparison.IsLinear && (comparison.JumpType.ToUpper() == "JE" || comparison.JumpType.ToUpper() == "JZ"))
-                    {
-                        if (isFull)
-                        {
-                            hasSignificantCode = true;
-                            Debug.WriteLine($"  Макрос JE/JZ для полной координаты считается значимым по умолчанию");
-                        }
-                    }
-
-                    if (!hasSignificantCode)
-                    {
-                        Debug.WriteLine("  -> нет значимого кода, пропускаем");
-                        continue;
-                    }
-
-                    Debug.WriteLine($"  -> найден значимый код: {allTexts.Count} текстов, {battleMonsters.Count} полностью определённых, {partialBattles.Count} частично определённых, паттерн={anyPathHasPattern}, загрузок из таблиц={allPartialBattleInfo.Count}");
-
-                    // === НОВАЯ ЛОГИКА: определяем, для каких клеток применять макрос ===
-                    var targetCells = new List<Point>();
-
-                    if (comparison.IsLinear)
-                    {
-                        // Линейный макрос - применяется к диапазону значений
-                        Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}]");
-                        for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
-                        {
-                            for (byte x = 0; x < 16; x++)
-                            {
-                                targetCells.Add(new Point(x, y));
-                            }
-                        }
-                    }
-                    else
-                    {
-                        // Обычный условный переход
-                        for (byte x = 0; x < 16; x++)
-                        {
-                            for (byte y = 0; y < 16; y++)
-                            {
-                                bool matches = false;
-
-                                if (isFull)
-                                {
-                                    // Проверка по полным координатам
-                                    if (x == targetX && y == targetY)
-                                    {
-                                        string jumpType = comparison.JumpType.ToUpper();
-                                        if (jumpType == "JE" || jumpType == "JZ")
-                                        {
-                                            matches = true;
-                                            Debug.WriteLine($"  Совпадение полной координаты: клетка ({x},{y}) подходит для макроса JE/JZ");
-                                        }
-                                    }
-                                }
-                                else if (isX)
-                                {
-                                    // Проверка X-координаты
-                                    matches = CheckCondition(x, comparison.Value, comparison.JumpType);
-                                }
-                                else if (isY)
-                                {
-                                    // Проверка Y-координаты
-                                    matches = CheckCondition(y, comparison.Value, comparison.JumpType);
-                                }
-
-                                if (matches)
-                                {
-                                    targetCells.Add(new Point(x, y));
-                                }
-                            }
-                        }
-                    }
-
-                    // Фильтруем целевые клетки: оставляем только те, которые:
-                    // 1. НЕ находятся в таблице объектов (tableObjectCoords)
-                    // 2. Имеют в existingCentralOptions значение "Случайная встреча"
-                    var validCells = targetCells
-                        .Where(p =>
-                        {
-                            string coordKey = $"{p.X},{p.Y}";
-                            bool isInTable = tableObjectCoords.Contains(coordKey);
-                            bool isRandomEncounter = existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча";
-
-                            if (isInTable)
-                            {
-                                Debug.WriteLine($"  Пропуск клетки ({p.X},{p.Y}): объект уже есть в таблице.");
-                            }
-                            else if (!isRandomEncounter)
-                            {
-                                Debug.WriteLine($"  Пропуск клетки ({p.X},{p.Y}): центральная опция '{option ?? "null"}' не 'Случайная встреча'.");
-                            }
-
-                            return !isInTable && isRandomEncounter;
-                        })
-                        .ToList();
-
-                    if (validCells.Count == 0)
-                    {
-                        Debug.WriteLine("  Нет подходящих клеток для применения макроса.");
-                        continue;
-                    }
-
-                    Debug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
-
-                    // Создаём объекты для каждой подходящей клетки
-                    int objectsCreated = 0;
-                    foreach (var cellPos in validCells)
-                    {
-                        var obj = new OvrObject
-                        {
-                            X = (byte)cellPos.X,
-                            Y = (byte)cellPos.Y,
-                            DirectionByte = 0,
-                            MonsterPower = monsterPower,
-                            MonsterLevel = monsterLevel,
-                            IsFromTable = false  // Явно указываем, что это не из таблицы
-                        };
-
-                        obj.HasAnyTableLoad = anyPathHasPattern;
-
-                        if (allTexts.Count > 0)
-                        {
-                            obj.PathTexts[0] = new HashSet<string>(allTexts);
-                        }
-
-                        foreach (var monster in battleMonsters)
-                        {
-                            obj.AddBattleMonster(monster.Key, monster.Value.val1, monster.Value.val2, monster.Value.isIndeterminate);
-                        }
-
-                        foreach (var partial in partialBattles)
-                        {
-                            obj.AddPartiallyDefinedBattle(
-                                partial.BxIndex,
-                                partial.RangeStart1,
-                                partial.RangeEnd1,
-                                partial.RangeStart2,
-                                partial.RangeEnd2
-                            );
-                        }
-
-                        objects.Add(obj);
-                        objectsCreated++;
-                        Debug.WriteLine($"  -> СОЗДАН AnyObjectSpec на ({cellPos.X},{cellPos.Y}) из макроса");
-                    }
-
-                    Debug.WriteLine($"  -> создано объектов из макроса: {objectsCreated}");
-                }
-
-                Debug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
-
-                // Выводим статистику по типам объектов
-                int tableObjects = objects.Count(o => o.IsFromTable);
-                int specObjects = objects.Count(o => !o.IsFromTable);
-                int partialBattleObjects = objects.Count(o => o.HasPartiallyDefinedBattles);
-                int tableLoadObjects = objects.Count(o => o.HasAnyTableLoad && o.LoadedValues.Count > 0);
-
-                Debug.WriteLine($"Объектов из таблицы: {tableObjects}, AnyObjectSpec: {specObjects}, с частичными битвами: {partialBattleObjects}, с загрузкой из таблиц: {tableLoadObjects}");
-
-                // Выводим список всех созданных объектов для отладки
-                foreach (var obj in objects.OrderBy(o => o.Y).ThenBy(o => o.X))
-                {
-                    Debug.WriteLine($"  Объект X={obj.X}, Y={obj.Y}: FromTable={obj.IsFromTable}, Power={obj.MonsterPower}, Level={obj.MonsterLevel}, BattleMonsters={obj.BattleMonsters.Count}, PartialBattles={obj.PartiallyDefinedBattles.Count}, TableLoad={obj.HasAnyTableLoad}");
-                }
+                immValue = bytes[1];
+                reg = "AL";
+                return true;
             }
 
-            return objects;
+            if (bytes.Length >= 3 && bytes[0] == 0x80 && bytes[1] == 0xF9)
+            {
+                immValue = bytes[2];
+                reg = "CL";
+                return true;
+            }
+
+            if (bytes.Length >= 3 && bytes[0] == 0x80 && bytes[1] == 0xFA)
+            {
+                immValue = bytes[2];
+                reg = "DL";
+                return true;
+            }
+
+            if (bytes.Length >= 3 && bytes[0] == 0x80 && bytes[1] == 0xFB)
+            {
+                immValue = bytes[2];
+                reg = "BL";
+                return true;
+            }
+
+            return false;
         }
 
-        // Вспомогательная функция для проверки условия
+        private byte[] ReadBytesAt(BinaryReader br, long position, int count)
+        {
+            long originalPos = br.BaseStream.Position;
+            br.BaseStream.Position = position;
+            byte[] data = br.ReadBytes(count);
+            br.BaseStream.Position = originalPos;
+            return data;
+        }
+
+        private uint GetInstructionTargetAddress(X86Instruction insn, long fileLength)
+        {
+            string operand = insn.Operand ?? "";
+            int hexIndex = operand.IndexOf("0x", StringComparison.OrdinalIgnoreCase);
+            if (hexIndex >= 0)
+            {
+                string hexPart = operand.Substring(hexIndex + 2);
+                hexPart = new string(hexPart.TakeWhile(c =>
+                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')).ToArray());
+
+                if (uint.TryParse(hexPart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint targetAddr))
+                {
+                    return targetAddr;
+                }
+            }
+            return 0;
+        }
+
+        private string ExtractText(BinaryReader br, ushort textAddress)
+        {
+            try
+            {
+                long fileOffset = textAddress - _config.TextBaseAddr;
+
+                if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
+                {
+                    return $"Cannot locate text (offset: 0x{fileOffset:X})";
+                }
+
+                long originalPos = br.BaseStream.Position;
+                br.BaseStream.Position = fileOffset;
+
+                var bytes = new List<byte>();
+                byte b;
+                int maxLength = 250;
+
+                while ((b = br.ReadByte()) != 0 && bytes.Count < maxLength)
+                {
+                    bytes.Add(b);
+                }
+
+                br.BaseStream.Position = originalPos;
+
+                if (bytes.Count == 0) return "(empty string)";
+
+                return DecodeText(bytes.ToArray());
+            }
+            catch (Exception ex)
+            {
+                return $"Error reading text: {ex.Message}";
+            }
+        }
+
+        private string DecodeText(byte[] bytes)
+        {
+            var sb = new StringBuilder();
+            foreach (byte b in bytes)
+            {
+                if (b == 0x0D) sb.Append("\\r");
+                else if (b == 0x0A) sb.Append("\\n");
+                else if (b == 0x09) sb.Append("\\t");
+                else if (b >= 0x20 && b <= 0x7E) sb.Append((char)b);
+                else if (b == 0x22) sb.Append("\\\"");
+                else if (b == 0x5C) sb.Append("\\\\");
+                else sb.Append($"\\x{b:X2}");
+            }
+            return sb.ToString();
+        }
+
+        private void MergeResults(PathAnalysisResult target, PathAnalysisResult source)
+        {
+            if (source == null) return;
+
+            foreach (var text in source.FoundTexts)
+                target.FoundTexts.Add(text);
+            foreach (var text in source.ContextTexts)
+                target.ContextTexts.Add(text);
+
+            // Сохраняем минимальный адрес первого локального текста
+            if (source.FirstLocalTextAddress < target.FirstLocalTextAddress)
+                target.FirstLocalTextAddress = source.FirstLocalTextAddress;
+
+            if (source.MonsterPower.HasValue && !target.MonsterPower.HasValue)
+                target.MonsterPower = source.MonsterPower;
+
+            if (source.MonsterLevel.HasValue && !target.MonsterLevel.HasValue)
+                target.MonsterLevel = source.MonsterLevel;
+
+            foreach (var entry in source.BattleMonsterEntries)
+                target.BattleMonsterEntries[entry.Key] = entry.Value;
+
+            target.PartialBattles.AddRange(source.PartialBattles);
+            target.PartialBattleInfo.AddRange(source.PartialBattleInfo);
+            target.HasPartialBattlePattern = target.HasPartialBattlePattern || source.HasPartialBattlePattern;
+            target.AlternativePaths.AddRange(source.AlternativePaths);
+        }
+
         private bool CheckCondition(byte value, byte compareValue, string jumpType)
         {
             switch (jumpType.ToUpper())
@@ -880,166 +670,320 @@ namespace MMMapEditor
             }
         }
 
-        // Метод для поиска всех сравнений координат
-        private List<CoordinateComparison> FindAllCoordinateComparisons(BinaryReader br, List<X86Instruction> allInstructions)
+        // ========== ОСНОВНОЙ МЕТОД АНАЛИЗА ==========
+
+        public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config, Dictionary<Point, string> existingCentralOptions)
         {
-            var comparisons = new List<CoordinateComparison>();
+            var analyzer = new OvrFileAnalyzer(config);
+            return analyzer.InternalAnalyze(filename, existingCentralOptions);
+        }
 
-            for (int i = 0; i < allInstructions.Count; i++)
+        private List<OvrObject> InternalAnalyze(string filename, Dictionary<Point, string> existingCentralOptions)
+        {
+            var objects = new List<OvrObject>();
+
+            using (var fs = new FileStream(filename, FileMode.Open, FileAccess.Read))
+            using (var br = new BinaryReader(fs))
             {
-                var insn = allInstructions[i];
-
-                // Ищем сравнения с непосредственным значением
-                if (IsCompareWithImmediate(insn, out byte immValue, out string reg))
+                if (fs.Length < 0x400)
                 {
-                    // Определяем, откуда взялось значение в регистре
-                    ushort? sourceAddr = FindMemorySourceForRegister(allInstructions, i, reg);
-                    if (!sourceAddr.HasValue) continue;
+                    throw new InvalidOperationException("File too small to be a valid overlay");
+                }
 
-                    // Определяем тип координаты
-                    CoordType coordType = CoordType.Unknown;
-                    if (sourceAddr.Value == 0x3C38)
-                        coordType = CoordType.XCoord;
-                    else if (sourceAddr.Value == 0x3C39)
-                        coordType = CoordType.YCoord;
-                    else if (sourceAddr.Value == 0x3C3A)
-                        coordType = CoordType.FullCoord;
-                    else
-                        continue; // Не наш адрес
+                fs.Seek(_config.StartAddress, SeekOrigin.Begin);
+                byte numObjects = br.ReadByte();
 
-                    // Смотрим следующие инструкции - может быть несколько условных переходов подряд
-                    int j = i + 1;
-                    byte? lastCompareValue = null;
-                    uint? lastJumpTarget = null;
-                    string lastJumpType = null;
+                var coordinates = ReadCoordinates(br, numObjects);
+                var directions = ReadDirections(br, numObjects);
+                var patchKeys = ReadPatchKeys(br, numObjects);
 
-                    // Проверяем, было ли предыдущее сравнение с тем же регистром
-                    bool hasPrecedingCondition = false;
-                    byte precedingValue = 0;
-                    string precedingJumpType = null;
+                var tableObjectCoords = new HashSet<string>();
 
-                    if (i > 0)
+                for (int i = 0; i < numObjects; i++)
+                {
+                    var obj = ProcessObject(br, i + 1, coordinates[i], directions[i], patchKeys[i]);
+                    obj.IsFromTable = true;
+                    objects.Add(obj);
+
+                    string coordKey = $"{obj.X},{obj.Y}";
+                    tableObjectCoords.Add(coordKey);
+                    Debug.WriteLine($"  Табличный объект добавлен: ({obj.X},{obj.Y})");
+                }
+
+                Debug.WriteLine($"\nОбъекты из таблицы [C973+]:");
+                foreach (var obj in objects.Where(o => o.IsFromTable))
+                {
+                    Debug.WriteLine($"  Объект X={obj.X}, Y={obj.Y}: {obj.PathTexts.Count} путей (IsFromTable={obj.IsFromTable})");
+                }
+
+                fs.Seek(0, SeekOrigin.Begin);
+
+                var allInstructions = DisassembleAll(br);
+                var comparisons = FindAllCoordinateComparisons(br, allInstructions);
+
+                Debug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
+
+                foreach (var comparison in comparisons)
+                {
+                    Debug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
+
+                    bool isX = (comparison.CoordType == CoordType.XCoord);
+                    bool isY = (comparison.CoordType == CoordType.YCoord);
+                    bool isFull = (comparison.CoordType == CoordType.FullCoord);
+
+                    byte targetX = 0;
+                    byte targetY = 0;
+                    if (isFull)
                     {
-                        // Ищем предыдущее сравнение (до 10 инструкций назад)
-                        for (int k = i - 1; k >= Math.Max(0, i - 10); k--)
+                        targetX = (byte)(comparison.Value & 0x0F);
+                        targetY = (byte)(comparison.Value >> 4);
+                        Debug.WriteLine($"  Полная координата: X={targetX}, Y={targetY} (значение 0x{comparison.Value:X2})");
+                    }
+
+                    Debug.WriteLine($"  Тип макроса: {(isFull ? "ПОЛНЫЕ КООРДИНАТЫ" : isX ? "X-координата" : "Y-координата")}");
+
+                    // Собираем все альтернативные пути макроса
+                    var alternativePaths = new List<AlternativePath>();
+                    ShowLinearDisassemblyAndCollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
+
+                    var allTexts = new HashSet<string>();
+                    byte? monsterPower = null;
+                    byte? monsterLevel = null;
+                    var battleMonsters = new Dictionary<int, (byte val1, byte val2, bool isIndeterminate)>();
+                    var partialBattles = new List<PartiallyDefinedBattle>();
+                    var partialBattleInfo = new List<PartialBattleInfo>();
+                    bool hasPartialBattlePattern = false;
+
+                    // Анализируем основной путь
+                    var mainRegisterTracker = new RegisterTracker();
+                    var mainPathResult = ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
+                        new HashSet<uint>(), 0, 0, null, 0);
+
+                    MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel,
+                        battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
+
+                    // Анализируем все альтернативные пути
+                    var processedTargets = new HashSet<uint>();
+                    foreach (var path in alternativePaths)
+                    {
+                        if (processedTargets.Contains(path.TargetAddress))
+                            continue;
+
+                        processedTargets.Add(path.TargetAddress);
+
+                        var pathRegisterTracker = new RegisterTracker();
+                        var pathResult = ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
+                            new HashSet<uint>(), 0, 0, null, 0);
+
+                        MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel,
+                            battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
+                    }
+
+                    bool hasSignificantCode = allTexts.Count > 0 ||
+                                              monsterPower.HasValue ||
+                                              monsterLevel.HasValue ||
+                                              battleMonsters.Count > 0 ||
+                                              partialBattles.Count > 0 ||
+                                              hasPartialBattlePattern ||
+                                              partialBattleInfo.Count > 0;
+
+                    if (!comparison.IsLinear && (comparison.JumpType.ToUpper() == "JE" || comparison.JumpType.ToUpper() == "JZ"))
+                    {
+                        if (isFull)
                         {
-                            var prevInsn = allInstructions[k];
-                            if (IsCompareWithImmediate(prevInsn, out byte prevValue, out string prevReg) && prevReg == reg)
+                            hasSignificantCode = true;
+                            Debug.WriteLine($"  Макрос JE/JZ для полной координаты считается значимым по умолчанию");
+                        }
+                    }
+
+                    if (!hasSignificantCode)
+                    {
+                        Debug.WriteLine("  -> нет значимого кода, пропускаем");
+                        continue;
+                    }
+
+                    Debug.WriteLine($"  -> найден значимый код: {allTexts.Count} текстов, {battleMonsters.Count} полностью определённых, {partialBattles.Count} частично определённых, паттерн={hasPartialBattlePattern}, загрузок из таблиц={partialBattleInfo.Count}");
+
+                    var targetCells = new List<Point>();
+
+                    if (comparison.IsLinear)
+                    {
+                        Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}]");
+                        for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
+                        {
+                            for (byte x = 0; x < 16; x++)
                             {
-                                hasPrecedingCondition = true;
-                                precedingValue = prevValue;
-                                // Смотрим следующий за ним переход
-                                if (k + 1 < allInstructions.Count)
+                                targetCells.Add(new Point(x, y));
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (byte x = 0; x < 16; x++)
+                        {
+                            for (byte y = 0; y < 16; y++)
+                            {
+                                bool matches = false;
+
+                                if (isFull)
                                 {
-                                    var nextAfterPrev = allInstructions[k + 1];
-                                    if (IsConditionalJump(nextAfterPrev, out uint _))
+                                    if (x == targetX && y == targetY)
                                     {
-                                        precedingJumpType = nextAfterPrev.Mnemonic.ToUpper();
+                                        string jumpType = comparison.JumpType.ToUpper();
+                                        if (jumpType == "JE" || jumpType == "JZ")
+                                        {
+                                            matches = true;
+                                            Debug.WriteLine($"  Совпадение полной координаты: клетка ({x},{y}) подходит для макроса JE/JZ");
+                                        }
                                     }
                                 }
-                                break;
-                            }
-                        }
-                    }
-
-                    while (j < allInstructions.Count)
-                    {
-                        var nextInsn = allInstructions[j];
-                        if (!IsConditionalJump(nextInsn, out uint jumpTarget))
-                            break;
-
-                        comparisons.Add(new CoordinateComparison
-                        {
-                            CompareAddress = (uint)insn.Address,
-                            MemAddr = sourceAddr.Value,
-                            CoordType = coordType,
-                            Value = immValue,
-                            JumpTarget = jumpTarget,
-                            JumpType = nextInsn.Mnemonic.ToUpper(),
-                            IsLinear = false
-                        });
-
-                        Debug.WriteLine($"  Найдено сравнение: 0x{insn.Address:X4} [{sourceAddr.Value:X4}]={immValue} -> 0x{jumpTarget:X4} ({nextInsn.Mnemonic}) [{coordType}]");
-
-                        lastCompareValue = immValue;
-                        lastJumpTarget = jumpTarget;
-                        lastJumpType = nextInsn.Mnemonic.ToUpper();
-                        j++;
-                    }
-
-                    // Если после условных переходов есть линейный код, добавляем запись для него
-                    if (j < allInstructions.Count && lastCompareValue.HasValue)
-                    {
-                        // Проверяем, что следующая инструкция - не новое сравнение
-                        var nextInsn = allInstructions[j];
-                        if (IsCompareWithImmediate(nextInsn, out _, out _))
-                        {
-                            // Это новое сравнение, а не линейный код
-                            Debug.WriteLine($"  Пропуск линейного выполнения: следующая инструкция - сравнение по адресу 0x{nextInsn.Address:X4}");
-                            continue;
-                        }
-
-                        // Определяем базовый диапазон для линейного выполнения
-                        byte linearStart = 0;
-                        byte linearEnd = 255;
-
-                        if (lastJumpType == "JB" || lastJumpType == "JC")
-                        {
-                            // После JB идут значения >= compareValue
-                            linearStart = lastCompareValue.Value;
-                            linearEnd = 255;
-                        }
-                        else if (lastJumpType == "JAE" || lastJumpType == "JNB" || lastJumpType == "JNC")
-                        {
-                            // После JAE идут значения < compareValue
-                            linearStart = 0;
-                            linearEnd = (byte)(lastCompareValue.Value - 1);
-                        }
-
-                        // Если это второе сравнение и было предыдущее условие
-                        if (hasPrecedingCondition)
-                        {
-                            if (precedingJumpType == "JB" || precedingJumpType == "JC")
-                            {
-                                linearStart = Math.Max(linearStart, precedingValue);
-                            }
-                            else if (precedingJumpType == "JAE" || precedingJumpType == "JNB" || precedingJumpType == "JNC")
-                            {
-                                linearEnd = Math.Min(linearEnd, (byte)(precedingValue - 1));
-                            }
-                            else if (precedingJumpType == "JE" || precedingJumpType == "JZ")
-                            {
-                                if (precedingValue == 3 && lastCompareValue == 9)
+                                else if (isX)
                                 {
-                                    linearStart = 4;
-                                    linearEnd = 8;
+                                    matches = CheckCondition(x, comparison.Value, comparison.JumpType);
+                                }
+                                else if (isY)
+                                {
+                                    matches = CheckCondition(y, comparison.Value, comparison.JumpType);
+                                }
+
+                                if (matches)
+                                {
+                                    targetCells.Add(new Point(x, y));
                                 }
                             }
                         }
-
-                        // Убеждаемся, что диапазон корректен
-                        if (linearStart <= linearEnd)
-                        {
-                            comparisons.Add(new CoordinateComparison
-                            {
-                                CompareAddress = (uint)insn.Address,
-                                MemAddr = sourceAddr.Value,
-                                CoordType = coordType,
-                                Value = lastCompareValue.Value,
-                                JumpTarget = (uint)allInstructions[j].Address,
-                                JumpType = "LINEAR",
-                                IsLinear = true,
-                                LinearStart = linearStart,
-                                LinearEnd = linearEnd
-                            });
-
-                            Debug.WriteLine($"  Найдено линейное выполнение: 0x{insn.Address:X4} [{sourceAddr.Value:X4}]={lastCompareValue} -> 0x{allInstructions[j].Address:X4} для значений [{linearStart}-{linearEnd}] [{coordType}]");
-                        }
                     }
+
+                    var validCells = targetCells
+                        .Where(p =>
+                        {
+                            string coordKey = $"{p.X},{p.Y}";
+                            bool isInTable = tableObjectCoords.Contains(coordKey);
+                            bool isRandomEncounter = existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча";
+
+                            if (isInTable)
+                            {
+                                Debug.WriteLine($"  Пропуск клетки ({p.X},{p.Y}): объект уже есть в таблице.");
+                            }
+                            else if (!isRandomEncounter)
+                            {
+                                Debug.WriteLine($"  Пропуск клетки ({p.X},{p.Y}): центральная опция '{option ?? "null"}' не 'Случайная встреча'.");
+                            }
+
+                            return !isInTable && isRandomEncounter;
+                        })
+                        .ToList();
+
+                    if (validCells.Count == 0)
+                    {
+                        Debug.WriteLine("  Нет подходящих клеток для применения макроса.");
+                        continue;
+                    }
+
+                    Debug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
+
+                    int objectsCreated = 0;
+                    foreach (var cellPos in validCells)
+                    {
+                        var obj = new OvrObject
+                        {
+                            X = (byte)cellPos.X,
+                            Y = (byte)cellPos.Y,
+                            DirectionByte = 0,
+                            MonsterPower = monsterPower,
+                            MonsterLevel = monsterLevel,
+                            IsFromTable = false
+                        };
+
+                        obj.HasAnyTableLoad = hasPartialBattlePattern;
+
+                        if (allTexts.Count > 0)
+                        {
+                            obj.PathTexts[0] = new HashSet<string>(allTexts);
+                        }
+
+                        foreach (var monster in battleMonsters)
+                        {
+                            obj.AddBattleMonster(monster.Key, monster.Value.val1, monster.Value.val2, monster.Value.isIndeterminate);
+                        }
+
+                        foreach (var partial in partialBattles)
+                        {
+                            obj.AddPartiallyDefinedBattle(
+                                partial.BxIndex,
+                                partial.RangeStart1,
+                                partial.RangeEnd1,
+                                partial.RangeStart2,
+                                partial.RangeEnd2
+                            );
+                        }
+
+                        objects.Add(obj);
+                        objectsCreated++;
+                        Debug.WriteLine($"  -> СОЗДАН AnyObjectSpec на ({cellPos.X},{cellPos.Y}) из макроса");
+                    }
+
+                    Debug.WriteLine($"  -> создано объектов из макроса: {objectsCreated}");
+                }
+
+                Debug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
+
+                int tableObjects = objects.Count(o => o.IsFromTable);
+                int specObjects = objects.Count(o => !o.IsFromTable);
+                int partialBattleObjects = objects.Count(o => o.HasPartiallyDefinedBattles);
+                int tableLoadObjects = objects.Count(o => o.HasAnyTableLoad && o.LoadedValues.Count > 0);
+
+                Debug.WriteLine($"Объектов из таблицы: {tableObjects}, AnyObjectSpec: {specObjects}, с частичными битвами: {partialBattleObjects}, с загрузкой из таблиц: {tableLoadObjects}");
+
+                foreach (var obj in objects.OrderBy(o => o.Y).ThenBy(o => o.X))
+                {
+                    Debug.WriteLine($"  Объект X={obj.X}, Y={obj.Y}: FromTable={obj.IsFromTable}, Power={obj.MonsterPower}, Level={obj.MonsterLevel}, BattleMonsters={obj.BattleMonsters.Count}, PartialBattles={obj.PartiallyDefinedBattles.Count}, TableLoad={obj.HasAnyTableLoad}");
                 }
             }
 
-            return comparisons;
+            return objects;
+        }
+
+        // Вспомогательный метод для слияния результатов анализа путей макроса
+        private void MergeMacroResults(PathAnalysisResult source,
+            HashSet<string> allTexts,
+            ref byte? monsterPower,
+            ref byte? monsterLevel,
+            Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
+            List<PartiallyDefinedBattle> partialBattles,
+            List<PartialBattleInfo> partialBattleInfo,
+            ref bool hasPartialBattlePattern)
+        {
+            if (source == null) return;
+
+            foreach (var text in source.FoundTexts)
+                allTexts.Add(text);
+            foreach (var text in source.ContextTexts)
+                allTexts.Add(text);
+
+            if (source.MonsterPower.HasValue)
+                monsterPower = source.MonsterPower;
+
+            if (source.MonsterLevel.HasValue)
+                monsterLevel = source.MonsterLevel;
+
+            foreach (var entry in source.BattleMonsterEntries)
+                battleMonsters[entry.Key] = entry.Value;
+
+            foreach (var partial in source.PartialBattles)
+            {
+                if (!partialBattles.Any(p => p.BxIndex == partial.BxIndex))
+                    partialBattles.Add(partial);
+            }
+
+            foreach (var info in source.PartialBattleInfo)
+            {
+                if (!partialBattleInfo.Any(i => i.BxIndex == info.BxIndex &&
+                                                 i.DestAddr == info.DestAddr))
+                    partialBattleInfo.Add(info);
+            }
+
+            hasPartialBattlePattern = hasPartialBattlePattern || source.HasPartialBattlePattern;
         }
 
         // ========== МЕТОДЫ ДЛЯ ОРИГИНАЛЬНОЙ ЛОГИКИ (TABLET OBJECTS) ==========
@@ -1076,8 +1020,9 @@ namespace MMMapEditor
             return (uint)(key + _config.PatchBase) & 0xFFFF;
         }
 
+        // ОСНОВНОЙ МЕТОД ОБРАБОТКИ ОБЪЕКТА ИЗ ТАБЛИЦЫ
         private OvrObject ProcessObject(BinaryReader br, int objIndex, Tuple<byte, byte> coords,
-                               byte direction, ushort patchKey)
+                                byte direction, ushort patchKey)
         {
             var ovrObject = new OvrObject
             {
@@ -1088,39 +1033,47 @@ namespace MMMapEditor
 
             uint patchAddress = CalculatePatchAddress(patchKey);
 
-            // Диагностика для отладки
-            if (ovrObject.X == 0 && ovrObject.Y == 7)
+            bool debugMode = (ovrObject.X == 12 && ovrObject.Y == 2) ||
+                             (ovrObject.X == 5 && ovrObject.Y == 8) ||
+                             (ovrObject.X == 8 && ovrObject.Y == 5);
+
+            if (debugMode)
             {
-                Debug.WriteLine($"\n  $$$$$$$ ОБРАБОТКА ОБЪЕКТА ИЗ ТАБЛИЦЫ ДЛЯ КЛЕТКИ (0,7) $$$$$$$");
-                Debug.WriteLine($"    Индекс объекта: {objIndex}");
-                Debug.WriteLine($"    PatchKey: 0x{patchKey:X4}");
-                Debug.WriteLine($"    PatchAddress: 0x{patchAddress:X4}");
-                Debug.WriteLine($"    DirectionByte: 0x{direction:X2}");
+                Debug.WriteLine($"\n=== ОБРАБОТКА ОБЪЕКТА ({ovrObject.X},{ovrObject.Y}) ===");
+                Debug.WriteLine($"PatchAddress: 0x{patchAddress:X4}");
             }
 
-            var alternativePaths = new List<AlternativePath>();
-            ShowLinearDisassemblyAndCollectAlternativePaths(br, patchAddress, alternativePaths, objIndex);
-
+            // ========== 1. Анализируем основной путь ==========
             var mainRegisterTracker = new RegisterTracker();
-            var mainPathAnalysis = AnalyzeMainPath(br, patchAddress, mainRegisterTracker, ovrObject);
-            ovrObject.PathTexts[0] = mainPathAnalysis.FoundTexts;
+            var mainPathResult = ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
+                new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0);
 
-            if (ovrObject.X == 0 && ovrObject.Y == 7)
+            // Сохраняем результаты основного пути
+            HashSet<string> mainLocalTexts = new HashSet<string>();
+            HashSet<string> mainContextTexts = new HashSet<string>();
+
+            if (mainPathResult.FoundTexts.Count > 0)
+                mainLocalTexts = new HashSet<string>(mainPathResult.FoundTexts);
+            if (mainPathResult.ContextTexts.Count > 0)
+                mainContextTexts = new HashSet<string>(mainPathResult.ContextTexts);
+
+            if (debugMode)
             {
-                Debug.WriteLine($"    Основной путь: найдено текстов: {mainPathAnalysis.FoundTexts.Count}");
-                if (mainPathAnalysis.FoundTexts.Count > 0)
-                {
-                    Debug.WriteLine($"    Первый текст: {mainPathAnalysis.FoundTexts.First()}");
-                }
+                Debug.WriteLine($"Основной путь: локальных текстов: {mainLocalTexts.Count}, контекстных: {mainContextTexts.Count}");
+                Debug.WriteLine($"FirstLocalTextAddress: 0x{mainPathResult.FirstLocalTextAddress:X4}");
+                foreach (var text in mainLocalTexts)
+                    Debug.WriteLine($"  Локальный: {text}");
+                foreach (var text in mainContextTexts)
+                    Debug.WriteLine($"  Контекстный: {text}");
             }
 
-            if (mainPathAnalysis.MonsterPower.HasValue)
-                ovrObject.MonsterPower = mainPathAnalysis.MonsterPower.Value;
-            if (mainPathAnalysis.MonsterLevel.HasValue)
-                ovrObject.MonsterLevel = mainPathAnalysis.MonsterLevel.Value;
+            if (mainPathResult.MonsterPower.HasValue)
+                ovrObject.MonsterPower = mainPathResult.MonsterPower.Value;
+            if (mainPathResult.MonsterLevel.HasValue)
+                ovrObject.MonsterLevel = mainPathResult.MonsterLevel.Value;
 
-            bool isMainPathIndeterminate = mainPathAnalysis.IsIndeterminateLoop;
-            foreach (var entry in mainPathAnalysis.BattleMonsterEntries.OrderBy(e => e.Key))
+            bool isMainPathIndeterminate = mainPathResult.IsIndeterminateLoop;
+            foreach (var entry in mainPathResult.BattleMonsterEntries.OrderBy(e => e.Key))
             {
                 if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
                 {
@@ -1133,8 +1086,7 @@ namespace MMMapEditor
                 }
             }
 
-            // НОВОЕ: добавляем частично определённые битвы из основного пути
-            foreach (var partial in mainPathAnalysis.PartialBattles)
+            foreach (var partial in mainPathResult.PartialBattles)
             {
                 ovrObject.AddPartiallyDefinedBattle(
                     partial.BxIndex,
@@ -1145,65 +1097,144 @@ namespace MMMapEditor
                 );
             }
 
-            var globallyAnalyzedPaths = new HashSet<string>();
-            int currentPathNumber = 1;
-
-            if (ovrObject.X == 0 && ovrObject.Y == 7)
+            if (mainPathResult.HasPartialBattlePattern)
             {
-                Debug.WriteLine($"    Альтернативных путей: {alternativePaths.Count}");
+                ovrObject.HasAnyTableLoad = true;
+                foreach (var info in mainPathResult.PartialBattleInfo)
+                {
+                    ovrObject.AddLoadedValue(
+                        info.BxIndex,
+                        info.SrcReg,
+                        info.SrcRegValue,
+                        info.SourceTableAddr ?? 0,
+                        info.IsFromTable,
+                        false
+                    );
+                }
             }
 
-            foreach (var path in alternativePaths)
+            // ========== 2. Собираем все результаты ==========
+            var allResults = new List<(int pathId, HashSet<string> texts, bool isLeaf)>();
+            var processedTargets = new HashSet<uint>();
+
+            // Добавляем основной путь, если в нём есть локальные тексты
+            if (mainLocalTexts.Count > 0)
             {
-                if (path.Analyzed) continue;
+                var mainCombinedTexts = new HashSet<string>();
+                foreach (var text in mainLocalTexts)
+                    mainCombinedTexts.Add(text);
+                foreach (var text in mainContextTexts)
+                    mainCombinedTexts.Add(text);
 
-                string globalPathKey = $"{patchAddress:X4}_{path.Address:X4}_{path.TargetAddress:X4}";
-                if (!globallyAnalyzedPaths.Contains(globalPathKey))
+                bool isMainLeaf = mainPathResult.AlternativePaths.Count == 0;
+                allResults.Add((1, mainCombinedTexts, isMainLeaf));
+
+                if (debugMode)
                 {
-                    globallyAnalyzedPaths.Add(globalPathKey);
+                    Debug.WriteLine($"Добавлен основной путь с {mainLocalTexts.Count} локальными текстами (листовой: {isMainLeaf})");
+                }
+            }
 
-                    if (ovrObject.X == 0 && ovrObject.Y == 7)
+            // Рекурсивная функция для обработки альтернативных путей
+            void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
+                              HashSet<string> inheritedContextTexts, HashSet<string> inheritedLocalTexts,
+                              uint firstLocalTextAddress)
+            {
+                if (depth > 5) return;
+
+                var sortedPaths = paths.OrderBy(p => p.Address).ToList();
+                int localCounter = 1;
+
+                foreach (var path in sortedPaths)
+                {
+                    if (processedTargets.Contains(path.TargetAddress))
+                        continue;
+
+                    processedTargets.Add(path.TargetAddress);
+                    int currentPathId = basePathId * 10 + localCounter;
+                    localCounter++;
+
+                    if (debugMode)
                     {
-                        Debug.WriteLine($"    Анализ альтернативного пути {currentPathNumber} -> 0x{path.TargetAddress:X4}");
+                        Debug.WriteLine($"\n  Анализ пути {currentPathId} (глубина {depth}) -> 0x{path.TargetAddress:X4} ({path.Condition})");
                     }
 
+                    // Создаём НОВЫЙ RegisterTracker для каждого пути
                     var pathRegisterTracker = new RegisterTracker();
-                    var pathResult = AnalyzeAlternativePath(br, patchAddress, path.Address, path.TargetAddress,
-                        objIndex, currentPathNumber, new HashSet<string>(), pathRegisterTracker, 0);
+                    var pathResult = ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
+                        new HashSet<uint>(), depth + 1, 0, debugMode ? ovrObject : null, currentPathId);
 
-                    ovrObject.PathTexts[currentPathNumber] = pathResult.FoundTexts;
+                    // Формируем тексты для этого пути
+                    var pathTexts = new HashSet<string>();
 
-                    if (ovrObject.X == 0 && ovrObject.Y == 7 && pathResult.FoundTexts.Count > 0)
+                    // 1. Наследуем контекстные тексты от родителя (ВСЕГДА)
+                    foreach (var text in inheritedContextTexts)
                     {
-                        Debug.WriteLine($"      Найдено текстов в пути {currentPathNumber}: {pathResult.FoundTexts.Count}");
-                        Debug.WriteLine($"      Первый текст: {pathResult.FoundTexts.First()}");
+                        pathTexts.Add(text);
                     }
 
-                    if (pathResult.MonsterPower.HasValue)
-                        ovrObject.MonsterPower = pathResult.MonsterPower.Value;
-                    if (pathResult.MonsterLevel.HasValue)
-                        ovrObject.MonsterLevel = pathResult.MonsterLevel.Value;
+                    // 2. Наследуем локальные тексты от родителя, если:
+                    //    - Это LINEAR путь (продолжение выполнения)
+                    //    - ИЛИ локальный текст был загружен ДО точки ветвления (path.Address > firstLocalTextAddress)
+                    bool shouldInheritLocal = path.Condition.StartsWith("LINEAR") ||
+                                              (firstLocalTextAddress != uint.MaxValue &&
+                                               path.Address > firstLocalTextAddress);
 
-                    bool isAltPathIndeterminate = pathResult.IsIndeterminateLoop;
-                    foreach (var entry in pathResult.BattleMonsterEntries.OrderBy(e => e.Key))
+                    if (shouldInheritLocal)
                     {
-                        if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                        foreach (var text in inheritedLocalTexts)
                         {
-                            var existingMonster = ovrObject.BattleMonsters.FirstOrDefault(m => m.Index == entry.Key);
-
-                            if (existingMonster == null)
-                            {
-                                ovrObject.AddBattleMonster(
-                                    entry.Key,
-                                    entry.Value.val1,
-                                    entry.Value.val2,
-                                    entry.Key > 0 && (isAltPathIndeterminate || entry.Value.isIndeterminate)
-                                );
-                            }
+                            pathTexts.Add(text);
                         }
                     }
 
-                    // НОВОЕ: добавляем частично определённые битвы из альтернативных путей
+                    // 3. Добавляем новые контекстные тексты из этого пути
+                    foreach (var text in pathResult.ContextTexts)
+                    {
+                        pathTexts.Add(text);
+                    }
+
+                    // 4. Добавляем новые локальные тексты из этого пути
+                    foreach (var text in pathResult.FoundTexts)
+                    {
+                        pathTexts.Add(text);
+                    }
+
+                    // Путь считается листовым, только если у него нет вложенных путей
+                    bool isLeaf = pathResult.AlternativePaths.Count == 0;
+
+                    // ВСЕГДА добавляем путь в результаты
+                    allResults.Add((currentPathId, pathTexts, isLeaf));
+
+                    if (debugMode && pathTexts.Count > 0)
+                    {
+                        Debug.WriteLine($"      Найдено текстов в пути {currentPathId}: {pathTexts.Count} (листовой: {isLeaf})");
+                        foreach (var text in pathTexts)
+                        {
+                            Debug.WriteLine($"        {text}");
+                        }
+                    }
+
+                    // Добавляем информацию о монстрах
+                    if (pathResult.MonsterPower.HasValue && !ovrObject.MonsterPower.HasValue)
+                        ovrObject.MonsterPower = pathResult.MonsterPower.Value;
+
+                    if (pathResult.MonsterLevel.HasValue && !ovrObject.MonsterLevel.HasValue)
+                        ovrObject.MonsterLevel = pathResult.MonsterLevel.Value;
+
+                    foreach (var entry in pathResult.BattleMonsterEntries)
+                    {
+                        if (!ovrObject.BattleMonsters.Any(m => m.Index == entry.Key))
+                        {
+                            ovrObject.AddBattleMonster(
+                                entry.Key,
+                                entry.Value.val1,
+                                entry.Value.val2,
+                                entry.Value.isIndeterminate
+                            );
+                        }
+                    }
+
                     foreach (var partial in pathResult.PartialBattles)
                     {
                         if (!ovrObject.PartiallyDefinedBattles.Any(p => p.BxIndex == partial.BxIndex))
@@ -1218,163 +1249,545 @@ namespace MMMapEditor
                         }
                     }
 
-                    SaveNestedPathsRecursively(ovrObject.PathTexts, pathResult.NestedPaths, ref currentPathNumber);
-                    path.Analyzed = true;
-                    currentPathNumber++;
+                    if (pathResult.HasPartialBattlePattern)
+                    {
+                        ovrObject.HasAnyTableLoad = true;
+                        foreach (var info in pathResult.PartialBattleInfo)
+                        {
+                            if (!ovrObject.LoadedValues.Any(v => v.BxIndex == info.BxIndex &&
+                                                                  v.RegName == info.SrcReg &&
+                                                                  v.SourceAddr == (info.SourceTableAddr ?? 0)))
+                            {
+                                ovrObject.AddLoadedValue(
+                                    info.BxIndex,
+                                    info.SrcReg,
+                                    info.SrcRegValue,
+                                    info.SourceTableAddr ?? 0,
+                                    info.IsFromTable,
+                                    false
+                                );
+                            }
+                        }
+                    }
+
+                    // Формируем набор текстов для наследования вложенными путями
+                    var newInheritedContextTexts = new HashSet<string>(inheritedContextTexts);
+                    foreach (var text in pathResult.ContextTexts)
+                    {
+                        newInheritedContextTexts.Add(text);
+                    }
+
+                    var newInheritedLocalTexts = new HashSet<string>();
+
+                    // Для вложенных путей наследуем локальные тексты по тому же правилу
+                    bool shouldPassLocalToChildren = path.Condition.StartsWith("LINEAR") ||
+                                                    (firstLocalTextAddress != uint.MaxValue &&
+                                                     path.Address > firstLocalTextAddress);
+
+                    if (shouldPassLocalToChildren)
+                    {
+                        foreach (var text in inheritedLocalTexts)
+                        {
+                            newInheritedLocalTexts.Add(text);
+                        }
+                    }
+
+                    // Всегда добавляем новые локальные тексты из этого пути
+                    foreach (var text in pathResult.FoundTexts)
+                    {
+                        newInheritedLocalTexts.Add(text);
+                    }
+
+                    // Рекурсивно обрабатываем вложенные пути
+                    if (pathResult.AlternativePaths.Count > 0)
+                    {
+                        if (debugMode)
+                        {
+                            Debug.WriteLine($"      Найдено {pathResult.AlternativePaths.Count} вложенных путей");
+                        }
+                        ProcessPaths(pathResult.AlternativePaths, currentPathId, depth + 1,
+                                    newInheritedContextTexts, newInheritedLocalTexts,
+                                    firstLocalTextAddress);
+                    }
                 }
             }
 
-            ovrObject.PathTexts = FilterUniquePaths(ovrObject.PathTexts);
-
-            if (ovrObject.X == 0 && ovrObject.Y == 7)
+            // Запускаем обработку альтернативных путей
+            if (mainPathResult.AlternativePaths.Count > 0)
             {
-                Debug.WriteLine($"    ИТОГО для клетки (0,7):");
-                Debug.WriteLine($"      Всего путей: {ovrObject.PathTexts.Count}");
-                foreach (var kvp in ovrObject.PathTexts)
+                if (debugMode)
                 {
-                    Debug.WriteLine($"      Path {kvp.Key}: {kvp.Value.Count} текстов");
-                    if (kvp.Value.Count > 0)
+                    Debug.WriteLine($"\nСобрано путей из основного анализа: {mainPathResult.AlternativePaths.Count}");
+                    foreach (var path in mainPathResult.AlternativePaths)
                     {
-                        Debug.WriteLine($"        Первый текст: {kvp.Value.First()}");
+                        Debug.WriteLine($"  Путь: 0x{path.Address:X4} -> 0x{path.TargetAddress:X4} ({path.Condition})");
                     }
                 }
-                Debug.WriteLine($"      BattleMonsters: {ovrObject.BattleMonsters.Count}");
-                Debug.WriteLine($"      PartialBattles: {ovrObject.PartiallyDefinedBattles.Count}");
+
+                ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
+                            mainContextTexts, mainLocalTexts,
+                            mainPathResult.FirstLocalTextAddress);
+            }
+
+            // ========== 3. Формируем финальный словарь путей ==========
+            var finalPaths = new Dictionary<int, HashSet<string>>();
+
+            // Оставляем только листовые пути (не имеющие вложенных путей)
+            var leafResults = allResults
+                .Where(r => r.isLeaf && r.texts.Count > 0)
+                .OrderBy(r => r.pathId)
+                .ToList();
+
+            // Группируем по уникальному содержимому текста
+            var uniqueTextGroups = new Dictionary<string, (int pathId, HashSet<string> texts)>();
+
+            foreach (var result in leafResults)
+            {
+                // Создаём ключ из отсортированных текстов для сравнения
+                var sortedTexts = result.texts.OrderBy(t => t).ToList();
+                string key = string.Join("|", sortedTexts);
+
+                // Если такой набор текстов ещё не встречался, добавляем его
+                if (!uniqueTextGroups.ContainsKey(key))
+                {
+                    uniqueTextGroups[key] = (result.pathId, result.texts);
+                }
+            }
+
+            // Преобразуем в список и сортируем по pathId
+            var uniqueResults = uniqueTextGroups.Values
+                .OrderBy(r => r.pathId)
+                .ToList();
+
+            if (uniqueResults.Count > 0)
+            {
+                // Первый путь всегда сохраняем с ключом 0
+                finalPaths[0] = uniqueResults[0].texts;
+
+                // Остальные пути сохраняем с ключами 1,2,3...
+                for (int i = 1; i < uniqueResults.Count; i++)
+                {
+                    finalPaths[i] = uniqueResults[i].texts;
+                }
+            }
+
+            ovrObject.PathTexts = finalPaths;
+
+            if (debugMode)
+            {
+                Debug.WriteLine($"\n    ИТОГО для клетки ({ovrObject.X},{ovrObject.Y}):");
+                Debug.WriteLine($"      Всего путей: {ovrObject.PathTexts.Count}");
+                foreach (var kvp in ovrObject.PathTexts.OrderBy(k => k.Key))
+                {
+                    Debug.WriteLine($"      Path {kvp.Key}: {kvp.Value.Count} текстов");
+                    foreach (var text in kvp.Value)
+                    {
+                        Debug.WriteLine($"        {text}");
+                    }
+                }
             }
 
             return ovrObject;
         }
 
-        private PathAnalysisResult AnalyzeMainPath(BinaryReader br, uint patchAddress,
-            RegisterTracker registerTracker, OvrObject currentObject)
+        // ========== НОВЫЙ ОСНОВНОЙ МЕТОД ВЫПОЛНЕНИЯ КОДА ==========
+
+        private PathAnalysisResult ExecuteCodeAtAddress(BinaryReader br, uint startAddress,
+            RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
+            int depth, int callDepth, OvrObject debugObject, int pathId = 0)
         {
-            var result = new PathAnalysisResult();
+            const int MAX_DEPTH = 10;
+            const int MAX_CALL_DEPTH = 5;
+            const int MAX_INSTRUCTIONS_PER_PATH = 1000;
 
-            result.IsIndeterminateLoop = false;
-            result.IsInLoop = false;
-            result.LoopStartAddress = 0;
-            result.BattleMonsterEntries.Clear();
-            result.PartialBattleInfo.Clear();
-            result.PartialBattles.Clear();
-            result.FoundTexts.Clear();
-            result.MonsterPower = null;
-            result.MonsterLevel = null;
-            result.MonsterIndex1 = null;
-            result.MonsterIndex2 = null;
-
-            var indirectTexts = AnalyzeIndirectTextPatterns(br, patchAddress);
-            foreach (var text in indirectTexts)
+            if (depth > MAX_DEPTH || callDepth > MAX_CALL_DEPTH)
             {
-                result.FoundTexts.Add(text);
+                Debug.WriteLine($"      Достигнут лимит глубины ({depth}/{callDepth}), прекращаем анализ");
+                return new PathAnalysisResult { IsTerminated = false };
             }
-
-            var analyzedCalls = new HashSet<uint>();
-            AnalyzeCallsWithFullDisassembly(br, patchAddress, analyzedCalls, result,
-                registerTracker, currentObject, 0);
-
-            AnalyzePartialBattleRanges(br, result);
-
-            return result;
-        }
-
-        private PathAnalysisResult AnalyzeAlternativePath(BinaryReader br, uint patchAddress, uint jumpAddress,
-     uint alternativeStartAddress, int objIndex, int pathIndex, HashSet<string> alreadyAnalyzedPaths,
-     RegisterTracker registerTracker, int recursionDepth)
-        {
-            // ===== ДИАГНОСТИКА ДЛЯ КЛЕТКИ (0,7) =====
-            if (objIndex == 5)
-            {
-                Debug.WriteLine($"        АНАЛИЗ АЛЬТЕРНАТИВНОГО ПУТИ {pathIndex} для объекта (0,7)");
-                Debug.WriteLine($"          jumpAddress: 0x{jumpAddress:X4}");
-                Debug.WriteLine($"          target: 0x{alternativeStartAddress:X4}");
-                Debug.WriteLine($"          recursionDepth: {recursionDepth}");
-            }
-
-            const int MAX_RECURSION_DEPTH = 3;
 
             var result = new PathAnalysisResult();
+            long fileLength = br.BaseStream.Length;
+            uint currentAddress = startAddress;
+            int instructionCount = 0;
+            var visitedInThisPath = new HashSet<uint>();
+            bool debugMode = debugObject != null || (pathId > 0 && debugObject?.X == 5 && debugObject?.Y == 8);
 
-            result.IsIndeterminateLoop = false;
-            result.LoopStartAddress = 0;
-            result.BattleMonsterEntries.Clear();
-            result.PartialBattleInfo.Clear();
-            result.PartialBattles.Clear();
-            result.FoundTexts.Clear();
-            result.MonsterPower = null;
-            result.MonsterLevel = null;
-            result.MonsterIndex1 = null;
-            result.MonsterIndex2 = null;
+            // Для отслеживания косвенных текстов
+            byte? lastAlValue = null;
+            ushort? lastBpValue = null;
+            uint lastTextAddress = 0;
+            var foundTextsInThisPath = new HashSet<string>();
 
-            if (recursionDepth > MAX_RECURSION_DEPTH) return result;
-
-            long fileSize = br.BaseStream.Length;
-            if (patchAddress >= fileSize) return result;
-
-            string pathKey = $"{jumpAddress:X4}_{alternativeStartAddress:X4}_{recursionDepth}";
-            if (alreadyAnalyzedPaths.Contains(pathKey)) return result;
-            alreadyAnalyzedPaths.Add(pathKey);
-
-            var localAlternativePaths = new List<AlternativePath>();
-            ShowLinearDisassemblyWithAlternativeBranch(br, patchAddress, jumpAddress, alternativeStartAddress,
-                localAlternativePaths, objIndex, 0, true);
-
-            var analyzedCalls = new HashSet<uint>();
-
-            if (IsNestedPath(jumpAddress, alternativeStartAddress))
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
             {
-                AnalyzeCallsWithNestedAlternativeBranch(br, patchAddress, jumpAddress, alternativeStartAddress,
-                    analyzedCalls, result, registerTracker, 0, new HashSet<string>());
-            }
-            else
-            {
-                AnalyzeCallsWithAlternativeBranch(br, patchAddress, jumpAddress, alternativeStartAddress,
-                    analyzedCalls, result, registerTracker, 0, 0);
-            }
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
 
-            var indirectTexts = AnalyzeIndirectTextPatterns(br, patchAddress);
-            foreach (var text in indirectTexts)
-            {
-                result.FoundTexts.Add(text);
-            }
-
-            AnalyzePartialBattleRanges(br, result);
-
-            if (localAlternativePaths.Count > 0 && recursionDepth < MAX_RECURSION_DEPTH)
-            {
-                Debug.WriteLine($"    Найдено {localAlternativePaths.Count} вложенных путей, глубина={recursionDepth}");
-
-                for (int i = 0; i < localAlternativePaths.Count; i++)
+                while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
                 {
-                    var nestedPath = localAlternativePaths[i];
-                    if (nestedPath.Analyzed)
+                    if (visitedInThisPath.Contains(currentAddress))
                     {
-                        Debug.WriteLine($"      Путь {i + 1} уже проанализирован");
+                        if (debugMode)
+                            Debug.WriteLine($"      Обнаружен цикл по адресу 0x{currentAddress:X4}, прекращаем анализ этого пути.");
+                        result.IsTerminated = false;
+                        break;
+                    }
+                    visitedInThisPath.Add(currentAddress);
+
+                    if (!TryDisassembleNext(br, currentAddress, out X86Instruction insn))
+                    {
+                        if (debugMode)
+                            Debug.WriteLine($"      Не удалось дизассемблировать по адресу 0x{currentAddress:X4}, пропускаем байт");
+                        currentAddress++;
                         continue;
                     }
 
-                    Debug.WriteLine($"      Анализ вложенного пути {i + 1}: адрес=0x{nestedPath.Address:X4}, target=0x{nestedPath.TargetAddress:X4}");
+                    instructionCount++;
+                    string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
+                    uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
-                    // ВАЖНО: передаём тот же registerTracker, чтобы сохранить состояние регистров
-                    var nestedResult = AnalyzeAlternativePath(br, patchAddress, nestedPath.Address,
-                        nestedPath.TargetAddress, objIndex, pathIndex * 10 + i + 1,
-                        new HashSet<string>(alreadyAnalyzedPaths), registerTracker, recursionDepth + 1);
+                    if (debugMode)
+                        Debug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
 
-                    result.NestedPaths[pathIndex * 10 + i + 1] = nestedResult;
-                    nestedPath.Analyzed = true;
+                    // Отслеживаем значения регистров для косвенных текстов
+                    byte[] bytes = insn.Bytes;
 
-                    Debug.WriteLine($"      Вложенный путь {i + 1} проанализирован, найдено текстов: {nestedResult.FoundTexts.Count}");
+                    // MOV AL, imm8
+                    if (bytes.Length >= 2 && bytes[0] == 0xB0)
+                    {
+                        lastAlValue = bytes[1];
+                        if (debugMode)
+                            Debug.WriteLine($"        Запомнили AL = 0x{lastAlValue:X2}");
+                    }
+
+                    // MOV BP, imm16
+                    if (bytes.Length >= 3 && bytes[0] == 0xBD)
+                    {
+                        lastBpValue = BitConverter.ToUInt16(bytes, 1);
+                        if (debugMode)
+                            Debug.WriteLine($"        Запомнили BP = 0x{lastBpValue:X4}");
+                    }
+
+                    // Если есть и AL, и BP, вычисляем потенциальный адрес текста
+                    if (lastAlValue.HasValue && lastBpValue.HasValue)
+                    {
+                        ushort combinedAddr = (ushort)((lastBpValue.Value << 8) | lastAlValue.Value);
+                        if (combinedAddr != lastTextAddress)
+                        {
+                            lastTextAddress = combinedAddr;
+                            string text = ExtractText(br, combinedAddr);
+                            if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                            {
+                                string textEntry = $"Text at 0x{combinedAddr:X4}: {text}";
+                                if (!foundTextsInThisPath.Contains(textEntry))
+                                {
+                                    foundTextsInThisPath.Add(textEntry);
+
+                                    // Текст из текущего пути - локальный
+                                    result.FoundTexts.Add(textEntry);
+
+                                    // ЗАПОМИНАЕМ АДРЕС ПЕРВОГО ЛОКАЛЬНОГО ТЕКСТА
+                                    if (result.FirstLocalTextAddress == uint.MaxValue)
+                                    {
+                                        result.FirstLocalTextAddress = (uint)insn.Address;
+                                        if (debugMode)
+                                            Debug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
+                                    }
+
+                                    if (debugMode)
+                                        Debug.WriteLine($"        Найден косвенный текст по адресу 0x{combinedAddr:X4}: {text}");
+                                }
+                            }
+                        }
+                    }
+
+                    // Стандартный поиск текстов
+                    var newTexts = new HashSet<string>();
+                    FindTextsInInstruction(insn, br, registerTracker, depth, newTexts);
+                    foreach (var text in newTexts)
+                    {
+                        if (!foundTextsInThisPath.Contains(text))
+                        {
+                            foundTextsInThisPath.Add(text);
+
+                            if (callDepth > 0)
+                            {
+                                // Текст из подпрограммы - контекстный
+                                result.ContextTexts.Add(text);
+                                if (debugMode)
+                                    Debug.WriteLine($"        Найден контекстный текст (из CALL): {text}");
+                            }
+                            else
+                            {
+                                // Текст из текущего пути - локальный
+                                result.FoundTexts.Add(text);
+
+                                // ЗАПОМИНАЕМ АДРЕС ПЕРВОГО ЛОКАЛЬНОГО ТЕКСТА
+                                if (result.FirstLocalTextAddress == uint.MaxValue)
+                                {
+                                    result.FirstLocalTextAddress = (uint)insn.Address;
+                                    if (debugMode)
+                                        Debug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
+                                }
+
+                                if (debugMode)
+                                    Debug.WriteLine($"        Найден прямой текст: {text}");
+                            }
+                        }
+                    }
+
+                    FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                    FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                    TrackRegisterOperations(insn, br, registerTracker, depth);
+
+                    // Анализируем частичные битвы после сбора информации
+                    if (result.PartialBattleInfo.Count > 0)
+                    {
+                        AnalyzePartialBattleRanges(br, result);
+                    }
+
+                    // ========== ОБРАБОТКА ИНСТРУКЦИЙ ==========
+
+                    // RET - конец пути
+                    if (IsReturnInstruction(mnemonicUpper))
+                    {
+                        if (debugMode)
+                            Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
+                        result.IsTerminated = true;
+                        result.HasSignificantCode = result.FoundTexts.Count > 0 ||
+                                                     result.ContextTexts.Count > 0 ||
+                                                     result.MonsterPower.HasValue ||
+                                                     result.MonsterLevel.HasValue ||
+                                                     result.BattleMonsterEntries.Count > 0 ||
+                                                     result.PartialBattles.Count > 0 ||
+                                                     result.HasPartialBattlePattern;
+                        return result;
+                    }
+
+                    // JMP - безусловный переход
+                    if (mnemonicUpper == "JMP" || mnemonicUpper == "JMPF" || mnemonicUpper == "JMPL" ||
+                        mnemonicUpper == "JMPE" || mnemonicUpper == "JMPI")
+                    {
+                        uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
+
+                        if (jumpTarget >= fileLength)
+                        {
+                            if (debugMode)
+                                Debug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
+                            result.IsTerminated = true;
+                            result.HasSignificantCode = true;
+                            return result;
+                        }
+
+                        if (jumpTarget != 0 && jumpTarget < fileLength)
+                        {
+                            if (debugMode)
+                                Debug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
+                            currentAddress = jumpTarget;
+                            continue;
+                        }
+                    }
+
+                    // Ручное распознавание JMP по опкоду 0xE9
+                    if (insn.Bytes.Length >= 1 && insn.Bytes[0] == 0xE9)
+                    {
+                        if (insn.Bytes.Length >= 3)
+                        {
+                            ushort jumpOffset = (ushort)(insn.Bytes[1] | (insn.Bytes[2] << 8));
+                            uint jumpTarget = (uint)(insn.Address + 3 + (short)jumpOffset);
+
+                            if (jumpTarget >= fileLength)
+                            {
+                                if (debugMode)
+                                    Debug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
+                                result.IsTerminated = true;
+                                return result;
+                            }
+
+                            if (jumpTarget < fileLength && jumpTarget != 0)
+                            {
+                                if (debugMode)
+                                    Debug.WriteLine($"      JMP (по опкоду 0xE9) к 0x{jumpTarget:X4}");
+                                currentAddress = jumpTarget;
+                                continue;
+                            }
+                        }
+                    }
+
+                    // CALL - вызов подпрограммы
+                    if (mnemonicUpper.StartsWith("CALL"))
+                    {
+                        uint callTarget = GetInstructionTargetAddress(insn, fileLength);
+
+                        if (callTarget < fileLength && callTarget != 0)
+                        {
+                            if (debugMode)
+                                Debug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
+
+                            // Создаём копию трекера для подпрограммы
+                            var subroutineTracker = registerTracker.Clone();
+
+                            // Анализируем подпрограмму
+                            var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
+                                globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId);
+
+                            // Добавляем найденные тексты из подпрограммы
+                            // Тексты из подпрограммы становятся контекстными для текущего пути
+                            foreach (var text in subroutineResult.FoundTexts)
+                            {
+                                if (!foundTextsInThisPath.Contains(text))
+                                {
+                                    foundTextsInThisPath.Add(text);
+                                    result.ContextTexts.Add(text);
+                                }
+                            }
+                            foreach (var text in subroutineResult.ContextTexts)
+                            {
+                                if (!foundTextsInThisPath.Contains(text))
+                                {
+                                    foundTextsInThisPath.Add(text);
+                                    result.ContextTexts.Add(text);
+                                }
+                            }
+
+                            // Добавляем информацию о монстрах из подпрограммы
+                            if (subroutineResult.MonsterPower.HasValue && !result.MonsterPower.HasValue)
+                                result.MonsterPower = subroutineResult.MonsterPower;
+
+                            if (subroutineResult.MonsterLevel.HasValue && !result.MonsterLevel.HasValue)
+                                result.MonsterLevel = subroutineResult.MonsterLevel;
+
+                            foreach (var entry in subroutineResult.BattleMonsterEntries)
+                            {
+                                if (!result.BattleMonsterEntries.ContainsKey(entry.Key))
+                                    result.BattleMonsterEntries[entry.Key] = entry.Value;
+                            }
+
+                            // Добавляем частичные битвы
+                            foreach (var partial in subroutineResult.PartialBattles)
+                            {
+                                if (!result.PartialBattles.Any(p => p.BxIndex == partial.BxIndex))
+                                    result.PartialBattles.Add(partial);
+                            }
+
+                            foreach (var info in subroutineResult.PartialBattleInfo)
+                            {
+                                if (!result.PartialBattleInfo.Any(i => i.BxIndex == info.BxIndex &&
+                                                                        i.DestAddr == info.DestAddr))
+                                    result.PartialBattleInfo.Add(info);
+                            }
+
+                            result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
+                        }
+                        else
+                        {
+                            if (debugMode)
+                                Debug.WriteLine($"      CALL за пределы оверлея (0x{callTarget:X4}) - игнорируем");
+                        }
+
+                        currentAddress = nextAddress;
+                        continue;
+                    }
+
+                    // ========== ВАЖНО: Обработка условных переходов ==========
+                    if (IsConditionalJump(insn, out uint condJumpTarget))
+                    {
+                        if (condJumpTarget < fileLength && condJumpTarget != 0)
+                        {
+                            // Добавляем целевой адрес перехода как альтернативный путь
+                            var altPath = new AlternativePath
+                            {
+                                Address = (uint)insn.Address,
+                                TargetAddress = condJumpTarget,
+                                Condition = $"{insn.Mnemonic} {insn.Operand}",
+                                Analyzed = false,
+                                PathNumber = pathId * 10 + result.AlternativePaths.Count + 1
+                            };
+
+                            if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
+                                                                   p.TargetAddress == altPath.TargetAddress))
+                            {
+                                result.AlternativePaths.Add(altPath);
+                                if (debugMode)
+                                    Debug.WriteLine($"      Найден альтернативный путь {altPath.PathNumber}: 0x{insn.Address:X4} -> 0x{condJumpTarget:X4}");
+                            }
+
+                            // Добавляем линейное продолжение как отдельный путь
+                            var linearPath = new AlternativePath
+                            {
+                                Address = (uint)insn.Address,
+                                TargetAddress = nextAddress,
+                                Condition = $"LINEAR after {insn.Mnemonic}",
+                                Analyzed = false,
+                                PathNumber = pathId * 10 + result.AlternativePaths.Count + 1
+                            };
+
+                            if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
+                                                                   p.TargetAddress == linearPath.TargetAddress))
+                            {
+                                result.AlternativePaths.Add(linearPath);
+                                if (debugMode)
+                                    Debug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
+                            }
+                        }
+
+                        // Завершаем текущий путь - не продолжаем выполнение
+                        if (debugMode)
+                            Debug.WriteLine($"      Останавливаем анализ текущего пути после условного перехода");
+
+                        result.IsTerminated = true;
+                        result.HasSignificantCode = result.FoundTexts.Count > 0 ||
+                                                     result.ContextTexts.Count > 0 ||
+                                                     result.MonsterPower.HasValue ||
+                                                     result.MonsterLevel.HasValue ||
+                                                     result.BattleMonsterEntries.Count > 0 ||
+                                                     result.PartialBattles.Count > 0 ||
+                                                     result.HasPartialBattlePattern;
+                        return result;
+                    }
+
+                    // Обычная инструкция - продолжаем линейно
+                    currentAddress = nextAddress;
                 }
             }
 
+            // Финальный анализ частичных битв после завершения пути
+            if (result.PartialBattleInfo.Count > 0)
+            {
+                AnalyzePartialBattleRanges(br, result);
+            }
+
+            if (instructionCount >= MAX_INSTRUCTIONS_PER_PATH)
+            {
+                if (debugMode)
+                    Debug.WriteLine($"      Достигнут лимит инструкций ({MAX_INSTRUCTIONS_PER_PATH}) - путь прерван");
+                result.IsTerminated = false;
+            }
+            else if (currentAddress >= fileLength)
+            {
+                if (debugMode)
+                    Debug.WriteLine($"      Достигнут конец оверлея - конец пути");
+                result.IsTerminated = true;
+            }
+
+            result.HasSignificantCode = result.FoundTexts.Count > 0 ||
+                                         result.ContextTexts.Count > 0 ||
+                                         result.MonsterPower.HasValue ||
+                                         result.MonsterLevel.HasValue ||
+                                         result.BattleMonsterEntries.Count > 0 ||
+                                         result.PartialBattles.Count > 0 ||
+                                         result.HasPartialBattlePattern;
+
             return result;
         }
+
+        // ========== ОСТАЛЬНЫЕ МЕТОДЫ ==========
 
         // метод для анализа диапазонов CDA9-CDB0 и CDB1-CDB8
         private void AnalyzePartialBattleRanges(BinaryReader br, PathAnalysisResult result)
         {
             if (!result.HasPartialBattlePattern || result.PartialBattleInfo.Count == 0)
             {
-                Debug.WriteLine($"    АНАЛИЗ ЧАСТИЧНЫХ БИТВ: нет данных (HasPattern={result.HasPartialBattlePattern}, InfoCount={result.PartialBattleInfo.Count})");
                 return;
             }
 
@@ -1386,20 +1799,10 @@ namespace MMMapEditor
 
             foreach (var group in groupedByBx)
             {
-                int saveBxIndex = group.Key; // BX при сохранении (0, 1, 2, ...)
+                int saveBxIndex = group.Key;
                 var entries = group.ToList();
 
                 Debug.WriteLine($"      Группа BX(сохранения)={saveBxIndex}: {entries.Count} записей");
-
-                // Для отладки выводим все записи в группе
-                foreach (var info in entries)
-                {
-                    string sourceInfo = info.SourceTableAddr.HasValue
-                        ? $"из [{info.SourceTableAddr:X4}]"
-                        : "источник неизвестен";
-
-                    Debug.WriteLine($"        {info.DestAddr:X4} = {info.SrcReg}({info.SrcRegValue:X2}) {sourceInfo}");
-                }
 
                 // Находим записи для 3C58 и 3C29
                 var entry58 = entries.FirstOrDefault(e => e.DestAddr == 0x3C58);
@@ -1412,7 +1815,7 @@ namespace MMMapEditor
                 }
 
                 // Определяем количество итераций цикла
-                int iterationCount = 1; // По умолчанию 1 итерация (без цикла)
+                int iterationCount = 1;
 
                 if (result.IsInLoop && result.LoopStartAddress != 0)
                 {
@@ -1423,7 +1826,6 @@ namespace MMMapEditor
                     }
                     else
                     {
-                        // Если количество итераций неизвестно, пытаемся определить по максимальному BX сохранения
                         int maxSaveBx = groupedByBx.Max(g => g.Key);
                         if (maxSaveBx > 0)
                         {
@@ -1515,20 +1917,235 @@ namespace MMMapEditor
 
                     int combinations = (rangeEnd1 - rangeStart1 + 1) * (rangeEnd2 - rangeStart2 + 1);
                     Debug.WriteLine($"        -> СОЗДАНА ЧАСТИЧНАЯ БИТВА: BX(сохранения)={saveBxIndex + iteration}, BX(загрузки)={loadBx}, {combinations} комбинация (итерация {iteration})");
-                    Debug.WriteLine($"           Значения: val1=0x{iterVal1:X2} из [{table1Addr:X4}], val2=0x{iterVal2:X2} из [{table2Addr:X4}]");
-
-                    var monsters = partialBattle.GetPossibleMonsters();
-
-                    if (monsters.Count > 0)
-                    {
-                        Debug.WriteLine($"           Монстр ID={monsters[0].MonsterId}");
-                    }
                 }
+            }
+        }
 
-                Debug.WriteLine($"      ИТОГО: создано {iterationCount} частично определённых битв для BX(сохранения)={saveBxIndex}");
+        private List<X86Instruction> DisassembleAll(BinaryReader br)
+        {
+            var instructions = new List<X86Instruction>();
+
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            {
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+
+                long fileLength = br.BaseStream.Length;
+                uint currentAddress = 0;
+
+                while (currentAddress < fileLength)
+                {
+                    var chunk = ReadCodeBlock(br, currentAddress, out var disassembled);
+                    if (disassembled == null || disassembled.Length == 0)
+                    {
+                        currentAddress++;
+                        continue;
+                    }
+
+                    instructions.AddRange(disassembled);
+                    currentAddress = (uint)(disassembled.Last().Address + disassembled.Last().Bytes.Length);
+                }
             }
 
-            Debug.WriteLine($"      ИТОГО ВСЕГО: создано {result.PartialBattles.Count} частично определённых битв");
+            Debug.WriteLine($"Дизассемблировано инструкций: {instructions.Count}");
+            return instructions;
+        }
+
+        private List<CoordinateComparison> FindAllCoordinateComparisons(BinaryReader br, List<X86Instruction> allInstructions)
+        {
+            var comparisons = new List<CoordinateComparison>();
+
+            for (int i = 0; i < allInstructions.Count; i++)
+            {
+                var insn = allInstructions[i];
+
+                if (IsCompareWithImmediate(insn, out byte immValue, out string reg))
+                {
+                    ushort? sourceAddr = FindMemorySourceForRegister(allInstructions, i, reg);
+                    if (!sourceAddr.HasValue) continue;
+
+                    CoordType coordType = CoordType.Unknown;
+                    if (sourceAddr.Value == 0x3C38)
+                        coordType = CoordType.XCoord;
+                    else if (sourceAddr.Value == 0x3C39)
+                        coordType = CoordType.YCoord;
+                    else if (sourceAddr.Value == 0x3C3A)
+                        coordType = CoordType.FullCoord;
+                    else
+                        continue;
+
+                    int j = i + 1;
+                    byte? lastCompareValue = null;
+                    uint? lastJumpTarget = null;
+                    string lastJumpType = null;
+
+                    bool hasPrecedingCondition = false;
+                    byte precedingValue = 0;
+                    string precedingJumpType = null;
+
+                    if (i > 0)
+                    {
+                        for (int k = i - 1; k >= Math.Max(0, i - 10); k--)
+                        {
+                            var prevInsn = allInstructions[k];
+                            if (IsCompareWithImmediate(prevInsn, out byte prevValue, out string prevReg) && prevReg == reg)
+                            {
+                                hasPrecedingCondition = true;
+                                precedingValue = prevValue;
+                                if (k + 1 < allInstructions.Count)
+                                {
+                                    var nextAfterPrev = allInstructions[k + 1];
+                                    if (IsConditionalJump(nextAfterPrev, out uint _))
+                                    {
+                                        precedingJumpType = nextAfterPrev.Mnemonic.ToUpper();
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    while (j < allInstructions.Count)
+                    {
+                        var nextInsn = allInstructions[j];
+                        if (!IsConditionalJump(nextInsn, out uint jumpTarget))
+                            break;
+
+                        comparisons.Add(new CoordinateComparison
+                        {
+                            CompareAddress = (uint)insn.Address,
+                            MemAddr = sourceAddr.Value,
+                            CoordType = coordType,
+                            Value = immValue,
+                            JumpTarget = jumpTarget,
+                            JumpType = nextInsn.Mnemonic.ToUpper(),
+                            IsLinear = false
+                        });
+
+                        Debug.WriteLine($"  Найдено сравнение: 0x{insn.Address:X4} [{sourceAddr.Value:X4}]={immValue} -> 0x{jumpTarget:X4} ({nextInsn.Mnemonic}) [{coordType}]");
+
+                        lastCompareValue = immValue;
+                        lastJumpTarget = jumpTarget;
+                        lastJumpType = nextInsn.Mnemonic.ToUpper();
+                        j++;
+                    }
+
+                    if (j < allInstructions.Count && lastCompareValue.HasValue)
+                    {
+                        var nextInsn = allInstructions[j];
+                        if (IsCompareWithImmediate(nextInsn, out _, out _))
+                        {
+                            Debug.WriteLine($"  Пропуск линейного выполнения: следующая инструкция - сравнение по адресу 0x{nextInsn.Address:X4}");
+                            continue;
+                        }
+
+                        byte linearStart = 0;
+                        byte linearEnd = 255;
+
+                        if (lastJumpType == "JB" || lastJumpType == "JC")
+                        {
+                            linearStart = lastCompareValue.Value;
+                            linearEnd = 255;
+                        }
+                        else if (lastJumpType == "JAE" || lastJumpType == "JNB" || lastJumpType == "JNC")
+                        {
+                            linearStart = 0;
+                            linearEnd = (byte)(lastCompareValue.Value - 1);
+                        }
+
+                        if (hasPrecedingCondition)
+                        {
+                            if (precedingJumpType == "JB" || precedingJumpType == "JC")
+                            {
+                                linearStart = Math.Max(linearStart, precedingValue);
+                            }
+                            else if (precedingJumpType == "JAE" || precedingJumpType == "JNB" || precedingJumpType == "JNC")
+                            {
+                                linearEnd = Math.Min(linearEnd, (byte)(precedingValue - 1));
+                            }
+                            else if (precedingJumpType == "JE" || precedingJumpType == "JZ")
+                            {
+                                if (precedingValue == 3 && lastCompareValue == 9)
+                                {
+                                    linearStart = 4;
+                                    linearEnd = 8;
+                                }
+                            }
+                        }
+
+                        if (linearStart <= linearEnd)
+                        {
+                            comparisons.Add(new CoordinateComparison
+                            {
+                                CompareAddress = (uint)insn.Address,
+                                MemAddr = sourceAddr.Value,
+                                CoordType = coordType,
+                                Value = lastCompareValue.Value,
+                                JumpTarget = (uint)allInstructions[j].Address,
+                                JumpType = "LINEAR",
+                                IsLinear = true,
+                                LinearStart = linearStart,
+                                LinearEnd = linearEnd
+                            });
+
+                            Debug.WriteLine($"  Найдено линейное выполнение: 0x{insn.Address:X4} [{sourceAddr.Value:X4}]={lastCompareValue} -> 0x{allInstructions[j].Address:X4} для значений [{linearStart}-{linearEnd}] [{coordType}]");
+                        }
+                    }
+                }
+            }
+
+            return comparisons;
+        }
+
+        private ushort? FindMemorySourceForRegister(List<X86Instruction> allInstructions, int currentIndex, string reg)
+        {
+            int start = Math.Max(0, currentIndex - 20);
+
+            for (int i = currentIndex - 1; i >= start; i--)
+            {
+                var insn = allInstructions[i];
+                byte[] bytes = insn.Bytes;
+
+                if (reg == "AL" && bytes.Length >= 3 && bytes[0] == 0xA0)
+                {
+                    return BitConverter.ToUInt16(bytes, 1);
+                }
+
+                if (reg == "CL" && bytes.Length >= 4 && bytes[0] == 0x8A && bytes[1] == 0x0E)
+                {
+                    return BitConverter.ToUInt16(bytes, 2);
+                }
+
+                if (reg == "DL" && bytes.Length >= 4 && bytes[0] == 0x8A && bytes[1] == 0x16)
+                {
+                    return BitConverter.ToUInt16(bytes, 2);
+                }
+
+                if (reg == "BL" && bytes.Length >= 4 && bytes[0] == 0x8A && bytes[1] == 0x1E)
+                {
+                    return BitConverter.ToUInt16(bytes, 2);
+                }
+
+                if (IsRegisterWrite(insn, reg))
+                {
+                    break;
+                }
+            }
+
+            return null;
+        }
+
+        private bool IsRegisterWrite(X86Instruction insn, string reg)
+        {
+            byte[] bytes = insn.Bytes;
+
+            switch (reg)
+            {
+                case "AL": return bytes.Length >= 2 && (bytes[0] & 0xF8) == 0xB0;
+                case "CL": return bytes.Length >= 2 && bytes[0] == 0xB1;
+                case "DL": return bytes.Length >= 2 && bytes[0] == 0xB2;
+                case "BL": return bytes.Length >= 2 && bytes[0] == 0xB3;
+                default: return false;
+            }
         }
 
         private void SaveNestedPathsRecursively(Dictionary<int, HashSet<string>> allPathTexts,
@@ -1536,14 +2153,17 @@ namespace MMMapEditor
         {
             foreach (var kvp in nestedPaths.OrderBy(x => x.Key))
             {
-                if (!allPathTexts.ContainsKey(kvp.Key))
+                if (kvp.Value.FoundTexts.Count > 0 && !allPathTexts.ContainsKey(nextPathNumber))
                 {
-                    allPathTexts[kvp.Key] = kvp.Value.FoundTexts;
-                }
+                    allPathTexts[nextPathNumber] = kvp.Value.FoundTexts;
 
-                if (kvp.Value.NestedPaths.Count > 0)
-                {
-                    SaveNestedPathsRecursively(allPathTexts, kvp.Value.NestedPaths, ref nextPathNumber);
+                    if (kvp.Value.NestedPaths.Count > 0)
+                    {
+                        int nestedNumber = nextPathNumber * 10;
+                        SaveNestedPathsRecursively(allPathTexts, kvp.Value.NestedPaths, ref nestedNumber);
+                    }
+
+                    nextPathNumber++;
                 }
             }
         }
@@ -1561,12 +2181,34 @@ namespace MMMapEditor
                     continue;
 
                 bool isUnique = true;
+
                 foreach (var existingSet in processedTextSets)
                 {
                     if (AreTextSetsEqual(existingSet, kvp.Value))
                     {
                         isUnique = false;
                         break;
+                    }
+                }
+
+                if (isUnique)
+                {
+                    foreach (var existingSet in processedTextSets)
+                    {
+                        if (kvp.Value.Count < existingSet.Count && existingSet.IsSupersetOf(kvp.Value))
+                        {
+                            isUnique = false;
+                            break;
+                        }
+                        if (kvp.Value.Count > existingSet.Count && kvp.Value.IsSupersetOf(existingSet))
+                        {
+                            var keyToRemove = uniquePaths.FirstOrDefault(x => x.Value == existingSet).Key;
+                            if (keyToRemove != 0)
+                            {
+                                uniquePaths.Remove(keyToRemove);
+                                processedTextSets.Remove(existingSet);
+                            }
+                        }
                     }
                 }
 
@@ -1595,154 +2237,6 @@ namespace MMMapEditor
             }
 
             return true;
-        }
-
-        private bool IsTransitionReachableFromAlternativePath(BinaryReader br, uint patchAddress,
-            uint mainJumpAddress, uint alternativeStartAddress, uint nestedJumpAddress)
-        {
-            try
-            {
-                using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-                {
-                    capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                    uint currentAddress = alternativeStartAddress;
-                    const int MAX_CHECK = 50;
-                    int checks = 0;
-
-                    while (currentAddress < nestedJumpAddress && checks < MAX_CHECK)
-                    {
-                        int bytesToRead = (int)Math.Min(32, nestedJumpAddress - currentAddress + 16);
-                        byte[] chunk = ReadBytesAt(br, currentAddress, bytesToRead);
-
-                        var instructions = capstone.Disassemble(chunk, currentAddress);
-                        if (instructions == null || instructions.Length == 0)
-                            break;
-
-                        foreach (var insn in instructions)
-                        {
-                            string mnemonicUpper = insn.Mnemonic.ToUpper();
-
-                            if (mnemonicUpper == "JMP" || mnemonicUpper == "RET" || mnemonicUpper == "RETF")
-                            {
-                                if (mnemonicUpper == "JMP")
-                                {
-                                    uint jumpTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
-                                    if (jumpTarget != nestedJumpAddress)
-                                    {
-                                        return false;
-                                    }
-                                }
-                                else
-                                {
-                                    return false;
-                                }
-                            }
-
-                            if ((uint)insn.Address >= nestedJumpAddress)
-                            {
-                                return true;
-                            }
-
-                            if (mnemonicUpper.StartsWith("J") && !mnemonicUpper.StartsWith("JMP"))
-                            {
-                                uint jumpTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
-                                if (jumpTarget != nestedJumpAddress && jumpTarget < nestedJumpAddress)
-                                {
-                                    return false;
-                                }
-                            }
-
-                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            checks++;
-                        }
-                    }
-
-                    return currentAddress >= nestedJumpAddress;
-                }
-            }
-            catch
-            {
-                return true;
-            }
-        }
-
-        private byte[] ReadBytesAt(BinaryReader br, long position, int count)
-        {
-            long originalPos = br.BaseStream.Position;
-            br.BaseStream.Position = position;
-            byte[] data = br.ReadBytes(count);
-            br.BaseStream.Position = originalPos;
-            return data;
-        }
-
-        private uint GetInstructionTargetAddress(X86Instruction insn, long fileLength)
-        {
-            string operand = insn.Operand ?? "";
-            int hexIndex = operand.IndexOf("0x", StringComparison.OrdinalIgnoreCase);
-            if (hexIndex >= 0)
-            {
-                string hexPart = operand.Substring(hexIndex + 2);
-                hexPart = new string(hexPart.TakeWhile(c =>
-                    (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')).ToArray());
-
-                if (uint.TryParse(hexPart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint targetAddr))
-                {
-                    return targetAddr;
-                }
-            }
-            return 0;
-        }
-
-        private string ExtractText(BinaryReader br, ushort textAddress)
-        {
-            try
-            {
-                long fileOffset = textAddress - _config.TextBaseAddr;
-
-                if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
-                {
-                    return $"Cannot locate text (offset: 0x{fileOffset:X})";
-                }
-
-                long originalPos = br.BaseStream.Position;
-                br.BaseStream.Position = fileOffset;
-
-                var bytes = new List<byte>();
-                byte b;
-                int maxLength = 250;
-
-                while ((b = br.ReadByte()) != 0 && bytes.Count < maxLength)
-                {
-                    bytes.Add(b);
-                }
-
-                br.BaseStream.Position = originalPos;
-
-                if (bytes.Count == 0) return "(empty string)";
-
-                return DecodeText(bytes.ToArray());
-            }
-            catch (Exception ex)
-            {
-                return $"Error reading text: {ex.Message}";
-            }
-        }
-
-        private string DecodeText(byte[] bytes)
-        {
-            var sb = new StringBuilder();
-            foreach (byte b in bytes)
-            {
-                if (b == 0x0D) sb.Append("\\r");
-                else if (b == 0x0A) sb.Append("\\n");
-                else if (b == 0x09) sb.Append("\\t");
-                else if (b >= 0x20 && b <= 0x7E) sb.Append((char)b);
-                else if (b == 0x22) sb.Append("\\\"");
-                else if (b == 0x5C) sb.Append("\\\\");
-                else sb.Append($"\\x{b:X2}");
-            }
-            return sb.ToString();
         }
 
         private HashSet<string> AnalyzeIndirectTextPatterns(BinaryReader br, uint patchAddress)
@@ -1783,907 +2277,6 @@ namespace MMMapEditor
             }
 
             return foundTexts;
-        }
-
-        private void AnalyzeCallsWithFullDisassembly(BinaryReader br, uint address, HashSet<uint> analyzedAddresses,
-            PathAnalysisResult result, RegisterTracker registerTracker, OvrObject currentObject, int depth)
-        {
-            if (depth > 5) return;
-            if (analyzedAddresses.Contains(address)) return;
-            analyzedAddresses.Add(address);
-
-            if (depth == 0) registerTracker.Clear();
-
-            long fileLength = br.BaseStream.Length;
-            if (address >= fileLength) return;
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                uint currentAddress = address;
-                const int MAX_INSTRUCTIONS = 50;
-                int instructionsShown = 0;
-                int loopIterationCount = 0;
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
-                {
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
-                        instructionsShown++;
-
-                        byte[] instructionBytes = insn.Bytes;
-                        string mnemonicUpper = insn.Mnemonic.ToUpper();
-
-                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                        TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                        if ((mnemonicUpper == "JC" || mnemonicUpper == "JB") &&
-                            instructionBytes.Length >= 4 &&
-                            instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
-                            instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-
-                            if (jumpTarget < currentAddress)
-                            {
-                                if (!result.IsIndeterminateLoop)
-                                {
-                                    result.IsIndeterminateLoop = true;
-                                    result.IsInLoop = true;
-                                    result.LoopStartAddress = jumpTarget;
-                                }
-
-                                loopIterationCount++;
-                                result.LoopIterationCount = loopIterationCount;
-
-                                Debug.WriteLine($"    ОБНАРУЖЕН ЦИКЛ в основном пути, итерация {loopIterationCount}");
-                            }
-                        }
-
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        if (mnemonicUpper.StartsWith("CALL"))
-                        {
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
-                            {
-                                AnalyzeCallsWithFullDisassembly(br, callTarget, analyzedAddresses,
-                                    result, registerTracker, currentObject, depth + 1);
-                            }
-                        }
-
-                        if (IsReturnInstruction(mnemonicUpper)) return;
-
-                        if (mnemonicUpper == "JMP")
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (jumpTarget >= fileLength) return;
-                            if (jumpTarget < fileLength && jumpTarget != 0)
-                            {
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-                        }
-
-                        currentAddress = nextAddress;
-                    }
-                }
-            }
-        }
-
-        private void AnalyzeCallsWithAlternativeBranch(BinaryReader br, uint patchAddress,
-     uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-     PathAnalysisResult result, RegisterTracker registerTracker, int depth, int callDepth = 0)
-        {
-            const int MAX_CALL_DEPTH = 5;
-            const int MAX_LOOP_ITERATIONS = 8;
-
-            if (depth > MAX_CALL_DEPTH) return;
-            if (analyzedAddresses.Contains(patchAddress)) return;
-            analyzedAddresses.Add(patchAddress);
-
-            long fileLength = br.BaseStream.Length;
-            if (patchAddress >= fileLength) return;
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                uint currentAddress = patchAddress;
-                const int MAX_INSTRUCTIONS = 100;
-                int instructionsShown = 0;
-                bool jumpTaken = false;
-                bool shouldStop = false;
-
-                int loopIterationCount = 0;
-                bool loopDetected = false;
-
-                var visitedInThisPath = new HashSet<uint>();
-                var recentInstructions = new List<X86Instruction>();
-                const int MAX_RECENT_INSTRUCTIONS = 10;
-
-                // Стек для отслеживания адресов возврата из CALL
-                Stack<uint> returnAddressStack = new Stack<uint>();
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS && !shouldStop)
-                {
-                    if (visitedInThisPath.Contains(currentAddress) && !loopDetected)
-                    {
-                        Debug.WriteLine($"    Повторное посещение адреса 0x{currentAddress:X4}, продолжаем анализ...");
-                    }
-                    visitedInThisPath.Add(currentAddress);
-
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-
-                    // Если не удалось дизассемблировать инструкцию
-                    if (instructions == null || instructions.Length == 0)
-                    {
-                        Debug.WriteLine($"      НЕ УДАЛОСЬ ДИЗАССЕМБЛИРОВАТЬ ИНСТРУКЦИЮ по адресу 0x{currentAddress:X4}");
-
-                        // Проверяем, может быть это JMP, который Capstone не распознал?
-                        if (chunk != null && chunk.Length >= 3 && chunk[0] == 0xE9)
-                        {
-                            ushort jumpOffset = (ushort)(chunk[1] | (chunk[2] << 8));
-                            uint jumpTarget = (uint)(currentAddress + 3 + (short)jumpOffset);
-
-                            if (jumpTarget >= fileLength)
-                            {
-                                Debug.WriteLine($"      Ручное распознавание: JMP (0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
-                                return;
-                            }
-
-                            Debug.WriteLine($"      Ручное распознавание: JMP (0xE9) к 0x{jumpTarget:X4}");
-                            currentAddress = jumpTarget;
-                            continue;
-                        }
-
-                        // Если это не распознаваемый JMP, просто пропускаем байт
-                        // Но не завершаем путь, потому что это может быть data
-                        currentAddress++;
-                        continue;
-                    }
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
-                        instructionsShown++;
-
-                        recentInstructions.Add(insn);
-                        if (recentInstructions.Count > MAX_RECENT_INSTRUCTIONS)
-                            recentInstructions.RemoveAt(0);
-
-                        byte[] instructionBytes = insn.Bytes;
-                        string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
-                        string opStr = insn.Operand ?? "";
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        // Отладка: показываем каждую инструкцию
-                        Debug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
-
-                        // Всегда собираем информацию, даже если потом остановимся
-                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                        TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                        // Проверяем, достигли ли мы целевого перехода
-                        if (insn.Address == jumpAddress && !jumpTaken)
-                        {
-                            Debug.WriteLine($"      Достигнут целевой переход по адресу 0x{insn.Address:X4}, переходим на 0x{alternativeStartAddress:X4}");
-                            jumpTaken = true;
-                            currentAddress = alternativeStartAddress;
-                            break;
-                        }
-
-                        // ========== ОБРАБОТКА ИНСТРУКЦИЙ ПЕРЕХОДА ==========
-
-                        // RET - возврат из подпрограммы
-                        if (IsReturnInstruction(mnemonicUpper))
-                        {
-                            if (returnAddressStack.Count > 0)
-                            {
-                                // Возвращаемся по адресу из стека
-                                uint returnAddress = returnAddressStack.Pop();
-                                Debug.WriteLine($"      RET на 0x{insn.Address:X4} - возврат в 0x{returnAddress:X4}");
-                                currentAddress = returnAddress;
-                                break;
-                            }
-                            else
-                            {
-                                // Если стек пуст, это конец всей цепочки вызовов
-                                Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути (стек пуст)");
-                                return;
-                            }
-                        }
-
-                        // INT - программное прерывание (может вести куда угодно, лучше остановиться)
-                        if (mnemonicUpper == "INT" || mnemonicUpper == "INT3")
-                        {
-                            Debug.WriteLine($"      INT на 0x{insn.Address:X4} - прерывание, конец пути");
-                            return;
-                        }
-
-                        // CALL - вызов подпрограммы
-                        if (mnemonicUpper.StartsWith("CALL"))
-                        {
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-
-                            if (callTarget < fileLength && callTarget != 0)
-                            {
-                                // Сохраняем адрес возврата (следующая инструкция после CALL)
-                                returnAddressStack.Push(nextAddress);
-
-                                Debug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
-
-                                // Анализируем подпрограмму
-                                if (!analyzedAddresses.Contains(callTarget))
-                                {
-                                    AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0, analyzedAddresses,
-                                        result, registerTracker, depth + 1, callDepth + 1);
-                                }
-
-                                // После возврата из подпрограммы продолжаем со следующей инструкции
-                                currentAddress = nextAddress;
-                                break;
-                            }
-                            else
-                            {
-                                // Если адрес некорректен, просто продолжаем
-                                currentAddress = nextAddress;
-                                break;
-                            }
-                        }
-
-                        // JMP - безусловный переход
-                        if (mnemonicUpper == "JMP" || mnemonicUpper == "JMPF" || mnemonicUpper == "JMPL" ||
-                            mnemonicUpper == "JMPE" || mnemonicUpper == "JMPI")
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-
-                            // JMP за пределы оверлея - НЕМЕДЛЕННОЕ ЗАВЕРШЕНИЕ
-                            if (jumpTarget >= fileLength)
-                            {
-                                Debug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
-                                return;
-                            }
-
-                            // JMP внутри оверлея
-                            if (jumpTarget != 0 && jumpTarget < fileLength)
-                            {
-                                Debug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-
-                            // Если не удалось определить целевой адрес, завершаем путь
-                            Debug.WriteLine($"      JMP с неизвестным адресом - конец пути");
-                            return;
-                        }
-
-                        // Дополнительная проверка по опкоду для JMP, если мнемоника не распозналась
-                        if (instructionBytes.Length >= 1 && instructionBytes[0] == 0xE9) // E9 - near JMP
-                        {
-                            if (instructionBytes.Length >= 3)
-                            {
-                                ushort jumpOffset = (ushort)(instructionBytes[1] | (instructionBytes[2] << 8));
-                                uint jumpTarget = (uint)(insn.Address + 3 + (short)jumpOffset);
-
-                                if (jumpTarget >= fileLength)
-                                {
-                                    Debug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
-                                    return;
-                                }
-
-                                if (jumpTarget < fileLength && jumpTarget != 0)
-                                {
-                                    Debug.WriteLine($"      JMP (по опкоду 0xE9) к 0x{jumpTarget:X4}");
-                                    currentAddress = jumpTarget;
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Обработка циклов (специфическая для Might and Magic)
-                        if ((mnemonicUpper == "JC" || mnemonicUpper == "JB") &&
-                            instructionBytes.Length >= 4 &&
-                            instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
-                            instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-
-                            if (jumpTarget < currentAddress)
-                            {
-                                if (!result.IsIndeterminateLoop)
-                                {
-                                    result.IsIndeterminateLoop = true;
-                                    result.IsInLoop = true;
-                                    result.LoopStartAddress = jumpTarget;
-                                    loopDetected = true;
-                                }
-
-                                loopIterationCount++;
-                                result.LoopIterationCount = loopIterationCount;
-
-                                string blValueStr = "unknown";
-                                if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
-                                {
-                                    blValueStr = $"0x{blValue:X2}";
-                                }
-
-                                Debug.WriteLine($"    ИТЕРАЦИЯ ЦИКЛА {loopIterationCount} по адресу 0x{insn.Address:X4} (BL={blValueStr})");
-
-                                if (loopIterationCount < MAX_LOOP_ITERATIONS)
-                                {
-                                    currentAddress = jumpTarget;
-                                    break;
-                                }
-                                else
-                                {
-                                    Debug.WriteLine($"    Достигнут лимит итераций цикла ({MAX_LOOP_ITERATIONS}), останавливаемся");
-                                    return;
-                                }
-                            }
-                        }
-
-                        // Обработка условных переходов
-                        else if (mnemonicUpper.StartsWith("J") &&
-                                 !mnemonicUpper.StartsWith("JMP") &&
-                                 !mnemonicUpper.StartsWith("JECXZ") &&
-                                 mnemonicUpper != "JCXZ")
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-
-                            // Проверяем, должно ли условие выполниться
-                            bool conditionMet = false;
-                            string conditionDesc = "";
-
-                            // Ищем предыдущую инструкцию CMP в recentInstructions
-                            for (int j = recentInstructions.Count - 2; j >= 0; j--)
-                            {
-                                var prevInsn = recentInstructions[j];
-                                if (prevInsn.Mnemonic.ToUpper() == "CMP")
-                                {
-                                    byte[] prevBytes = prevInsn.Bytes;
-
-                                    if (prevBytes.Length >= 2 && prevBytes[0] == 0x3C) // CMP AL, imm8
-                                    {
-                                        byte cmpValue = prevBytes[1];
-                                        if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
-                                        {
-                                            byte al = (byte)alValue;
-
-                                            switch (mnemonicUpper)
-                                            {
-                                                case "JE":
-                                                case "JZ":
-                                                    conditionMet = (al == cmpValue);
-                                                    conditionDesc = $"AL=0x{al:X2} == 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JNE":
-                                                case "JNZ":
-                                                    conditionMet = (al != cmpValue);
-                                                    conditionDesc = $"AL=0x{al:X2} != 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JB":
-                                                case "JC":
-                                                    conditionMet = (al < cmpValue);
-                                                    conditionDesc = $"AL=0x{al:X2} < 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JBE":
-                                                case "JNA":
-                                                    conditionMet = (al <= cmpValue);
-                                                    conditionDesc = $"AL=0x{al:X2} <= 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JA":
-                                                case "JNBE":
-                                                    conditionMet = (al > cmpValue);
-                                                    conditionDesc = $"AL=0x{al:X2} > 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JAE":
-                                                case "JNB":
-                                                case "JNC":
-                                                    conditionMet = (al >= cmpValue);
-                                                    conditionDesc = $"AL=0x{al:X2} >= 0x{cmpValue:X2}";
-                                                    break;
-                                            }
-                                        }
-                                    }
-                                    else if (prevBytes.Length >= 3 && prevBytes[0] == 0x80 && prevBytes[1] == 0xFB) // CMP BL, imm8
-                                    {
-                                        byte cmpValue = prevBytes[2];
-                                        if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
-                                        {
-                                            byte bl = (byte)blValue;
-
-                                            switch (mnemonicUpper)
-                                            {
-                                                case "JE":
-                                                case "JZ":
-                                                    conditionMet = (bl == cmpValue);
-                                                    conditionDesc = $"BL=0x{bl:X2} == 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JNE":
-                                                case "JNZ":
-                                                    conditionMet = (bl != cmpValue);
-                                                    conditionDesc = $"BL=0x{bl:X2} != 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JB":
-                                                case "JC":
-                                                    conditionMet = (bl < cmpValue);
-                                                    conditionDesc = $"BL=0x{bl:X2} < 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JBE":
-                                                case "JNA":
-                                                    conditionMet = (bl <= cmpValue);
-                                                    conditionDesc = $"BL=0x{bl:X2} <= 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JA":
-                                                case "JNBE":
-                                                    conditionMet = (bl > cmpValue);
-                                                    conditionDesc = $"BL=0x{bl:X2} > 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JAE":
-                                                case "JNB":
-                                                case "JNC":
-                                                    conditionMet = (bl >= cmpValue);
-                                                    conditionDesc = $"BL=0x{bl:X2} >= 0x{cmpValue:X2}";
-                                                    break;
-                                            }
-                                        }
-                                    }
-                                    else if (prevBytes.Length >= 3 && prevBytes[0] == 0x80 && prevBytes[1] == 0xF9) // CMP CL, imm8
-                                    {
-                                        byte cmpValue = prevBytes[2];
-                                        if (registerTracker.TryGetRegisterValue("CL", out ushort clValue))
-                                        {
-                                            byte cl = (byte)clValue;
-
-                                            switch (mnemonicUpper)
-                                            {
-                                                case "JE":
-                                                case "JZ":
-                                                    conditionMet = (cl == cmpValue);
-                                                    conditionDesc = $"CL=0x{cl:X2} == 0x{cmpValue:X2}";
-                                                    break;
-                                                case "JNE":
-                                                case "JNZ":
-                                                    conditionMet = (cl != cmpValue);
-                                                    conditionDesc = $"CL=0x{cl:X2} != 0x{cmpValue:X2}";
-                                                    break;
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-
-                            if (jumpTarget != 0 && jumpTarget < fileLength)
-                            {
-                                if (conditionMet)
-                                {
-                                    Debug.WriteLine($"      УСЛОВИЕ ВЫПОЛНЕНО ({conditionDesc}) - переходим по адресу 0x{jumpTarget:X4}");
-                                    currentAddress = jumpTarget;
-                                    break;
-                                }
-                                else
-                                {
-                                    Debug.WriteLine($"      Условие НЕ выполнено ({conditionDesc}), продолжаем линейно по адресу 0x{nextAddress:X4}");
-                                    currentAddress = nextAddress;
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                // Если jumpTarget некорректен, просто продолжаем линейно
-                                currentAddress = nextAddress;
-                                break;
-                            }
-                        }
-
-                        // Все остальные инструкции - просто продолжаем линейно
-                        else
-                        {
-                            currentAddress = nextAddress;
-                        }
-                    }
-                }
-
-                if (loopDetected)
-                {
-                    Debug.WriteLine($"    ЦИКЛ ЗАВЕРШЁН: всего итераций = {loopIterationCount}");
-                }
-            }
-        }
-
-        private void AnalyzeCallsWithNestedAlternativeBranch(BinaryReader br, uint patchAddress,
-            uint jumpAddress, uint alternativeStartAddress, HashSet<uint> analyzedAddresses,
-            PathAnalysisResult result, RegisterTracker registerTracker, int depth, HashSet<string> alreadyAnalyzedConditions = null)
-        {
-            if (depth > 5) return;
-
-            if (alreadyAnalyzedConditions == null)
-                alreadyAnalyzedConditions = new HashSet<string>();
-
-            long fileLength = br.BaseStream.Length;
-
-            string pathKey = $"{patchAddress:X4}_{jumpAddress:X4}_{alternativeStartAddress:X4}_{depth}";
-            if (alreadyAnalyzedConditions.Contains(pathKey)) return;
-            alreadyAnalyzedConditions.Add(pathKey);
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                uint currentAddress = patchAddress;
-                bool reachedJumpAddress = false;
-                int maxSteps = 100;
-                int stepsTaken = 0;
-
-                while (currentAddress < jumpAddress && currentAddress < fileLength && stepsTaken < maxSteps)
-                {
-                    stepsTaken++;
-
-                    string positionKey = $"{currentAddress:X4}_{jumpAddress:X4}";
-                    if (alreadyAnalyzedConditions.Contains(positionKey)) break;
-                    alreadyAnalyzedConditions.Add(positionKey);
-
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    bool processedInstruction = false;
-                    foreach (var insn in instructions)
-                    {
-                        if ((uint)insn.Address >= jumpAddress)
-                        {
-                            reachedJumpAddress = true;
-                            break;
-                        }
-
-                        string mnemonic = insn.Mnemonic.ToUpper();
-
-                        if (mnemonic.StartsWith("CALL"))
-                        {
-                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                            FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                            TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
-                            {
-                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
-                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
-                            }
-
-                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            processedInstruction = true;
-                            break;
-                        }
-                        else if (mnemonic.StartsWith("J") && !mnemonic.StartsWith("JMP") && !mnemonic.StartsWith("JECXZ"))
-                        {
-                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                            FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                            TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                            uint target = GetInstructionTargetAddress(insn, fileLength);
-
-                            if (alreadyAnalyzedConditions.Contains($"{target:X4}_visited"))
-                            {
-                                currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            }
-                            else
-                            {
-                                alreadyAnalyzedConditions.Add($"{target:X4}_visited");
-                                currentAddress = target;
-                            }
-
-                            processedInstruction = true;
-                            break;
-                        }
-                        else
-                        {
-                            FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                            FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                            FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                            TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            processedInstruction = true;
-                            break;
-                        }
-                    }
-
-                    if (!processedInstruction) break;
-                    if (reachedJumpAddress) break;
-                }
-
-                AnalyzeSpecificJumpExecutionWithFullCollection(br, jumpAddress, alternativeStartAddress,
-                    analyzedAddresses, result, registerTracker, depth, "");
-            }
-        }
-
-        private void AnalyzeSpecificJumpExecutionWithFullCollection(BinaryReader br, uint jumpAddress, uint alternativeStartAddress,
-            HashSet<uint> analyzedAddresses, PathAnalysisResult result, RegisterTracker registerTracker, int depth, string prefix)
-        {
-            if (analyzedAddresses.Contains(jumpAddress)) return;
-            analyzedAddresses.Add(jumpAddress);
-
-            long fileLength = br.BaseStream.Length;
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                uint currentAddress = jumpAddress;
-                const int MAX_INSTRUCTIONS = 50;
-                int instructionsShown = 0;
-                bool jumpExecuted = false;
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
-                {
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
-                        instructionsShown++;
-
-                        FindTextsInInstruction(insn, br, registerTracker, depth, result.FoundTexts);
-                        FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                        FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
-                        TrackRegisterOperations(insn, br, registerTracker, depth);
-
-                        string mnemonic = insn.Mnemonic.ToUpper();
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        if (insn.Address == jumpAddress && !jumpExecuted)
-                        {
-                            jumpExecuted = true;
-                            currentAddress = alternativeStartAddress;
-                            break;
-                        }
-
-                        if (IsReturnInstruction(mnemonic)) return;
-
-                        if (mnemonic == "JMP")
-                        {
-                            uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (jumpTarget >= fileLength) return;
-                            if (jumpTarget < fileLength && jumpTarget != 0)
-                            {
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-                        }
-
-                        if (mnemonic.StartsWith("CALL"))
-                        {
-                            uint callTarget = GetInstructionTargetAddress(insn, fileLength);
-                            if (callTarget < fileLength && callTarget != 0 && !analyzedAddresses.Contains(callTarget))
-                            {
-                                AnalyzeCallsWithAlternativeBranch(br, callTarget, 0, 0,
-                                    analyzedAddresses, result, registerTracker, depth + 1, 0);
-                            }
-                        }
-
-                        currentAddress = nextAddress;
-                    }
-                }
-            }
-        }
-
-        private void ShowLinearDisassemblyAndCollectAlternativePaths(BinaryReader br, uint startAddress,
-            List<AlternativePath> alternativePaths, int objIndex)
-        {
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                long fileLength = br.BaseStream.Length;
-                uint currentAddress = startAddress;
-                int instructionsShown = 0;
-                const int MAX_INSTRUCTIONS = 50;
-
-                var processedAddresses = new Dictionary<uint, int>();
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
-                {
-                    if (processedAddresses.ContainsKey(currentAddress))
-                    {
-                        processedAddresses[currentAddress]++;
-                        if (processedAddresses[currentAddress] > 2) break;
-                    }
-                    else
-                    {
-                        processedAddresses[currentAddress] = 1;
-                    }
-
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
-                        instructionsShown++;
-
-                        string mnemonicUpper = insn.Mnemonic.ToUpper();
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        if (mnemonicUpper.StartsWith("J") &&
-                            !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ"))
-                        {
-                            uint jumpTarget = GetJumpTarget(insn);
-                            if (jumpTarget != 0 && jumpTarget < fileLength)
-                            {
-                                var altPath = new AlternativePath
-                                {
-                                    ObjectIndex = objIndex,
-                                    Address = (uint)insn.Address,
-                                    Condition = $"{insn.Mnemonic} {insn.Operand}",
-                                    TargetAddress = jumpTarget,
-                                    Analyzed = false
-                                };
-
-                                bool alreadyExists = alternativePaths.Any(p =>
-                                    p.Address == altPath.Address && p.TargetAddress == altPath.TargetAddress);
-
-                                if (!alreadyExists)
-                                {
-                                    alternativePaths.Add(altPath);
-                                }
-                            }
-                        }
-
-                        if (IsReturnInstruction(mnemonicUpper)) return;
-
-                        if (mnemonicUpper == "JMP")
-                        {
-                            uint jumpTarget = GetJumpTarget(insn);
-                            if (jumpTarget >= fileLength) return;
-
-                            if (jumpTarget < fileLength && jumpTarget != 0)
-                            {
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-                        }
-                        else
-                        {
-                            currentAddress = nextAddress;
-                        }
-                    }
-                }
-            }
-        }
-
-        private void ShowLinearDisassemblyWithAlternativeBranch(BinaryReader br, uint patchAddress,
-            uint jumpAddress, uint alternativeStartAddress, List<AlternativePath> localAlternativePaths,
-            int objIndex, int depth = 0, bool isMainAlternativeAnalysis = false)
-        {
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                long fileLength = br.BaseStream.Length;
-                uint currentAddress = patchAddress;
-                int instructionsShown = 0;
-                const int MAX_INSTRUCTIONS = 100;
-
-                var processedAddresses = new Dictionary<uint, int>();
-                bool jumpTaken = false;
-                bool shouldStop = false;
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS && !shouldStop)
-                {
-                    if (processedAddresses.ContainsKey(currentAddress))
-                    {
-                        processedAddresses[currentAddress]++;
-                        if (processedAddresses[currentAddress] > 3) break;
-                    }
-                    else
-                    {
-                        processedAddresses[currentAddress] = 1;
-                    }
-
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS || shouldStop) break;
-                        instructionsShown++;
-
-                        string mnemonicUpper = insn.Mnemonic.ToUpper();
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        if (insn.Address == jumpAddress && !jumpTaken)
-                        {
-                            jumpTaken = true;
-                            currentAddress = alternativeStartAddress;
-                            break;
-                        }
-
-                        if (jumpTaken && mnemonicUpper.StartsWith("J") &&
-                            !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ") &&
-                            insn.Address != jumpAddress)
-                        {
-                            uint jumpTarget = GetJumpTarget(insn);
-
-                            if (jumpTarget != 0 && jumpTarget < fileLength)
-                            {
-                                var altPath = new AlternativePath
-                                {
-                                    ObjectIndex = objIndex,
-                                    Address = (uint)insn.Address,
-                                    Condition = $"{insn.Mnemonic} {insn.Operand} (внутри альтернативного пути)",
-                                    TargetAddress = jumpTarget,
-                                    Analyzed = false
-                                };
-
-                                if (isMainAlternativeAnalysis)
-                                {
-                                    bool alreadyExists = localAlternativePaths.Any(p =>
-                                        p.Address == altPath.Address && p.TargetAddress == altPath.TargetAddress);
-
-                                    if (!alreadyExists)
-                                    {
-                                        localAlternativePaths.Add(altPath);
-                                    }
-                                }
-                                else
-                                {
-                                    localAlternativePaths.Add(altPath);
-                                }
-                            }
-                        }
-
-                        if (IsReturnInstruction(mnemonicUpper))
-                        {
-                            shouldStop = true;
-                            break;
-                        }
-
-                        if (mnemonicUpper == "JMP")
-                        {
-                            uint jumpTarget = GetJumpTarget(insn);
-
-                            if (processedAddresses.ContainsKey(jumpTarget))
-                            {
-                                if (jumpTarget >= patchAddress && jumpTarget < currentAddress)
-                                {
-                                    shouldStop = true;
-                                    break;
-                                }
-                            }
-
-                            if (jumpTarget >= fileLength)
-                            {
-                                shouldStop = true;
-                                break;
-                            }
-
-                            if (jumpTarget < fileLength && jumpTarget != 0)
-                            {
-                                currentAddress = jumpTarget;
-                                break;
-                            }
-                        }
-                        else
-                        {
-                            currentAddress = nextAddress;
-                        }
-                    }
-                }
-            }
         }
 
         private List<X86Instruction> ReconstructExecutionPath(BinaryReader br, uint startAddress)
@@ -2775,10 +2368,91 @@ namespace MMMapEditor
             return path;
         }
 
-        private bool IsNestedPath(uint jumpAddress, uint alternativeStartAddress)
+        private void ShowLinearDisassemblyAndCollectAlternativePaths(BinaryReader br, uint startAddress,
+            List<AlternativePath> alternativePaths, int objIndex)
         {
-            return jumpAddress != 0 && alternativeStartAddress > jumpAddress;
+            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            {
+                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
+
+                long fileLength = br.BaseStream.Length;
+                uint currentAddress = startAddress;
+                int instructionsShown = 0;
+                const int MAX_INSTRUCTIONS = 50;
+
+                var processedAddresses = new Dictionary<uint, int>();
+
+                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
+                {
+                    if (processedAddresses.ContainsKey(currentAddress))
+                    {
+                        processedAddresses[currentAddress]++;
+                        if (processedAddresses[currentAddress] > 2) break;
+                    }
+                    else
+                    {
+                        processedAddresses[currentAddress] = 1;
+                    }
+
+                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
+                    if (instructions == null || instructions.Length == 0) break;
+
+                    foreach (var insn in instructions)
+                    {
+                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
+                        instructionsShown++;
+
+                        string mnemonicUpper = insn.Mnemonic.ToUpper();
+                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
+
+                        if (mnemonicUpper.StartsWith("J") &&
+                            !mnemonicUpper.StartsWith("JMP") && !mnemonicUpper.StartsWith("JECXZ"))
+                        {
+                            uint jumpTarget = GetJumpTarget(insn);
+                            if (jumpTarget != 0 && jumpTarget < fileLength)
+                            {
+                                var altPath = new AlternativePath
+                                {
+                                    ObjectIndex = objIndex,
+                                    Address = (uint)insn.Address,
+                                    Condition = $"{insn.Mnemonic} {insn.Operand}",
+                                    TargetAddress = jumpTarget,
+                                    Analyzed = false
+                                };
+
+                                bool alreadyExists = alternativePaths.Any(p =>
+                                    p.Address == altPath.Address && p.TargetAddress == altPath.TargetAddress);
+
+                                if (!alreadyExists)
+                                {
+                                    alternativePaths.Add(altPath);
+                                }
+                            }
+                        }
+
+                        if (IsReturnInstruction(mnemonicUpper)) return;
+
+                        if (mnemonicUpper == "JMP")
+                        {
+                            uint jumpTarget = GetJumpTarget(insn);
+                            if (jumpTarget >= fileLength) return;
+
+                            if (jumpTarget < fileLength && jumpTarget != 0)
+                            {
+                                currentAddress = jumpTarget;
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            currentAddress = nextAddress;
+                        }
+                    }
+                }
+            }
         }
+
+        // ========== МЕТОДЫ ПОИСКА ИНФОРМАЦИИ В ИНСТРУКЦИЯХ ==========
 
         private void FindTextsInInstruction(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
             int depth, HashSet<string> output)
@@ -2852,22 +2526,6 @@ namespace MMMapEditor
                     isTextFound = true;
                     textFound = text;
                     sourceType = "MOV BP, imm16";
-                }
-            }
-
-            // Диагностика для чужих текстов
-            if (isTextFound && output.Count > 0)
-            {
-                if (textFound.Contains("STEP UP TO THE BAR") ||
-                    textFound.Contains("STAIRS GOING DOWN") ||
-                    textFound.Contains("SEVERAL FAT CLERICS") ||
-                    textFound.Contains("THREE HUGE ARMOR") ||
-                    textFound.Contains("POOF"))
-                {
-                    Debug.WriteLine($"      *** НАЙДЕН ТЕКСТ ДЛЯ ДРУГОЙ КЛЕТКИ ***");
-                    Debug.WriteLine($"        Адрес инструкции: 0x{address:X4}");
-                    Debug.WriteLine($"        Источник: {sourceType}");
-                    Debug.WriteLine($"        Текст: {textFound}");
                 }
             }
         }
@@ -2977,7 +2635,6 @@ namespace MMMapEditor
             string mnemonicUpper = insn.Mnemonic.ToUpper();
             long fileLength = br.BaseStream.Length;
 
-            // Обнаружение цикла
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
                 instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
@@ -2998,7 +2655,6 @@ namespace MMMapEditor
                 Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}");
             }
 
-            // Загрузка из таблиц CDA9+ / CDB1+
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x8A &&
                 instructionBytes[1] == 0x87 &&
@@ -3126,7 +2782,6 @@ namespace MMMapEditor
                 }
             }
 
-            // Полностью определённые битвы
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x88 &&
                 instructionBytes[1] == 0x87 &&
@@ -3788,7 +3443,6 @@ namespace MMMapEditor
                 ushort addr = BitConverter.ToUInt16(instructionBytes, 2);
                 if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
                 {
-                    // Диагностика для сравнений в общем коде
                     if (address >= 0x0210 && address <= 0x02F0)
                     {
                         Debug.WriteLine($"      *** СРАВНЕНИЕ В ОБЩЕМ КОДЕ ***");
@@ -3993,775 +3647,6 @@ namespace MMMapEditor
             }
 
             #endregion
-        }
-
-        // ========== МЕТОДЫ ДЛЯ АНАЛИЗА МАКРОСОВ ==========
-
-        private List<X86Instruction> DisassembleAll(BinaryReader br)
-        {
-            var instructions = new List<X86Instruction>();
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                long fileLength = br.BaseStream.Length;
-                uint currentAddress = 0;
-
-                while (currentAddress < fileLength)
-                {
-                    var chunk = ReadCodeBlock(br, currentAddress, out var disassembled);
-                    if (disassembled == null || disassembled.Length == 0)
-                    {
-                        currentAddress++;
-                        continue;
-                    }
-
-                    instructions.AddRange(disassembled);
-                    currentAddress = (uint)(disassembled.Last().Address + disassembled.Last().Bytes.Length);
-                }
-            }
-
-            Debug.WriteLine($"Дизассемблировано инструкций: {instructions.Count}");
-            return instructions;
-        }
-
-        private List<(uint CompareAddress, ushort MemAddr, byte Value, uint JumpTarget, MacroExecutionResult MacroResult)>
-    FindAllSignificantMacros(BinaryReader br, List<X86Instruction> allInstructions)
-        {
-            var significantMacros = new List<(uint, ushort, byte, uint, MacroExecutionResult)>();
-
-            for (int i = 0; i < allInstructions.Count; i++)
-            {
-                var insn = allInstructions[i];
-
-                // Ищем сравнения с непосредственным значением
-                if (IsCompareWithImmediate(insn, out byte immValue, out string reg))
-                {
-                    // Определяем, откуда взялось значение в регистре
-                    ushort? sourceAddr = FindMemorySourceForRegister(allInstructions, i, reg);
-                    if (!sourceAddr.HasValue) continue;
-
-                    // Проверяем, что это один из наших адресов
-                    if (sourceAddr.Value != 0x3C38 && sourceAddr.Value != 0x3C39 && sourceAddr.Value != 0x3C3A)
-                        continue;
-
-                    // Смотрим следующую инструкцию - должен быть условный переход
-                    if (i + 1 >= allInstructions.Count) continue;
-
-                    var nextInsn = allInstructions[i + 1];
-                    if (!IsConditionalJump(nextInsn, out uint jumpTarget)) continue;
-
-                    Debug.WriteLine($"  Анализ макроса: 0x{insn.Address:X4} [{sourceAddr.Value:X4}]={immValue} -> 0x{jumpTarget:X4}");
-
-                    // Эмулируем ВЕСЬ макрос, начиная с адреса перехода
-                    var macroResult = EmulateMacro(br, jumpTarget, sourceAddr.Value, immValue);
-
-                    // Проверяем, есть ли значимый код в любой из веток
-                    bool hasSignificantCode = macroResult.CommonResult.HasSignificantCode;
-                    int totalTexts = macroResult.CommonResult.Texts.Count;
-                    int totalMonsters = macroResult.CommonResult.BattleMonsters.Count;
-
-                    // Проходим по всем веткам и собираем результаты
-                    foreach (var branch in macroResult.BranchResults)
-                    {
-                        if (branch.Value.HasSignificantCode)
-                        {
-                            hasSignificantCode = true;
-                            totalTexts += branch.Value.Texts.Count;
-                            totalMonsters += branch.Value.BattleMonsters.Count;
-
-                            // Добавляем результат ветки к общему результату
-                            macroResult.CommonResult = MergeResults(macroResult.CommonResult, branch.Value);
-
-                            Debug.WriteLine($"    Ветка {branch.Key} имеет значимый код: {branch.Value.Texts.Count} текстов, {branch.Value.BattleMonsters.Count} монстров");
-                        }
-                    }
-
-                    // Убеждаемся, что CommonResult.HasSignificantCode отражает наличие значимого кода
-                    if (hasSignificantCode)
-                    {
-                        macroResult.CommonResult.HasSignificantCode = true;
-                        significantMacros.Add(((uint)insn.Address, sourceAddr.Value, immValue, jumpTarget, macroResult));
-                        Debug.WriteLine($"    -> ЗНАЧИМЫЙ МАКРОС (всего {totalTexts} текстов, {totalMonsters} монстров)");
-                    }
-                    else
-                    {
-                        Debug.WriteLine($"    -> незначимый макрос");
-                    }
-                }
-            }
-
-            return significantMacros;
-        }
-
-        private MacroExecutionResult EmulateMacro(BinaryReader br, uint startAddress, ushort memAddr, byte compareValue)
-        {
-            var macroResult = new MacroExecutionResult();
-
-            // Находим все возможные пути выполнения
-            var paths = FindAllExecutionPaths(br, startAddress);
-
-            // Группируем пути по целевому адресу
-            var pathsByTarget = paths.GroupBy(p => p.StartAddress).ToDictionary(g => g.Key, g => g.ToList());
-
-            // Для каждого уникального целевого адреса эмулируем путь один раз
-            foreach (var targetAddr in pathsByTarget.Keys)
-            {
-                var path = pathsByTarget[targetAddr].First();
-
-                // Определяем все условия, которые ведут на этот адрес
-                var conditions = pathsByTarget[targetAddr]
-                    .Where(p => p.Condition != null)
-                    .Select(p => DeterminePathCondition(p, compareValue, memAddr, p.SourceAddress))
-                    .Where(c => c != null)
-                    .ToList();
-
-                // Эмулируем выполнение пути
-                var state = new ExecutionState();
-                var result = ExecutePath(br, targetAddr, state);
-
-                // Если есть условия, сохраняем результат для каждого условия
-                if (conditions.Count > 0)
-                {
-                    foreach (var condition in conditions)
-                    {
-                        macroResult.BranchResults[condition] = result;
-                        Debug.WriteLine($"      Ветка {condition} -> {result.Texts.Count} текстов, {result.BattleMonsters.Count} монстров");
-                    }
-                }
-                else
-                {
-                    // Если нет условий, добавляем к общему результату
-                    macroResult.CommonResult = MergeResults(macroResult.CommonResult, result);
-                }
-            }
-
-            // Также эмулируем основной путь (линейное выполнение от startAddress)
-            var mainState = new ExecutionState();
-            var mainResult = ExecutePath(br, startAddress, mainState);
-            macroResult.CommonResult = MergeResults(macroResult.CommonResult, mainResult);
-
-            return macroResult;
-        }
-
-        private ConditionRange DeterminePathCondition(ExecutionPath path, byte compareValue, ushort memAddr, uint sourceAddress)
-        {
-            if (path.Condition == null) return null;
-
-            string mnemonic = path.Condition.Mnemonic.ToUpper();
-
-            // Для данного конкретного случая определяем точные диапазоны по адресам
-            if (sourceAddress == 0x02F9) // JZ после CMP AL, 0x3
-            {
-                return new ConditionRange { Min = 3, Max = 3, IsX = false }; // только X=3
-            }
-            else if (sourceAddress == 0x02FB) // JC после CMP AL, 0x3
-            {
-                return new ConditionRange { Min = 0, Max = 2, IsX = false }; // X < 3
-            }
-            else if (sourceAddress == 0x02FF) // JNC после CMP AL, 0x9
-            {
-                return new ConditionRange { Min = 9, Max = 255, IsX = false }; // X >= 9
-            }
-
-            // Базовая логика на основе мнемоники для остальных случаев
-            switch (mnemonic)
-            {
-                case "JZ":
-                case "JE":
-                    return new ConditionRange { Min = compareValue, Max = compareValue, IsX = false };
-
-                case "JNZ":
-                case "JNE":
-                    return new ConditionRange { Min = 0, Max = 255, IsX = false };
-
-                case "JB":
-                case "JNAE":
-                case "JC":
-                    return new ConditionRange { Min = 0, Max = (byte)(compareValue - 1), IsX = false };
-
-                case "JBE":
-                case "JNA":
-                    return new ConditionRange { Min = 0, Max = compareValue, IsX = false };
-
-                case "JA":
-                case "JNBE":
-                    return new ConditionRange { Min = (byte)(compareValue + 1), Max = 255, IsX = false };
-
-                case "JAE":
-                case "JNB":
-                case "JNC":
-                    return new ConditionRange { Min = compareValue, Max = 255, IsX = false };
-
-                default:
-                    return null;
-            }
-        }
-
-        private List<ExecutionPath> FindAllExecutionPaths(BinaryReader br, uint startAddress)
-        {
-            var paths = new List<ExecutionPath>();
-            var visitedAddresses = new HashSet<uint>();
-            var workList = new Queue<uint>();
-            var pathSources = new Dictionary<uint, uint>(); // адрес -> адрес источника (условного перехода)
-
-            workList.Enqueue(startAddress);
-            pathSources[startAddress] = 0;
-
-            while (workList.Count > 0)
-            {
-                uint currentAddress = workList.Dequeue();
-
-                if (visitedAddresses.Contains(currentAddress))
-                    continue;
-
-                using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-                {
-                    capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                    uint addr = currentAddress;
-                    while (addr < br.BaseStream.Length)
-                    {
-                        if (visitedAddresses.Contains(addr))
-                            break;
-                        visitedAddresses.Add(addr);
-
-                        var chunk = ReadCodeBlock(br, addr, out var instructions);
-                        if (instructions == null || instructions.Length == 0)
-                        {
-                            addr++;
-                            continue;
-                        }
-
-                        foreach (var insn in instructions)
-                        {
-                            string mnemonic = insn.Mnemonic.ToUpper();
-
-                            // Нашли условный переход - добавляем целевую ветку в очередь
-                            if (IsConditionalJump(insn, out uint jumpTarget))
-                            {
-                                if (!visitedAddresses.Contains(jumpTarget) && !workList.Contains(jumpTarget))
-                                {
-                                    workList.Enqueue(jumpTarget);
-                                    pathSources[jumpTarget] = (uint)insn.Address;
-                                    paths.Add(new ExecutionPath
-                                    {
-                                        StartAddress = jumpTarget,
-                                        Condition = insn,
-                                        SourceAddress = (uint)insn.Address
-                                    });
-                                }
-
-                                // Продолжаем линейно
-                                addr = (uint)(insn.Address + insn.Bytes.Length);
-                                break;
-                            }
-
-                            // Безусловный переход
-                            if (mnemonic == "JMP")
-                            {
-                                uint target = GetInstructionTargetAddress(insn, br.BaseStream.Length);
-                                if (target < br.BaseStream.Length)
-                                {
-                                    if (!visitedAddresses.Contains(target) && !workList.Contains(target))
-                                    {
-                                        workList.Enqueue(target);
-                                        pathSources[target] = (uint)insn.Address;
-                                        paths.Add(new ExecutionPath
-                                        {
-                                            StartAddress = target,
-                                            Condition = null,
-                                            SourceAddress = (uint)insn.Address
-                                        });
-                                    }
-                                }
-                                addr = (uint)(insn.Address + insn.Bytes.Length);
-                                break;
-                            }
-
-                            // RET - конец пути
-                            if (IsReturnInstruction(mnemonic))
-                            {
-                                addr = (uint)(insn.Address + insn.Bytes.Length);
-                                break;
-                            }
-
-                            addr = (uint)(insn.Address + insn.Bytes.Length);
-                        }
-                    }
-                }
-            }
-
-            return paths;
-        }
-
-        private ConditionRange DeterminePathCondition(ExecutionPath path, byte compareValue, ushort memAddr)
-        {
-            if (path.Condition == null) return null;
-
-            string mnemonic = path.Condition.Mnemonic.ToUpper();
-            uint sourceAddr = path.SourceAddress;
-
-            // Анализируем контекст вокруг условного перехода
-            // Для данного конкретного случая:
-            // 0x02F7: CMP AL, 0x3
-            // 0x02F9: JZ 0x0348  (ветка для X=3)
-            // 0x02FB: JC 0x0342  (ветка для X<3)
-            // 0x02FD: CMP AL, 0x9
-            // 0x02FF: JNC 0x0348 (ветка для X>=9)
-
-            // Определяем, какое это сравнение по счету
-            if (sourceAddr == 0x02F9) // JZ после первого сравнения
-            {
-                return new ConditionRange { Min = compareValue, Max = compareValue };
-            }
-            else if (sourceAddr == 0x02FB) // JC после первого сравнения
-            {
-                return new ConditionRange { Min = 0, Max = (byte)(compareValue - 1) };
-            }
-            else if (sourceAddr == 0x02FF) // JNC после второго сравнения
-            {
-                return new ConditionRange { Min = 9, Max = 255 }; // для X >= 9
-            }
-
-            // Базовая логика на основе мнемоники
-            switch (mnemonic)
-            {
-                case "JZ":
-                case "JE":
-                    return new ConditionRange { Min = compareValue, Max = compareValue };
-
-                case "JNZ":
-                case "JNE":
-                    return new ConditionRange { Min = 0, Max = 255 };
-
-                case "JB":
-                case "JNAE":
-                case "JC":
-                    return new ConditionRange { Min = 0, Max = (byte)(compareValue - 1) };
-
-                case "JBE":
-                case "JNA":
-                    return new ConditionRange { Min = 0, Max = compareValue };
-
-                case "JA":
-                case "JNBE":
-                    return new ConditionRange { Min = (byte)(compareValue + 1), Max = 255 };
-
-                case "JAE":
-                case "JNB":
-                case "JNC":
-                    return new ConditionRange { Min = compareValue, Max = 255 };
-
-                default:
-                    return null;
-            }
-        }
-
-        private CodeEmulationResult ExecutePath(BinaryReader br, uint startAddress, ExecutionState state)
-        {
-            var result = new CodeEmulationResult();
-            bool hasSignificantCodeInPath = false;
-            int instructionCount = 0;
-
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                uint currentAddress = startAddress;
-                int maxInstructions = 1000;
-                int insnCount = 0;
-
-                while (currentAddress < br.BaseStream.Length && insnCount < maxInstructions)
-                {
-                    if (state.VisitedAddresses.Contains(currentAddress))
-                        break;
-                    state.VisitedAddresses.Add(currentAddress);
-
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0)
-                    {
-                        currentAddress++;
-                        continue;
-                    }
-
-                    foreach (var insn in instructions)
-                    {
-                        insnCount++;
-                        instructionCount++;
-
-                        // Любая инструкция - это уже значимый код
-                        hasSignificantCodeInPath = true;
-
-                        // Отслеживаем регистры
-                        TrackRegisters(insn, state.Registers);
-
-                        // Извлекаем действия
-                        if (IsTextStore(insn, state.Registers, out string text))
-                        {
-                            result.Texts.Add(text);
-                            Debug.WriteLine($"      Текст: {text}");
-                        }
-
-                        if (IsMonsterStatChange(insn, state.Registers, out byte? power, out byte? level))
-                        {
-                            if (power.HasValue)
-                            {
-                                result.MonsterPower = power;
-                                Debug.WriteLine($"      Сила монстров: {power}");
-                            }
-                            if (level.HasValue)
-                            {
-                                result.MonsterLevel = level;
-                                Debug.WriteLine($"      Уровень монстров: {level}");
-                            }
-                        }
-
-                        if (IsBattleMonsterStore(insn, state.Registers, out int index, out byte val1, out byte val2, out bool isIndeterminate))
-                        {
-                            result.BattleMonsters.Add((index, val1, val2, isIndeterminate));
-                            Debug.WriteLine($"      Монстр: index={index}, val1={val1}, val2={val2}, indeterminate={isIndeterminate}");
-                        }
-
-                        if (IsDirectionByteStore(insn, state.Registers, out byte dirByte))
-                        {
-                            result.DirectionByte = dirByte;
-                            Debug.WriteLine($"      DirectionByte: 0x{dirByte:X2}");
-                        }
-
-                        string mnemonic = insn.Mnemonic.ToUpper();
-
-                        // RET - конец пути
-                        if (IsReturnInstruction(mnemonic))
-                        {
-                            Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
-                            result.HasSignificantCode = hasSignificantCodeInPath;
-                            return result;
-                        }
-
-                        // CALL - игнорируем, продолжаем после возврата
-                        if (mnemonic.StartsWith("CALL"))
-                        {
-                            uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
-                            Debug.WriteLine($"      CALL 0x{callTarget:X4} - игнорируем");
-                            currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                            break;
-                        }
-
-                        // JMP
-                        if (mnemonic == "JMP")
-                        {
-                            uint target = GetInstructionTargetAddress(insn, br.BaseStream.Length);
-
-                            // JMP за пределы оверлея - конец пути
-                            if (target >= br.BaseStream.Length)
-                            {
-                                Debug.WriteLine($"      JMP за пределы оверлея (0x{target:X4}) - конец пути");
-                                result.HasSignificantCode = hasSignificantCodeInPath;
-                                return result;
-                            }
-
-                            // JMP внутри оверлея - продолжаем по целевому адресу
-                            Debug.WriteLine($"      JMP to 0x{target:X4}");
-                            currentAddress = target;
-                            break;
-                        }
-
-                        // Условные переходы - не следуем по ним, продолжаем линейно
-                        if (mnemonic.StartsWith("J") && !mnemonic.StartsWith("JMP") && !mnemonic.StartsWith("JECXZ"))
-                        {
-                            // Просто продолжаем линейно
-                        }
-
-                        currentAddress = (uint)(insn.Address + insn.Bytes.Length);
-                    }
-                }
-
-                // Если дошли до конца оверлея
-                if (currentAddress >= br.BaseStream.Length)
-                {
-                    Debug.WriteLine($"      Достигнут конец оверлея - конец пути");
-                }
-            }
-
-            result.HasSignificantCode = hasSignificantCodeInPath && instructionCount > 0;
-            return result;
-        }
-
-        private JumpCondition DetermineJumpCondition(X86Instruction insn)
-        {
-            string mnemonic = insn.Mnemonic.ToUpper();
-
-            // Пытаемся найти предыдущую инструкцию CMP
-            // В реальном коде нужно анализировать контекст
-
-            return new JumpCondition
-            {
-                Type = mnemonic,
-                Target = GetInstructionTargetAddress(insn, 0xFFFF)
-            };
-        }
-
-        private CodeEmulationResult MergeResults(CodeEmulationResult r1, CodeEmulationResult r2)
-        {
-            if (r2 == null) return r1;
-            if (r1 == null) return r2;
-
-            var merged = new CodeEmulationResult();
-
-            // Объединяем тексты
-            foreach (var text in r1.Texts) merged.Texts.Add(text);
-            foreach (var text in r2.Texts) merged.Texts.Add(text);
-
-            // Берем максимальные значения силы/уровня
-            if (r1.MonsterPower.HasValue || r2.MonsterPower.HasValue)
-                merged.MonsterPower = Math.Max(r1.MonsterPower ?? 0, r2.MonsterPower ?? 0);
-
-            if (r1.MonsterLevel.HasValue || r2.MonsterLevel.HasValue)
-                merged.MonsterLevel = Math.Max(r1.MonsterLevel ?? 0, r2.MonsterLevel ?? 0);
-
-            // Объединяем монстров
-            foreach (var m in r1.BattleMonsters) merged.BattleMonsters.Add(m);
-            foreach (var m in r2.BattleMonsters) merged.BattleMonsters.Add(m);
-
-            // OR для DirectionByte
-            merged.DirectionByte = (byte)(r1.DirectionByte | r2.DirectionByte);
-
-            merged.HasSignificantCode = r1.HasSignificantCode || r2.HasSignificantCode;
-
-            return merged;
-        }
-
-        private bool IsCompareWithImmediate(X86Instruction insn, out byte immValue, out string reg)
-        {
-            immValue = 0;
-            reg = "";
-
-            byte[] bytes = insn.Bytes;
-
-            // CMP AL, imm8 (3C imm)
-            if (bytes.Length >= 2 && bytes[0] == 0x3C)
-            {
-                immValue = bytes[1];
-                reg = "AL";
-                return true;
-            }
-
-            // CMP CL, imm8 (80 F9 imm)
-            if (bytes.Length >= 3 && bytes[0] == 0x80 && bytes[1] == 0xF9)
-            {
-                immValue = bytes[2];
-                reg = "CL";
-                return true;
-            }
-
-            // CMP DL, imm8 (80 FA imm)
-            if (bytes.Length >= 3 && bytes[0] == 0x80 && bytes[1] == 0xFA)
-            {
-                immValue = bytes[2];
-                reg = "DL";
-                return true;
-            }
-
-            // CMP BL, imm8 (80 FB imm)
-            if (bytes.Length >= 3 && bytes[0] == 0x80 && bytes[1] == 0xFB)
-            {
-                immValue = bytes[2];
-                reg = "BL";
-                return true;
-            }
-
-            return false;
-        }
-
-        private ushort? FindMemorySourceForRegister(List<X86Instruction> allInstructions, int currentIndex, string reg)
-        {
-            // Ищем максимум 20 инструкций назад
-            int start = Math.Max(0, currentIndex - 20);
-
-            for (int i = currentIndex - 1; i >= start; i--)
-            {
-                var insn = allInstructions[i];
-                byte[] bytes = insn.Bytes;
-
-                // MOV reg, [addr]
-                if (reg == "AL" && bytes.Length >= 3 && bytes[0] == 0xA0)
-                {
-                    return BitConverter.ToUInt16(bytes, 1);
-                }
-
-                // MOV CL, [addr] (8A 0E addr)
-                if (reg == "CL" && bytes.Length >= 4 && bytes[0] == 0x8A && bytes[1] == 0x0E)
-                {
-                    return BitConverter.ToUInt16(bytes, 2);
-                }
-
-                // MOV DL, [addr] (8A 16 addr)
-                if (reg == "DL" && bytes.Length >= 4 && bytes[0] == 0x8A && bytes[1] == 0x16)
-                {
-                    return BitConverter.ToUInt16(bytes, 2);
-                }
-
-                // MOV BL, [addr] (8A 1E addr)
-                if (reg == "BL" && bytes.Length >= 4 && bytes[0] == 0x8A && bytes[1] == 0x1E)
-                {
-                    return BitConverter.ToUInt16(bytes, 2);
-                }
-
-                // Если встретили другую запись в этот регистр, останавливаемся
-                if (IsRegisterWrite(insn, reg))
-                {
-                    break;
-                }
-            }
-
-            return null;
-        }
-
-        private bool IsRegisterWrite(X86Instruction insn, string reg)
-        {
-            byte[] bytes = insn.Bytes;
-
-            switch (reg)
-            {
-                case "AL": return bytes.Length >= 2 && (bytes[0] & 0xF8) == 0xB0; // MOV AL, imm
-                case "CL": return bytes.Length >= 2 && bytes[0] == 0xB1; // MOV CL, imm
-                case "DL": return bytes.Length >= 2 && bytes[0] == 0xB2; // MOV DL, imm
-                case "BL": return bytes.Length >= 2 && bytes[0] == 0xB3; // MOV BL, imm
-                default: return false;
-            }
-        }
-
-        private void TrackRegisters(X86Instruction insn, Dictionary<string, ushort> registers)
-        {
-            byte[] bytes = insn.Bytes;
-
-            // MOV reg, imm16
-            if (bytes.Length >= 3 && (bytes[0] & 0xF8) == 0xB8)
-            {
-                ushort value = BitConverter.ToUInt16(bytes, 1);
-                byte regIndex = (byte)(bytes[0] - 0xB8);
-                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
-                if (regIndex < regNames.Length)
-                {
-                    registers[regNames[regIndex]] = value;
-                }
-            }
-
-            // MOV reg, imm8
-            if (bytes.Length >= 2 && (bytes[0] & 0xF8) == 0xB0)
-            {
-                byte value = bytes[1];
-                byte regIndex = (byte)(bytes[0] - 0xB0);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-                if (regIndex < regNames.Length)
-                {
-                    registers[regNames[regIndex]] = value;
-                }
-            }
-        }
-
-        private bool IsTextStore(X86Instruction insn, Dictionary<string, ushort> registers, out string text)
-        {
-            text = null;
-            byte[] bytes = insn.Bytes;
-
-            // MOV [0x3BD4], imm16
-            if (bytes.Length >= 6 && bytes[0] == 0xC7 && bytes[1] == 0x06 &&
-                bytes[2] == 0xD4 && bytes[3] == 0x3B)
-            {
-                ushort textAddr = BitConverter.ToUInt16(bytes, 4);
-                text = $"Text at 0x{textAddr:X4}";
-                return true;
-            }
-
-            // MOV [0x3BD4], reg
-            if (bytes.Length >= 4 && bytes[0] == 0x89 && bytes[1] == 0x06 &&
-                bytes[2] == 0xD4 && bytes[3] == 0x3B)
-            {
-                byte modRM = bytes[1];
-                byte regField = (byte)((modRM >> 3) & 0x07);
-                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
-
-                if (regField < regNames.Length && registers.TryGetValue(regNames[regField], out ushort value))
-                {
-                    text = $"Text at 0x{value:X4} (via {regNames[regField]})";
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private bool IsMonsterStatChange(X86Instruction insn, Dictionary<string, ushort> registers, out byte? power, out byte? level)
-        {
-            power = null;
-            level = null;
-            byte[] bytes = insn.Bytes;
-
-            // MOV [0xC96F], imm (сила)
-            if (bytes.Length >= 5 && bytes[0] == 0xC6 && bytes[1] == 0x06 &&
-                bytes[2] == 0x6F && bytes[3] == 0xC9)
-            {
-                power = bytes[4];
-                return true;
-            }
-
-            // MOV [0xC961], imm (уровень)
-            if (bytes.Length >= 5 && bytes[0] == 0xC6 && bytes[1] == 0x06 &&
-                bytes[2] == 0x61 && bytes[3] == 0xC9)
-            {
-                level = bytes[4];
-                return true;
-            }
-
-            return false;
-        }
-
-        private bool IsBattleMonsterStore(X86Instruction insn, Dictionary<string, ushort> registers, out int index, out byte val1, out byte val2, out bool isIndeterminate)
-        {
-            index = 0;
-            val1 = 0;
-            val2 = 0;
-            isIndeterminate = false;
-
-            byte[] bytes = insn.Bytes;
-
-            // MOV [BX + 0x3C58], AL
-            if (bytes.Length >= 4 && bytes[0] == 0x88 && bytes[1] == 0x87 &&
-                bytes[2] == 0x58 && bytes[3] == 0x3C)
-            {
-                if (registers.TryGetValue("BX", out ushort bxValue) &&
-                    registers.TryGetValue("AL", out ushort alValue))
-                {
-                    index = bxValue;
-                    val1 = (byte)alValue;
-                    return true;
-                }
-            }
-
-            // MOV [BX + 0x3C29], CL
-            if (bytes.Length >= 4 && bytes[0] == 0x88 && bytes[1] == 0x8F &&
-                bytes[2] == 0x29 && bytes[3] == 0x3C)
-            {
-                if (registers.TryGetValue("BX", out ushort bxValue) &&
-                    registers.TryGetValue("CL", out ushort clValue))
-                {
-                    index = bxValue;
-                    val2 = (byte)clValue;
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private bool IsDirectionByteStore(X86Instruction insn, Dictionary<string, ushort> registers, out byte dirByte)
-        {
-            dirByte = 0;
-            // Пока заглушка - в реальности нужно анализировать конкретные паттерны
-            return false;
         }
     }
 }
