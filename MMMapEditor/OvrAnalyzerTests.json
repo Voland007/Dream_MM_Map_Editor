@@ -1,0 +1,39 @@
+[
+  {
+    "Id": "TEST_001",
+    "Name": "Проверка текстов в подземелье 1",
+    "OvrFilePath": "MM1_Maps/UNDERWOR.OVR",
+    "OvrConfigName": "UNDERWOR.OVR",
+    "Description": "Проверка всех известных текстов в подземелье",
+    "ExpectedCellTexts": {
+      "(2,3)": {
+        "ExpectedTexts": [ "Text at 0x1234: Привет мир" ],
+        "Comment": "Текст у входа"
+      },
+      "(5,8)": {
+        "ExpectedTexts": [ "Text at 0x5678: Секретная комната" ],
+        "Comment": "Секретная комната"
+      },
+      "(10,12)": {
+        "ShouldBeEmpty": true,
+        "Comment": "Пустая клетка"
+      }
+    }
+  },
+  {
+    "Id": "TEST_002",
+    "Name": "Проверка текстов в замке",
+    "OvrFilePath": "MM1_Maps/CASTLE.OVR",
+    "OvrConfigName": "CASTLE.OVR",
+    "Description": "Проверка текстов в замке",
+    "ExpectedCellTexts": {
+      "(4,4)": {
+        "ExpectedTexts": [
+          "Text at 0x1111: Добро пожаловать в замок",
+          "Text at 0x2222: Вход в тронный зал"
+        ],
+        "Comment": "Может быть один из двух вариантов"
+      }
+    }
+  }
+]

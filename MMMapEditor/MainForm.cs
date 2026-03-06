@@ -983,7 +983,7 @@ namespace MMMapEditor
             onMapsSearchItem.Click += OnMapsSearchItem_Click;
             searchMenuItem.DropDownItems.Add(onMapsSearchItem);
 
-          //  menuStrip.Items.Insert(menuStrip.Items.IndexOf(settingMenuItem), searchMenuItem);
+            //  menuStrip.Items.Insert(menuStrip.Items.IndexOf(settingMenuItem), searchMenuItem);
 
             settingMenuItem = new ToolStripMenuItem("Настройки");
             toolStripMenuItemManageObjects = new ToolStripMenuItem("Управление объектами");
@@ -997,6 +997,13 @@ namespace MMMapEditor
             // Добавляем подпункт в меню "Настройки"
             settingMenuItem.DropDownItems.Add(directionsMenuItem);
 
+            ToolStripMenuItem testMenuItem = new ToolStripMenuItem("Тестирование");
+            ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Запустить тесты анализатора");
+            runAnalyzerTestsItem.Click += RunAnalyzerTests_Click;
+            testMenuItem.DropDownItems.Add(runAnalyzerTestsItem);
+
+            menuStrip.Items.Add(testMenuItem);
+
             // Подписываемся на событие Click для вызова формы
             toolStripMenuItemManageObjects.Click += toolStripMenuItemManageObjects_Click;
 
@@ -1006,6 +1013,46 @@ namespace MMMapEditor
             menuStrip.Items.Add(searchMenuItem);
             menuStrip.Items.Add(settingMenuItem);
             Controls.Add(menuStrip);
+        }
+
+        private void RunAnalyzerTests_Click(object sender, EventArgs e)
+        {
+            string testsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OvrAnalyzerTests.json");
+
+            var runner = new MMMapEditor.Tests.OvrAnalyzerTestRunner();
+            var testCases = runner.LoadTestCases(testsFilePath);
+
+            if (testCases.Count == 0)
+            {
+                // Создаём пример тестового файла, если его нет
+                var result = MessageBox.Show(
+                    "Файл с тестами не найден или имеет неверный формат.\n\n" +
+                    "Создать пример тестового файла?",
+                    "Файл тестов не найден",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                {
+                    //заглушка
+                    //runner.CreateExampleTestFile(testsFilePath);
+                    //MessageBox.Show(
+                    //    $"Создан пример файла тестов:\n{testsFilePath}\n\n" +
+                    //    $"Отредактируйте его и запустите тесты снова.\n\n" +
+                    //    $"ВАЖНО: Убедитесь, что файл содержит массив тестов (начинается с [ и заканчивается ]).",
+                    //    "Файл тестов создан",
+                    //    MessageBoxButtons.OK,
+                    //    MessageBoxIcon.Information);
+                }
+                return;
+            }
+
+            // Запускаем тесты
+            var results = runner.RunTests(testCases);
+
+            // Показываем результаты
+            var viewer = new MMMapEditor.Tests.TestResultsViewer(results);
+            viewer.ShowDialog();
         }
 
         private void OnMapsSearchItem_Click(object sender, EventArgs e)

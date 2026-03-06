@@ -1045,7 +1045,7 @@ namespace MMMapEditor
 
             // ========== 1. Анализируем основной путь ==========
             var mainRegisterTracker = new RegisterTracker();
-            var mainPathResult = ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
+            var mainPathResult = ExecuteCodeAtAddress(br, 0, mainRegisterTracker,
                 new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0);
 
             // Сохраняем результаты основного пути
