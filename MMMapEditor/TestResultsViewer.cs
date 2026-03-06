@@ -418,12 +418,33 @@ namespace MMMapEditor.Tests
 
                 foreach (var result in _results.OrderBy(r => r.TestCase.Name))
                 {
+                    // Отладочная информация
+                    int passedCells = result.CellResults.Count(r => r.Passed);
+                    System.Diagnostics.Debug.WriteLine($"=== ОТЛАДКА: Тест '{result.TestCase.Name}' ===");
+                    System.Diagnostics.Debug.WriteLine($"  Passed (свойство): {result.Passed}");
+                    System.Diagnostics.Debug.WriteLine($"  Всего клеток: {result.CellResults.Count}");
+                    System.Diagnostics.Debug.WriteLine($"  Пройдено клеток: {passedCells}");
+                    System.Diagnostics.Debug.WriteLine($"  Провалено клеток: {result.CellResults.Count - passedCells}");
+
+                    // Детальная информация по каждой клетке
+                    foreach (var cellResult in result.CellResults)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"  Клетка ({cellResult.Cell.X},{cellResult.Cell.Y}): {(cellResult.Passed ? "✓" : "✗")}");
+                        System.Diagnostics.Debug.WriteLine($"    Ожидаемый: {cellResult.Expected}");
+                        System.Diagnostics.Debug.WriteLine($"    Фактический: {cellResult.Actual}");
+                    }
+
+                    // Пересчитываем Passed на основе результатов клеток
+                    result.Passed = result.CellResults.All(r => r.Passed);
+                    System.Diagnostics.Debug.WriteLine($"  Passed (пересчитанный): {result.Passed}");
+                    System.Diagnostics.Debug.WriteLine("");
+
                     if (result.Passed)
                         passedCount++;
                     else
                         failedCount++;
 
-                    var testNode = new TreeNode($"{result.TestCase.Name} [{result.TestCase.Id}]")
+                    var testNode = new TreeNode($"{result.TestCase.Name} [{result.TestCase.Id}] - {result.PassedChecks}/{result.TotalChecks}")
                     {
                         Tag = result,
                         ForeColor = result.Passed ? Color.FromArgb(106, 153, 85) : Color.FromArgb(244, 135, 113),
@@ -441,13 +462,16 @@ namespace MMMapEditor.Tests
                         };
 
                         // Добавляем информацию о тексте
-                        var actualNode = new TreeNode($"Фактический: {Truncate(cellResult.Actual, 50)}")
+                        string actualDisplay = Truncate(cellResult.Actual, 50);
+                        string expectedDisplay = Truncate(cellResult.Expected, 50);
+
+                        var actualNode = new TreeNode($"Фактический: {actualDisplay}")
                         {
                             Tag = cellResult,
                             ForeColor = Color.FromArgb(206, 145, 120)
                         };
 
-                        var expectedNode = new TreeNode($"Ожидаемый: {cellResult.Expected}")
+                        var expectedNode = new TreeNode($"Ожидаемый: {expectedDisplay}")
                         {
                             Tag = cellResult,
                             ForeColor = Color.FromArgb(156, 220, 254)
@@ -456,7 +480,7 @@ namespace MMMapEditor.Tests
                         // Проверяем наличие заметок
                         if (!string.IsNullOrEmpty(cellResult.Notes))
                         {
-                            var notesNode = new TreeNode($"Заметки: {cellResult.Notes}")
+                            var notesNode = new TreeNode($"Заметки: {Truncate(cellResult.Notes, 50)}")
                             {
                                 Tag = cellResult,
                                 ForeColor = Color.FromArgb(255, 215, 0)
@@ -513,26 +537,41 @@ namespace MMMapEditor.Tests
 
         private void UpdateStats(int passedCount, int failedCount)
         {
-            foreach (Control control in this.Controls)
+            // Рекурсивно ищем лейбл с именем "statsLabel"
+            Label statsLabel = FindControl<Label>(this, "statsLabel");
+
+            if (statsLabel != null)
             {
-                if (control is SplitContainer sc)
+                statsLabel.Text = $"Всего: {_results.Count} | Пройдено: {passedCount} | Провалено: {failedCount}";
+            }
+            else
+            {
+                // Если не нашли, выведем в отладку
+                System.Diagnostics.Debug.WriteLine("statsLabel не найден!");
+            }
+        }
+
+        /// <summary>
+        /// Рекурсивно ищет контрол указанного типа по имени
+        /// </summary>
+        private T FindControl<T>(Control parent, string name) where T : Control
+        {
+            foreach (Control control in parent.Controls)
+            {
+                if (control is T typedControl && control.Name == name)
                 {
-                    foreach (Control panel in sc.Panel1.Controls)
-                    {
-                        if (panel is Panel p)
-                        {
-                            foreach (Control c in p.Controls)
-                            {
-                                if (c is Label lbl && lbl.Name == "statsLabel")
-                                {
-                                    lbl.Text = $"Всего: {_results.Count} | Пройдено: {passedCount} | Провалено: {failedCount}";
-                                    return;
-                                }
-                            }
-                        }
-                    }
+                    return typedControl;
+                }
+
+                // Рекурсивно ищем в дочерних контролах
+                T found = FindControl<T>(control, name);
+                if (found != null)
+                {
+                    return found;
                 }
             }
+
+            return null;
         }
 
         private void FillSummaryGrid()

@@ -998,9 +998,9 @@ namespace MMMapEditor
             settingMenuItem.DropDownItems.Add(directionsMenuItem);
 
             ToolStripMenuItem testMenuItem = new ToolStripMenuItem("Тестирование");
-            ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Запустить тесты анализатора");
+            ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Юнит-функциональные тесты");
             runAnalyzerTestsItem.Click += RunAnalyzerTests_Click;
-            testMenuItem.DropDownItems.Add(runAnalyzerTestsItem);
+            
 
             menuStrip.Items.Add(testMenuItem);
 
@@ -1012,6 +1012,8 @@ namespace MMMapEditor
             menuStrip.Items.Add(fileMenuItem);
             menuStrip.Items.Add(searchMenuItem);
             menuStrip.Items.Add(settingMenuItem);
+            menuStrip.Items.Add(testMenuItem);
+            testMenuItem.DropDownItems.Add(runAnalyzerTestsItem);
             Controls.Add(menuStrip);
         }
 
