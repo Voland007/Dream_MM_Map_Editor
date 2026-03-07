@@ -2637,13 +2637,14 @@ namespace MMMapEditor
         }
 
         private void FindMonsterBattleInfo(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
-            int depth, PathAnalysisResult result)
+    int depth, PathAnalysisResult result)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
             string mnemonicUpper = insn.Mnemonic.ToUpper();
             long fileLength = br.BaseStream.Length;
 
+            // Обнаружение неопределенного цикла (инструкция CMP BL, [3C1D])
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
                 instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
@@ -2652,18 +2653,30 @@ namespace MMMapEditor
                 result.IsInLoop = true;
                 result.LoopStartAddress = address;
 
+                // Определяем, есть ли в результате записи с BX > 0
+                bool hasBxGreaterThanZero = result.BattleMonsterEntries.Any(kvp => kvp.Key > 0);
+
+                int markedCount = 0;
                 foreach (var key in result.BattleMonsterEntries.Keys.ToList())
                 {
-                    if (key > 0)
+                    // Если есть записи с BX > 0, значит BX меняется в цикле,
+                    // и только они неопределены. Если нет записей с BX > 0,
+                    // значит цикл выполняется с одним и тем же BX, и даже BX=0 неопределен.
+                    bool shouldMark = hasBxGreaterThanZero ? key > 0 : true;
+
+                    if (shouldMark)
                     {
                         var entry = result.BattleMonsterEntries[key];
                         result.BattleMonsterEntries[key] = (entry.val1, entry.val2, true);
+                        markedCount++;
                     }
                 }
 
-                Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}");
+                Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, помечено {markedCount} записей как неопределенные");
+                return;
             }
 
+            // Загрузка из таблицы CDA9+ (MOV AL, [BX+CDA9])
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x8A &&
                 instructionBytes[1] == 0x87 &&
@@ -2713,6 +2726,7 @@ namespace MMMapEditor
                     result.HasPartialBattlePattern = true;
                 }
             }
+            // Загрузка из таблицы CDB1+ (MOV BP, [BX+CDB1])
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x8B &&
                      instructionBytes[1] == 0xAF &&
@@ -2764,6 +2778,7 @@ namespace MMMapEditor
                     result.HasPartialBattlePattern = true;
                 }
             }
+            // Копирование BP в CX (MOV CX, BP)
             else if (instructionBytes.Length >= 2 &&
                      instructionBytes[0] == 0x8B &&
                      instructionBytes[1] == 0xCD)
@@ -2791,6 +2806,7 @@ namespace MMMapEditor
                 }
             }
 
+            // Сохранение в [BX+3C58] из AL
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x88 &&
                 instructionBytes[1] == 0x87 &&
@@ -2801,7 +2817,9 @@ namespace MMMapEditor
                     if (registerTracker.TryGetRegisterValue("AL", out ushort alValue))
                     {
                         byte val1 = (byte)alValue;
-                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+                        // Флаг неопределенности будет установлен позже при обнаружении цикла
+                        // Пока всегда false
+                        bool isIndeterminate = false;
 
                         if (registerTracker.IsFromTable("AL"))
                         {
@@ -2833,11 +2851,12 @@ namespace MMMapEditor
                                 result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                             }
 
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = AL (BX={bxValue}, val1={val1:X2})");
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = AL (BX={bxValue}, val1={val1:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
             }
+            // Сохранение в [BX+3C29] из CL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
                      instructionBytes[1] == 0x8F &&
@@ -2848,7 +2867,7 @@ namespace MMMapEditor
                     if (registerTracker.TryGetRegisterValue("CL", out ushort clValue))
                     {
                         byte val2 = (byte)clValue;
-                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+                        bool isIndeterminate = false;
 
                         if (registerTracker.IsFromTable("CL"))
                         {
@@ -2880,11 +2899,12 @@ namespace MMMapEditor
                                 result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
                             }
 
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = CL (BX={bxValue}, val2={val2:X2})");
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = CL (BX={bxValue}, val2={val2:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
             }
+            // Сохранение в [BX+3C58] из DL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
                      instructionBytes[1] == 0x97 &&
@@ -2895,7 +2915,7 @@ namespace MMMapEditor
                     if (registerTracker.TryGetRegisterValue("DL", out ushort dlValue))
                     {
                         byte val1 = (byte)dlValue;
-                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+                        bool isIndeterminate = false;
 
                         if (registerTracker.IsFromTable("DL"))
                         {
@@ -2927,11 +2947,12 @@ namespace MMMapEditor
                                 result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                             }
 
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = DL (BX={bxValue}, val1={val1:X2})");
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = DL (BX={bxValue}, val1={val1:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
             }
+            // Сохранение в [BX+3C29] из DL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
                      instructionBytes[1] == 0x97 &&
@@ -2942,7 +2963,7 @@ namespace MMMapEditor
                     if (registerTracker.TryGetRegisterValue("DL", out ushort dlValue))
                     {
                         byte val2 = (byte)dlValue;
-                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+                        bool isIndeterminate = false;
 
                         if (registerTracker.IsFromTable("DL"))
                         {
@@ -2974,11 +2995,12 @@ namespace MMMapEditor
                                 result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
                             }
 
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = DL (BX={bxValue}, val2={val2:X2})");
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = DL (BX={bxValue}, val2={val2:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
             }
+            // Сохранение в [BX+3C58] из BL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
                      instructionBytes[1] == 0x9F &&
@@ -2989,7 +3011,7 @@ namespace MMMapEditor
                     if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
                     {
                         byte val1 = (byte)blValue;
-                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+                        bool isIndeterminate = false;
 
                         if (registerTracker.IsFromTable("BL"))
                         {
@@ -3021,11 +3043,12 @@ namespace MMMapEditor
                                 result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                             }
 
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = BL (BX={bxValue}, val1={val1:X2})");
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = BL (BX={bxValue}, val1={val1:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
             }
+            // Сохранение в [BX+3C29] из BL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
                      instructionBytes[1] == 0x9F &&
@@ -3036,7 +3059,7 @@ namespace MMMapEditor
                     if (registerTracker.TryGetRegisterValue("BL", out ushort blValue))
                     {
                         byte val2 = (byte)blValue;
-                        bool isIndeterminate = (bxValue > 0 && result.IsIndeterminateLoop);
+                        bool isIndeterminate = false;
 
                         if (registerTracker.IsFromTable("BL"))
                         {
@@ -3068,11 +3091,12 @@ namespace MMMapEditor
                                 result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
                             }
 
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = BL (BX={bxValue}, val2={val2:X2})");
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = BL (BX={bxValue}, val2={val2:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
             }
+            // Прямое сохранение в [3C58] из AL (без BX)
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
                      instructionBytes[1] == 0x58 && instructionBytes[2] == 0x3C)
@@ -3112,10 +3136,11 @@ namespace MMMapEditor
                             result.BattleMonsterEntries[bxValue] = ((byte)alValue, 0, isIndeterminate);
                         }
 
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C58] = AL (val1={alValue:X2})");
+                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C58] = AL (val1={alValue:X2}, isIndeterminate={isIndeterminate})");
                     }
                 }
             }
+            // Прямое сохранение в [3C29] из AL (без BX)
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
                      instructionBytes[1] == 0x29 && instructionBytes[2] == 0x3C)
@@ -3155,7 +3180,7 @@ namespace MMMapEditor
                             result.BattleMonsterEntries[bxValue] = (0, (byte)alValue, isIndeterminate);
                         }
 
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = AL (val2={alValue:X2})");
+                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = AL (val2={alValue:X2}, isIndeterminate={isIndeterminate})");
                     }
                 }
             }
