@@ -1073,16 +1073,25 @@ namespace MMMapEditor
                 ovrObject.MonsterLevel = mainPathResult.MonsterLevel.Value;
 
             bool isMainPathIndeterminate = mainPathResult.IsIndeterminateLoop;
-            foreach (var entry in mainPathResult.BattleMonsterEntries.OrderBy(e => e.Key))
+            if (mainPathResult.BattleMonsterEntries.Count > 0)
             {
-                if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                // Все записи обрабатываются одинаково, без разделения на одиночные и множественные
+                foreach (var entry in mainPathResult.BattleMonsterEntries.OrderBy(e => e.Key))
                 {
-                    ovrObject.AddBattleMonster(
-                        entry.Key,
-                        entry.Value.val1,
-                        entry.Value.val2,
-                        entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)
-                    );
+                    if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                    {
+                        ovrObject.AddBattleMonster(
+                            entry.Key,
+                            entry.Value.val1,
+                            entry.Value.val2,
+                            entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)
+                        );
+                    }
+                }
+
+                if (debugMode && mainPathResult.BattleMonsterEntries.Count > 0)
+                {
+                    Debug.WriteLine($"      Добавлено {mainPathResult.BattleMonsterEntries.Count} записей монстров в объект");
                 }
             }
 

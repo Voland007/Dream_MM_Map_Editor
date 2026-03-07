@@ -303,41 +303,19 @@ namespace MMMapEditor
                 var grouped = GetGroupedBattleMonsters();
                 grouped = grouped.OrderBy(g => g.Indices.Min()).ToList();
 
-                if (grouped.Count == 1)
+                // ВСЕГДА используем формат группы
+                var result = "Битва с группой монстров:";
+                foreach (var g in grouped)
                 {
-                    var g = grouped[0];
                     string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
-                    string desc;
-
-                    if (g.IsIndeterminate)
-                        desc = $"Битва: {cleanName} x? (Random count)";
-                    else if (g.Count == 1)
-                        desc = $"Битва: {cleanName}";
-                    else
-                        desc = $"Битва: {cleanName} x{g.Count}";
-
-                    if (!addedDescriptions.Contains(desc))
-                    {
-                        descriptions.Add(desc);
-                        addedDescriptions.Add(desc);
-                    }
+                    string countDisplay = g.IsIndeterminate ? "? (Random count)" : g.Count.ToString();
+                    result += $"\n  • {cleanName} x{countDisplay}";
                 }
-                else
-                {
-                    var result = "Битва с группой монстров:";
-                    foreach (var g in grouped)
-                    {
-                        string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
-                        result += g.IsIndeterminate
-                            ? $"\n  • {cleanName} x? (Random count)"
-                            : $"\n  • {cleanName} x{g.Count}";
-                    }
 
-                    if (!addedDescriptions.Contains(result))
-                    {
-                        descriptions.Add(result);
-                        addedDescriptions.Add(result);
-                    }
+                if (!addedDescriptions.Contains(result))
+                {
+                    descriptions.Add(result);
+                    addedDescriptions.Add(result);
                 }
             }
 
