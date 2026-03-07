@@ -1731,96 +1731,32 @@ namespace MMMapEditor
         /// </summary>
         private void FormatMonsterBattleInfo(RichTextBox rt, string noteText)
         {
-            // Разбиваем текст на строки для анализа чётности
-            var lines = noteText.Split('\n');
-            int lineIndex = 0;
-            int currentPos = 0;
-
-            // Формат: "Битва: Имя монстра"
-            var singleMatches = Regex.Matches(noteText, @"^Битва: ([^\n]+?)(?:\s+x\d+)?$", RegexOptions.Multiline);
-            foreach (Match match in singleMatches)
-            {
-                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
-                Color lineColor = isEven ? Color.FromArgb(255, 140, 0) : Color.FromArgb(255, 180, 80);
-
-                rt.Select(match.Index, match.Length);
-                rt.SelectionColor = lineColor;
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
-            }
-
-            // Формат: "Битва: Имя монстра xN"
-            var multiMatches = Regex.Matches(noteText, @"^Битва: (.+?) x(\d+)$", RegexOptions.Multiline);
-            foreach (Match match in multiMatches)
-            {
-                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
-                Color lineColor = isEven ? Color.FromArgb(255, 140, 0) : Color.FromArgb(255, 180, 80);
-
-                rt.Select(match.Index, match.Length);
-                rt.SelectionColor = lineColor;
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
-
-                var countGroup = match.Groups[2];
-                rt.Select(match.Index + countGroup.Index, countGroup.Length);
-                rt.SelectionColor = isEven ? Color.FromArgb(255, 200, 0) : Color.FromArgb(255, 220, 100);
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
-            }
-
-            // Формат: "Битва: Имя монстра x? (Random count)"
-            var randomMatches = Regex.Matches(noteText, @"^Битва: (.+?) x\? \(Random count\)$", RegexOptions.Multiline);
-            foreach (Match match in randomMatches)
-            {
-                bool isEven = GetLineNumber(noteText, match.Index) % 2 == 0;
-                Color lineColor = isEven ? Color.FromArgb(255, 140, 0) : Color.FromArgb(255, 180, 80);
-
-                rt.Select(match.Index, match.Length);
-                rt.SelectionColor = lineColor;
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
-            }
-
-            // Формат: "Битва с группой монстров:"
+            // Заголовок группы
             var groupHeaderMatches = Regex.Matches(noteText, @"^Битва с группой монстров:$", RegexOptions.Multiline);
             foreach (Match match in groupHeaderMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.LightYellow;  
+                rt.SelectionColor = Color.LightYellow;
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
             }
 
-            // Формат: "  • Имя монстра xN"
-            var bulletMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x\d+)$", RegexOptions.Multiline);
+            // Строки с монстрами (всегда в формате "  • Имя монстра xN" или "  • Имя монстра x? (Random count)")
+            var bulletMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x(\d+|\? \(Random count\)))$", RegexOptions.Multiline);
             foreach (Match match in bulletMatches)
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(240, 31, 111);  // Ярко-розовый для всей строки
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
 
-                var countMatch = Regex.Match(match.Value, @"x(\d+)$");
-                if (countMatch.Success)
-                {
-                    int countIndex = match.Index + match.Value.LastIndexOf('x');
-                    rt.Select(countIndex, countMatch.Length);
-                    rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для числа
-                    rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
-                }
-            }
-
-            // Формат: "  • Имя монстра x? (Random count)"
-            var bulletRandomMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x\? \(Random count\))$", RegexOptions.Multiline);
-            foreach (Match match in bulletRandomMatches)
-            {
-                rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(255, 71, 151);  // Розовый для всей строки
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
-
-                int xPos = match.Value.IndexOf("x?");
+                // Находим часть с количеством (xN или x? (Random count))
+                int xPos = match.Value.IndexOf('x');
                 if (xPos >= 0)
                 {
                     rt.Select(match.Index + xPos, match.Length - xPos);
-                    rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для "x? (Random count)"
+                    rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для количества
                     rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
                 }
             }
-
         }
 
         /// <summary>
