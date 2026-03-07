@@ -1076,7 +1076,7 @@ namespace MMMapEditor
             if (mainPathResult.BattleMonsterEntries.Count > 0)
             {
                 // Все записи обрабатываются одинаково, без разделения на одиночные и множественные
-                foreach (var entry in mainPathResult.BattleMonsterEntries.OrderBy(e => e.Key))
+                foreach (var entry in mainPathResult.BattleMonsterEntries)
                 {
                     if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
                     {
@@ -1084,7 +1084,7 @@ namespace MMMapEditor
                             entry.Key,
                             entry.Value.val1,
                             entry.Value.val2,
-                            entry.Key > 0 && (isMainPathIndeterminate || entry.Value.isIndeterminate)
+                            isMainPathIndeterminate || entry.Value.isIndeterminate  // Просто объединяем флаги
                         );
                     }
                 }
