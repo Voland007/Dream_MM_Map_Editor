@@ -222,7 +222,7 @@ namespace MMMapEditor.Tests
                     return result;
                 }
 
-                System.Diagnostics.Debug.WriteLine($"Файл существует: {testCase.OvrFilePath}");
+                System.Diagnostics.Debug.WriteLine($"Файл существует: {Path.GetFileName(testCase.OvrFilePath)}");
 
                 // Проверяем наличие конфигурации
                 string configKey = testCase.OvrConfigName ?? Path.GetFileName(testCase.OvrFilePath).ToUpper();
@@ -278,21 +278,137 @@ namespace MMMapEditor.Tests
                             System.Diagnostics.Debug.WriteLine($"  Объект найден: IsFromTable={cellObject.IsFromTable}, путей={cellObject.PathTexts.Count}");
                         }
 
-                        // Собираем все тексты для клетки
+                        // СОБИРАЕМ ВСЕ ТЕКСТЫ ДЛЯ КЛЕТКИ
                         var allTexts = new HashSet<string>();
+
                         if (cellObject != null)
                         {
+                            // 1. Тексты из путей (PathTexts)
                             foreach (var pathTexts in cellObject.PathTexts.Values)
                             {
                                 foreach (var text in pathTexts)
                                 {
                                     allTexts.Add(text);
                                     string preview = text.Length > 50 ? text.Substring(0, 50) + "..." : text;
-                                    System.Diagnostics.Debug.WriteLine($"  Найден текст: {preview}");
+                                    System.Diagnostics.Debug.WriteLine($"  Найден текст из пути: {preview}");
                                 }
+                            }
+
+                            // 2. Информация о силе монстров
+                            if (cellObject.MonsterPower.HasValue)
+                            {
+                                string powerText = $"Сила монстров: {cellObject.MonsterPower.Value}";
+                                allTexts.Add(powerText);
+                                System.Diagnostics.Debug.WriteLine($"  Найдена сила монстров: {powerText}");
+                            }
+
+                            // 3. Информация об уровне монстров
+                            if (cellObject.MonsterLevel.HasValue)
+                            {
+                                string levelText = $"Уровень монстров: {cellObject.MonsterLevel.Value}";
+                                allTexts.Add(levelText);
+                                System.Diagnostics.Debug.WriteLine($"  Найден уровень монстров: {levelText}");
+                            }
+
+                            // 4. Информация о битвах с монстрами (полностью определённых)
+                            foreach (var battle in cellObject.BattleMonsters)
+                            {
+                                // Используем свойства класса BattleMonster
+                                string battleText;
+
+                                if (battle.IsIndeterminate)
+                                {
+                                    battleText = $"Битва: {battle.MonsterName} x? (Random count)";
+                                }
+                                else
+                                {
+                                    battleText = $"Битва: {battle.MonsterName}";
+                                }
+
+                                allTexts.Add(battleText);
+                                System.Diagnostics.Debug.WriteLine($"  Найдена битва: {battleText} (индекс: {battle.Index}, val1={battle.MonsterIndex1}, val2={battle.MonsterIndex2})");
+                            }
+
+                            // 5. Информация о частично определённых битвах
+                            foreach (var partial in cellObject.PartiallyDefinedBattles)
+                            {
+                                var possibleMonsters = partial.GetPossibleMonsters();
+
+                                if (possibleMonsters.Count == 1)
+                                {
+                                    string partialText = $"Частично определённая битва: {possibleMonsters[0].MonsterName}";
+                                    allTexts.Add(partialText);
+                                    System.Diagnostics.Debug.WriteLine($"  Найдена частичная битва: {partialText}");
+                                }
+                                else if (possibleMonsters.Count > 0)
+                                {
+                                    string partialText = $"Частично определённая битва (BX={partial.BxIndex}, {possibleMonsters.Count} вариантов)";
+                                    allTexts.Add(partialText);
+                                    System.Diagnostics.Debug.WriteLine($"  Найдена частичная битва: {partialText}");
+
+                                    // Добавляем каждый вариант отдельно для детализации
+                                    for (int i = 0; i < Math.Min(possibleMonsters.Count, 5); i++)
+                                    {
+                                        string variantText = $"  • Вариант {i + 1}: {possibleMonsters[i].MonsterName}";
+                                        allTexts.Add(variantText);
+                                    }
+
+                                    if (possibleMonsters.Count > 5)
+                                    {
+                                        allTexts.Add($"  • ... и ещё {possibleMonsters.Count - 5} вариантов");
+                                    }
+                                }
+                                else
+                                {
+                                    string partialText = $"Частично определённая битва (BX={partial.BxIndex}, диапазоны: [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}])";
+                                    allTexts.Add(partialText);
+                                    System.Diagnostics.Debug.WriteLine($"  Найдена частичная битва (без монстров): {partialText}");
+                                }
+                            }
+
+                            // 6. Информация о загрузке из таблиц
+                            if (cellObject.HasAnyTableLoad && cellObject.LoadedValues.Count > 0)
+                            {
+                                foreach (var loadInfo in cellObject.LoadedValues)
+                                {
+                                    string loadText = $"Загрузка из таблицы: {loadInfo}";
+                                    allTexts.Add(loadText);
+                                }
+                                System.Diagnostics.Debug.WriteLine($"  Найдено загрузок из таблиц: {cellObject.LoadedValues.Count}");
+                            }
+
+                            // 7. Формируем текст как в заметках (если есть сила и уровень)
+                            if (cellObject.MonsterPower.HasValue || cellObject.MonsterLevel.HasValue)
+                            {
+                                var notesBuilder = new System.Text.StringBuilder();
+
+                                if (cellObject.MonsterPower.HasValue)
+                                {
+                                    notesBuilder.AppendLine($"Сила монстров увеличивается с 1 до {cellObject.MonsterPower.Value}");
+                                }
+                                if (cellObject.MonsterLevel.HasValue)
+                                {
+                                    notesBuilder.AppendLine($"Уровень монстров увеличивается с 1 до {cellObject.MonsterLevel.Value}");
+                                }
+
+                                string notes = notesBuilder.ToString().TrimEnd();
+                                if (!string.IsNullOrEmpty(notes))
+                                {
+                                    allTexts.Add(notes);
+                                    System.Diagnostics.Debug.WriteLine($"  Добавлены заметки о монстрах: {notes}");
+                                }
+                            }
+
+                            // 8. Полное описание битвы (если есть)
+                            string fullBattleDesc = cellObject.GetBattleDescription();
+                            if (!string.IsNullOrEmpty(fullBattleDesc))
+                            {
+                                allTexts.Add(fullBattleDesc);
+                                System.Diagnostics.Debug.WriteLine($"  Добавлено полное описание битвы");
                             }
                         }
 
+                        // Формируем итоговый текст
                         string actualText = allTexts.Count > 0
                             ? string.Join("\n", allTexts.OrderBy(t => t))
                             : "";
@@ -302,9 +418,11 @@ namespace MMMapEditor.Tests
                             : (actualText.Length > 50 ? actualText.Substring(0, 50) + "..." : actualText);
                         System.Diagnostics.Debug.WriteLine($"  Фактический текст: {actualPreview}");
 
+                        // Проверяем соответствие ожиданию
                         bool passed = expectation.Matches(actualText);
                         System.Diagnostics.Debug.WriteLine($"  Результат: {(passed ? "СОВПАДАЕТ" : "НЕ СОВПАДАЕТ")}");
 
+                        // Сохраняем результат для клетки
                         var cellResult = new CellCheckResult
                         {
                             Cell = cellPos,
@@ -323,7 +441,7 @@ namespace MMMapEditor.Tests
                         result.CellResults.Add(cellResult);
                     }
 
-                    // Тест пройден, если все проверки успешны
+                    // Тест пройден, если ВСЕ проверки успешны (можно изменить логику при необходимости)
                     result.Passed = result.CellResults.All(r => r.Passed);
                     System.Diagnostics.Debug.WriteLine($"\nИТОГ: пройдено {result.PassedChecks}/{result.TotalChecks}");
                 }
