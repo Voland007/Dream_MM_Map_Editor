@@ -204,7 +204,10 @@ namespace MMMapEditor.Tests
         /// <summary>
         /// Запустить один тест
         /// </summary>
-        public TestResult RunTest(TestCase testCase, Dictionary<Point, string> existingCentralOptions = null)
+        /// <param name="testCase">Тестовый случай</param>
+        /// <param name="existingCentralOptions">Существующие центральные опции</param>
+        /// <param name="existingNotes">Заметки из notesPerCell</param>
+        public TestResult RunTest(TestCase testCase, Dictionary<Point, string> existingCentralOptions = null, Dictionary<Point, string> existingNotes = null)
         {
             var result = new TestResult { TestCase = testCase };
 
@@ -243,8 +246,35 @@ namespace MMMapEditor.Tests
                 {
                     result.Logger = logger;
 
-                    // Создаём временный словарь для centralOptions, если не передан
-                    var centralOptions = existingCentralOptions ?? new Dictionary<Point, string>();
+                    // СОЗДАЁМ СЛОВАРЬ CENTRAL OPTIONS ТОЛЬКО ДЛЯ КЛЕТОК, КОТОРЫЕ НЕ ДОЛЖНЫ БЫТЬ ПУСТЫМИ
+                    var centralOptions = new Dictionary<Point, string>();
+
+                    // Добавляем клетки со значением "Случайная встреча" ТОЛЬКО если они НЕ должны быть пустыми
+                    foreach (var kvp in testCase.ExpectedCellTexts)
+                    {
+                        var cellPos = kvp.Key;
+                        var expectation = kvp.Value;
+
+                        // Если клетка НЕ должна быть пустой, устанавливаем "Случайная встреча"
+                        if (!expectation.ShouldBeEmpty)
+                        {
+                            centralOptions[cellPos] = "Случайная встреча";
+                            System.Diagnostics.Debug.WriteLine($"  Установлена centralOptions[{cellPos}] = \"Случайная встреча\"");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"  Клетка {cellPos} должна быть пустой, НЕ устанавливаем centralOptions");
+                        }
+                    }
+
+                    // Если переданы существующие centralOptions, добавляем их поверх (с приоритетом)
+                    if (existingCentralOptions != null)
+                    {
+                        foreach (var kvp in existingCentralOptions)
+                        {
+                            centralOptions[kvp.Key] = kvp.Value;
+                        }
+                    }
 
                     System.Diagnostics.Debug.WriteLine("Запуск анализатора...");
 
@@ -256,6 +286,8 @@ namespace MMMapEditor.Tests
                     );
 
                     System.Diagnostics.Debug.WriteLine($"Анализатор вернул {objects.Count} объектов");
+
+                    // После анализатора centralOptions может быть изменён
 
                     // Проверяем каждую ожидаемую клетку
                     foreach (var kvp in testCase.ExpectedCellTexts)
@@ -281,9 +313,9 @@ namespace MMMapEditor.Tests
                         // СОБИРАЕМ ВСЕ ТЕКСТЫ ДЛЯ КЛЕТКИ
                         var allTexts = new HashSet<string>();
 
+                        // 1. Тексты из путей (PathTexts)
                         if (cellObject != null)
                         {
-                            // 1. Тексты из путей (PathTexts)
                             foreach (var pathTexts in cellObject.PathTexts.Values)
                             {
                                 foreach (var text in pathTexts)
@@ -310,10 +342,9 @@ namespace MMMapEditor.Tests
                                 System.Diagnostics.Debug.WriteLine($"  Найден уровень монстров: {levelText}");
                             }
 
-                            // 4. Информация о битвах с монстрами (полностью определённых)
+                            // 4. Информация о битвах с монстрами
                             foreach (var battle in cellObject.BattleMonsters)
                             {
-                                // Используем свойства класса BattleMonster
                                 string battleText;
 
                                 if (battle.IsIndeterminate)
@@ -326,7 +357,7 @@ namespace MMMapEditor.Tests
                                 }
 
                                 allTexts.Add(battleText);
-                                System.Diagnostics.Debug.WriteLine($"  Найдена битва: {battleText} (индекс: {battle.Index}, val1={battle.MonsterIndex1}, val2={battle.MonsterIndex2})");
+                                System.Diagnostics.Debug.WriteLine($"  Найдена битва: {battleText}");
                             }
 
                             // 5. Информация о частично определённых битвах
@@ -338,73 +369,53 @@ namespace MMMapEditor.Tests
                                 {
                                     string partialText = $"Частично определённая битва: {possibleMonsters[0].MonsterName}";
                                     allTexts.Add(partialText);
-                                    System.Diagnostics.Debug.WriteLine($"  Найдена частичная битва: {partialText}");
                                 }
                                 else if (possibleMonsters.Count > 0)
                                 {
-                                    string partialText = $"Частично определённая битва (BX={partial.BxIndex}, {possibleMonsters.Count} вариантов)";
+                                    string partialText = $"Частично определённая битва ({possibleMonsters.Count} вариантов)";
                                     allTexts.Add(partialText);
-                                    System.Diagnostics.Debug.WriteLine($"  Найдена частичная битва: {partialText}");
-
-                                    // Добавляем каждый вариант отдельно для детализации
-                                    for (int i = 0; i < Math.Min(possibleMonsters.Count, 5); i++)
-                                    {
-                                        string variantText = $"  • Вариант {i + 1}: {possibleMonsters[i].MonsterName}";
-                                        allTexts.Add(variantText);
-                                    }
-
-                                    if (possibleMonsters.Count > 5)
-                                    {
-                                        allTexts.Add($"  • ... и ещё {possibleMonsters.Count - 5} вариантов");
-                                    }
-                                }
-                                else
-                                {
-                                    string partialText = $"Частично определённая битва (BX={partial.BxIndex}, диапазоны: [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}])";
-                                    allTexts.Add(partialText);
-                                    System.Diagnostics.Debug.WriteLine($"  Найдена частичная битва (без монстров): {partialText}");
                                 }
                             }
 
-                            // 6. Информация о загрузке из таблиц
-                            if (cellObject.HasAnyTableLoad && cellObject.LoadedValues.Count > 0)
-                            {
-                                foreach (var loadInfo in cellObject.LoadedValues)
-                                {
-                                    string loadText = $"Загрузка из таблицы: {loadInfo}";
-                                    allTexts.Add(loadText);
-                                }
-                                System.Diagnostics.Debug.WriteLine($"  Найдено загрузок из таблиц: {cellObject.LoadedValues.Count}");
-                            }
-
-                            // 7. Формируем текст как в заметках (если есть сила и уровень)
-                            if (cellObject.MonsterPower.HasValue || cellObject.MonsterLevel.HasValue)
-                            {
-                                var notesBuilder = new System.Text.StringBuilder();
-
-                                if (cellObject.MonsterPower.HasValue)
-                                {
-                                    notesBuilder.AppendLine($"Сила монстров увеличивается с 1 до {cellObject.MonsterPower.Value}");
-                                }
-                                if (cellObject.MonsterLevel.HasValue)
-                                {
-                                    notesBuilder.AppendLine($"Уровень монстров увеличивается с 1 до {cellObject.MonsterLevel.Value}");
-                                }
-
-                                string notes = notesBuilder.ToString().TrimEnd();
-                                if (!string.IsNullOrEmpty(notes))
-                                {
-                                    allTexts.Add(notes);
-                                    System.Diagnostics.Debug.WriteLine($"  Добавлены заметки о монстрах: {notes}");
-                                }
-                            }
-
-                            // 8. Полное описание битвы (если есть)
+                            // 6. Полное описание битвы
                             string fullBattleDesc = cellObject.GetBattleDescription();
                             if (!string.IsNullOrEmpty(fullBattleDesc))
                             {
                                 allTexts.Add(fullBattleDesc);
-                                System.Diagnostics.Debug.WriteLine($"  Добавлено полное описание битвы");
+                            }
+                        }
+
+                        // 7. ЗАМЕТКИ ИЗ CENTRAL OPTIONS (после анализатора)
+                        if (centralOptions != null && centralOptions.TryGetValue(cellPos, out string centralNote))
+                        {
+                            if (!string.IsNullOrEmpty(centralNote) && centralNote != "Случайная встреча")
+                            {
+                                foreach (string line in centralNote.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    string trimmedLine = line.Trim();
+                                    if (!string.IsNullOrEmpty(trimmedLine) && !allTexts.Contains(trimmedLine))
+                                    {
+                                        allTexts.Add(trimmedLine);
+                                        System.Diagnostics.Debug.WriteLine($"  Найдена заметка из centralOptions: {trimmedLine}");
+                                    }
+                                }
+                            }
+                        }
+
+                        // 8. ЗАМЕТКИ ИЗ existingNotes (notesPerCell)
+                        if (existingNotes != null && existingNotes.TryGetValue(cellPos, out string notesNote))
+                        {
+                            if (!string.IsNullOrEmpty(notesNote))
+                            {
+                                foreach (string line in notesNote.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    string trimmedLine = line.Trim();
+                                    if (!string.IsNullOrEmpty(trimmedLine) && !allTexts.Contains(trimmedLine))
+                                    {
+                                        allTexts.Add(trimmedLine);
+                                        System.Diagnostics.Debug.WriteLine($"  Найдена заметка из notesPerCell: {trimmedLine}");
+                                    }
+                                }
                             }
                         }
 
@@ -432,16 +443,10 @@ namespace MMMapEditor.Tests
                             AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y)
                         };
 
-                        // Добавляем заметки, если они есть в centralOptions
-                        if (centralOptions.TryGetValue(cellPos, out string note))
-                        {
-                            cellResult.Notes = note;
-                        }
-
                         result.CellResults.Add(cellResult);
                     }
 
-                    // Тест пройден, если ВСЕ проверки успешны (можно изменить логику при необходимости)
+                    // Тест пройден, если ВСЕ проверки успешны
                     result.Passed = result.CellResults.All(r => r.Passed);
                     System.Diagnostics.Debug.WriteLine($"\nИТОГ: пройдено {result.PassedChecks}/{result.TotalChecks}");
                 }
@@ -460,9 +465,20 @@ namespace MMMapEditor.Tests
         /// <summary>
         /// Запустить несколько тестов
         /// </summary>
-        public List<TestResult> RunTests(List<TestCase> testCases)
+        /// <param name="testCases">Список тестовых случаев для запуска</param>
+        /// <param name="existingNotes">Заметки из notesPerCell (необязательно)</param>
+        /// <returns>Список результатов тестов</returns>
+        public List<TestResult> RunTests(List<TestCase> testCases, Dictionary<Point, string> existingNotes = null)
         {
             var results = new List<TestResult>();
+
+            System.Diagnostics.Debug.WriteLine($"\n==========================================");
+            System.Diagnostics.Debug.WriteLine($"ЗАПУСК ТЕСТОВ: {testCases.Count} тестов");
+            System.Diagnostics.Debug.WriteLine($"==========================================\n");
+
+            int passedCount = 0;
+            int failedCount = 0;
+            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
             foreach (var testCase in testCases)
             {
@@ -470,15 +486,59 @@ namespace MMMapEditor.Tests
                 System.Diagnostics.Debug.WriteLine($"Запуск теста: {testCase.Name} ({testCase.Id})");
                 System.Diagnostics.Debug.WriteLine($"========================================");
 
-                var result = RunTest(testCase);
+                // Запускаем тест
+                var result = RunTest(testCase, null, existingNotes);
                 results.Add(result);
 
-                System.Diagnostics.Debug.WriteLine($"\nРезультат: {(result.Passed ? "ПРОЙДЕН" : "ПРОВАЛЕН")}");
-                System.Diagnostics.Debug.WriteLine($"Проверок: {result.TotalChecks}, пройдено: {result.PassedChecks}, провалено: {result.FailedChecks}");
-                System.Diagnostics.Debug.WriteLine($"Время: {result.Logger?.ExecutionTimeMs} мс");
+                if (result.Passed)
+                {
+                    passedCount++;
+                    System.Diagnostics.Debug.WriteLine($"\n✅ ТЕСТ ПРОЙДЕН: {testCase.Name}");
+                }
+                else
+                {
+                    failedCount++;
+                    System.Diagnostics.Debug.WriteLine($"\n❌ ТЕСТ ПРОВАЛЕН: {testCase.Name}");
+                }
+
+                System.Diagnostics.Debug.WriteLine($"   Проверок: {result.TotalChecks}, пройдено: {result.PassedChecks}, провалено: {result.FailedChecks}");
+                System.Diagnostics.Debug.WriteLine($"   Время: {result.Logger?.ExecutionTimeMs} мс");
+
+                // Если есть ошибка, выводим её
+                if (!string.IsNullOrEmpty(result.ErrorMessage))
+                {
+                    System.Diagnostics.Debug.WriteLine($"   Ошибка: {result.ErrorMessage}");
+                }
+
+                // Выводим детали по проваленным клеткам
+                foreach (var cellResult in result.CellResults.Where(r => !r.Passed))
+                {
+                    System.Diagnostics.Debug.WriteLine($"   ❌ Клетка ({cellResult.Cell.X},{cellResult.Cell.Y}):");
+                    System.Diagnostics.Debug.WriteLine($"      Ожидаемый: {cellResult.Expected}");
+                    System.Diagnostics.Debug.WriteLine($"      Фактический: {cellResult.Actual}");
+                }
             }
 
+            stopwatch.Stop();
+
+            System.Diagnostics.Debug.WriteLine($"\n==========================================");
+            System.Diagnostics.Debug.WriteLine($"ИТОГИ ТЕСТИРОВАНИЯ");
+            System.Diagnostics.Debug.WriteLine($"==========================================");
+            System.Diagnostics.Debug.WriteLine($"Всего тестов: {testCases.Count}");
+            System.Diagnostics.Debug.WriteLine($"Пройдено: {passedCount}");
+            System.Diagnostics.Debug.WriteLine($"Провалено: {failedCount}");
+            System.Diagnostics.Debug.WriteLine($"Общее время: {stopwatch.ElapsedMilliseconds} мс");
+            System.Diagnostics.Debug.WriteLine($"==========================================\n");
+
             return results;
+        }
+
+        /// <summary>
+        /// Запустить несколько тестов (перегрузка без параметров)
+        /// </summary>
+        public List<TestResult> RunTests(List<TestCase> testCases)
+        {
+            return RunTests(testCases, null);
         }
     }
 }
