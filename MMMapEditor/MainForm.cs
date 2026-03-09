@@ -1597,11 +1597,16 @@ namespace MMMapEditor
                     }
 
                     // 4. Текстовые сообщения (пути) - группируем по вариантам
-                    bool hasAnyTexts = obj.PathTexts != null && obj.PathTexts.Count > 0;
+                    // ИСПРАВЛЕНО: используем PathTextsOrdered если есть, иначе PathTexts
+                    bool hasAnyTexts = false;
 
-                    if (hasAnyTexts)
+                    // Сначала пробуем получить упорядоченные тексты
+                    if (obj.PathTextsOrdered != null && obj.PathTextsOrdered.Count > 0)
                     {
-                        foreach (var kvp in obj.PathTexts.OrderBy(p => p.Key))
+                        hasAnyTexts = true;
+                        Debug.WriteLine($"      Используем PathTextsOrdered с {obj.PathTextsOrdered.Count} путями");
+
+                        foreach (var kvp in obj.PathTextsOrdered.OrderBy(p => p.Key))
                         {
                             if (kvp.Value == null || kvp.Value.Count == 0)
                                 continue;
@@ -1610,8 +1615,8 @@ namespace MMMapEditor
                             if (!variantContents.ContainsKey(variantNumber))
                                 variantContents[variantNumber] = new List<string>();
 
-                            // Сортируем тексты для консистентности
-                            foreach (var text in kvp.Value.OrderBy(t => t))
+                            // Тексты уже в правильном порядке, просто добавляем
+                            foreach (var text in kvp.Value)
                             {
                                 int colonIndex = text.IndexOf(':');
                                 if (colonIndex >= 0 && colonIndex + 1 < text.Length)
@@ -1622,11 +1627,47 @@ namespace MMMapEditor
                                     {
                                         decodedText = decodedText.TrimEnd('\r');
                                         variantContents[variantNumber].Add(decodedText);
+                                        Debug.WriteLine($"        Добавлен текст: {decodedText}");
                                     }
                                 }
                             }
                         }
                     }
+                    // Если нет упорядоченных, используем обычные PathTexts
+                    else if (obj.PathTexts != null && obj.PathTexts.Count > 0)
+                    {
+                        hasAnyTexts = true;
+                        Debug.WriteLine($"      Используем PathTexts с {obj.PathTexts.Count} путями");
+
+                        foreach (var kvp in obj.PathTexts.OrderBy(p => p.Key))
+                        {
+                            if (kvp.Value == null || kvp.Value.Count == 0)
+                                continue;
+
+                            int variantNumber = kvp.Key;
+                            if (!variantContents.ContainsKey(variantNumber))
+                                variantContents[variantNumber] = new List<string>();
+
+                            // Для обычного HashSet порядок не гарантирован, но добавляем как есть
+                            foreach (var text in kvp.Value)
+                            {
+                                int colonIndex = text.IndexOf(':');
+                                if (colonIndex >= 0 && colonIndex + 1 < text.Length)
+                                {
+                                    string textPart = text.Substring(colonIndex + 1).Trim();
+                                    string decodedText = DecodeTextString(textPart);
+                                    if (!string.IsNullOrEmpty(decodedText))
+                                    {
+                                        decodedText = decodedText.TrimEnd('\r');
+                                        variantContents[variantNumber].Add(decodedText);
+                                        Debug.WriteLine($"        Добавлен текст: {decodedText}");
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Debug.WriteLine($"      hasAnyTexts: {hasAnyTexts}, variantContents.Count: {variantContents.Count}");
 
                     // 5. Определяем, есть ли битва
                     bool hasBattle = battleInfoLines.Count > 0;
@@ -1653,18 +1694,21 @@ namespace MMMapEditor
                         {
                             // Нет текстовых вариантов - битва становится вариантом 0
                             variantContents[0] = battleVariantLines;
+                            Debug.WriteLine($"      Добавлена битва как вариант 0");
                         }
                         else if (variantContents.Count == 1)
                         {
                             // Ровно один вариант - добавляем битву к нему (объединяем)
                             int firstVariant = variantContents.Keys.Min();
                             variantContents[firstVariant].AddRange(battleVariantLines);
+                            Debug.WriteLine($"      Битва добавлена к варианту {firstVariant}");
                         }
                         else
                         {
                             // Два и более вариантов - битва создаёт новый отдельный вариант
                             int maxVariant = variantContents.Keys.Max();
                             variantContents[maxVariant + 1] = battleVariantLines;
+                            Debug.WriteLine($"      Битва создаёт новый вариант {maxVariant + 1}");
                         }
                     }
                     else if (monsterStatLines.Count > 0 && variantContents.Count > 0)
@@ -1673,11 +1717,13 @@ namespace MMMapEditor
                         // добавляем статистику к первому варианту
                         int firstVariant = variantContents.Keys.Min();
                         variantContents[firstVariant].InsertRange(0, monsterStatLines);
+                        Debug.WriteLine($"      Статистика монстров добавлена к варианту {firstVariant}");
                     }
                     else if (monsterStatLines.Count > 0)
                     {
                         // Если есть только статистика и нет ни текстов, ни битв
                         variantContents[0] = monsterStatLines;
+                        Debug.WriteLine($"      Статистика монстров как вариант 0");
                     }
 
                     // ---- ФОРМИРУЕМ ИТОГОВЫЕ ЗАМЕТКИ ----
@@ -1687,6 +1733,7 @@ namespace MMMapEditor
                     {
                         // Нет никакого контента - оставляем существующие заметки
                         newNotes.Append(existingNotes);
+                        Debug.WriteLine($"      Нет контента, оставляем существующие заметки");
                     }
                     else if (variantContents.Count == 1)
                     {
@@ -1696,6 +1743,7 @@ namespace MMMapEditor
                         {
                             newNotes.Append(line + "\n");
                         }
+                        Debug.WriteLine($"      Один вариант, {singleVariant.Count} строк");
                     }
                     else
                     {
@@ -1723,18 +1771,17 @@ namespace MMMapEditor
                                 newNotes.AppendLine();
                             }
                         }
+                        Debug.WriteLine($"      Несколько вариантов: {sortedVariants.Count}");
                     }
 
                     // Если есть новые заметки, сохраняем их
                     if (newNotes.Length > 0)
                     {
-                        // Если были старые заметки, добавляем их в конец? Или заменить? Пока заменим.
                         notesPerCell[pos] = newNotes.ToString().TrimEnd('\n');
                         Debug.WriteLine($"    Добавлены заметки для ({obj.X},{obj.Y}): {newNotes.ToString().Replace("\n", "\\n")}");
                     }
                     else
                     {
-                        // Если нет новых заметок, оставляем старые (если они были)
                         notesPerCell[pos] = existingNotes;
                         Debug.WriteLine($"    Нет заметок для ({obj.X},{obj.Y})");
                     }
@@ -1763,7 +1810,6 @@ namespace MMMapEditor
                               "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
-
 
         private void ApplyItalicSeaWaveStyle(RichTextBox rt, int startIndex, int length)
         {

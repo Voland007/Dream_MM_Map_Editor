@@ -31,6 +31,9 @@ namespace MMMapEditor
         public byte DirectionByte { get; set; }
         public Dictionary<int, HashSet<string>> PathTexts { get; set; } = new Dictionary<int, HashSet<string>>();
 
+        // НОВОЕ: упорядоченные версии путей для отображения
+        public Dictionary<int, List<string>> PathTextsOrdered { get; set; } = new Dictionary<int, List<string>>();
+
         public bool IsFromTable { get; set; } = false;
 
         #endregion

@@ -1268,8 +1268,9 @@ namespace MMMapEditor
         }
 
         // ОСНОВНОЙ МЕТОД ОБРАБОТКИ ОБЪЕКТА ИЗ ТАБЛИЦЫ
+
         private OvrObject ProcessObject(BinaryReader br, int objIndex, Tuple<byte, byte> coords,
-                                byte direction, ushort patchKey)
+                                        byte direction, ushort patchKey)
         {
             var ovrObject = new OvrObject
             {
@@ -1295,23 +1296,46 @@ namespace MMMapEditor
             var mainPathResult = ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
                 new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0);
 
-            // Сохраняем результаты основного пути
-            HashSet<string> mainLocalTexts = new HashSet<string>();
-            HashSet<string> mainContextTexts = new HashSet<string>();
+            // Сохраняем результаты основного пути с разделением на типы
+            List<TextEntry> mainLocalTexts = new List<TextEntry>();
+            List<TextEntry> mainContextTexts = new List<TextEntry>();
 
-            if (mainPathResult.FoundTexts.Count > 0)
-                mainLocalTexts = new HashSet<string>(mainPathResult.FoundTexts);
-            if (mainPathResult.ContextTexts.Count > 0)
-                mainContextTexts = new HashSet<string>(mainPathResult.ContextTexts);
+            // Преобразуем FoundTexts и ContextTexts в список с сохранением порядка
+            int order = 0;
+
+            // ИСПРАВЛЕНИЕ: Сначала добавляем контекстные тексты (из CALL)
+            // Они должны быть первыми, так как это "рамка" для диалогов
+            foreach (var text in mainPathResult.ContextTexts)
+            {
+                mainContextTexts.Add(new TextEntry
+                {
+                    Text = text,
+                    Order = order++,
+                    IsContextual = true,
+                    Address = mainPathResult.FirstLocalTextAddress
+                });
+            }
+
+            // Потом добавляем локальные тексты
+            foreach (var text in mainPathResult.FoundTexts)
+            {
+                mainLocalTexts.Add(new TextEntry
+                {
+                    Text = text,
+                    Order = order++,
+                    IsContextual = false,
+                    Address = mainPathResult.FirstLocalTextAddress
+                });
+            }
 
             if (debugMode)
             {
                 Debug.WriteLine($"Основной путь: локальных текстов: {mainLocalTexts.Count}, контекстных: {mainContextTexts.Count}");
                 Debug.WriteLine($"FirstLocalTextAddress: 0x{mainPathResult.FirstLocalTextAddress:X4}");
                 foreach (var text in mainLocalTexts)
-                    Debug.WriteLine($"  Локальный: {text}");
+                    Debug.WriteLine($"  Локальный [{text.Order}]: {text.Text}");
                 foreach (var text in mainContextTexts)
-                    Debug.WriteLine($"  Контекстный: {text}");
+                    Debug.WriteLine($"  Контекстный [{text.Order}]: {text.Text}");
             }
 
             if (mainPathResult.MonsterPower.HasValue)
@@ -1322,7 +1346,6 @@ namespace MMMapEditor
             bool isMainPathIndeterminate = mainPathResult.IsIndeterminateLoop;
             if (mainPathResult.BattleMonsterEntries.Count > 0)
             {
-                // Все записи обрабатываются одинаково, без разделения на одиночные и множественные
                 foreach (var entry in mainPathResult.BattleMonsterEntries)
                 {
                     if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
@@ -1331,14 +1354,9 @@ namespace MMMapEditor
                             entry.Key,
                             entry.Value.val1,
                             entry.Value.val2,
-                            isMainPathIndeterminate || entry.Value.isIndeterminate  // Просто объединяем флаги
+                            isMainPathIndeterminate || entry.Value.isIndeterminate
                         );
                     }
-                }
-
-                if (debugMode && mainPathResult.BattleMonsterEntries.Count > 0)
-                {
-                    Debug.WriteLine($"      Добавлено {mainPathResult.BattleMonsterEntries.Count} записей монстров в объект");
                 }
             }
 
@@ -1369,31 +1387,27 @@ namespace MMMapEditor
                 }
             }
 
-            // ========== 2. Собираем все результаты ==========
-            var allResults = new List<(int pathId, HashSet<string> texts, bool isLeaf)>();
-            var processedTargets = new HashSet<uint>();
+            // ========== 2. Собираем все результаты с сохранением порядка ==========
+            var allResults = new List<PathResult>();
 
-            // Добавляем основной путь, если в нём есть локальные тексты
-            if (mainLocalTexts.Count > 0)
+            // Добавляем основной путь - контекстные тексты должны быть перед локальными
+            var mainCombinedTexts = new List<TextEntry>();
+            mainCombinedTexts.AddRange(mainContextTexts);  // Сначала контекстные
+            mainCombinedTexts.AddRange(mainLocalTexts);    // Потом локальные
+
+            allResults.Add(new PathResult
             {
-                var mainCombinedTexts = new HashSet<string>();
-                foreach (var text in mainLocalTexts)
-                    mainCombinedTexts.Add(text);
-                foreach (var text in mainContextTexts)
-                    mainCombinedTexts.Add(text);
+                PathId = 1,
+                Texts = mainCombinedTexts,
+                IsLeaf = mainPathResult.AlternativePaths.Count == 0
+            });
 
-                bool isMainLeaf = mainPathResult.AlternativePaths.Count == 0;
-                allResults.Add((1, mainCombinedTexts, isMainLeaf));
-
-                if (debugMode)
-                {
-                    Debug.WriteLine($"Добавлен основной путь с {mainLocalTexts.Count} локальными текстами (листовой: {isMainLeaf})");
-                }
-            }
+            var processedTargets = new HashSet<uint>();
 
             // Рекурсивная функция для обработки альтернативных путей
             void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
-                              HashSet<string> inheritedContextTexts, HashSet<string> inheritedLocalTexts,
+                              List<TextEntry> inheritedContextTexts,
+                              List<TextEntry> inheritedLocalTexts,
                               uint firstLocalTextAddress)
             {
                 if (depth > 5) return;
@@ -1420,54 +1434,85 @@ namespace MMMapEditor
                     var pathResult = ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                         new HashSet<uint>(), depth + 1, 0, debugMode ? ovrObject : null, currentPathId);
 
-                    // Формируем тексты для этого пути
-                    var pathTexts = new HashSet<string>();
+                    // Формируем тексты для этого пути с сохранением порядка
+                    List<TextEntry> pathTexts = new List<TextEntry>();
+                    int nextOrder = 0;
 
-                    // 1. Наследуем контекстные тексты от родителя (ВСЕГДА)
+                    // ========== ВАЖНО: правильный порядок добавления ==========
+
+                    // 1. Сначала наследуем контекстные тексты от родителя
                     foreach (var text in inheritedContextTexts)
                     {
-                        pathTexts.Add(text);
+                        pathTexts.Add(new TextEntry
+                        {
+                            Text = text.Text,
+                            Order = nextOrder++,
+                            IsContextual = true,
+                            Address = text.Address
+                        });
                     }
 
-                    // 2. Наследуем локальные тексты от родителя, если:
-                    //    - Это LINEAR путь (продолжение выполнения)
-                    //    - ИЛИ локальный текст был загружен ДО точки ветвления (path.Address > firstLocalTextAddress)
+                    // 2. Потом добавляем новые контекстные тексты из этого пути
+                    foreach (var text in pathResult.ContextTexts)
+                    {
+                        pathTexts.Add(new TextEntry
+                        {
+                            Text = text,
+                            Order = nextOrder++,
+                            IsContextual = true,
+                            Address = pathResult.FirstLocalTextAddress
+                        });
+                    }
+
+                    // 3. Определяем, нужно ли наследовать локальные тексты
                     bool shouldInheritLocal = path.Condition.StartsWith("LINEAR") ||
                                               (firstLocalTextAddress != uint.MaxValue &&
                                                path.Address > firstLocalTextAddress);
 
+                    // 4. Если нужно, наследуем локальные тексты от родителя
                     if (shouldInheritLocal)
                     {
                         foreach (var text in inheritedLocalTexts)
                         {
-                            pathTexts.Add(text);
+                            pathTexts.Add(new TextEntry
+                            {
+                                Text = text.Text,
+                                Order = nextOrder++,
+                                IsContextual = false,
+                                Address = text.Address
+                            });
                         }
                     }
 
-                    // 3. Добавляем новые контекстные тексты из этого пути
-                    foreach (var text in pathResult.ContextTexts)
-                    {
-                        pathTexts.Add(text);
-                    }
-
-                    // 4. Добавляем новые локальные тексты из этого пути
+                    // 5. В самом конце добавляем новые локальные тексты из этого пути
                     foreach (var text in pathResult.FoundTexts)
                     {
-                        pathTexts.Add(text);
+                        pathTexts.Add(new TextEntry
+                        {
+                            Text = text,
+                            Order = nextOrder++,
+                            IsContextual = false,
+                            Address = pathResult.FirstLocalTextAddress
+                        });
                     }
 
                     // Путь считается листовым, только если у него нет вложенных путей
                     bool isLeaf = pathResult.AlternativePaths.Count == 0;
 
-                    // ВСЕГДА добавляем путь в результаты
-                    allResults.Add((currentPathId, pathTexts, isLeaf));
+                    // Добавляем путь в результаты
+                    allResults.Add(new PathResult
+                    {
+                        PathId = currentPathId,
+                        Texts = pathTexts,
+                        IsLeaf = isLeaf
+                    });
 
                     if (debugMode && pathTexts.Count > 0)
                     {
                         Debug.WriteLine($"      Найдено текстов в пути {currentPathId}: {pathTexts.Count} (листовой: {isLeaf})");
-                        foreach (var text in pathTexts)
+                        foreach (var text in pathTexts.OrderBy(t => t.Order))
                         {
-                            Debug.WriteLine($"        {text}");
+                            Debug.WriteLine($"        [{text.Order}] {(text.IsContextual ? "C" : "L")}: {text.Text}");
                         }
                     }
 
@@ -1527,20 +1572,21 @@ namespace MMMapEditor
                     }
 
                     // Формируем набор текстов для наследования вложенными путями
-                    var newInheritedContextTexts = new HashSet<string>(inheritedContextTexts);
+                    var newInheritedContextTexts = new List<TextEntry>(inheritedContextTexts);
                     foreach (var text in pathResult.ContextTexts)
                     {
-                        newInheritedContextTexts.Add(text);
+                        newInheritedContextTexts.Add(new TextEntry
+                        {
+                            Text = text,
+                            Order = nextOrder,
+                            IsContextual = true,
+                            Address = pathResult.FirstLocalTextAddress
+                        });
                     }
 
-                    var newInheritedLocalTexts = new HashSet<string>();
+                    var newInheritedLocalTexts = new List<TextEntry>();
 
-                    // Для вложенных путей наследуем локальные тексты по тому же правилу
-                    bool shouldPassLocalToChildren = path.Condition.StartsWith("LINEAR") ||
-                                                    (firstLocalTextAddress != uint.MaxValue &&
-                                                     path.Address > firstLocalTextAddress);
-
-                    if (shouldPassLocalToChildren)
+                    if (shouldInheritLocal)
                     {
                         foreach (var text in inheritedLocalTexts)
                         {
@@ -1548,10 +1594,15 @@ namespace MMMapEditor
                         }
                     }
 
-                    // Всегда добавляем новые локальные тексты из этого пути
                     foreach (var text in pathResult.FoundTexts)
                     {
-                        newInheritedLocalTexts.Add(text);
+                        newInheritedLocalTexts.Add(new TextEntry
+                        {
+                            Text = text,
+                            Order = nextOrder,
+                            IsContextual = false,
+                            Address = pathResult.FirstLocalTextAddress
+                        });
                     }
 
                     // Рекурсивно обрабатываем вложенные пути
@@ -1586,27 +1637,36 @@ namespace MMMapEditor
             }
 
             // ========== 3. Формируем финальный словарь путей ==========
-            var finalPaths = new Dictionary<int, HashSet<string>>();
+            var finalOrderedPaths = new Dictionary<int, List<string>>();
 
-            // Оставляем только листовые пути (не имеющие вложенных путей)
+            // Оставляем только листовые пути
             var leafResults = allResults
-                .Where(r => r.isLeaf && r.texts.Count > 0)
-                .OrderBy(r => r.pathId)
+                .Where(r => r.IsLeaf && r.Texts.Count > 0)
+                .OrderBy(r => r.PathId)
                 .ToList();
 
-            // Группируем по уникальному содержимому текста
-            var uniqueTextGroups = new Dictionary<string, (int pathId, HashSet<string> texts)>();
+            // Группируем по уникальному содержимому текста, но с сохранением порядка
+            var uniqueTextGroups = new Dictionary<string, (int pathId, List<string> texts)>();
 
             foreach (var result in leafResults)
             {
-                // Создаём ключ из отсортированных текстов для сравнения
-                var sortedTexts = result.texts.OrderBy(t => t).ToList();
-                string key = string.Join("|", sortedTexts);
+                // Преобразуем TextEntry в список строк, сохраняя порядок
+                var orderedTexts = result.Texts
+                    .OrderBy(t => t.Order)
+                    .Select(t => t.Text)
+                    .Where(t => !string.IsNullOrEmpty(t))
+                    .ToList();
+
+                if (orderedTexts.Count == 0)
+                    continue;
+
+                // Создаём ключ из текстов для сравнения (порядок важен!)
+                string key = string.Join("|", orderedTexts);
 
                 // Если такой набор текстов ещё не встречался, добавляем его
                 if (!uniqueTextGroups.ContainsKey(key))
                 {
-                    uniqueTextGroups[key] = (result.pathId, result.texts);
+                    uniqueTextGroups[key] = (result.PathId, orderedTexts);
                 }
             }
 
@@ -1618,22 +1678,31 @@ namespace MMMapEditor
             if (uniqueResults.Count > 0)
             {
                 // Первый путь всегда сохраняем с ключом 0
-                finalPaths[0] = uniqueResults[0].texts;
+                finalOrderedPaths[0] = uniqueResults[0].texts;
 
                 // Остальные пути сохраняем с ключами 1,2,3...
                 for (int i = 1; i < uniqueResults.Count; i++)
                 {
-                    finalPaths[i] = uniqueResults[i].texts;
+                    finalOrderedPaths[i] = uniqueResults[i].texts;
                 }
             }
 
-            ovrObject.PathTexts = finalPaths;
+            // Сохраняем оба представления - HashSet для обратной совместимости
+            // и List для правильного порядка при отображении
+            ovrObject.PathTexts = new Dictionary<int, HashSet<string>>();
+            ovrObject.PathTextsOrdered = new Dictionary<int, List<string>>();
+
+            foreach (var kvp in finalOrderedPaths)
+            {
+                ovrObject.PathTexts[kvp.Key] = new HashSet<string>(kvp.Value);
+                ovrObject.PathTextsOrdered[kvp.Key] = kvp.Value;
+            }
 
             if (debugMode)
             {
                 Debug.WriteLine($"\n    ИТОГО для клетки ({ovrObject.X},{ovrObject.Y}):");
-                Debug.WriteLine($"      Всего путей: {ovrObject.PathTexts.Count}");
-                foreach (var kvp in ovrObject.PathTexts.OrderBy(k => k.Key))
+                Debug.WriteLine($"      Всего путей: {ovrObject.PathTextsOrdered.Count}");
+                foreach (var kvp in ovrObject.PathTextsOrdered.OrderBy(k => k.Key))
                 {
                     Debug.WriteLine($"      Path {kvp.Key}: {kvp.Value.Count} текстов");
                     foreach (var text in kvp.Value)
@@ -1644,6 +1713,22 @@ namespace MMMapEditor
             }
 
             return ovrObject;
+        }
+
+        // Вспомогательные классы
+        private class TextEntry
+        {
+            public string Text { get; set; }
+            public int Order { get; set; }
+            public bool IsContextual { get; set; }
+            public uint Address { get; set; }
+        }
+
+        private class PathResult
+        {
+            public int PathId { get; set; }
+            public List<TextEntry> Texts { get; set; } = new List<TextEntry>();
+            public bool IsLeaf { get; set; }
         }
 
         // ========== НОВЫЙ ОСНОВНОЙ МЕТОД ВЫПОЛНЕНИЯ КОДА ==========
