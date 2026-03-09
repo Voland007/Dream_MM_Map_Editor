@@ -723,6 +723,7 @@ namespace MMMapEditor
 
                 Debug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
 
+                // ========== ВТОРОЙ РЕЖИМ (ОРИГИНАЛЬНЫЙ, РАБОЧИЙ) ==========
                 foreach (var comparison in comparisons)
                 {
                     Debug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
@@ -926,6 +927,125 @@ namespace MMMapEditor
                     Debug.WriteLine($"  -> создано объектов из макроса: {objectsCreated}");
                 }
 
+                // ========== ТРЕТИЙ РЕЖИМ (НОВЫЙ) - ПУТЬ ПО УМОЛЧАНИЮ ==========
+                uint? defaultPathAddress = FindDefaultPathAfterTableLoop(allInstructions);
+
+                if (defaultPathAddress.HasValue)
+                {
+                    Debug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
+                    Debug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
+
+                    // Анализируем путь по умолчанию
+                    var defaultRegisterTracker = new RegisterTracker();
+                    var defaultPathResult = ExecuteCodeAtAddress(br, defaultPathAddress.Value, defaultRegisterTracker,
+                        new HashSet<uint>(), 0, 0, null, 0);
+
+                    // Собираем все тексты и информацию
+                    var defaultTexts = new HashSet<string>();
+                    foreach (var text in defaultPathResult.FoundTexts)
+                        defaultTexts.Add(text);
+                    foreach (var text in defaultPathResult.ContextTexts)
+                        defaultTexts.Add(text);
+
+                    bool hasSignificantCode = defaultTexts.Count > 0 ||
+                                              defaultPathResult.MonsterPower.HasValue ||
+                                              defaultPathResult.MonsterLevel.HasValue ||
+                                              defaultPathResult.BattleMonsterEntries.Count > 0 ||
+                                              defaultPathResult.PartialBattles.Count > 0;
+
+                    if (hasSignificantCode)
+                    {
+                        Debug.WriteLine($"  Найден значимый код в пути по умолчанию:");
+                        Debug.WriteLine($"    Текстов: {defaultTexts.Count}");
+                        Debug.WriteLine($"    MonsterPower: {defaultPathResult.MonsterPower}");
+                        Debug.WriteLine($"    MonsterLevel: {defaultPathResult.MonsterLevel}");
+                        Debug.WriteLine($"    BattleMonsters: {defaultPathResult.BattleMonsterEntries.Count}");
+
+                        // Создаем объекты для ВСЕХ клеток, которых нет в таблице
+                        // и у которых центральная опция "Случайная встреча"
+                        int objectsCreated = 0;
+                        for (byte x = 0; x < 16; x++)
+                        {
+                            for (byte y = 0; y < 16; y++)
+                            {
+                                var cellPos = new Point(x, y);
+                                string coordKey = $"{x},{y}";
+
+                                // Пропускаем клетки из таблицы
+                                if (tableObjectCoords.Contains(coordKey))
+                                    continue;
+
+                                // Проверяем центральную опцию
+                                bool isRandomEncounter = existingCentralOptions.TryGetValue(cellPos, out string option) &&
+                                                         option == "Случайная встреча";
+
+                                if (!isRandomEncounter)
+                                    continue;
+
+                                // Проверяем, не был ли уже создан объект для этой клетки во втором режиме
+                                bool alreadyExists = objects.Any(o => o.X == x && o.Y == y);
+                                if (alreadyExists)
+                                {
+                                    Debug.WriteLine($"  Клетка ({x},{y}) уже имеет объект из второго режима, пропускаем");
+                                    continue;
+                                }
+
+                                var obj = new OvrObject
+                                {
+                                    X = x,
+                                    Y = y,
+                                    DirectionByte = 0,
+                                    MonsterPower = defaultPathResult.MonsterPower,
+                                    MonsterLevel = defaultPathResult.MonsterLevel,
+                                    IsFromTable = false
+                                };
+
+                                if (defaultTexts.Count > 0)
+                                {
+                                    obj.PathTexts[0] = new HashSet<string>(defaultTexts);
+                                }
+
+                                foreach (var monster in defaultPathResult.BattleMonsterEntries)
+                                {
+                                    obj.AddBattleMonster(monster.Key, monster.Value.val1,
+                                                        monster.Value.val2, monster.Value.isIndeterminate);
+                                }
+
+                                foreach (var partial in defaultPathResult.PartialBattles)
+                                {
+                                    obj.AddPartiallyDefinedBattle(
+                                        partial.BxIndex,
+                                        partial.RangeStart1,
+                                        partial.RangeEnd1,
+                                        partial.RangeStart2,
+                                        partial.RangeEnd2
+                                    );
+                                }
+
+                                obj.HasAnyTableLoad = defaultPathResult.HasPartialBattlePattern;
+
+                                objects.Add(obj);
+                                objectsCreated++;
+
+                                if (x == 15 && y == 6)
+                                {
+                                    Debug.WriteLine($"  >>> СОЗДАН ОБЪЕКТ ДЛЯ (15,6) ИЗ ТРЕТЬЕГО РЕЖИМА!");
+                                    if (defaultTexts.Count > 0)
+                                    {
+                                        Debug.WriteLine($"      Текст: {defaultTexts.First()}");
+                                    }
+                                }
+                            }
+                        }
+
+                        Debug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"  Путь по умолчанию не содержит значимого кода");
+                    }
+                }
+
                 Debug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
 
                 int tableObjects = objects.Count(o => o.IsFromTable);
@@ -942,6 +1062,133 @@ namespace MMMapEditor
             }
 
             return objects;
+        }
+
+        // ========== НОВЫЙ ВСПОМОГАТЕЛЬНЫЙ МЕТОД ==========
+
+        private uint? FindDefaultPathAfterTableLoop(List<X86Instruction> allInstructions)
+        {
+            Debug.WriteLine("Поиск пути по умолчанию после табличного цикла...");
+
+            for (int i = 0; i < allInstructions.Count - 10; i++)
+            {
+                // Ищем паттерн: MOV AL, [3C3A]
+                if (i < allInstructions.Count &&
+                    allInstructions[i].Bytes.Length >= 3 &&
+                    allInstructions[i].Bytes[0] == 0xA0 &&
+                    allInstructions[i].Bytes[1] == 0x3A &&
+                    allInstructions[i].Bytes[2] == 0x3C)
+                {
+                    // Ищем MOV BX, 0
+                    if (i + 1 < allInstructions.Count &&
+                        allInstructions[i + 1].Bytes.Length >= 3 &&
+                        allInstructions[i + 1].Bytes[0] == 0xBB &&
+                        allInstructions[i + 1].Bytes[1] == 0x00 &&
+                        allInstructions[i + 1].Bytes[2] == 0x00)
+                    {
+                        // Ищем CMP AL, [BX + C973]
+                        if (i + 2 < allInstructions.Count &&
+                            allInstructions[i + 2].Bytes.Length >= 4 &&
+                            allInstructions[i + 2].Bytes[0] == 0x3A &&
+                            allInstructions[i + 2].Bytes[1] == 0x87 &&
+                            allInstructions[i + 2].Bytes[2] == 0x73 &&
+                            allInstructions[i + 2].Bytes[3] == 0xC9)
+                        {
+                            Debug.WriteLine($"  Найден паттерн начала табличного цикла по адресу 0x{allInstructions[i].Address:X4}");
+
+                            // Ищем JC/JB для возврата в цикл
+                            for (int j = i + 3; j < i + 15 && j < allInstructions.Count; j++)
+                            {
+                                if (IsConditionalJump(allInstructions[j], out uint target) &&
+                                    (allInstructions[j].Mnemonic.ToUpper() == "JC" ||
+                                     allInstructions[j].Mnemonic.ToUpper() == "JB" ||
+                                     allInstructions[j].Mnemonic.ToUpper() == "JNAE"))
+                                {
+                                    Debug.WriteLine($"  Найден переход цикла по адресу 0x{allInstructions[j].Address:X4}");
+
+                                    // Ищем инструкцию после цикла (путь по умолчанию)
+                                    // Обычно это MOV word ptr [0x3BD4], imm16
+                                    for (int k = j + 1; k < j + 10 && k < allInstructions.Count; k++)
+                                    {
+                                        // Ищем MOV word ptr [0x3BD4], imm16
+                                        if (allInstructions[k].Bytes.Length >= 6 &&
+                                            allInstructions[k].Bytes[0] == 0xC7 &&
+                                            allInstructions[k].Bytes[1] == 0x06 &&
+                                            allInstructions[k].Bytes[2] == 0xD4 &&
+                                            allInstructions[k].Bytes[3] == 0x3B)
+                                        {
+                                            uint defaultPathAddress = (uint)allInstructions[k].Address;
+                                            ushort textAddr = BitConverter.ToUInt16(allInstructions[k].Bytes, 4);
+
+                                            Debug.WriteLine($"  Найден путь по умолчанию после табличного цикла: 0x{defaultPathAddress:X4}");
+                                            Debug.WriteLine($"    Загружается текст из 0x{textAddr:X4}");
+
+                                            return defaultPathAddress;
+                                        }
+
+                                        // Альтернативный паттерн: просто первый адрес после цикла
+                                        if (k == j + 1 && allInstructions[k].Address > allInstructions[j].Address)
+                                        {
+                                            uint defaultPathAddress = (uint)allInstructions[k].Address;
+                                            Debug.WriteLine($"  Возможный путь по умолчанию: 0x{defaultPathAddress:X4} (первая инструкция после цикла)");
+
+                                            // Продолжаем поиск, но запоминаем этот адрес
+                                        }
+                                    }
+
+                                    // Если не нашли паттерн с MOV, берем первую инструкцию после цикла
+                                    if (j + 1 < allInstructions.Count)
+                                    {
+                                        uint defaultPathAddress = (uint)allInstructions[j + 1].Address;
+                                        Debug.WriteLine($"  Путь по умолчанию (первая инструкция после цикла): 0x{defaultPathAddress:X4}");
+                                        return defaultPathAddress;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Альтернативный поиск: просто ищем MOV word ptr [0x3BD4], imm16 после серии сравнений
+            for (int i = 0; i < allInstructions.Count - 5; i++)
+            {
+                if (allInstructions[i].Bytes.Length >= 6 &&
+                    allInstructions[i].Bytes[0] == 0xC7 &&
+                    allInstructions[i].Bytes[1] == 0x06 &&
+                    allInstructions[i].Bytes[2] == 0xD4 &&
+                    allInstructions[i].Bytes[3] == 0x3B)
+                {
+                    // Проверяем, есть ли перед этим цикл сравнений
+                    bool hasComparisonsBefore = false;
+                    for (int j = Math.Max(0, i - 20); j < i; j++)
+                    {
+                        if (allInstructions[j].Bytes.Length >= 4 &&
+                            allInstructions[j].Bytes[0] == 0x3A &&
+                            allInstructions[j].Bytes[1] == 0x87 &&
+                            allInstructions[j].Bytes[2] == 0x73 &&
+                            allInstructions[j].Bytes[3] == 0xC9)
+                        {
+                            hasComparisonsBefore = true;
+                            break;
+                        }
+                    }
+
+                    if (hasComparisonsBefore)
+                    {
+                        uint defaultPathAddress = (uint)allInstructions[i].Address;
+                        ushort textAddr = BitConverter.ToUInt16(allInstructions[i].Bytes, 4);
+
+                        Debug.WriteLine($"  Найден путь по умолчанию (альтернативный поиск): 0x{defaultPathAddress:X4}");
+                        Debug.WriteLine($"    Загружается текст из 0x{textAddr:X4}");
+
+                        return defaultPathAddress;
+                    }
+                }
+            }
+
+            Debug.WriteLine("  Путь по умолчанию не найден");
+            return null;
         }
 
         // Вспомогательный метод для слияния результатов анализа путей макроса
