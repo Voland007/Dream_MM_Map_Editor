@@ -123,7 +123,7 @@ namespace MMMapEditor
         private readonly Dictionary<string, JObject> _objectsData = new Dictionary<string, JObject>(); // Приватное поле для хранения данных объектов из JSON
         public string ActiveConfigObjectFile { get; set; }
         private LocalizedDirectionsForm localizedDirectionsForm; // Новые свойства для управления формой настроек
-        private string mapSector = ""; 
+        private string mapSector = "";
         private string surface = "";
         private Point? mostDangerousCell; //флаг для поментки опасной клетки
         private Point? mostPeacefulCell; // флаг для пометки безопасной клетки
@@ -262,25 +262,25 @@ namespace MMMapEditor
                 }
             }
 
-                // Если файл не указан, используем базовую конфигурацию
-                _objectsData["Пустота"] = new JObject(
-                    new JProperty("Name", "Пустота"),
-                    new JProperty("LeftMargin", 0),
-                    new JProperty("RightMargin", 0),
-                    new JProperty("FilterLevel", 0),
-                    new JProperty("IconBase64", ""),
-                    new JProperty("BodyPixels", new JArray())
-                );
+            // Если файл не указан, используем базовую конфигурацию
+            _objectsData["Пустота"] = new JObject(
+                new JProperty("Name", "Пустота"),
+                new JProperty("LeftMargin", 0),
+                new JProperty("RightMargin", 0),
+                new JProperty("FilterLevel", 0),
+                new JProperty("IconBase64", ""),
+                new JProperty("BodyPixels", new JArray())
+            );
 
-                _objectsData["Не исследовано"] = new JObject(
-                    new JProperty("Name", "Не исследовано"),
-                    new JProperty("LeftMargin", 0),
-                    new JProperty("RightMargin", 0),
-                    new JProperty("FilterLevel", 0),
-                    new JProperty("IconBase64", ""),
-                    new JProperty("BodyPixels", new JArray())
-                );
-            
+            _objectsData["Не исследовано"] = new JObject(
+                new JProperty("Name", "Не исследовано"),
+                new JProperty("LeftMargin", 0),
+                new JProperty("RightMargin", 0),
+                new JProperty("FilterLevel", 0),
+                new JProperty("IconBase64", ""),
+                new JProperty("BodyPixels", new JArray())
+            );
+
         }
 
         private void LoadNamesFromJson()
@@ -586,12 +586,12 @@ namespace MMMapEditor
                     !previousMessageStates.Equals(currentMessageStates);
 
                 if (hasChanged)
-                     {
+                {
                     gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
 
                     UpdatePreview();
-                isMapModified = true;
-            }
+                    isMapModified = true;
+                }
             }
         }
 
@@ -636,13 +636,13 @@ namespace MMMapEditor
 
             bufferPasteImageButton = new Button
             {
-               // Text = "Вставить изображение",
+                // Text = "Вставить изображение",
                 Location = new Point(infoLabel.Left + 45, 400),
                 Width = 50,
                 Height = 50,
-                Image = Properties.Resources.BufferPasterButtonIcon, 
+                Image = Properties.Resources.BufferPasterButtonIcon,
                 ImageAlign = ContentAlignment.MiddleLeft, // Выравнивание изображения
-              //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
+                                                          //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
             };
 
             bufferPasteImageButton.Click += BufferPasteImageButton_Click;
@@ -653,7 +653,7 @@ namespace MMMapEditor
                 Location = new Point(bufferPasteImageButton.Right + 30, 400),
                 Width = 50,
                 Height = 50,
-                Image = Properties.Resources.TrashBasket, 
+                Image = Properties.Resources.TrashBasket,
                 ImageAlign = ContentAlignment.MiddleLeft, // Выравнивание изображения
                                                           //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
             };
@@ -848,8 +848,8 @@ namespace MMMapEditor
                 FlatStyle = FlatStyle.Flat
             };
 
-            centerComboBox.Items.AddRange(new object[] { 
-                "Пустота", 
+            centerComboBox.Items.AddRange(new object[] {
+                "Пустота",
                 "Не исследовано" });
             if (centerComboBox.Items.Count > 0)
             {
@@ -863,9 +863,9 @@ namespace MMMapEditor
                 Location = new Point(centerComboBox.Left, centerComboBox.Bottom + 5),
                 ForeColor = Color.White,
                 Appearance = Appearance.Normal,
-            //ImageAlign = ContentAlignment.MiddleCenter,
-            //BackgroundImageLayout = ImageLayout.Center
-        };
+                //ImageAlign = ContentAlignment.MiddleCenter,
+                //BackgroundImageLayout = ImageLayout.Center
+            };
             isDangerCheckBox.CheckedChanged += IsDangerCheckBox_CheckedChanged;
 
             noMagicCheckBox = new CheckBox
@@ -1000,7 +1000,7 @@ namespace MMMapEditor
             ToolStripMenuItem testMenuItem = new ToolStripMenuItem("Тестирование");
             ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Юнит-функциональные тесты");
             runAnalyzerTestsItem.Click += RunAnalyzerTests_Click;
-            
+
 
             menuStrip.Items.Add(testMenuItem);
 
@@ -1379,7 +1379,7 @@ namespace MMMapEditor
             if (mostPeacefulCellAddress + 1 >= fileData.Length)
             {
                 Console.WriteLine($"Адрес mostPeacefulCell выходит за пределы файла.");
-                return  null;
+                return null;
             }
 
             // Читаем координаты X и Y
@@ -1557,64 +1557,60 @@ namespace MMMapEditor
 
                     messageStates[pos] = new Tuple<bool, bool, bool, bool>(top, left, bottom, right);
 
-                    // ---- ФОРМИРУЕМ ЗАМЕТКИ ----
-                    StringBuilder newNotes = new StringBuilder();
+                    // ---- ФОРМИРУЕМ ЗАМЕТКИ С УЧЁТОМ ВАРИАНТОВ ----
 
-                    // 1. Информация о полностью определённых битвах
+                    // Словарь для хранения всех вариантов (ключ - номер варианта, значение - список строк варианта)
+                    Dictionary<int, List<string>> variantContents = new Dictionary<int, List<string>>();
+
+                    // 1. Сначала собираем информацию о битвах (если они есть)
+                    List<string> battleInfoLines = new List<string>();
+
                     if (obj.HasBattleInfo)
                     {
                         string battleDesc = obj.GetBattleDescription();
                         if (!string.IsNullOrEmpty(battleDesc))
                         {
-                            newNotes.Append(battleDesc + "\n");
+                            battleInfoLines.Add(battleDesc);
                         }
                     }
 
-                    // 2. Изменения статистики монстров
+                    // 2. Изменения статистики монстров (это всегда глобально для клетки, а не для варианта)
+                    List<string> monsterStatLines = new List<string>();
                     if (obj.HasMonsterStatChanges)
                     {
                         var powerDesc = obj.GetMonsterPowerDescription(defaultMonsterPower);
-                        if (powerDesc != null) newNotes.Append(powerDesc + "\n");
+                        if (powerDesc != null) monsterStatLines.Add(powerDesc);
 
                         var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
-                        if (levelDesc != null) newNotes.Append(levelDesc + "\n");
+                        if (levelDesc != null) monsterStatLines.Add(levelDesc);
                     }
 
                     // 3. Частично определённые битвы
+                    List<string> partialBattleLines = new List<string>();
                     if (obj.HasPartiallyDefinedBattles)
                     {
                         string battleDesc = obj.GetBattleDescription();
                         if (!string.IsNullOrEmpty(battleDesc))
                         {
-                            newNotes.Append(battleDesc + "\n");
+                            partialBattleLines.Add(battleDesc);
                         }
                     }
 
-                    // 4. Текстовые сообщения (пути)
+                    // 4. Текстовые сообщения (пути) - группируем по вариантам
                     bool hasAnyTexts = obj.PathTexts != null && obj.PathTexts.Count > 0;
+
                     if (hasAnyTexts)
                     {
-                        bool shouldShowPath0 = obj.ShouldShowPath0;
-                        int variantCounter = 1;
-
                         foreach (var kvp in obj.PathTexts.OrderBy(p => p.Key))
                         {
                             if (kvp.Value == null || kvp.Value.Count == 0)
                                 continue;
 
-                            if (kvp.Key == 0)
-                            {
-                                if (shouldShowPath0)
-                                {
-                                    newNotes.Append($"Эта ячейка содержит различные варианты текста:\n");
-                                    newNotes.Append($"Вариант{variantCounter++}:\n");
-                                }
-                            }
-                            else
-                            {
-                                newNotes.Append($"Вариант{variantCounter++}:\n");
-                            }
+                            int variantNumber = kvp.Key;
+                            if (!variantContents.ContainsKey(variantNumber))
+                                variantContents[variantNumber] = new List<string>();
 
+                            // Сортируем тексты для консистентности
                             foreach (var text in kvp.Value.OrderBy(t => t))
                             {
                                 int colonIndex = text.IndexOf(':');
@@ -1625,9 +1621,106 @@ namespace MMMapEditor
                                     if (!string.IsNullOrEmpty(decodedText))
                                     {
                                         decodedText = decodedText.TrimEnd('\r');
-                                        newNotes.Append(decodedText + "\n");
+                                        variantContents[variantNumber].Add(decodedText);
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // 5. Определяем, есть ли битва
+                    bool hasBattle = battleInfoLines.Count > 0;
+                    bool hasPartialBattle = partialBattleLines.Count > 0;
+
+                    // Если есть битва, добавляем её
+                    if (hasBattle || hasPartialBattle)
+                    {
+                        List<string> battleVariantLines = new List<string>();
+
+                        // Добавляем основную информацию о битве
+                        if (hasBattle)
+                            battleVariantLines.AddRange(battleInfoLines);
+                        if (hasPartialBattle)
+                            battleVariantLines.AddRange(partialBattleLines);
+
+                        // Добавляем статистику монстров (если есть) к битве
+                        if (monsterStatLines.Count > 0)
+                        {
+                            battleVariantLines.InsertRange(0, monsterStatLines);
+                        }
+
+                        if (variantContents.Count == 0)
+                        {
+                            // Нет текстовых вариантов - битва становится вариантом 0
+                            variantContents[0] = battleVariantLines;
+                        }
+                        else if (variantContents.Count == 1)
+                        {
+                            // Ровно один вариант - добавляем битву к нему (объединяем)
+                            int firstVariant = variantContents.Keys.Min();
+                            variantContents[firstVariant].AddRange(battleVariantLines);
+                        }
+                        else
+                        {
+                            // Два и более вариантов - битва создаёт новый отдельный вариант
+                            int maxVariant = variantContents.Keys.Max();
+                            variantContents[maxVariant + 1] = battleVariantLines;
+                        }
+                    }
+                    else if (monsterStatLines.Count > 0 && variantContents.Count > 0)
+                    {
+                        // Если есть только статистика монстров и есть текстовые варианты,
+                        // добавляем статистику к первому варианту
+                        int firstVariant = variantContents.Keys.Min();
+                        variantContents[firstVariant].InsertRange(0, monsterStatLines);
+                    }
+                    else if (monsterStatLines.Count > 0)
+                    {
+                        // Если есть только статистика и нет ни текстов, ни битв
+                        variantContents[0] = monsterStatLines;
+                    }
+
+                    // ---- ФОРМИРУЕМ ИТОГОВЫЕ ЗАМЕТКИ ----
+                    StringBuilder newNotes = new StringBuilder();
+
+                    if (variantContents.Count == 0)
+                    {
+                        // Нет никакого контента - оставляем существующие заметки
+                        newNotes.Append(existingNotes);
+                    }
+                    else if (variantContents.Count == 1)
+                    {
+                        // Только один вариант - выводим без заголовка "Вариант"
+                        var singleVariant = variantContents.First().Value;
+                        foreach (var line in singleVariant)
+                        {
+                            newNotes.Append(line + "\n");
+                        }
+                    }
+                    else
+                    {
+                        // Несколько вариантов - добавляем заголовок и нумеруем
+                        newNotes.AppendLine("Эта ячейка содержит различные варианты текста:");
+
+                        var sortedVariants = variantContents.OrderBy(v => v.Key).ToList();
+
+                        for (int i = 0; i < sortedVariants.Count; i++)
+                        {
+                            var variant = sortedVariants[i];
+
+                            // Добавляем заголовок варианта
+                            newNotes.Append($"Вариант{i + 1}:\n");
+
+                            // Добавляем содержимое варианта
+                            foreach (var line in variant.Value)
+                            {
+                                newNotes.Append(line + "\n");
+                            }
+
+                            // Добавляем пустую строку между вариантами, кроме последнего
+                            if (i < sortedVariants.Count - 1)
+                            {
+                                newNotes.AppendLine();
                             }
                         }
                     }
@@ -1986,7 +2079,7 @@ namespace MMMapEditor
             // Сбрасываем выделение
             rt.Select(0, 0);
         }
-        
+
         // Новый метод для обработки текстовых записей
         private string ProcessTextEntry(string textEntry)
         {
@@ -3053,7 +3146,7 @@ namespace MMMapEditor
             }
 
             // Показываем уведомление о выполнении загрузки
-          //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void SaveAsItem_Click(object sender, EventArgs e)
@@ -3086,38 +3179,38 @@ namespace MMMapEditor
             }
         }
 
-private void SaveMap(string filename)
-    {
-        // Создаем контейнер для данных карты
-        var mapData = new Dictionary<string, object>();
-
-        // Состояние каждой ячейки будем собирать в отдельную структуру
-        var cellsData = new List<object>();
-
-        for (int y = 0; y < GridSize; y++)
+        private void SaveMap(string filename)
         {
-            for (int x = 0; x < GridSize; x++)
-            {
-                Point pos = new Point(x, y);
-                var cellInfo = new Dictionary<string, object>()
-                {
-                    ["Borders"] = borders[pos],
-                    ["Passages"] = passageDict[pos],
-                    ["ClosedStates"] = closedStates[pos],
-                    ["Messages"] = messageStates[pos],
-                    ["CentralOption"] = centralOptions[pos],
-                    ["IsDanger"] = isDangerStates[pos],
-                    ["NoMagic"] = noMagicStates[pos],
-                    ["Lighting"] = lightingLevels[pos],
-                    ["Note"] = notesPerCell[pos],
-                    ["Image"] = imagesPerCell[pos]?.ToBase64String() // Сериализуем изображение в Base64
-                };
-                cellsData.Add(cellInfo);
-            }
-        }
+            // Создаем контейнер для данных карты
+            var mapData = new Dictionary<string, object>();
 
-        // Добавляем список ячеек в главный контейнер
-        mapData["Cells"] = cellsData;
+            // Состояние каждой ячейки будем собирать в отдельную структуру
+            var cellsData = new List<object>();
+
+            for (int y = 0; y < GridSize; y++)
+            {
+                for (int x = 0; x < GridSize; x++)
+                {
+                    Point pos = new Point(x, y);
+                    var cellInfo = new Dictionary<string, object>()
+                    {
+                        ["Borders"] = borders[pos],
+                        ["Passages"] = passageDict[pos],
+                        ["ClosedStates"] = closedStates[pos],
+                        ["Messages"] = messageStates[pos],
+                        ["CentralOption"] = centralOptions[pos],
+                        ["IsDanger"] = isDangerStates[pos],
+                        ["NoMagic"] = noMagicStates[pos],
+                        ["Lighting"] = lightingLevels[pos],
+                        ["Note"] = notesPerCell[pos],
+                        ["Image"] = imagesPerCell[pos]?.ToBase64String() // Сериализуем изображение в Base64
+                    };
+                    cellsData.Add(cellInfo);
+                }
+            }
+
+            // Добавляем список ячеек в главный контейнер
+            mapData["Cells"] = cellsData;
 
             // Добавляем MetaData с необходимыми полями
             mapData["MetaData"] = new Dictionary<string, object>()
@@ -3132,8 +3225,8 @@ private void SaveMap(string filename)
 
         }
 
-    // Обработчик клика по пункту "Создать новую(карту)"
-    private void NewMapItem_Click(object sender, EventArgs e)
+        // Обработчик клика по пункту "Создать новую(карту)"
+        private void NewMapItem_Click(object sender, EventArgs e)
         {
             if (isMapModified)
             {
@@ -3307,7 +3400,7 @@ private void SaveMap(string filename)
                     bool hasChanged = previousImage != imagesPerCell[pos];
 
                     if (hasChanged)
-                    isMapModified = true;
+                        isMapModified = true;
                 }
                 else
                 {
@@ -3408,8 +3501,8 @@ private void SaveMap(string filename)
                 //AutoSize = true,
                 Height = 20,
                 ForeColor = Color.White,
-               // Anchor = AnchorStyles.Left // Прикрепляем к левому краю и вершине
-                                                              //  Location = new Point(10,10)
+                // Anchor = AnchorStyles.Left // Прикрепляем к левому краю и вершине
+                //  Location = new Point(10,10)
 
             };
 
@@ -3457,7 +3550,7 @@ private void SaveMap(string filename)
                 bool hasChanged = previousNote != notesPerCell[pos];
 
                 if (hasChanged)
-                  isMapModified = true;
+                    isMapModified = true;
             }
         }
 
@@ -3625,12 +3718,12 @@ private void SaveMap(string filename)
                 bool hasChanged = !previousPassages.Equals(passageDict[pos]);
 
                 if (hasChanged)
-                {     
+                {
 
-                // Обновляем соответствующую ячейку на карте
-                gridButtons[selectedPosition.Value.X, GridSize - 1 - (selectedPosition.Value.Y)].Invalidate();
-                UpdatePreview();
-                isMapModified = true;
+                    // Обновляем соответствующую ячейку на карте
+                    gridButtons[selectedPosition.Value.X, GridSize - 1 - (selectedPosition.Value.Y)].Invalidate();
+                    UpdatePreview();
+                    isMapModified = true;
                 }
             }
         }
@@ -3884,14 +3977,14 @@ private void SaveMap(string filename)
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
-                        bounds.X, 
+                        bounds.X,
                         bounds.Bottom - exitWordBitmap.Height,                // начало снизу
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
-                        bounds.X,                                        
+                        bounds.X,
                         bounds.Y,                                       // начало сверху
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
@@ -4006,8 +4099,8 @@ private void SaveMap(string filename)
             // Чёрный пиксель в верхнем левом углу внешних ворот
             using (SolidBrush blackBrush = new SolidBrush(Color.Black))
             {
-                graphics.FillRectangle(blackBrush, dx-1, dy-1, 1, 1); // Верхний левый угол
-                graphics.FillRectangle(blackBrush, dx + gateWidth, dy-1, 1, 1); // Верхний правый угол
+                graphics.FillRectangle(blackBrush, dx - 1, dy - 1, 1, 1); // Верхний левый угол
+                graphics.FillRectangle(blackBrush, dx + gateWidth, dy - 1, 1, 1); // Верхний правый угол
             }
 
             // Средний слой получает цвет внешних ворот
@@ -4049,17 +4142,17 @@ private void SaveMap(string filename)
                     case Direction.Bottom:
                         // Левая и правая вертикальные линии
                         graphics.DrawLine(blackPen, dx - 2, dy - 1, dx - 2, dy + gateHeight);
-                        graphics.DrawLine(blackPen, dx + gateWidth+1, dy - 1, dx + gateWidth+1, dy + gateHeight);
+                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy - 1, dx + gateWidth + 1, dy + gateHeight);
                         break;
                     case Direction.Left:
                         // Левая и правая горизонтальные линии (после поворота) в левой части ячейки
                         graphics.DrawLine(blackPen, dx - 1, dy - 1, dx - 1, dy + gateHeight);                   // Левая сторона
-                        graphics.DrawLine(blackPen, dx + gateWidth+2, dy - 1, dx + gateWidth+2, dy + gateHeight); // Правая сторона
+                        graphics.DrawLine(blackPen, dx + gateWidth + 2, dy - 1, dx + gateWidth + 2, dy + gateHeight); // Правая сторона
                         break;
                     case Direction.Right:
                         // Левая и правая горизонтальные линии (после поворота) в правой части ячейки
-                        graphics.DrawLine(blackPen, dx - 2 , dy , dx - 2, dy + gateHeight+1);                   // Левая сторона
-                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy, dx + gateWidth + 1, dy + gateHeight+1); // Правая сторона
+                        graphics.DrawLine(blackPen, dx - 2, dy, dx - 2, dy + gateHeight + 1);                   // Левая сторона
+                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy, dx + gateWidth + 1, dy + gateHeight + 1); // Правая сторона
                         break;
 
                 }
@@ -4092,7 +4185,7 @@ private void SaveMap(string filename)
         // Метод для отрисовки лестницы вверх
         private void DrawStairsUp(Graphics g, Rectangle bounds, Direction direction)
         {
-           
+
             // Выбор массива в зависимости от направления
             int[,] stairsPatternToUse = direction == Direction.Top ?
                 Passage_Pixels_Patterns.stairs_pattern_rotated270 : // Используем зеркальный массив для направления Top
@@ -4380,7 +4473,7 @@ private void SaveMap(string filename)
             {
                 case Direction.Top:
                     SafeSetPixel(letterC, 15, 5, Color.FromArgb(255, 255, 105, 180));
-                    SafeSetPixel(letterC, 18, 6, Color.Transparent);   
+                    SafeSetPixel(letterC, 18, 6, Color.Transparent);
                     break;
                 case Direction.Bottom:
                     SafeSetPixel(letterC, 15, 5 + 32, Color.FromArgb(255, 255, 105, 180));
@@ -4418,7 +4511,7 @@ private void SaveMap(string filename)
                     Color pixel = bmp.GetPixel(x, y);
                     if (pixel == oldColor)
                     {
-                        SafeSetPixel(bmp,x, y, newColor);
+                        SafeSetPixel(bmp, x, y, newColor);
                     }
                 }
             }
@@ -5223,7 +5316,7 @@ private void SaveMap(string filename)
                     }
 
                     if (centralOption == "Пустота") { }
-                    else  if (centralOption == "Не исследовано")
+                    else if (centralOption == "Не исследовано")
                         DrawUnexplored(g, bounds, pos);
                     else
                     {
@@ -5247,10 +5340,10 @@ private void SaveMap(string filename)
             bounds.X + bounds.Width / 2, // центр по горизонтали
             bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
                                            ), new StringFormat()
-                    {
-                        Alignment = StringAlignment.Center,
-                        LineAlignment = StringAlignment.Center
-                    });
+                                           {
+                                               Alignment = StringAlignment.Center,
+                                               LineAlignment = StringAlignment.Center
+                                           });
                 }
             }
 
@@ -5459,7 +5552,7 @@ private void SaveMap(string filename)
                 // По умолчанию устанавливаем освещение "Светло"
                 lightingLevels[position] = Lighting.Light;
 
-             //   key.Invalidate();
+                //   key.Invalidate();
             }
         }
 
@@ -5476,18 +5569,18 @@ private void SaveMap(string filename)
                 // Проверка на изменение
                 bool hasChanged = previousCentralOption != centralOptions[pos];
 
-                if (hasChanged) 
+                if (hasChanged)
                 {
                     // Получаем соответствующую кнопку по текущей позиции
                     Button correspondingButton = gridButtons[pos.X, GridSize - 1 - (pos.Y)];
 
-                // Инвалидация кнопки приведет к повторному вызову метода Paint
-                correspondingButton.Invalidate();
+                    // Инвалидация кнопки приведет к повторному вызову метода Paint
+                    correspondingButton.Invalidate();
 
-                // Можно обновить UI или любые другие действия
-                UpdatePreview(); // Обновляем предпросмотр, если нужно
+                    // Можно обновить UI или любые другие действия
+                    UpdatePreview(); // Обновляем предпросмотр, если нужно
 
-                       isMapModified = true;
+                    isMapModified = true;
                 }
 
             }
