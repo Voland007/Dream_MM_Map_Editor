@@ -418,26 +418,8 @@ namespace MMMapEditor.Tests
 
                 foreach (var result in _results.OrderBy(r => r.TestCase.Name))
                 {
-                    // Отладочная информация
-                    int passedCells = result.CellResults.Count(r => r.Passed);
-                    System.Diagnostics.Debug.WriteLine($"=== ОТЛАДКА: Тест '{result.TestCase.Name}' ===");
-                    System.Diagnostics.Debug.WriteLine($"  Passed (свойство): {result.Passed}");
-                    System.Diagnostics.Debug.WriteLine($"  Всего клеток: {result.CellResults.Count}");
-                    System.Diagnostics.Debug.WriteLine($"  Пройдено клеток: {passedCells}");
-                    System.Diagnostics.Debug.WriteLine($"  Провалено клеток: {result.CellResults.Count - passedCells}");
-
-                    // Детальная информация по каждой клетке
-                    foreach (var cellResult in result.CellResults)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"  Клетка ({cellResult.Cell.X},{cellResult.Cell.Y}): {(cellResult.Passed ? "✓" : "✗")}");
-                        System.Diagnostics.Debug.WriteLine($"    Ожидаемый: {cellResult.Expected}");
-                        System.Diagnostics.Debug.WriteLine($"    Фактический: {cellResult.Actual}");
-                    }
-
                     // Пересчитываем Passed на основе результатов клеток
                     result.Passed = result.CellResults.All(r => r.Passed);
-                    System.Diagnostics.Debug.WriteLine($"  Passed (пересчитанный): {result.Passed}");
-                    System.Diagnostics.Debug.WriteLine("");
 
                     if (result.Passed)
                         passedCount++;
@@ -461,31 +443,45 @@ namespace MMMapEditor.Tests
                             ToolTipText = cellResult.Passed ? "Ожидание совпадает" : "Ожидание не совпадает"
                         };
 
-                        // Добавляем информацию о тексте
-                        string actualDisplay = Truncate(cellResult.Actual, 50);
-                        string expectedDisplay = Truncate(cellResult.Expected, 50);
+                        // Для отображения в дереве используем первые 200 символов или первые 5 строк
+                        string actualPreview = GetPreviewText(cellResult.Actual, 200, 3);
+                        string expectedPreview = GetPreviewText(cellResult.Expected, 200, 3);
 
-                        var actualNode = new TreeNode($"Фактический: {actualDisplay}")
+                        var actualNode = new TreeNode($"Фактический: {actualPreview}")
                         {
                             Tag = cellResult,
-                            ForeColor = Color.FromArgb(206, 145, 120)
+                            ForeColor = Color.FromArgb(206, 145, 120),
+                            ToolTipText = cellResult.Actual // Полный текст в подсказке
                         };
 
-                        var expectedNode = new TreeNode($"Ожидаемый: {expectedDisplay}")
+                        var expectedNode = new TreeNode($"Ожидаемый: {expectedPreview}")
                         {
                             Tag = cellResult,
-                            ForeColor = Color.FromArgb(156, 220, 254)
+                            ForeColor = Color.FromArgb(156, 220, 254),
+                            ToolTipText = cellResult.Expected // Полный текст в подсказке
                         };
 
-                        // Проверяем наличие заметок
+                        // Добавляем заметки, если есть
                         if (!string.IsNullOrEmpty(cellResult.Notes))
                         {
-                            var notesNode = new TreeNode($"Заметки: {Truncate(cellResult.Notes, 50)}")
+                            var notesNode = new TreeNode($"Заметки: {GetPreviewText(cellResult.Notes, 100, 2)}")
                             {
                                 Tag = cellResult,
-                                ForeColor = Color.FromArgb(255, 215, 0)
+                                ForeColor = Color.FromArgb(255, 215, 0),
+                                ToolTipText = cellResult.Notes
                             };
                             cellNode.Nodes.Add(notesNode);
+                        }
+
+                        // Добавляем информацию о трассировке, если есть и тест провален
+                        if (!cellResult.Passed && !string.IsNullOrEmpty(cellResult.AnalysisTrace))
+                        {
+                            var traceNode = new TreeNode($"Трассировка (есть)")
+                            {
+                                Tag = cellResult,
+                                ForeColor = Color.Gray
+                            };
+                            cellNode.Nodes.Add(traceNode);
                         }
 
                         cellNode.Nodes.Add(actualNode);
@@ -533,6 +529,31 @@ namespace MMMapEditor.Tests
             {
                 _treeView.EndUpdate();
             }
+        }
+
+        /// <summary>
+        /// Получить предварительный просмотр текста для отображения в дереве
+        /// </summary>
+        private string GetPreviewText(string text, int maxLength = 200, int maxLines = 3)
+        {
+            if (string.IsNullOrEmpty(text))
+                return "<пусто>";
+
+            var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            var previewLines = lines.Take(maxLines).ToList();
+
+            string result = string.Join("\n", previewLines);
+
+            if (lines.Length > maxLines)
+            {
+                result += $"\n... и ещё {lines.Length - maxLines} строк";
+            }
+            else if (result.Length > maxLength)
+            {
+                result = result.Substring(0, maxLength) + "...";
+            }
+
+            return result.Replace("\r", "\\r").Replace("\n", "\\n");
         }
 
         private void UpdateStats(int passedCount, int failedCount)
@@ -808,19 +829,20 @@ namespace MMMapEditor.Tests
             AppendStyledText($"=== КЛЕТКА ({result.Cell.X},{result.Cell.Y}) ===\n\n",
                 new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(255, 215, 0));
 
-            // Извлекаем чистый текст без префикса для отображения
-            string cleanActual = ExtractCleanTextForDisplay(result.Actual);
-            string displayActual = DecodeStringForDisplay(cleanActual);
-            string displayExpected = DecodeStringForDisplay(result.Expected);
-
-            AppendStyledText($"Ожидаемый текст: {displayExpected}\n",
+            // ПОКАЗЫВАЕМ ПОЛНЫЙ ТЕКСТ БЕЗ ВСЯКОЙ ОБРЕЗКИ
+            AppendStyledText("Ожидаемый текст:\n",
+                new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(156, 220, 254));
+            AppendStyledText(result.Expected + "\n\n",
                 _detailsBox.Font, Color.FromArgb(156, 220, 254));
-            AppendStyledText($"Фактический текст: {displayActual}\n",
+
+            AppendStyledText("Фактический текст:\n",
+                new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(206, 145, 120));
+            AppendStyledText(result.Actual + "\n\n",
                 _detailsBox.Font, Color.FromArgb(206, 145, 120));
 
-            // Показываем оригинальный текст с префиксом для отладки
-            AppendStyledText($"Оригинал: {result.Actual}\n",
-                new Font("Consolas", 8), Color.Gray);
+            // Добавляем разделитель для наглядности
+            AppendStyledText(new string('-', 50) + "\n\n",
+                _detailsBox.Font, Color.Gray);
 
             AppendStyledText($"Результат: ",
                 _detailsBox.Font, Color.White);
@@ -1068,13 +1090,40 @@ namespace MMMapEditor.Tests
             }
         }
 
-        private string Truncate(string text, int maxLength)
+        private string Truncate(string text, int maxLength = 150, int maxLines = 3)
         {
             if (string.IsNullOrEmpty(text))
                 return "";
-            if (text.Length <= maxLength)
-                return text;
-            return text.Substring(0, maxLength) + "...";
+
+            var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+
+            if (lines.Length == 0)
+                return "";
+
+            // Если всего строк немного, показываем их все
+            if (lines.Length <= maxLines)
+            {
+                string result = string.Join("\n", lines);
+                if (result.Length <= maxLength)
+                    return result;
+            }
+
+            // Показываем первые maxLines строк
+            var firstLines = lines.Take(maxLines).ToList();
+            string preview = string.Join("\n", firstLines);
+
+            // Если есть ещё строки, добавляем индикатор
+            if (lines.Length > maxLines)
+            {
+                preview += $"\n... и ещё {lines.Length - maxLines} строк";
+            }
+            // Если текст слишком длинный даже в первых строках, обрезаем
+            else if (preview.Length > maxLength)
+            {
+                preview = preview.Substring(0, maxLength) + "...";
+            }
+
+            return preview;
         }
     }
 }
