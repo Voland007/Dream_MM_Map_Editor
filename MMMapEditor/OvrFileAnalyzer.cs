@@ -66,8 +66,8 @@ namespace MMMapEditor
         {
             private Dictionary<string, ushort> registers = new Dictionary<string, ushort>();
             private Dictionary<string, string> registerSources = new Dictionary<string, string>();
-            private Dictionary<string, (ushort addr, bool fromTable, ushort originalBx)> registerSources2 =
-                new Dictionary<string, (ushort, bool, ushort)>();
+            private Dictionary<string, (ushort addr, bool fromTable, ushort originalBx, string sourceTable)> registerSources2 =
+                new Dictionary<string, (ushort, bool, ushort, string)>();
 
             // Для отслеживания флагов
             public bool ZeroFlag { get; set; }
@@ -119,10 +119,27 @@ namespace MMMapEditor
                 }
             }
 
-            public void SetRegisterValueWithSource(string reg, ushort value, ushort sourceAddr, ushort originalBx, bool fromTable, uint address, string instruction)
+            public void SetRegisterValueWithSource(string reg, ushort value, ushort sourceAddr, ushort originalBx, bool fromTable, uint address, string instruction, string sourceTable = null)
             {
                 SetRegisterValue(reg, value, address, instruction);
-                registerSources2[reg.ToUpper()] = (sourceAddr, fromTable, originalBx);
+
+                string tableType = sourceTable;
+                if (tableType == null && fromTable)
+                {
+                    // Определяем тип таблицы по адресу
+                    if (sourceAddr >= 0xCDBD && sourceAddr <= 0xCDC4)
+                        tableType = "CDBD";
+                    else if (sourceAddr >= 0xCDB5 && sourceAddr <= 0xCDBC)
+                        tableType = "CDB5";
+                    else if (sourceAddr >= 0xCDA9 && sourceAddr <= 0xCDB0)
+                        tableType = "CDA9";
+                    else if (sourceAddr >= 0xCDB1 && sourceAddr <= 0xCDB8)
+                        tableType = "CDB1";
+                    else
+                        tableType = "UNKNOWN";
+                }
+
+                registerSources2[reg.ToUpper()] = (sourceAddr, fromTable, originalBx, tableType);
             }
 
             public bool IsFromTable(string reg)
@@ -144,7 +161,47 @@ namespace MMMapEditor
                 if (regUpper == "DL" && registerSources2.TryGetValue("DX", out var dxSrc) && dxSrc.fromTable)
                     return true;
 
+                if (regUpper == "BH" && registerSources2.TryGetValue("BX", out var bxSrc2) && bxSrc2.fromTable)
+                    return true;
+
+                if (regUpper == "CH" && registerSources2.TryGetValue("CX", out var cxSrc2) && cxSrc2.fromTable)
+                    return true;
+
+                if (regUpper == "DH" && registerSources2.TryGetValue("DX", out var dxSrc2) && dxSrc2.fromTable)
+                    return true;
+
                 return false;
+            }
+
+            public string GetSourceTable(string reg)
+            {
+                string regUpper = reg.ToUpper();
+
+                if (registerSources2.TryGetValue(regUpper, out var src))
+                    return src.sourceTable;
+
+                if (regUpper == "CL" && registerSources2.TryGetValue("CX", out var cxSrc))
+                    return cxSrc.sourceTable;
+
+                if (regUpper == "AL" && registerSources2.TryGetValue("AX", out var axSrc))
+                    return axSrc.sourceTable;
+
+                if (regUpper == "BL" && registerSources2.TryGetValue("BX", out var bxSrc))
+                    return bxSrc.sourceTable;
+
+                if (regUpper == "DL" && registerSources2.TryGetValue("DX", out var dxSrc))
+                    return dxSrc.sourceTable;
+
+                if (regUpper == "BH" && registerSources2.TryGetValue("BX", out var bxSrc2))
+                    return bxSrc2.sourceTable;
+
+                if (regUpper == "CH" && registerSources2.TryGetValue("CX", out var cxSrc2))
+                    return cxSrc2.sourceTable;
+
+                if (regUpper == "DH" && registerSources2.TryGetValue("DX", out var dxSrc2))
+                    return dxSrc2.sourceTable;
+
+                return null;
             }
 
             public ushort? GetSourceAddress(string reg)
@@ -165,6 +222,15 @@ namespace MMMapEditor
 
                 if (regUpper == "DL" && registerSources2.TryGetValue("DX", out var dxSrc))
                     return dxSrc.addr;
+
+                if (regUpper == "BH" && registerSources2.TryGetValue("BX", out var bxSrc2))
+                    return bxSrc2.addr;
+
+                if (regUpper == "CH" && registerSources2.TryGetValue("CX", out var cxSrc2))
+                    return cxSrc2.addr;
+
+                if (regUpper == "DH" && registerSources2.TryGetValue("DX", out var dxSrc2))
+                    return dxSrc2.addr;
 
                 return null;
             }
@@ -187,6 +253,15 @@ namespace MMMapEditor
 
                 if (regUpper == "DL" && registerSources2.TryGetValue("DX", out var dxSrc))
                     return dxSrc.originalBx;
+
+                if (regUpper == "BH" && registerSources2.TryGetValue("BX", out var bxSrc2))
+                    return bxSrc2.originalBx;
+
+                if (regUpper == "CH" && registerSources2.TryGetValue("CX", out var cxSrc2))
+                    return cxSrc2.originalBx;
+
+                if (regUpper == "DH" && registerSources2.TryGetValue("DX", out var dxSrc2))
+                    return dxSrc2.originalBx;
 
                 return null;
             }
@@ -227,6 +302,16 @@ namespace MMMapEditor
                 if (registers.TryGetValue(fullRegUpper, out ushort existingValue))
                 {
                     currentValue = existingValue;
+                }
+
+                // Сохраняем информацию об источнике для полного регистра
+                if (registerSources2.TryGetValue(partialRegUpper, out var srcInfo))
+                {
+                    // Если у нас есть информация о частичном регистре, сохраняем её для полного
+                    if (!registerSources2.ContainsKey(fullRegUpper))
+                    {
+                        registerSources2[fullRegUpper] = srcInfo;
+                    }
                 }
 
                 if (partialRegUpper == "AL" || partialRegUpper == "AH")
@@ -864,10 +949,10 @@ namespace MMMapEditor
                     var partialBattleInfo = new List<PartialBattleInfo>();
                     bool hasPartialBattlePattern = false;
 
-                    // Анализируем основной путь
+                    // Анализируем основной путь (передаём targetX=0, targetY=0, так как это макрос, а не конкретная клетка)
                     var mainRegisterTracker = new RegisterTracker();
                     var mainPathResult = ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
-                        new HashSet<uint>(), 0, 0, null, 0);
+                        new HashSet<uint>(), 0, 0, null, 0, 0, 0);
 
                     MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel,
                         battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
@@ -883,7 +968,7 @@ namespace MMMapEditor
 
                         var pathRegisterTracker = new RegisterTracker();
                         var pathResult = ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
-                            new HashSet<uint>(), 0, 0, null, 0);
+                            new HashSet<uint>(), 0, 0, null, 0, 0, 0);
 
                         MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel,
                             battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
@@ -1044,10 +1129,10 @@ namespace MMMapEditor
                     Debug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
                     Debug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
 
-                    // Анализируем путь по умолчанию
+                    // Анализируем путь по умолчанию (передаём targetX=0, targetY=0)
                     var defaultRegisterTracker = new RegisterTracker();
                     var defaultPathResult = ExecuteCodeAtAddress(br, defaultPathAddress.Value, defaultRegisterTracker,
-                        new HashSet<uint>(), 0, 0, null, 0);
+                        new HashSet<uint>(), 0, 0, null, 0, 0, 0);
 
                     // Собираем все тексты и информацию
                     var defaultTexts = new HashSet<string>();
@@ -1357,6 +1442,15 @@ namespace MMMapEditor
             return (uint)(key + _config.PatchBase) & 0xFFFF;
         }
 
+        // Новый вспомогательный метод для установки начальных значений регистров из координат
+        private void SetInitialRegistersFromCoordinates(RegisterTracker tracker, byte x, byte y, uint patchStartAddress)
+        {
+            // Устанавливаем BL = X (координата), BH = 0
+            tracker.SetRegisterValue("BL", x, patchStartAddress, "Initial X coordinate");
+            tracker.SetRegisterValue("BH", 0, patchStartAddress, "Initial BH = 0");
+            tracker.SetRegisterValue("BX", (ushort)x, patchStartAddress, $"Initial BX = X ({x})");
+        }
+
         // ОСНОВНОЙ МЕТОД ОБРАБОТКИ ОБЪЕКТА ИЗ ТАБЛИЦЫ
         private OvrObject ProcessObject(BinaryReader br, int objIndex, Tuple<byte, byte> coords,
                                         byte direction, ushort patchKey)
@@ -1372,7 +1466,7 @@ namespace MMMapEditor
 
             bool debugMode = (ovrObject.X == 12 && ovrObject.Y == 2) ||
                              (ovrObject.X == 5 && ovrObject.Y == 8) ||
-                             (ovrObject.X == 8 && ovrObject.Y == 0) ||  // Добавил отладку для (8,0)
+                             (ovrObject.X == 8 && ovrObject.Y == 0) ||
                              (ovrObject.X == 8 && ovrObject.Y == 5);
 
             if (debugMode)
@@ -1383,8 +1477,11 @@ namespace MMMapEditor
 
             // ========== 1. Анализируем основной путь ==========
             var mainRegisterTracker = new RegisterTracker();
+            // Устанавливаем начальные значения регистров на основе координат
+            SetInitialRegistersFromCoordinates(mainRegisterTracker, ovrObject.X, ovrObject.Y, patchAddress);
+
             var mainPathResult = ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
-                new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0);
+                new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0, ovrObject.X, ovrObject.Y);
 
             // Сохраняем результаты основного пути с разделением на типы
             List<TextEntry> mainLocalTexts = new List<TextEntry>();
@@ -1520,8 +1617,9 @@ namespace MMMapEditor
 
                     // Создаём НОВЫЙ RegisterTracker для каждого пути
                     var pathRegisterTracker = new RegisterTracker();
+                    // Для альтернативных путей также передаём координаты, так как они могут понадобиться
                     var pathResult = ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
-                        new HashSet<uint>(), depth + 1, 0, debugMode ? ovrObject : null, currentPathId);
+                        new HashSet<uint>(), depth + 1, 0, debugMode ? ovrObject : null, currentPathId, ovrObject.X, ovrObject.Y);
 
                     // Формируем тексты для этого пути с сохранением порядка
                     List<TextEntry> pathTexts = new List<TextEntry>();
@@ -1806,7 +1904,7 @@ namespace MMMapEditor
 
         private PathAnalysisResult ExecuteCodeAtAddress(BinaryReader br, uint startAddress,
      RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
-     int depth, int callDepth, OvrObject debugObject, int pathId = 0)
+     int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY)
         {
             const int MAX_DEPTH = 12;
             const int MAX_CALL_DEPTH = 10;
@@ -1955,7 +2053,8 @@ namespace MMMapEditor
 
                     // Поиск изменений статистики монстров и информации о битвах
                     FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                    FindMonsterBattleInfo(insn, br, registerTracker, depth, result);
+                    // ПЕРЕДАЁМ targetX и targetY в метод FindMonsterBattleInfo
+                    FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY);
                     TrackRegisterOperations(insn, br, registerTracker, depth);
 
                     // Анализ частичных битв
@@ -2052,8 +2151,9 @@ namespace MMMapEditor
                                 Debug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
 
                             var subroutineTracker = registerTracker.Clone();
+                            // Для подпрограмм также передаём координаты
                             var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
-                                globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId);
+                                globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId, targetX, targetY);
 
                             // Добавляем результаты из подпрограммы
                             foreach (var text in subroutineResult.FoundTexts)
@@ -2279,7 +2379,6 @@ namespace MMMapEditor
         }
 
         // Вспомогательный метод для определения, является ли цикл полезным
-        // Вспомогательный метод для определения, является ли цикл полезным
         private bool IsTableLoadLoop(BinaryReader br, uint address, RegisterTracker registerTracker, PathAnalysisResult result)
         {
             // Проверяем, не является ли это циклом загрузки из таблиц CDA9/CDB1
@@ -2364,6 +2463,26 @@ namespace MMMapEditor
                     continue;
                 }
 
+                // ПРОВЕРКА: не были ли эти значения уже определены как конкретные?
+                bool alreadyDefined = false;
+
+                // Проверяем, есть ли уже полностью определённая битва для этого BX индекса
+                if (result.BattleMonsterEntries.ContainsKey(saveBxIndex))
+                {
+                    var existing = result.BattleMonsterEntries[saveBxIndex];
+                    // Если оба значения не нулевые, значит битва уже полностью определена
+                    if (existing.val1 != 0 || existing.val2 != 0)
+                    {
+                        Debug.WriteLine($"        -> БИТВА УЖЕ ПОЛНОСТЬЮ ОПРЕДЕЛЕНА: val1={existing.val1:X2}, val2={existing.val2:X2}, пропускаем создание частичной");
+                        alreadyDefined = true;
+                    }
+                }
+
+                if (alreadyDefined)
+                {
+                    continue;
+                }
+
                 // Определяем количество итераций цикла
                 int iterationCount = 1;
 
@@ -2376,23 +2495,39 @@ namespace MMMapEditor
                     }
                     else
                     {
+                        // Используем максимальный BX индекс для определения количества итераций
                         int maxSaveBx = groupedByBx.Max(g => g.Key);
                         if (maxSaveBx > 0)
                         {
+                            // Количество итераций = максимальный BX индекс + 1
                             iterationCount = maxSaveBx + 1;
                             Debug.WriteLine($"        Количество итераций определено по BX сохранения: {iterationCount}");
                         }
                         else
                         {
+                            // Если не можем определить, используем значение по умолчанию
                             iterationCount = 8;
                             Debug.WriteLine($"        Количество итераций неизвестно, предполагаем {iterationCount}");
                         }
                     }
                 }
 
-                // СОЗДАЁМ ЧАСТИЧНЫЕ БИТВЫ ДЛЯ КАЖДОЙ ИТЕРАЦИИ
+                // СОЗДАЁМ ЧАСТИЧНЫЕ БИТВЫ ТОЛЬКО ДЛЯ ИТЕРАЦИЙ, КОТОРЫЕ ЕЩЁ НЕ ОПРЕДЕЛЕНЫ
                 for (int iteration = 0; iteration < iterationCount; iteration++)
                 {
+                    int currentBxIndex = saveBxIndex + iteration;
+
+                    // Проверяем, не определена ли уже битва для этого индекса
+                    if (result.BattleMonsterEntries.ContainsKey(currentBxIndex))
+                    {
+                        var existing = result.BattleMonsterEntries[currentBxIndex];
+                        if (existing.val1 != 0 || existing.val2 != 0)
+                        {
+                            Debug.WriteLine($"        -> БИТВА ДЛЯ BX={currentBxIndex} УЖЕ ОПРЕДЕЛЕНА, пропускаем");
+                            continue;
+                        }
+                    }
+
                     int loadBx = iteration;
 
                     ushort table1Addr = (ushort)(0xCDA9 + loadBx);
@@ -2454,19 +2589,43 @@ namespace MMMapEditor
                         continue;
                     }
 
+                    // Проверяем, не совпадают ли эти значения с уже определёнными конкретными значениями
+                    bool matchesExisting = false;
+                    if (result.BattleMonsterEntries.ContainsKey(currentBxIndex))
+                    {
+                        var existing = result.BattleMonsterEntries[currentBxIndex];
+                        if (existing.val1 == rangeStart1 && existing.val2 == rangeStart2)
+                        {
+                            matchesExisting = true;
+                        }
+                    }
+
+                    if (matchesExisting)
+                    {
+                        Debug.WriteLine($"        -> ЗНАЧЕНИЯ СОВПАДАЮТ С УЖЕ ОПРЕДЕЛЁННОЙ БИТВОЙ, пропускаем");
+                        continue;
+                    }
+
                     var partialBattle = new PartiallyDefinedBattle
                     {
-                        BxIndex = saveBxIndex + iteration,
+                        BxIndex = currentBxIndex,
                         RangeStart1 = rangeStart1,
                         RangeEnd1 = rangeEnd1,
                         RangeStart2 = rangeStart2,
                         RangeEnd2 = rangeEnd2
                     };
 
-                    result.PartialBattles.Add(partialBattle);
-
-                    int combinations = (rangeEnd1 - rangeStart1 + 1) * (rangeEnd2 - rangeStart2 + 1);
-                    Debug.WriteLine($"        -> СОЗДАНА ЧАСТИЧНАЯ БИТВА: BX(сохранения)={saveBxIndex + iteration}, BX(загрузки)={loadBx}, {combinations} комбинация (итерация {iteration})");
+                    // Добавляем только если такой частичной битвы ещё нет
+                    if (!result.PartialBattles.Any(p => p.BxIndex == partialBattle.BxIndex))
+                    {
+                        result.PartialBattles.Add(partialBattle);
+                        int combinations = (rangeEnd1 - rangeStart1 + 1) * (rangeEnd2 - rangeStart2 + 1);
+                        Debug.WriteLine($"        -> СОЗДАНА ЧАСТИЧНАЯ БИТВА: BX(сохранения)={currentBxIndex}, BX(загрузки)={loadBx}, {combinations} комбинация (итерация {iteration})");
+                    }
+                    else
+                    {
+                        Debug.WriteLine($"        -> ЧАСТИЧНАЯ БИТВА ДЛЯ BX={currentBxIndex} УЖЕ СУЩЕСТВУЕТ, пропускаем");
+                    }
                 }
             }
         }
@@ -3227,7 +3386,7 @@ namespace MMMapEditor
         }
 
         private void FindMonsterBattleInfo(X86Instruction insn, BinaryReader br, RegisterTracker registerTracker,
-            int depth, PathAnalysisResult result)
+            int depth, PathAnalysisResult result, byte targetX, byte targetY)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
@@ -3243,14 +3402,11 @@ namespace MMMapEditor
                 result.IsInLoop = true;
                 result.LoopStartAddress = address;
 
-                // Определяем, есть ли в результате записи с BX > 0
                 bool hasBxGreaterThanZero = result.BattleMonsterEntries.Any(kvp => kvp.Key > 0);
-
                 int markedCount = 0;
                 foreach (var key in result.BattleMonsterEntries.Keys.ToList())
                 {
                     bool shouldMark = hasBxGreaterThanZero ? key > 0 : true;
-
                     if (shouldMark)
                     {
                         var entry = result.BattleMonsterEntries[key];
@@ -3258,13 +3414,200 @@ namespace MMMapEditor
                         markedCount++;
                     }
                 }
-
                 Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, помечено {markedCount} записей как неопределенные");
                 return;
             }
 
-            // Загрузка из таблицы CDA9+ (MOV AL, [BX+CDA9])
+            // ========== ТАБЛИЦЫ КОНКРЕТНЫХ ЗНАЧЕНИЙ (CDBD+ И CDB5+) ==========
+
+            // Загрузка из таблицы CDBD+ (MOV AL, [BX+CDBD])
             if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x8A &&
+                instructionBytes[1] == 0x87 &&
+                instructionBytes[2] == 0xBD && instructionBytes[3] == 0xCD)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    ushort sourceAddr = (ushort)(0xCDBD + bxValue);
+                    long fileOffset = sourceAddr - _config.TextBaseAddr;
+
+                    byte actualValue = 0;
+                    bool readSuccess = false;
+                    string debugInfo = "";
+
+                    ushort effectiveBx = bxValue;
+                    if (effectiveBx == 0 && targetX != 0)
+                    {
+                        effectiveBx = targetX;
+                        sourceAddr = (ushort)(0xCDBD + effectiveBx);
+                        fileOffset = sourceAddr - _config.TextBaseAddr;
+                        debugInfo = $" (using targetX={targetX})";
+                        Debug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    }
+
+                    try
+                    {
+                        if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                        {
+                            long originalPos = br.BaseStream.Position;
+                            br.BaseStream.Position = fileOffset;
+                            actualValue = br.ReadByte();
+                            br.BaseStream.Position = originalPos;
+                            readSuccess = true;
+                            Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}{debugInfo}");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    }
+
+                    registerTracker.SetRegisterValueWithSource(
+                        "AL",
+                        readSuccess ? actualValue : (byte)0,
+                        sourceAddr,
+                        (ushort)effectiveBx,
+                        true,
+                        address,
+                        $"MOV AL, [BX+CDBD] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
+                        "CDBD"
+                    );
+
+                    Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDBD+: AL = [BX+CDBD] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4})");
+                }
+                return;
+            }
+
+            // Загрузка из таблицы CDB5+ (MOV BP, [BX+CDB5])
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x8B &&
+                     instructionBytes[1] == 0xAF &&
+                     instructionBytes[2] == 0xB5 && instructionBytes[3] == 0xCD)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    ushort sourceAddr = (ushort)(0xCDB5 + bxValue);
+                    long fileOffset = sourceAddr - _config.TextBaseAddr;
+
+                    ushort actualValue = 0;
+                    bool readSuccess = false;
+                    string debugInfo = "";
+
+                    ushort effectiveBx = bxValue;
+                    if (effectiveBx == 0 && targetX != 0)
+                    {
+                        effectiveBx = targetX;
+                        sourceAddr = (ushort)(0xCDB5 + effectiveBx);
+                        fileOffset = sourceAddr - _config.TextBaseAddr;
+                        debugInfo = $" (using targetX={targetX})";
+                        Debug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    }
+
+                    try
+                    {
+                        if (fileOffset >= 0 && fileOffset + 1 < br.BaseStream.Length)
+                        {
+                            long originalPos = br.BaseStream.Position;
+                            br.BaseStream.Position = fileOffset;
+                            byte lowByte = br.ReadByte();
+                            byte highByte = br.ReadByte();
+                            actualValue = (ushort)((highByte << 8) | lowByte);
+                            br.BaseStream.Position = originalPos;
+                            readSuccess = true;
+                            Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}{debugInfo}");
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    }
+
+                    registerTracker.SetRegisterValueWithSource(
+                        "BP",
+                        readSuccess ? actualValue : (ushort)0,
+                        sourceAddr,
+                        (ushort)effectiveBx,
+                        true,
+                        address,
+                        $"MOV BP, [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
+                        "CDB5"
+                    );
+
+                    Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+: BP = [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4})");
+                }
+                return;
+            }
+
+            // Загрузка младшего байта из CDB5+ (MOV AL, [BX+CDB5])
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x8A &&
+                     instructionBytes[1] == 0x87 &&
+                     instructionBytes[2] == 0xB5 && instructionBytes[3] == 0xCD)
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                {
+                    ushort sourceAddr = (ushort)(0xCDB5 + bxValue);
+                    long fileOffset = sourceAddr - _config.TextBaseAddr;
+
+                    byte actualValue = 0;
+                    bool readSuccess = false;
+                    string debugInfo = "";
+
+                    ushort effectiveBx = bxValue;
+                    if (effectiveBx == 0 && targetX != 0)
+                    {
+                        effectiveBx = targetX;
+                        sourceAddr = (ushort)(0xCDB5 + effectiveBx);
+                        fileOffset = sourceAddr - _config.TextBaseAddr;
+                        debugInfo = $" (using targetX={targetX})";
+                        Debug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    }
+
+                    try
+                    {
+                        if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                        {
+                            long originalPos = br.BaseStream.Position;
+                            br.BaseStream.Position = fileOffset;
+                            actualValue = br.ReadByte();
+                            br.BaseStream.Position = originalPos;
+                            readSuccess = true;
+                            Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}{debugInfo}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    }
+
+                    registerTracker.SetRegisterValueWithSource(
+                        "AL",
+                        readSuccess ? actualValue : (byte)0,
+                        sourceAddr,
+                        (ushort)effectiveBx,
+                        true,
+                        address,
+                        $"MOV AL, [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
+                        "CDB5"
+                    );
+
+                    Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+ (младший байт): AL = [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4})");
+                }
+                return;
+            }
+
+            // ========== ТАБЛИЦЫ ЧАСТИЧНЫХ ЗНАЧЕНИЙ (CDA9+ И CDB1+) ==========
+
+            // Загрузка из таблицы CDA9+ (MOV AL, [BX+CDA9])
+            else if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x8A &&
                 instructionBytes[1] == 0x87 &&
                 instructionBytes[2] == 0xA9 && instructionBytes[3] == 0xCD)
@@ -3286,12 +3629,11 @@ namespace MMMapEditor
                             actualValue = br.ReadByte();
                             br.BaseStream.Position = originalPos;
                             readSuccess = true;
-
                             Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}");
                         }
                         else
                         {
-                            Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла (длина файла: 0x{br.BaseStream.Length:X})");
+                            Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
                         }
                     }
                     catch (Exception ex)
@@ -3306,13 +3648,15 @@ namespace MMMapEditor
                         bxValue,
                         true,
                         address,
-                        $"MOV AL, [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})"
+                        $"MOV AL, [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
+                        "CDA9"
                     );
 
                     Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDA9+: AL = [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4})");
-                    result.HasPartialBattlePattern = true;
                 }
+                return;
             }
+
             // Загрузка из таблицы CDB1+ (MOV BP, [BX+CDB1])
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x8B &&
@@ -3338,12 +3682,11 @@ namespace MMMapEditor
                             actualValue = (ushort)((highByte << 8) | lowByte);
                             br.BaseStream.Position = originalPos;
                             readSuccess = true;
-
-                            Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4} (младший байт: 0x{lowByte:X2}, старший: 0x{highByte:X2})");
+                            Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}");
                         }
                         else
                         {
-                            Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла (длина файла: 0x{br.BaseStream.Length:X})");
+                            Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
                         }
                     }
                     catch (Exception ex)
@@ -3358,13 +3701,15 @@ namespace MMMapEditor
                         bxValue,
                         true,
                         address,
-                        $"MOV BP, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})"
+                        $"MOV BP, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
+                        "CDB1"
                     );
 
                     Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+: BP = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
-                    result.HasPartialBattlePattern = true;
                 }
+                return;
             }
+
             // Загрузка младшего байта из CDB1+ (MOV AL, [BX+CDB1])
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x8A &&
@@ -3388,7 +3733,6 @@ namespace MMMapEditor
                             actualValue = br.ReadByte();
                             br.BaseStream.Position = originalPos;
                             readSuccess = true;
-
                             Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2} (младший байт)");
                         }
                     }
@@ -3404,13 +3748,17 @@ namespace MMMapEditor
                         bxValue,
                         true,
                         address,
-                        $"MOV AL, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})"
+                        $"MOV AL, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
+                        "CDB1"
                     );
 
                     Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+ (младший байт): AL = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
-                    result.HasPartialBattlePattern = true;
                 }
+                return;
             }
+
+            // ========== КОПИРОВАНИЕ МЕЖДУ РЕГИСТРАМИ ==========
+
             // Копирование BP в CX (MOV CX, BP)
             else if (instructionBytes.Length >= 2 &&
                      instructionBytes[0] == 0x8B &&
@@ -3420,6 +3768,7 @@ namespace MMMapEditor
                 {
                     ushort? sourceAddr = registerTracker.GetSourceAddress("BP");
                     ushort? originalBx = registerTracker.GetOriginalBx("BP");
+                    string sourceTable = registerTracker.GetSourceTable("BP");
                     ushort bpValue = 0;
                     registerTracker.TryGetRegisterValue("BP", out bpValue);
 
@@ -3430,14 +3779,18 @@ namespace MMMapEditor
                         originalBx ?? 0,
                         true,
                         address,
-                        "MOV CX, BP (копирование из таблицы)"
+                        "MOV CX, BP (копирование из таблицы)",
+                        sourceTable
                     );
 
                     registerTracker.TrackPartialRegisterOperation("CX", "CL", (byte)bpValue, address, "MOV CL, low byte of BP");
 
-                    Debug.WriteLine($"    КОПИРОВАНИЕ ИЗ ТАБЛИЦЫ: CX = BP (source={sourceAddr:X4}, originalBX={originalBx}, val={bpValue:X4})");
+                    Debug.WriteLine($"    КОПИРОВАНИЕ ИЗ ТАБЛИЦЫ: CX = BP (source={sourceAddr:X4}, table={sourceTable}, originalBX={originalBx}, val={bpValue:X4})");
                 }
+                return;
             }
+
+            // ========== СОХРАНЕНИЕ В [BX+3C58] И [BX+3C29] ==========
 
             // Сохранение в [BX+3C58] из AL
             if (instructionBytes.Length >= 4 &&
@@ -3452,26 +3805,60 @@ namespace MMMapEditor
                         byte val1 = alValue;
                         bool isIndeterminate = false;
 
+                        // Проверяем источник значения
                         if (registerTracker.IsFromTable("AL"))
                         {
                             ushort? sourceAddr = registerTracker.GetSourceAddress("AL");
                             ushort? originalBx = registerTracker.GetOriginalBx("AL");
+                            string sourceTable = registerTracker.GetSourceTable("AL");
 
-                            result.HasPartialBattlePattern = true;
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            // Если из таблицы CDBD+ - КОНКРЕТНЫЕ
+                            if (sourceTable == "CDBD")
                             {
-                                BxIndex = originalBx ?? bxValue,
-                                DestAddr = 0x3C58,
-                                SrcReg = "AL",
-                                SrcRegValue = val1,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr
-                            });
-
-                            Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={val1:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDBD): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val1={val1:X2})");
+                            }
+                            // Если из таблицы CDA9+ - ЧАСТИЧНЫЕ
+                            else if (sourceTable == "CDA9")
+                            {
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? bxValue,
+                                    DestAddr = 0x3C58,
+                                    SrcReg = "AL",
+                                    SrcRegValue = val1,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={val1:X2})");
+                            }
+                            else
+                            {
+                                // Из неизвестной таблицы
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = AL (BX={bxValue}, val1={val1:X2})");
+                            }
                         }
                         else
                         {
+                            // Значение не из таблиц
                             if (result.BattleMonsterEntries.ContainsKey(bxValue))
                             {
                                 var existing = result.BattleMonsterEntries[bxValue];
@@ -3481,12 +3868,13 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                             }
-
                             Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = AL (BX={bxValue}, val1={val1:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
+                return;
             }
+
             // Сохранение в [BX+3C29] из CL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
@@ -3500,26 +3888,61 @@ namespace MMMapEditor
                         byte val2 = clValue;
                         bool isIndeterminate = false;
 
-                        if (registerTracker.IsFromTable("CL"))
+                        // Проверяем источник значения (может быть в CL или CX)
+                        bool isFromTable = registerTracker.IsFromTable("CL") || registerTracker.IsFromTable("CX");
+                        ushort? sourceAddr = registerTracker.GetSourceAddress("CL") ?? registerTracker.GetSourceAddress("CX");
+                        ushort? originalBx = registerTracker.GetOriginalBx("CL") ?? registerTracker.GetOriginalBx("CX");
+                        string sourceTable = registerTracker.GetSourceTable("CL") ?? registerTracker.GetSourceTable("CX");
+
+                        if (isFromTable && sourceAddr.HasValue)
                         {
-                            ushort? sourceAddr = registerTracker.GetSourceAddress("CL");
-                            ushort? originalBx = registerTracker.GetOriginalBx("CL");
-
-                            result.HasPartialBattlePattern = true;
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            // Если из таблицы CDB5+ - КОНКРЕТНЫЕ
+                            if (sourceTable == "CDB5")
                             {
-                                BxIndex = originalBx ?? bxValue,
-                                DestAddr = 0x3C29,
-                                SrcReg = "CL",
-                                SrcRegValue = val2,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr
-                            });
-
-                            Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={val2:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDB5): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val2={val2:X2})");
+                            }
+                            // Если из таблицы CDB1+ - ЧАСТИЧНЫЕ
+                            else if (sourceTable == "CDB1")
+                            {
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? bxValue,
+                                    DestAddr = 0x3C29,
+                                    SrcReg = "CL",
+                                    SrcRegValue = val2,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={val2:X2})");
+                            }
+                            else
+                            {
+                                // Из неизвестной таблицы
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = CL (BX={bxValue}, val2={val2:X2})");
+                            }
                         }
                         else
                         {
+                            // Значение не из таблиц
                             if (result.BattleMonsterEntries.ContainsKey(bxValue))
                             {
                                 var existing = result.BattleMonsterEntries[bxValue];
@@ -3529,12 +3952,13 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
                             }
-
                             Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = CL (BX={bxValue}, val2={val2:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
+                return;
             }
+
             // Сохранение в [BX+3C58] из DL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
@@ -3552,19 +3976,48 @@ namespace MMMapEditor
                         {
                             ushort? sourceAddr = registerTracker.GetSourceAddress("DL");
                             ushort? originalBx = registerTracker.GetOriginalBx("DL");
+                            string sourceTable = registerTracker.GetSourceTable("DL");
 
-                            result.HasPartialBattlePattern = true;
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            if (sourceTable == "CDBD")
                             {
-                                BxIndex = originalBx ?? bxValue,
-                                DestAddr = 0x3C58,
-                                SrcReg = "DL",
-                                SrcRegValue = val1,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr
-                            });
-
-                            Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={val1:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDBD): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={val1:X2})");
+                            }
+                            else if (sourceTable == "CDA9")
+                            {
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? bxValue,
+                                    DestAddr = 0x3C58,
+                                    SrcReg = "DL",
+                                    SrcRegValue = val1,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={val1:X2})");
+                            }
+                            else
+                            {
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = DL (BX={bxValue}, val1={val1:X2})");
+                            }
                         }
                         else
                         {
@@ -3577,12 +4030,13 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                             }
-
                             Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = DL (BX={bxValue}, val1={val1:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
+                return;
             }
+
             // Сохранение в [BX+3C29] из DL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
@@ -3600,19 +4054,48 @@ namespace MMMapEditor
                         {
                             ushort? sourceAddr = registerTracker.GetSourceAddress("DL");
                             ushort? originalBx = registerTracker.GetOriginalBx("DL");
+                            string sourceTable = registerTracker.GetSourceTable("DL");
 
-                            result.HasPartialBattlePattern = true;
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            if (sourceTable == "CDB5")
                             {
-                                BxIndex = originalBx ?? bxValue,
-                                DestAddr = 0x3C29,
-                                SrcReg = "DL",
-                                SrcRegValue = val2,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr
-                            });
-
-                            Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={val2:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDB5): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={val2:X2})");
+                            }
+                            else if (sourceTable == "CDB1")
+                            {
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? bxValue,
+                                    DestAddr = 0x3C29,
+                                    SrcReg = "DL",
+                                    SrcRegValue = val2,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={val2:X2})");
+                            }
+                            else
+                            {
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = DL (BX={bxValue}, val2={val2:X2})");
+                            }
                         }
                         else
                         {
@@ -3625,12 +4108,13 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
                             }
-
                             Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = DL (BX={bxValue}, val2={val2:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
+                return;
             }
+
             // Сохранение в [BX+3C58] из BL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
@@ -3648,19 +4132,48 @@ namespace MMMapEditor
                         {
                             ushort? sourceAddr = registerTracker.GetSourceAddress("BL");
                             ushort? originalBx = registerTracker.GetOriginalBx("BL");
+                            string sourceTable = registerTracker.GetSourceTable("BL");
 
-                            result.HasPartialBattlePattern = true;
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            if (sourceTable == "CDBD")
                             {
-                                BxIndex = originalBx ?? bxValue,
-                                DestAddr = 0x3C58,
-                                SrcReg = "BL",
-                                SrcRegValue = val1,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr
-                            });
-
-                            Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={val1:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDBD): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={val1:X2})");
+                            }
+                            else if (sourceTable == "CDA9")
+                            {
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? bxValue,
+                                    DestAddr = 0x3C58,
+                                    SrcReg = "BL",
+                                    SrcRegValue = val1,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={val1:X2})");
+                            }
+                            else
+                            {
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (val1, existing.val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = BL (BX={bxValue}, val1={val1:X2})");
+                            }
                         }
                         else
                         {
@@ -3673,12 +4186,13 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[bxValue] = (val1, 0, isIndeterminate);
                             }
-
                             Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = BL (BX={bxValue}, val1={val1:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
+                return;
             }
+
             // Сохранение в [BX+3C29] из BL
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 &&
@@ -3696,19 +4210,48 @@ namespace MMMapEditor
                         {
                             ushort? sourceAddr = registerTracker.GetSourceAddress("BL");
                             ushort? originalBx = registerTracker.GetOriginalBx("BL");
+                            string sourceTable = registerTracker.GetSourceTable("BL");
 
-                            result.HasPartialBattlePattern = true;
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            if (sourceTable == "CDB5")
                             {
-                                BxIndex = originalBx ?? bxValue,
-                                DestAddr = 0x3C29,
-                                SrcReg = "BL",
-                                SrcRegValue = val2,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr
-                            });
-
-                            Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={val2:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDB5): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={val2:X2})");
+                            }
+                            else if (sourceTable == "CDB1")
+                            {
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? bxValue,
+                                    DestAddr = 0x3C29,
+                                    SrcReg = "BL",
+                                    SrcRegValue = val2,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={val2:X2})");
+                            }
+                            else
+                            {
+                                if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                                {
+                                    var existing = result.BattleMonsterEntries[bxValue];
+                                    result.BattleMonsterEntries[bxValue] = (existing.val1, val2, isIndeterminate);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = BL (BX={bxValue}, val2={val2:X2})");
+                            }
                         }
                         else
                         {
@@ -3721,12 +4264,15 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[bxValue] = (0, val2, isIndeterminate);
                             }
-
                             Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = BL (BX={bxValue}, val2={val2:X2}, isIndeterminate={isIndeterminate})");
                         }
                     }
                 }
+                return;
             }
+
+            // ========== ПРЯМЫЕ СОХРАНЕНИЯ (БЕЗ BX) ==========
+
             // Прямое сохранение в [3C58] из AL (без BX)
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
@@ -3741,19 +4287,48 @@ namespace MMMapEditor
                     {
                         ushort? sourceAddr = registerTracker.GetSourceAddress("AL");
                         ushort? originalBx = registerTracker.GetOriginalBx("AL");
+                        string sourceTable = registerTracker.GetSourceTable("AL");
 
-                        result.HasPartialBattlePattern = true;
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
+                        if (sourceTable == "CDBD")
                         {
-                            BxIndex = originalBx ?? bxValue,
-                            DestAddr = 0x3C58,
-                            SrcReg = "AL",
-                            SrcRegValue = alValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr
-                        });
-
-                        Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
+                            if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                            {
+                                var existing = result.BattleMonsterEntries[bxValue];
+                                result.BattleMonsterEntries[bxValue] = (alValue, existing.val2, isIndeterminate);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[bxValue] = (alValue, 0, isIndeterminate);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDBD): [3C58] = AL (val1={alValue:X2})");
+                        }
+                        else if (sourceTable == "CDA9")
+                        {
+                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            {
+                                BxIndex = originalBx ?? bxValue,
+                                DestAddr = 0x3C58,
+                                SrcReg = "AL",
+                                SrcRegValue = alValue,
+                                IsFromTable = true,
+                                SourceTableAddr = sourceAddr
+                            });
+                            result.HasPartialBattlePattern = true;
+                            Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
+                        }
+                        else
+                        {
+                            if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                            {
+                                var existing = result.BattleMonsterEntries[bxValue];
+                                result.BattleMonsterEntries[bxValue] = (alValue, existing.val2, isIndeterminate);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[bxValue] = (alValue, 0, isIndeterminate);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C58] = AL (val1={alValue:X2})");
+                        }
                     }
                     else
                     {
@@ -3766,11 +4341,12 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[bxValue] = (alValue, 0, isIndeterminate);
                         }
-
                         Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C58] = AL (val1={alValue:X2}, isIndeterminate={isIndeterminate})");
                     }
                 }
+                return;
             }
+
             // Прямое сохранение в [3C29] из AL (без BX)
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
@@ -3785,19 +4361,48 @@ namespace MMMapEditor
                     {
                         ushort? sourceAddr = registerTracker.GetSourceAddress("AL");
                         ushort? originalBx = registerTracker.GetOriginalBx("AL");
+                        string sourceTable = registerTracker.GetSourceTable("AL");
 
-                        result.HasPartialBattlePattern = true;
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
+                        if (sourceTable == "CDB5")
                         {
-                            BxIndex = originalBx ?? bxValue,
-                            DestAddr = 0x3C29,
-                            SrcReg = "AL",
-                            SrcRegValue = alValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr
-                        });
-
-                        Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
+                            if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                            {
+                                var existing = result.BattleMonsterEntries[bxValue];
+                                result.BattleMonsterEntries[bxValue] = (existing.val1, alValue, isIndeterminate);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[bxValue] = (0, alValue, isIndeterminate);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDB5): [3C29] = AL (val2={alValue:X2})");
+                        }
+                        else if (sourceTable == "CDB1")
+                        {
+                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            {
+                                BxIndex = originalBx ?? bxValue,
+                                DestAddr = 0x3C29,
+                                SrcReg = "AL",
+                                SrcRegValue = alValue,
+                                IsFromTable = true,
+                                SourceTableAddr = sourceAddr
+                            });
+                            result.HasPartialBattlePattern = true;
+                            Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
+                        }
+                        else
+                        {
+                            if (result.BattleMonsterEntries.ContainsKey(bxValue))
+                            {
+                                var existing = result.BattleMonsterEntries[bxValue];
+                                result.BattleMonsterEntries[bxValue] = (existing.val1, alValue, isIndeterminate);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[bxValue] = (0, alValue, isIndeterminate);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = AL (val2={alValue:X2})");
+                        }
                     }
                     else
                     {
@@ -3810,10 +4415,10 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[bxValue] = (0, alValue, isIndeterminate);
                         }
-
                         Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = AL (val2={alValue:X2}, isIndeterminate={isIndeterminate})");
                     }
                 }
+                return;
             }
         }
 
