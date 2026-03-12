@@ -356,7 +356,7 @@ namespace MMMapEditor
         /// Загрузка из таблицы CDB5+ (MOV BP, [BX+CDB5]) - слово с двумя индексами монстров
         /// </summary>
         private void ProcessLoadFromTableCDB5(byte[] bytes, RegisterTracker tracker,
-            uint address, BinaryReader br, byte targetX, byte targetY)
+    uint address, BinaryReader br, byte targetX, byte targetY)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -396,7 +396,7 @@ namespace MMMapEditor
                     Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
-                // Сохраняем полное слово в BP
+                // Сохраняем полное слово только в BP. НЕ трогаем AL.
                 tracker.SetRegisterValueWithSource(
                     "BP",
                     readSuccess ? actualValue : (ushort)0,
@@ -408,34 +408,8 @@ namespace MMMapEditor
                     "CDB5"
                 );
 
-                // Сохраняем младший байт (второй индекс) в AL
-                if (readSuccess)
-                {
-                    byte lowByte = (byte)(actualValue & 0xFF);
-                    tracker.SetRegisterValueWithSource(
-                        "AL",
-                        lowByte,
-                        sourceAddr,
-                        (ushort)effectiveBx,
-                        true,
-                        address,
-                        $"MOV AL, low byte of [BX+CDB5] (0x{lowByte:X2})",
-                        "CDB5"
-                    );
-
-                    // Сохраняем старший байт (первый индекс) в AH
-                    byte highByte = (byte)(actualValue >> 8);
-                    tracker.SetRegisterValueWithSource(
-                        "AH",
-                        highByte,
-                        sourceAddr,
-                        (ushort)effectiveBx,
-                        true,
-                        address,
-                        $"MOV AH, high byte of [BX+CDB5] (0x{highByte:X2})",
-                        "CDB5"
-                    );
-                }
+                // УДАЛЕНО: автоматическая установка AL и AH.
+                // Информация о high и low байтах будет доступна через BP и последующее копирование в CX.
 
                 Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+: BP = [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
             }
@@ -556,7 +530,7 @@ namespace MMMapEditor
         /// Загрузка из таблицы CDB1+ (MOV BP, [BX+CDB1]) - слово с индексами монстров
         /// </summary>
         private void ProcessLoadFromTableCDB1(byte[] bytes, RegisterTracker tracker,
-            uint address, BinaryReader br)
+    uint address, BinaryReader br)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -600,21 +574,8 @@ namespace MMMapEditor
                     "CDB1"
                 );
 
-                // Также сохраняем младший байт в AL для возможного использования
-                if (readSuccess)
-                {
-                    byte lowByte = (byte)(actualValue & 0xFF);
-                    tracker.SetRegisterValueWithSource(
-                        "AL",
-                        lowByte,
-                        sourceAddr,
-                        bxValue,
-                        true,
-                        address,
-                        $"MOV AL, low byte of [BX+CDB1] (0x{lowByte:X2})",
-                        "CDB1"
-                    );
-                }
+                // УДАЛЕНО: автоматическая установка AL из младшего байта.
+                // Младший байт будет доступен позже, если произойдет MOV CX, BP и затем использование CL.
 
                 Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+: BP = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
             }
@@ -785,8 +746,9 @@ namespace MMMapEditor
         /// <summary>
         /// Сохранение в [BX+3C58] из AL
         /// </summary>
+        // InstructionAnalyzer.cs
         private void ProcessSaveTo3C58FromAL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -817,37 +779,23 @@ namespace MMMapEditor
                                 break;
 
                             case "CDB5":
-                                // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС монстра (полностью определённый)
+                                // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в AL? Это нестандартная ситуация
+                                // В оригинале такого не должно быть, но если случилось, сохраняем как val1
+                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val1={alValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, alValue, false);
+                                    result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
                                 }
                                 else
                                 {
-                                    result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
+                                    result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val2={alValue:X2})");
                                 break;
 
                             case "CDA9":
-                                // Из таблицы CDA9+ - частично определённая битва
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = originalBx ?? saveIndex,
-                                    DestAddr = 0x3C58,
-                                    SrcReg = "AL",
-                                    SrcRegValue = alValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = "CDA9"
-                                });
-                                result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА (CDA9): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
-                                break;
-
                             case "CDB1":
-                                // Из таблицы CDB1+ - частично определённая битва
+                                // Из таблиц CDA9/CDB1 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = originalBx ?? saveIndex,
@@ -856,10 +804,10 @@ namespace MMMapEditor
                                     SrcRegValue = alValue,
                                     IsFromTable = true,
                                     SourceTableAddr = sourceAddr,
-                                    SourceTable = "CDB1"
+                                    SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА (CDB1): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
+                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
                                 break;
 
                             default:
@@ -899,7 +847,7 @@ namespace MMMapEditor
         /// Сохранение в [BX+3C29] из CL
         /// </summary>
         private void ProcessSaveTo3C29FromCL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -930,37 +878,22 @@ namespace MMMapEditor
                                 break;
 
                             case "CDBD":
-                                // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС монстра (полностью определённый)
+                                // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в CL? Нестандартно
+                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val2={clValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (clValue, existing.val2, false);
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, clValue, false);
                                 }
                                 else
                                 {
-                                    result.BattleMonsterEntries[saveIndex] = (clValue, 0, false);
+                                    result.BattleMonsterEntries[saveIndex] = (0, clValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val1={clValue:X2})");
                                 break;
 
                             case "CDB1":
-                                // Из таблицы CDB1+ - частично определённая битва
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = originalBx ?? saveIndex,
-                                    DestAddr = 0x3C29,
-                                    SrcReg = "CL",
-                                    SrcRegValue = clValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = "CDB1"
-                                });
-                                result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА (CDB1): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
-                                break;
-
                             case "CDA9":
-                                // Из таблицы CDA9+ - частично определённая битва
+                                // Из таблиц CDB1/CDA9 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = originalBx ?? saveIndex,
@@ -969,10 +902,10 @@ namespace MMMapEditor
                                     SrcRegValue = clValue,
                                     IsFromTable = true,
                                     SourceTableAddr = sourceAddr,
-                                    SourceTable = "CDA9"
+                                    SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА (CDA9): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
+                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
                                 break;
 
                             default:
@@ -1012,7 +945,7 @@ namespace MMMapEditor
         /// Сохранение в [BX+3C58] из DL
         /// </summary>
         private void ProcessSaveTo3C58FromDL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -1024,51 +957,73 @@ namespace MMMapEditor
                     ushort? originalBx = tracker.GetOriginalBx("DL") ?? tracker.GetOriginalBx("DX");
                     string sourceTable = tracker.GetSourceTable("DL") ?? tracker.GetSourceTable("DX");
 
-                    if (isFromTable && sourceTable == "CDBD")
+                    if (isFromTable)
                     {
-                        if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                        switch (sourceTable)
                         {
-                            var existing = result.BattleMonsterEntries[saveIndex];
-                            result.BattleMonsterEntries[saveIndex] = (dlValue, existing.val2, false);
+                            case "CDBD":
+                                // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС монстра
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (dlValue, existing.val2, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
+                                break;
+
+                            case "CDB5":
+                                // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в DL? Нестандартно
+                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (dlValue, existing.val2, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
+                                }
+                                break;
+
+                            case "CDA9":
+                            case "CDB1":
+                                // Из таблиц CDA9/CDB1 - частично определённая битва
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? saveIndex,
+                                    DestAddr = 0x3C58,
+                                    SrcReg = "DL",
+                                    SrcRegValue = dlValue,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr,
+                                    SourceTable = sourceTable
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
+                                break;
+
+                            default:
+                                // Из неизвестной таблицы - считаем полностью определённой
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (dlValue, existing.val2, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
+                                break;
                         }
-                        else
-                        {
-                            result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
-                        }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDBD): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
-                    }
-                    else if (isFromTable && sourceTable == "CDA9")
-                    {
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
-                        {
-                            BxIndex = originalBx ?? saveIndex,
-                            DestAddr = 0x3C58,
-                            SrcReg = "DL",
-                            SrcRegValue = dlValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr,
-                            SourceTable = "CDA9"
-                        });
-                        result.HasPartialBattlePattern = true;
-                        Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
-                    }
-                    else if (isFromTable && sourceTable == "CDB1")
-                    {
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
-                        {
-                            BxIndex = originalBx ?? saveIndex,
-                            DestAddr = 0x3C58,
-                            SrcReg = "DL",
-                            SrcRegValue = dlValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr,
-                            SourceTable = "CDB1"
-                        });
-                        result.HasPartialBattlePattern = true;
-                        Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                     }
                     else
                     {
+                        // Значение не из таблиц - полностью определённая битва
                         if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                         {
                             var existing = result.BattleMonsterEntries[saveIndex];
@@ -1078,7 +1033,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
+                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
                     }
                 }
             }
@@ -1088,7 +1043,7 @@ namespace MMMapEditor
         /// Сохранение в [BX+3C29] из DL
         /// </summary>
         private void ProcessSaveTo3C29FromDL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -1100,36 +1055,73 @@ namespace MMMapEditor
                     ushort? originalBx = tracker.GetOriginalBx("DL") ?? tracker.GetOriginalBx("DX");
                     string sourceTable = tracker.GetSourceTable("DL") ?? tracker.GetSourceTable("DX");
 
-                    if (isFromTable && sourceTable == "CDB5")
+                    if (isFromTable)
                     {
-                        if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                        switch (sourceTable)
                         {
-                            var existing = result.BattleMonsterEntries[saveIndex];
-                            result.BattleMonsterEntries[saveIndex] = (existing.val1, dlValue, false);
+                            case "CDB5":
+                                // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС монстра
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, dlValue, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
+                                break;
+
+                            case "CDBD":
+                                // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в DL? Нестандартно
+                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, dlValue, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
+                                }
+                                break;
+
+                            case "CDB1":
+                            case "CDA9":
+                                // Из таблиц CDB1/CDA9 - частично определённая битва
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? saveIndex,
+                                    DestAddr = 0x3C29,
+                                    SrcReg = "DL",
+                                    SrcRegValue = dlValue,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr,
+                                    SourceTable = sourceTable
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
+                                break;
+
+                            default:
+                                // Из неизвестной таблицы - считаем полностью определённой
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, dlValue, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
+                                break;
                         }
-                        else
-                        {
-                            result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
-                        }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDB5): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
-                    }
-                    else if (isFromTable && sourceTable == "CDB1")
-                    {
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
-                        {
-                            BxIndex = originalBx ?? saveIndex,
-                            DestAddr = 0x3C29,
-                            SrcReg = "DL",
-                            SrcRegValue = dlValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr,
-                            SourceTable = "CDB1"
-                        });
-                        result.HasPartialBattlePattern = true;
-                        Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                     }
                     else
                     {
+                        // Значение не из таблиц - полностью определённая битва
                         if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                         {
                             var existing = result.BattleMonsterEntries[saveIndex];
@@ -1139,7 +1131,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
+                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
                     }
                 }
             }
@@ -1149,7 +1141,7 @@ namespace MMMapEditor
         /// Сохранение в [BX+3C58] из BL
         /// </summary>
         private void ProcessSaveTo3C58FromBL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -1161,36 +1153,73 @@ namespace MMMapEditor
                     ushort? originalBx = tracker.GetOriginalBx("BL") ?? tracker.GetOriginalBx("BX");
                     string sourceTable = tracker.GetSourceTable("BL") ?? tracker.GetSourceTable("BX");
 
-                    if (isFromTable && sourceTable == "CDBD")
+                    if (isFromTable)
                     {
-                        if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                        switch (sourceTable)
                         {
-                            var existing = result.BattleMonsterEntries[saveIndex];
-                            result.BattleMonsterEntries[saveIndex] = (blValue, existing.val2, false);
+                            case "CDBD":
+                                // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС монстра
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (blValue, existing.val2, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
+                                break;
+
+                            case "CDB5":
+                                // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в BL? Нестандартно
+                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (blValue, existing.val2, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
+                                }
+                                break;
+
+                            case "CDA9":
+                            case "CDB1":
+                                // Из таблиц CDA9/CDB1 - частично определённая битва
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? saveIndex,
+                                    DestAddr = 0x3C58,
+                                    SrcReg = "BL",
+                                    SrcRegValue = blValue,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr,
+                                    SourceTable = sourceTable
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
+                                break;
+
+                            default:
+                                // Из неизвестной таблицы - считаем полностью определённой
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (blValue, existing.val2, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
+                                break;
                         }
-                        else
-                        {
-                            result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
-                        }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDBD): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
-                    }
-                    else if (isFromTable && sourceTable == "CDA9")
-                    {
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
-                        {
-                            BxIndex = originalBx ?? saveIndex,
-                            DestAddr = 0x3C58,
-                            SrcReg = "BL",
-                            SrcRegValue = blValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr,
-                            SourceTable = "CDA9"
-                        });
-                        result.HasPartialBattlePattern = true;
-                        Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                     }
                     else
                     {
+                        // Значение не из таблиц - полностью определённая битва
                         if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                         {
                             var existing = result.BattleMonsterEntries[saveIndex];
@@ -1200,7 +1229,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
+                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
                     }
                 }
             }
@@ -1210,7 +1239,7 @@ namespace MMMapEditor
         /// Сохранение в [BX+3C29] из BL
         /// </summary>
         private void ProcessSaveTo3C29FromBL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
@@ -1222,36 +1251,73 @@ namespace MMMapEditor
                     ushort? originalBx = tracker.GetOriginalBx("BL") ?? tracker.GetOriginalBx("BX");
                     string sourceTable = tracker.GetSourceTable("BL") ?? tracker.GetSourceTable("BX");
 
-                    if (isFromTable && sourceTable == "CDB5")
+                    if (isFromTable)
                     {
-                        if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                        switch (sourceTable)
                         {
-                            var existing = result.BattleMonsterEntries[saveIndex];
-                            result.BattleMonsterEntries[saveIndex] = (existing.val1, blValue, false);
+                            case "CDB5":
+                                // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС монстра
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, blValue, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
+                                break;
+
+                            case "CDBD":
+                                // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в BL? Нестандартно
+                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, blValue, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
+                                }
+                                break;
+
+                            case "CDB1":
+                            case "CDA9":
+                                // Из таблиц CDB1/CDA9 - частично определённая битва
+                                result.PartialBattleInfo.Add(new PartialBattleInfo
+                                {
+                                    BxIndex = originalBx ?? saveIndex,
+                                    DestAddr = 0x3C29,
+                                    SrcReg = "BL",
+                                    SrcRegValue = blValue,
+                                    IsFromTable = true,
+                                    SourceTableAddr = sourceAddr,
+                                    SourceTable = sourceTable
+                                });
+                                result.HasPartialBattlePattern = true;
+                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
+                                break;
+
+                            default:
+                                // Из неизвестной таблицы - считаем полностью определённой
+                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                                {
+                                    var existing = result.BattleMonsterEntries[saveIndex];
+                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, blValue, false);
+                                }
+                                else
+                                {
+                                    result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
+                                }
+                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
+                                break;
                         }
-                        else
-                        {
-                            result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
-                        }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (из CDB5): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
-                    }
-                    else if (isFromTable && sourceTable == "CDB1")
-                    {
-                        result.PartialBattleInfo.Add(new PartialBattleInfo
-                        {
-                            BxIndex = originalBx ?? saveIndex,
-                            DestAddr = 0x3C29,
-                            SrcReg = "BL",
-                            SrcRegValue = blValue,
-                            IsFromTable = true,
-                            SourceTableAddr = sourceAddr,
-                            SourceTable = "CDB1"
-                        });
-                        result.HasPartialBattlePattern = true;
-                        Debug.WriteLine($"    СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                     }
                     else
                     {
+                        // Значение не из таблиц - полностью определённая битва
                         if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                         {
                             var existing = result.BattleMonsterEntries[saveIndex];
@@ -1261,7 +1327,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА: [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
+                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
                     }
                 }
             }
@@ -1271,7 +1337,7 @@ namespace MMMapEditor
         /// Прямое сохранение в [3C58] из AL (без BX)
         /// </summary>
         private void ProcessDirectSaveTo3C58FromAL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetByteRegisterValue("AL", out byte alValue))
             {
@@ -1281,51 +1347,73 @@ namespace MMMapEditor
                 ushort? originalBx = tracker.GetOriginalBx("AL");
                 string sourceTable = tracker.GetSourceTable("AL");
 
-                if (isFromTable && sourceTable == "CDBD")
+                if (isFromTable)
                 {
-                    if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                    switch (sourceTable)
                     {
-                        var existing = result.BattleMonsterEntries[saveIndex];
-                        result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
+                        case "CDBD":
+                            // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС монстра
+                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                            {
+                                var existing = result.BattleMonsterEntries[saveIndex];
+                                result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDBD): [3C58] = AL (val1={alValue:X2})");
+                            break;
+
+                        case "CDB5":
+                            // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в AL? Нестандартно
+                            Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDB5 в 3C58? Нестандартно): [3C58] = AL (val1={alValue:X2})");
+                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                            {
+                                var existing = result.BattleMonsterEntries[saveIndex];
+                                result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
+                            }
+                            break;
+
+                        case "CDA9":
+                        case "CDB1":
+                            // Из таблиц CDA9/CDB1 - частично определённая битва
+                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            {
+                                BxIndex = originalBx ?? saveIndex,
+                                DestAddr = 0x3C58,
+                                SrcReg = "AL",
+                                SrcRegValue = alValue,
+                                IsFromTable = true,
+                                SourceTableAddr = sourceAddr,
+                                SourceTable = sourceTable
+                            });
+                            result.HasPartialBattlePattern = true;
+                            Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
+                            break;
+
+                        default:
+                            // Из неизвестной таблицы - считаем полностью определённой
+                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                            {
+                                var existing = result.BattleMonsterEntries[saveIndex];
+                                result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C58] = AL (val1={alValue:X2})");
+                            break;
                     }
-                    else
-                    {
-                        result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
-                    }
-                    Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDBD): [3C58] = AL (val1={alValue:X2})");
-                }
-                else if (isFromTable && sourceTable == "CDA9")
-                {
-                    result.PartialBattleInfo.Add(new PartialBattleInfo
-                    {
-                        BxIndex = originalBx ?? saveIndex,
-                        DestAddr = 0x3C58,
-                        SrcReg = "AL",
-                        SrcRegValue = alValue,
-                        IsFromTable = true,
-                        SourceTableAddr = sourceAddr,
-                        SourceTable = "CDA9"
-                    });
-                    result.HasPartialBattlePattern = true;
-                    Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
-                }
-                else if (isFromTable && sourceTable == "CDB1")
-                {
-                    result.PartialBattleInfo.Add(new PartialBattleInfo
-                    {
-                        BxIndex = originalBx ?? saveIndex,
-                        DestAddr = 0x3C58,
-                        SrcReg = "AL",
-                        SrcRegValue = alValue,
-                        IsFromTable = true,
-                        SourceTableAddr = sourceAddr,
-                        SourceTable = "CDB1"
-                    });
-                    result.HasPartialBattlePattern = true;
-                    Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
                 }
                 else
                 {
+                    // Значение не из таблиц - полностью определённая битва
                     if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                     {
                         var existing = result.BattleMonsterEntries[saveIndex];
@@ -1344,7 +1432,7 @@ namespace MMMapEditor
         /// Прямое сохранение в [3C29] из AL (без BX)
         /// </summary>
         private void ProcessDirectSaveTo3C29FromAL(byte[] bytes, RegisterTracker tracker,
-            PathAnalysisResult result, uint address)
+    PathAnalysisResult result, uint address)
         {
             if (tracker.TryGetByteRegisterValue("AL", out byte alValue))
             {
@@ -1354,51 +1442,73 @@ namespace MMMapEditor
                 ushort? originalBx = tracker.GetOriginalBx("AL");
                 string sourceTable = tracker.GetSourceTable("AL");
 
-                if (isFromTable && sourceTable == "CDB5")
+                if (isFromTable)
                 {
-                    if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                    switch (sourceTable)
                     {
-                        var existing = result.BattleMonsterEntries[saveIndex];
-                        result.BattleMonsterEntries[saveIndex] = (existing.val1, alValue, false);
+                        case "CDB5":
+                            // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС монстра
+                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                            {
+                                var existing = result.BattleMonsterEntries[saveIndex];
+                                result.BattleMonsterEntries[saveIndex] = (existing.val1, alValue, false);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDB5): [3C29] = AL (val2={alValue:X2})");
+                            break;
+
+                        case "CDBD":
+                            // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в AL? Нестандартно
+                            Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDBD в 3C29? Нестандартно): [3C29] = AL (val2={alValue:X2})");
+                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                            {
+                                var existing = result.BattleMonsterEntries[saveIndex];
+                                result.BattleMonsterEntries[saveIndex] = (existing.val1, alValue, false);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
+                            }
+                            break;
+
+                        case "CDB1":
+                        case "CDA9":
+                            // Из таблиц CDB1/CDA9 - частично определённая битва
+                            result.PartialBattleInfo.Add(new PartialBattleInfo
+                            {
+                                BxIndex = originalBx ?? saveIndex,
+                                DestAddr = 0x3C29,
+                                SrcReg = "AL",
+                                SrcRegValue = alValue,
+                                IsFromTable = true,
+                                SourceTableAddr = sourceAddr,
+                                SourceTable = sourceTable
+                            });
+                            result.HasPartialBattlePattern = true;
+                            Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
+                            break;
+
+                        default:
+                            // Из неизвестной таблицы - считаем полностью определённой
+                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
+                            {
+                                var existing = result.BattleMonsterEntries[saveIndex];
+                                result.BattleMonsterEntries[saveIndex] = (existing.val1, alValue, false);
+                            }
+                            else
+                            {
+                                result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
+                            }
+                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C29] = AL (val2={alValue:X2})");
+                            break;
                     }
-                    else
-                    {
-                        result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
-                    }
-                    Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDB5): [3C29] = AL (val2={alValue:X2})");
-                }
-                else if (isFromTable && sourceTable == "CDB1")
-                {
-                    result.PartialBattleInfo.Add(new PartialBattleInfo
-                    {
-                        BxIndex = originalBx ?? saveIndex,
-                        DestAddr = 0x3C29,
-                        SrcReg = "AL",
-                        SrcRegValue = alValue,
-                        IsFromTable = true,
-                        SourceTableAddr = sourceAddr,
-                        SourceTable = "CDB1"
-                    });
-                    result.HasPartialBattlePattern = true;
-                    Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDB1+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
-                }
-                else if (isFromTable && sourceTable == "CDA9")
-                {
-                    result.PartialBattleInfo.Add(new PartialBattleInfo
-                    {
-                        BxIndex = originalBx ?? saveIndex,
-                        DestAddr = 0x3C29,
-                        SrcReg = "AL",
-                        SrcRegValue = alValue,
-                        IsFromTable = true,
-                        SourceTableAddr = sourceAddr,
-                        SourceTable = "CDA9"
-                    });
-                    result.HasPartialBattlePattern = true;
-                    Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ CDA9+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
                 }
                 else
                 {
+                    // Значение не из таблиц - полностью определённая битва
                     if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                     {
                         var existing = result.BattleMonsterEntries[saveIndex];
