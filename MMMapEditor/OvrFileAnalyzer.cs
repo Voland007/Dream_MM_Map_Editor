@@ -651,11 +651,33 @@ namespace MMMapEditor
             if (comparison.IsLinear)
             {
                 Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}]");
-                for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
+
+                if (isX)
                 {
-                    for (byte x = 0; x < 16; x++)
+                    for (byte x = comparison.LinearStart; x <= comparison.LinearEnd && x < 16; x++)
                     {
-                        targetCells.Add(new Point(x, y));
+                        for (byte y = 0; y < 16; y++)
+                        {
+                            targetCells.Add(new Point(x, y));
+                        }
+                    }
+                }
+                else if (isY)
+                {
+                    for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
+                    {
+                        for (byte x = 0; x < 16; x++)
+                        {
+                            targetCells.Add(new Point(x, y));
+                        }
+                    }
+                }
+                else if (isFull)
+                {
+                    string jumpType = comparison.JumpType.ToUpper();
+                    if (jumpType == "JE" || jumpType == "JZ")
+                    {
+                        targetCells.Add(new Point(targetX, targetY));
                     }
                 }
             }
