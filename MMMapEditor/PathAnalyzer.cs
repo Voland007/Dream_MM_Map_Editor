@@ -39,8 +39,10 @@ namespace MMMapEditor
         public void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
             List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
             uint firstLocalTextAddress, BinaryReader br, OvrObject debugObject,
-            byte targetX, byte targetY, List<PathResult> allResults, OvrObject ovrObject)
+            byte targetX, byte targetY, List<PathResult> allResults, OvrObject ovrObject,
+            HashSet<(uint From, uint To)> processedBackEdges = null)
         {
+            processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
 
             var sortedPaths = paths.OrderBy(p => p.Address).ToList();
@@ -66,7 +68,8 @@ namespace MMMapEditor
                 // Создаём НОВЫЙ RegisterTracker для каждого пути
                 var pathRegisterTracker = new RegisterTracker();
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
-                    new HashSet<uint>(), depth + 1, 0, debugObject, currentPathId, targetX, targetY);
+                    new HashSet<uint>(), depth + 1, 0, debugObject, currentPathId, targetX, targetY,
+                    processedBackEdges);
 
                 // Формируем тексты для этого пути с сохранением порядка
                 var pathTexts = BuildPathTexts(path, pathResult, inheritedContextTexts,
@@ -109,7 +112,7 @@ namespace MMMapEditor
                     ProcessPaths(pathResult.AlternativePaths, currentPathId, depth + 1,
                         newInheritedContextTexts, newInheritedLocalTexts,
                         firstLocalTextAddress, br, debugObject, targetX, targetY,
-                        allResults, ovrObject);
+                        allResults, ovrObject, processedBackEdges);
                 }
             }
         }

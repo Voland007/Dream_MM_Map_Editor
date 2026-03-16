@@ -44,8 +44,10 @@ namespace MMMapEditor
 
         public PathAnalysisResult ExecuteCodeAtAddress(BinaryReader br, uint startAddress,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
-            int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY)
+            int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
+            HashSet<(uint From, uint To)> processedBackEdges = null)
         {
+            processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = debugObject != null || (pathId > 0 && debugObject?.X == 8 && debugObject?.Y == 0);
 
             if (depth > MAX_DEPTH || callDepth > MAX_CALL_DEPTH)
@@ -148,7 +150,7 @@ namespace MMMapEditor
                     // Обработка инструкций перехода и возврата
                     var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
                         globallyAnalyzedAddresses, depth, callDepth, debugObject, pathId, targetX, targetY,
-                        result, currentAddress, nextAddress, fileLength, debugMode);
+                        processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode);
 
                     if (handlingResult.ShouldReturn)
                         return handlingResult.Result;
@@ -246,6 +248,7 @@ namespace MMMapEditor
         private ControlFlowResult HandleControlFlowInstructions(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
             int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
+            HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint currentAddress, uint nextAddress, long fileLength, bool debugMode)
         {
             string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
@@ -283,14 +286,14 @@ namespace MMMapEditor
             if (mnemonicUpper.StartsWith("CALL"))
             {
                 return HandleCall(insn, br, registerTracker, globallyAnalyzedAddresses, depth, callDepth,
-                    debugObject, pathId, targetX, targetY, result, nextAddress, debugMode);
+                    debugObject, pathId, targetX, targetY, processedBackEdges, result, nextAddress, debugMode);
             }
 
             // УСЛОВНЫЕ ПЕРЕХОДЫ
             if (IsConditionalJump(insn, out uint condJumpTarget))
             {
                 return HandleConditionalJump(insn, condJumpTarget, nextAddress, fileLength,
-                    debugMode, result, currentAddress);
+                    debugMode, processedBackEdges, result, currentAddress);
             }
 
             // Обычная инструкция - продолжаем линейно
@@ -392,6 +395,7 @@ namespace MMMapEditor
         private ControlFlowResult HandleCall(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
             int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
+            HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint nextAddress, bool debugMode)
         {
             uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
@@ -403,7 +407,8 @@ namespace MMMapEditor
 
                 var subroutineTracker = registerTracker.Clone();
                 var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
-                    globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId, targetX, targetY);
+                    globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId, targetX, targetY,
+                    processedBackEdges);
 
                 // Добавляем результаты из подпрограммы
                 var foundTextsInThisPath = new HashSet<string>();
@@ -448,10 +453,26 @@ namespace MMMapEditor
         /// Обрабатывает условный переход
         /// </summary>
         private ControlFlowResult HandleConditionalJump(X86Instruction insn, uint condJumpTarget,
-            uint nextAddress, long fileLength, bool debugMode, PathAnalysisResult result, uint currentAddress)
+            uint nextAddress, long fileLength, bool debugMode,
+            HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress)
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
+                if (condJumpTarget < currentAddress)
+                {
+                    var backEdge = (From: currentAddress, To: condJumpTarget);
+
+                    if (!processedBackEdges.Add(backEdge))
+                    {
+                        if (debugMode)
+                            Debug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
+
+                        return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                    }
+
+                    if (debugMode)
+                        Debug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, разрешаем одну развилку");
+                }
                 // Добавляем целевой адрес перехода как альтернативный путь
                 var altPath = new AlternativePath
                 {

@@ -139,8 +139,11 @@ namespace MMMapEditor
             var mainRegisterTracker = new RegisterTracker();
             SetInitialRegistersFromCoordinates(mainRegisterTracker, ovrObject.X, ovrObject.Y, patchAddress);
 
+            var processedBackEdges = new HashSet<(uint From, uint To)>();
+
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
-                new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0, ovrObject.X, ovrObject.Y);
+                new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0, ovrObject.X, ovrObject.Y,
+                processedBackEdges);
 
             // Сбор результатов основного пути
             var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
@@ -164,7 +167,7 @@ namespace MMMapEditor
                 _pathAnalyzer.ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
                     mainContextTexts, mainLocalTexts,
                     mainPathResult.FirstLocalTextAddress, br, debugMode ? ovrObject : null,
-                    ovrObject.X, ovrObject.Y, allResults, ovrObject);
+                    ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges);
             }
 
             // Формирование финальных путей
@@ -299,8 +302,9 @@ namespace MMMapEditor
 
             // Анализ основного пути
             var mainRegisterTracker = new RegisterTracker();
+            var macroProcessedBackEdges = new HashSet<(uint From, uint To)>();
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
-                new HashSet<uint>(), 0, 0, null, 0, targetX, targetY);
+                new HashSet<uint>(), 0, 0, null, 0, targetX, targetY, macroProcessedBackEdges);
 
             MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel,
                 battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
@@ -651,33 +655,11 @@ namespace MMMapEditor
             if (comparison.IsLinear)
             {
                 Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}]");
-
-                if (isX)
+                for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
                 {
-                    for (byte x = comparison.LinearStart; x <= comparison.LinearEnd && x < 16; x++)
+                    for (byte x = 0; x < 16; x++)
                     {
-                        for (byte y = 0; y < 16; y++)
-                        {
-                            targetCells.Add(new Point(x, y));
-                        }
-                    }
-                }
-                else if (isY)
-                {
-                    for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
-                    {
-                        for (byte x = 0; x < 16; x++)
-                        {
-                            targetCells.Add(new Point(x, y));
-                        }
-                    }
-                }
-                else if (isFull)
-                {
-                    string jumpType = comparison.JumpType.ToUpper();
-                    if (jumpType == "JE" || jumpType == "JZ")
-                    {
-                        targetCells.Add(new Point(targetX, targetY));
+                        targetCells.Add(new Point(x, y));
                     }
                 }
             }
