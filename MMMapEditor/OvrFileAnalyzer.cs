@@ -201,7 +201,7 @@ namespace MMMapEditor
         }
 
         private List<OvrObject> ProcessMacros(BinaryReader br, List<CoordinateComparison> comparisons,
-            HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions)
+    HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions)
         {
             var objects = new List<OvrObject>();
 
@@ -253,14 +253,14 @@ namespace MMMapEditor
                 // Определение целевых клеток
                 var targetCells = GetTargetCells(comparison, isX, isY, isFull, targetX, targetY);
 
-                var validCells = targetCells
-                    .Where(p =>
-                    {
-                        string coordKey = $"{p.X},{p.Y}";
-                        bool isInTable = tableObjectCoords.Contains(coordKey);
-                        bool isRandomEncounter = existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча";
-                        return !isInTable && isRandomEncounter;
-                    })
+                // ИСПРАВЛЕНИЕ: Сначала фильтруем клетки, которые ЕСТЬ в таблице - они НЕ ДОЛЖНЫ обрабатываться макросами
+                var cellsNotInTable = targetCells
+                    .Where(p => !tableObjectCoords.Contains($"{p.X},{p.Y}"))
+                    .ToList();
+
+                // Затем из оставшихся выбираем только те, что помечены как случайные встречи
+                var validCells = cellsNotInTable
+                    .Where(p => existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча")
                     .ToList();
 
                 if (validCells.Count == 0)
