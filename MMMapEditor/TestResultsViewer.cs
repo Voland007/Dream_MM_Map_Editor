@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -39,10 +39,12 @@ namespace MMMapEditor.Tests
         private ComboBox _ovrFileCombo;
         private DataGridView _summaryGrid;
         private System.Windows.Forms.Timer _filterTimer;
+        private readonly Dictionary<Point, string> _existingNotes;
 
-        public TestResultsViewer(List<TestResult> results)
+        public TestResultsViewer(List<TestResult> results, Dictionary<Point, string> existingNotes = null)
         {
-            _results = results;
+            _results = results ?? new List<TestResult>();
+            _existingNotes = existingNotes ?? new Dictionary<Point, string>();
             InitializeComponent();
             PopulateResults();
         }
@@ -933,7 +935,7 @@ namespace MMMapEditor.Tests
             try
             {
                 var runner = new OvrAnalyzerTestRunner();
-                var newResult = runner.RunTest(testCase);
+                var newResult = runner.RunTest(testCase, null, _existingNotes);
 
                 // Обновляем результат в списке
                 var index = _results.FindIndex(r => r.TestCase.Id == newResult.TestCase.Id);
@@ -1003,7 +1005,7 @@ namespace MMMapEditor.Tests
             try
             {
                 var runner = new OvrAnalyzerTestRunner();
-                var newResults = runner.RunTests(testCasesToRun);
+                var newResults = runner.RunTests(testCasesToRun, _existingNotes);
 
                 // Обновляем результаты
                 foreach (var newResult in newResults)

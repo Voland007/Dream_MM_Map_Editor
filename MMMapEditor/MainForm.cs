@@ -1050,7 +1050,7 @@ namespace MMMapEditor
             }
 
             // Запускаем тесты
-            var results = runner.RunTests(testCases);
+            var results = runner.RunTests(testCases, notesPerCell);
 
             // Показываем результаты
             var viewer = new MMMapEditor.Tests.TestResultsViewer(results);
@@ -1467,347 +1467,36 @@ namespace MMMapEditor
         {
             try
             {
-                string fileNameOnly = Path.GetFileName(filename).ToUpper();
+                var buildResult = OvrNotesBuilder.BuildNotes(
+                    filename,
+                    centralOptions,
+                    notesPerCell,
+                    messageStates);
 
-                // Проверяем наличие конфигурации
-                if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
-                {
-                    MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена. Файл не будет обработан.",
-                                  "Предупреждение", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
+                centralOptions = buildResult.CentralOptions;
+                notesPerCell = buildResult.NotesPerCell;
+                messageStates = buildResult.MessageStates;
 
-                var config = OvrFileConfigs.Configs[fileNameOnly];
-
-                // Получаем дефолтные значения силы и уровня монстров
-                byte defaultMonsterPower = 0;
-                byte defaultMonsterLevel = 0;
-
-                try
-                {
-                    byte[] fileData = File.ReadAllBytes(filename);
-                    if (config.MonsterPower < fileData.Length)
-                        defaultMonsterPower = fileData[config.MonsterPower];
-                    if (config.MonsterLevel < fileData.Length)
-                        defaultMonsterLevel = fileData[config.MonsterLevel];
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Ошибка чтения дефолтных значений монстров: {ex.Message}");
-                }
-
-                // Используем анализатор для получения ВСЕХ объектов (и из таблицы, и из макросов)
-                var allObjects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config, centralOptions);
-
-                // Словарь для быстрой проверки, есть ли у клетки объект из таблицы
-                var tableObjectCoords = new HashSet<string>(
-                    allObjects.Where(obj => obj.IsFromTable).Select(obj => $"{obj.X},{obj.Y}")
-                );
-
-                // Обрабатываем все объекты, полученные от анализатора
-                foreach (var obj in allObjects)
-                {
-                    Point pos = new Point(obj.X, obj.Y);
-                    string coordKey = $"{obj.X},{obj.Y}";
-
-                    // Проверяем текущее состояние клетки в centralOptions
-                    if (!centralOptions.TryGetValue(pos, out string existingOption))
-                    {
-                        Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) не имеет записи в centralOptions, пропускаем");
-                        continue;
-                    }
-
-                    // Если клетка имеет объект из таблицы, мы всё равно обрабатываем её,
-                    // но анализатор уже гарантировал, что в obj нет "чужих" данных.
-                    if (tableObjectCoords.Contains(coordKey))
-                    {
-                        Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) имеет объект ИЗ ТАБЛИЦЫ. Применяем его данные.");
-                        // Просто применяем то, что дал анализатор.
-                    }
-                    // Если клетка НЕ из таблицы, проверяем, что у неё "Случайная встреча"
-                    else if (existingOption != "Случайная встреча")
-                    {
-                        Debug.WriteLine($"  Клетка ({obj.X},{obj.Y}) имеет '{existingOption}' и не из таблицы - пропускаем (ждём 'Случайная встреча')");
-                        continue;
-                    }
-
-                    // Если мы дошли до сюда, значит:
-                    // 1. Клетка из таблицы - применяем данные.
-                    // 2. Клетка не из таблицы, но с "Случайная встреча" - применяем данные.
-
-                    Debug.WriteLine($"  Применяем данные для клетки ({obj.X},{obj.Y}){(obj.IsFromTable ? " (из таблицы)" : " (AnyObjectSpec)")}");
-
-                    // Сохраняем существующие заметки, если они есть
-                    string existingNotes = notesPerCell.TryGetValue(pos, out var notes) ? notes : "";
-
-                    // Заменяем центральную опцию
-                    centralOptions[pos] = obj.IsFromTable ? "AnyObject" : "AnyObjectSpec";
-
-                    // Устанавливаем направления с сообщениями
-                    var directionsWithMessages = obj.GetDirectionsWithMessages();
-
-                    var currentMessages = messageStates.TryGetValue(pos, out var prev)
-                        ? prev
-                        : new Tuple<bool, bool, bool, bool>(false, false, false, false);
-
-                    bool top = currentMessages.Item1 || directionsWithMessages.Contains(Direction.Top);
-                    bool left = currentMessages.Item2 || directionsWithMessages.Contains(Direction.Left);
-                    bool bottom = currentMessages.Item3 || directionsWithMessages.Contains(Direction.Bottom);
-                    bool right = currentMessages.Item4 || directionsWithMessages.Contains(Direction.Right);
-
-                    messageStates[pos] = new Tuple<bool, bool, bool, bool>(top, left, bottom, right);
-
-                    // ---- ФОРМИРУЕМ ЗАМЕТКИ С УЧЁТОМ ВАРИАНТОВ ----
-
-                    // Словарь для хранения всех вариантов (ключ - номер варианта, значение - список строк варианта)
-                    Dictionary<int, List<string>> variantContents = new Dictionary<int, List<string>>();
-
-                    // 1. Сначала собираем информацию о битвах (если они есть)
-                    List<string> battleInfoLines = new List<string>();
-
-                    if (obj.HasBattleInfo)
-                    {
-                        string battleDesc = obj.GetBattleDescription();
-                        if (!string.IsNullOrEmpty(battleDesc))
-                        {
-                            battleInfoLines.Add(battleDesc);
-                        }
-                    }
-
-                    // 2. Изменения статистики монстров (это всегда глобально для клетки, а не для варианта)
-                    List<string> monsterStatLines = new List<string>();
-                    if (obj.HasMonsterStatChanges)
-                    {
-                        var powerDesc = obj.GetMonsterPowerDescription(defaultMonsterPower);
-                        if (powerDesc != null) monsterStatLines.Add(powerDesc);
-
-                        var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
-                        if (levelDesc != null) monsterStatLines.Add(levelDesc);
-                    }
-
-                    // 3. Частично определённые битвы
-                    List<string> partialBattleLines = new List<string>();
-                    if (obj.HasPartiallyDefinedBattles)
-                    {
-                        string battleDesc = obj.GetBattleDescription();
-                        if (!string.IsNullOrEmpty(battleDesc))
-                        {
-                            partialBattleLines.Add(battleDesc);
-                        }
-                    }
-
-                    // 4. Текстовые сообщения (пути) - группируем по вариантам
-                    // ИСПРАВЛЕНО: используем PathTextsOrdered если есть, иначе PathTexts
-                    bool hasAnyTexts = false;
-
-                    // Сначала пробуем получить упорядоченные тексты
-                    if (obj.PathTextsOrdered != null && obj.PathTextsOrdered.Count > 0)
-                    {
-                        hasAnyTexts = true;
-                        Debug.WriteLine($"      Используем PathTextsOrdered с {obj.PathTextsOrdered.Count} путями");
-
-                        foreach (var kvp in obj.PathTextsOrdered.OrderBy(p => p.Key))
-                        {
-                            if (kvp.Value == null || kvp.Value.Count == 0)
-                                continue;
-
-                            int variantNumber = kvp.Key;
-                            if (!variantContents.ContainsKey(variantNumber))
-                                variantContents[variantNumber] = new List<string>();
-
-                            // Тексты уже в правильном порядке, просто добавляем
-                            foreach (var text in kvp.Value)
-                            {
-                                int colonIndex = text.IndexOf(':');
-                                if (colonIndex >= 0 && colonIndex + 1 < text.Length)
-                                {
-                                    string textPart = text.Substring(colonIndex + 1).Trim();
-                                    string decodedText = DecodeTextString(textPart);
-                                    if (!string.IsNullOrEmpty(decodedText))
-                                    {
-                                        decodedText = decodedText.TrimEnd('\r');
-                                        variantContents[variantNumber].Add(decodedText);
-                                        Debug.WriteLine($"        Добавлен текст: {decodedText}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    // Если нет упорядоченных, используем обычные PathTexts
-                    else if (obj.PathTexts != null && obj.PathTexts.Count > 0)
-                    {
-                        hasAnyTexts = true;
-                        Debug.WriteLine($"      Используем PathTexts с {obj.PathTexts.Count} путями");
-
-                        foreach (var kvp in obj.PathTexts.OrderBy(p => p.Key))
-                        {
-                            if (kvp.Value == null || kvp.Value.Count == 0)
-                                continue;
-
-                            int variantNumber = kvp.Key;
-                            if (!variantContents.ContainsKey(variantNumber))
-                                variantContents[variantNumber] = new List<string>();
-
-                            // Для обычного HashSet порядок не гарантирован, но добавляем как есть
-                            foreach (var text in kvp.Value)
-                            {
-                                int colonIndex = text.IndexOf(':');
-                                if (colonIndex >= 0 && colonIndex + 1 < text.Length)
-                                {
-                                    string textPart = text.Substring(colonIndex + 1).Trim();
-                                    string decodedText = DecodeTextString(textPart);
-                                    if (!string.IsNullOrEmpty(decodedText))
-                                    {
-                                        decodedText = decodedText.TrimEnd('\r');
-                                        variantContents[variantNumber].Add(decodedText);
-                                        Debug.WriteLine($"        Добавлен текст: {decodedText}");
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Debug.WriteLine($"      hasAnyTexts: {hasAnyTexts}, variantContents.Count: {variantContents.Count}");
-
-                    // 5. Определяем, есть ли битва
-                    bool hasBattle = battleInfoLines.Count > 0;
-                    bool hasPartialBattle = partialBattleLines.Count > 0;
-
-                    // Если есть битва, добавляем её
-                    if (hasBattle || hasPartialBattle)
-                    {
-                        List<string> battleVariantLines = new List<string>();
-
-                        // Добавляем основную информацию о битве
-                        if (hasBattle)
-                            battleVariantLines.AddRange(battleInfoLines);
-                        if (hasPartialBattle)
-                            battleVariantLines.AddRange(partialBattleLines);
-
-                        // Добавляем статистику монстров (если есть) к битве
-                        if (monsterStatLines.Count > 0)
-                        {
-                            battleVariantLines.InsertRange(0, monsterStatLines);
-                        }
-
-                        if (variantContents.Count == 0)
-                        {
-                            // Нет текстовых вариантов - битва становится вариантом 0
-                            variantContents[0] = battleVariantLines;
-                            Debug.WriteLine($"      Добавлена битва как вариант 0");
-                        }
-                        else if (variantContents.Count == 1)
-                        {
-                            // Ровно один вариант - добавляем битву к нему (объединяем)
-                            int firstVariant = variantContents.Keys.Min();
-                            variantContents[firstVariant].AddRange(battleVariantLines);
-                            Debug.WriteLine($"      Битва добавлена к варианту {firstVariant}");
-                        }
-                        else
-                        {
-                            // Два и более вариантов - битва создаёт новый отдельный вариант
-                            int maxVariant = variantContents.Keys.Max();
-                            variantContents[maxVariant + 1] = battleVariantLines;
-                            Debug.WriteLine($"      Битва создаёт новый вариант {maxVariant + 1}");
-                        }
-                    }
-                    else if (monsterStatLines.Count > 0 && variantContents.Count > 0)
-                    {
-                        // Если есть только статистика монстров и есть текстовые варианты,
-                        // добавляем статистику к первому варианту
-                        int firstVariant = variantContents.Keys.Min();
-                        variantContents[firstVariant].InsertRange(0, monsterStatLines);
-                        Debug.WriteLine($"      Статистика монстров добавлена к варианту {firstVariant}");
-                    }
-                    else if (monsterStatLines.Count > 0)
-                    {
-                        // Если есть только статистика и нет ни текстов, ни битв
-                        variantContents[0] = monsterStatLines;
-                        Debug.WriteLine($"      Статистика монстров как вариант 0");
-                    }
-
-                    // ---- ФОРМИРУЕМ ИТОГОВЫЕ ЗАМЕТКИ ----
-                    StringBuilder newNotes = new StringBuilder();
-
-                    if (variantContents.Count == 0)
-                    {
-                        // Нет никакого контента - оставляем существующие заметки
-                        newNotes.Append(existingNotes);
-                        Debug.WriteLine($"      Нет контента, оставляем существующие заметки");
-                    }
-                    else if (variantContents.Count == 1)
-                    {
-                        // Только один вариант - выводим без заголовка "Вариант"
-                        var singleVariant = variantContents.First().Value;
-                        foreach (var line in singleVariant)
-                        {
-                            newNotes.Append(line + "\n");
-                        }
-                        Debug.WriteLine($"      Один вариант, {singleVariant.Count} строк");
-                    }
-                    else
-                    {
-                        // Несколько вариантов - добавляем заголовок и нумеруем
-                        newNotes.AppendLine("Эта ячейка содержит различные варианты текста:");
-
-                        var sortedVariants = variantContents.OrderBy(v => v.Key).ToList();
-
-                        for (int i = 0; i < sortedVariants.Count; i++)
-                        {
-                            var variant = sortedVariants[i];
-
-                            // Добавляем заголовок варианта
-                            newNotes.Append($"Вариант{i + 1}:\n");
-
-                            // Добавляем содержимое варианта
-                            foreach (var line in variant.Value)
-                            {
-                                newNotes.Append(line + "\n");
-                            }
-
-                            // Добавляем пустую строку между вариантами, кроме последнего
-                            if (i < sortedVariants.Count - 1)
-                            {
-                                newNotes.AppendLine();
-                            }
-                        }
-                        Debug.WriteLine($"      Несколько вариантов: {sortedVariants.Count}");
-                    }
-
-                    // Если есть новые заметки, сохраняем их
-                    if (newNotes.Length > 0)
-                    {
-                        notesPerCell[pos] = newNotes.ToString().TrimEnd('\n');
-                        Debug.WriteLine($"    Добавлены заметки для ({obj.X},{obj.Y}): {newNotes.ToString().Replace("\n", "\\n")}");
-                    }
-                    else
-                    {
-                        notesPerCell[pos] = existingNotes;
-                        Debug.WriteLine($"    Нет заметок для ({obj.X},{obj.Y})");
-                    }
-                }
-
-                // Перерисовываем интерфейс
                 foreach (var button in gridButtons)
-                {
                     button.Invalidate();
-                }
 
                 if (selectedPosition.HasValue)
-                {
                     UpdateNotesFormatting();
-                }
 
-                // Информационное сообщение о количестве найденных объектов
-                int tableCount = allObjects.Count(o => o.IsFromTable);
-                int specCount = allObjects.Count(o => !o.IsFromTable);
-                MessageBox.Show($"Загружено объектов из анализа кода: Всего {allObjects.Count} (из таблицы: {tableCount}, AnyObjectSpec: {specCount})",
-                               "Отладочная информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(
+                    $"Загружено объектов из анализа кода: Всего {buildResult.TotalObjects} " +
+                    $"(из таблицы: {buildResult.TableObjects}, AnyObjectSpec: {buildResult.SpecObjects})",
+                    "Отладочная информация",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка при обработке OVR файла: {ex.Message}",
-                              "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(
+                    $"Ошибка при обработке OVR файла: {ex.Message}",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
             }
         }
 

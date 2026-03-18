@@ -135,23 +135,17 @@ namespace MMMapEditor.Tests
         /// </summary>
         public bool Matches(string actualText)
         {
+            string normalizedActual = NormalizeString(actualText ?? "");
+
             if (ShouldBeEmpty)
-                return string.IsNullOrEmpty(actualText);
+                return string.IsNullOrWhiteSpace(normalizedActual);
 
             if (ExpectedTexts == null || ExpectedTexts.Count == 0)
-                return true; // Нет конкретных ожиданий
-
-            // Извлекаем чистый текст без префикса
-            string cleanActual = ExtractCleanText(actualText);
-
-            // Декодируем фактический текст (преобразуем \r в реальные переносы)
-            string decodedActual = DecodeString(cleanActual);
-            string normalizedActual = NormalizeString(decodedActual);
+                return false;
 
             foreach (var expected in ExpectedTexts)
             {
-                // Декодируем ожидаемый текст (на случай если там тоже есть escape)
-                string decodedExpected = DecodeString(expected);
+                string decodedExpected = DecodeString(expected ?? "");
                 string normalizedExpected = NormalizeString(decodedExpected);
 
                 if (normalizedActual == normalizedExpected)

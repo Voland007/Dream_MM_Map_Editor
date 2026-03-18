@@ -201,18 +201,15 @@ namespace MMMapEditor.Tests
             SaveTestCases(filePath, exampleTests);
         }
 
-        /// <summary>
-        /// Запустить один тест
-        /// </summary>
-        /// <param name="testCase">Тестовый случай</param>
-        /// <param name="existingCentralOptions">Существующие центральные опции</param>
-        /// <param name="existingNotes">Заметки из notesPerCell</param>
-        public TestResult RunTest(TestCase testCase, Dictionary<Point, string> existingCentralOptions = null, Dictionary<Point, string> existingNotes = null)
+        public TestResult RunTest(
+    TestCase testCase,
+    Dictionary<Point, string> existingCentralOptions = null,
+    Dictionary<Point, string> existingNotes = null)
         {
             var result = new TestResult { TestCase = testCase };
 
             System.Diagnostics.Debug.WriteLine($"\n=== ЗАПУСК ТЕСТА: {testCase.Name} ===");
-            System.Diagnostics.Debug.WriteLine($"Клеток для проверки: {testCase.ExpectedCellTexts.Count}");
+            System.Diagnostics.Debug.WriteLine($"Клеток для проверки: {testCase.ExpectedCellTexts?.Count ?? 0}");
 
             try
             {
@@ -239,223 +236,115 @@ namespace MMMapEditor.Tests
 
                 System.Diagnostics.Debug.WriteLine($"Конфигурация найдена: {configKey}");
 
-                var config = _configs[configKey];
-
-                // Создаём логгер
                 using (var logger = new TestLogger(testCase.Id))
                 {
                     result.Logger = logger;
 
-                    // СОЗДАЁМ СЛОВАРЬ CENTRAL OPTIONS ТОЛЬКО ДЛЯ КЛЕТОК, КОТОРЫЕ НЕ ДОЛЖНЫ БЫТЬ ПУСТЫМИ
+                    // Готовим centralOptions только для тестируемых клеток:
+                    // для непустых ожиданий ставим "Случайная встреча",
+                    // чтобы builder построил текст так же, как в боевом коде.
                     var centralOptions = new Dictionary<Point, string>();
 
-                    // Добавляем клетки со значением "Случайная встреча" ТОЛЬКО если они НЕ должны быть пустыми
-                    foreach (var kvp in testCase.ExpectedCellTexts)
+                    if (testCase.ExpectedCellTexts != null)
                     {
-                        var cellPos = kvp.Key;
-                        var expectation = kvp.Value;
+                        foreach (var kvp in testCase.ExpectedCellTexts)
+                        {
+                            var cellPos = kvp.Key;
+                            var expectation = kvp.Value;
 
-                        // Если клетка НЕ должна быть пустой, устанавливаем "Случайная встреча"
-                        if (!expectation.ShouldBeEmpty)
-                        {
-                            centralOptions[cellPos] = "Случайная встреча";
-                            System.Diagnostics.Debug.WriteLine($"  Установлена centralOptions[{cellPos}] = \"Случайная встреча\"");
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine($"  Клетка {cellPos} должна быть пустой, НЕ устанавливаем centralOptions");
+                            if (!expectation.ShouldBeEmpty)
+                            {
+                                centralOptions[cellPos] = "Случайная встреча";
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"  centralOptions[{cellPos.X},{cellPos.Y}] = \"Случайная встреча\"");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine(
+                                    $"  Клетка ({cellPos.X},{cellPos.Y}) должна быть пустой");
+                            }
                         }
                     }
 
-                    // Если переданы существующие centralOptions, добавляем их поверх (с приоритетом)
+                    // Если были переданы внешние centralOptions, накладываем их сверху
                     if (existingCentralOptions != null)
                     {
                         foreach (var kvp in existingCentralOptions)
-                        {
                             centralOptions[kvp.Key] = kvp.Value;
-                        }
                     }
 
-                    System.Diagnostics.Debug.WriteLine("Запуск анализатора...");
+                    System.Diagnostics.Debug.WriteLine("Запуск OvrNotesBuilder.BuildNotes(...)...");
 
-                    // Запускаем анализатор
-                    var objects = OvrFileAnalyzer.AnalyzeOvrFile(
+                    // КЛЮЧЕВОЙ МОМЕНТ:
+                    // строим боевые заметки тем же кодом, что использует MainForm
+                    var buildResult = OvrNotesBuilder.BuildNotes(
                         testCase.OvrFilePath,
-                        config,
-                        centralOptions
-                    );
+                        centralOptions,
+                        existingNotes,
+                        null);
 
-                    System.Diagnostics.Debug.WriteLine($"Анализатор вернул {objects.Count} объектов");
-
-                    // После анализатора centralOptions может быть изменён
+                    System.Diagnostics.Debug.WriteLine(
+                        $"BuildNotes завершён. NotesPerCell={buildResult.NotesPerCell.Count}, " +
+                        $"CentralOptions={buildResult.CentralOptions.Count}, " +
+                        $"Objects: total={buildResult.TotalObjects}, table={buildResult.TableObjects}, spec={buildResult.SpecObjects}");
 
                     // Проверяем каждую ожидаемую клетку
-                    foreach (var kvp in testCase.ExpectedCellTexts)
+                    if (testCase.ExpectedCellTexts != null)
                     {
-                        var cellPos = kvp.Key;
-                        var expectation = kvp.Value;
-
-                        System.Diagnostics.Debug.WriteLine($"\nПроверка клетки ({cellPos.X},{cellPos.Y}):");
-                        System.Diagnostics.Debug.WriteLine($"  Ожидание: {expectation.GetDescription()}");
-
-                        // Находим объект для этой клетки
-                        var cellObject = objects.FirstOrDefault(o => o.X == cellPos.X && o.Y == cellPos.Y);
-
-                        if (cellObject == null)
+                        foreach (var kvp in testCase.ExpectedCellTexts)
                         {
-                            System.Diagnostics.Debug.WriteLine($"  Объект для клетки не найден в результатах анализатора");
+                            var cellPos = kvp.Key;
+                            var expectation = kvp.Value;
+
+                            System.Diagnostics.Debug.WriteLine($"\nПроверка клетки ({cellPos.X},{cellPos.Y}):");
+                            System.Diagnostics.Debug.WriteLine($"  Ожидание: {expectation.GetDescription()}");
+
+                            string actualText = "";
+                            if (buildResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
+                            {
+                                actualText = noteText ?? "";
+                            }
+
+                            string actualPreview = string.IsNullOrEmpty(actualText)
+                                ? "<пусто>"
+                                : (actualText.Length > 200 ? actualText.Substring(0, 200) + "..." : actualText);
+
+                            System.Diagnostics.Debug.WriteLine($"  Фактический текст: {actualPreview}");
+
+                            bool passed = expectation.Matches(actualText);
+
+                            System.Diagnostics.Debug.WriteLine(
+                                $"  Результат: {(passed ? "СОВПАДАЕТ" : "НЕ СОВПАДАЕТ")}");
+
+                            var cellResult = new CellCheckResult
+                            {
+                                Cell = cellPos,
+                                Expected = expectation.GetDescription(),
+                                Actual = actualText,
+                                Passed = passed,
+                                AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y),
+                                Notes = expectation.Comment
+                            };
+
+                            result.CellResults.Add(cellResult);
                         }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine($"  Объект найден: IsFromTable={cellObject.IsFromTable}, путей={cellObject.PathTexts.Count}");
-                        }
-
-                        // СОБИРАЕМ ВСЕ ТЕКСТЫ ДЛЯ КЛЕТКИ
-                        var allTexts = new HashSet<string>();
-
-                        // 1. Тексты из путей (PathTexts)
-                        if (cellObject != null)
-                        {
-                            foreach (var pathTexts in cellObject.PathTexts.Values)
-                            {
-                                foreach (var text in pathTexts)
-                                {
-                                    allTexts.Add(text);
-                                    string preview = text.Length > 50 ? text.Substring(0, 50) + "..." : text;
-                                    System.Diagnostics.Debug.WriteLine($"  Найден текст из пути: {preview}");
-                                }
-                            }
-
-                            // 2. Информация о силе монстров
-                            if (cellObject.MonsterPower.HasValue)
-                            {
-                                string powerText = $"Сила монстров: {cellObject.MonsterPower.Value}";
-                                allTexts.Add(powerText);
-                                System.Diagnostics.Debug.WriteLine($"  Найдена сила монстров: {powerText}");
-                            }
-
-                            // 3. Информация об уровне монстров
-                            if (cellObject.MonsterLevel.HasValue)
-                            {
-                                string levelText = $"Уровень монстров: {cellObject.MonsterLevel.Value}";
-                                allTexts.Add(levelText);
-                                System.Diagnostics.Debug.WriteLine($"  Найден уровень монстров: {levelText}");
-                            }
-
-                            // 4. Информация о битвах с монстрами
-                            foreach (var battle in cellObject.BattleMonsters)
-                            {
-                                string battleText;
-
-                                if (battle.IsIndeterminate)
-                                {
-                                    battleText = $"Битва: {battle.MonsterName} x? (Random count)";
-                                }
-                                else
-                                {
-                                    battleText = $"Битва: {battle.MonsterName}";
-                                }
-
-                                allTexts.Add(battleText);
-                                System.Diagnostics.Debug.WriteLine($"  Найдена битва: {battleText}");
-                            }
-
-                            // 5. Информация о частично определённых битвах
-                            foreach (var partial in cellObject.PartiallyDefinedBattles)
-                            {
-                                var possibleMonsters = partial.GetPossibleMonsters();
-
-                                if (possibleMonsters.Count == 1)
-                                {
-                                    string partialText = $"Частично определённая битва: {possibleMonsters[0].MonsterName}";
-                                    allTexts.Add(partialText);
-                                }
-                                else if (possibleMonsters.Count > 0)
-                                {
-                                    string partialText = $"Частично определённая битва ({possibleMonsters.Count} вариантов)";
-                                    allTexts.Add(partialText);
-                                }
-                            }
-
-                            // 6. Полное описание битвы
-                            string fullBattleDesc = cellObject.GetBattleDescription();
-                            if (!string.IsNullOrEmpty(fullBattleDesc))
-                            {
-                                allTexts.Add(fullBattleDesc);
-                            }
-                        }
-
-                        // 7. ЗАМЕТКИ ИЗ CENTRAL OPTIONS (после анализатора)
-                        if (centralOptions != null && centralOptions.TryGetValue(cellPos, out string centralNote))
-                        {
-                            if (!string.IsNullOrEmpty(centralNote) && centralNote != "Случайная встреча")
-                            {
-                                foreach (string line in centralNote.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
-                                {
-                                    string trimmedLine = line.Trim();
-                                    if (!string.IsNullOrEmpty(trimmedLine) && !allTexts.Contains(trimmedLine))
-                                    {
-                                        allTexts.Add(trimmedLine);
-                                        System.Diagnostics.Debug.WriteLine($"  Найдена заметка из centralOptions: {trimmedLine}");
-                                    }
-                                }
-                            }
-                        }
-
-                        // 8. ЗАМЕТКИ ИЗ existingNotes (notesPerCell)
-                        if (existingNotes != null && existingNotes.TryGetValue(cellPos, out string notesNote))
-                        {
-                            if (!string.IsNullOrEmpty(notesNote))
-                            {
-                                foreach (string line in notesNote.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
-                                {
-                                    string trimmedLine = line.Trim();
-                                    if (!string.IsNullOrEmpty(trimmedLine) && !allTexts.Contains(trimmedLine))
-                                    {
-                                        allTexts.Add(trimmedLine);
-                                        System.Diagnostics.Debug.WriteLine($"  Найдена заметка из notesPerCell: {trimmedLine}");
-                                    }
-                                }
-                            }
-                        }
-
-                        // Формируем итоговый текст
-                        string actualText = allTexts.Count > 0
-                            ? string.Join("\n", allTexts.OrderBy(t => t))
-                            : "";
-
-                        string actualPreview = string.IsNullOrEmpty(actualText)
-                            ? "<пусто>"
-                            : (actualText.Length > 50 ? actualText.Substring(0, 50) + "..." : actualText);
-                        System.Diagnostics.Debug.WriteLine($"  Фактический текст: {actualPreview}");
-
-                        // Проверяем соответствие ожиданию
-                        bool passed = expectation.Matches(actualText);
-                        System.Diagnostics.Debug.WriteLine($"  Результат: {(passed ? "СОВПАДАЕТ" : "НЕ СОВПАДАЕТ")}");
-
-                        // Сохраняем результат для клетки
-                        var cellResult = new CellCheckResult
-                        {
-                            Cell = cellPos,
-                            Expected = expectation.GetDescription(),
-                            Actual = actualText,
-                            Passed = passed,
-                            AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y)
-                        };
-
-                        result.CellResults.Add(cellResult);
                     }
 
-                    // Тест пройден, если ВСЕ проверки успешны
                     result.Passed = result.CellResults.All(r => r.Passed);
-                    System.Diagnostics.Debug.WriteLine($"\nИТОГ: пройдено {result.PassedChecks}/{result.TotalChecks}");
+
+                    System.Diagnostics.Debug.WriteLine(
+                        $"\n=== ТЕСТ ЗАВЕРШЁН: {(result.Passed ? "ПРОЙДЕН" : "ПРОВАЛЕН")} ===");
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Проверок: {result.TotalChecks}, пройдено: {result.PassedChecks}, провалено: {result.FailedChecks}");
+                    System.Diagnostics.Debug.WriteLine(
+                        $"Время выполнения: {logger.ExecutionTimeMs} мс");
                 }
             }
             catch (Exception ex)
             {
                 result.Passed = false;
-                result.ErrorMessage = ex.ToString();
-                System.Diagnostics.Debug.WriteLine($"ИСКЛЮЧЕНИЕ: {ex.Message}");
+                result.ErrorMessage = ex.Message;
+                System.Diagnostics.Debug.WriteLine($"ОШИБКА ПРИ ВЫПОЛНЕНИИ ТЕСТА: {ex.Message}");
                 System.Diagnostics.Debug.WriteLine($"Stack trace: {ex.StackTrace}");
             }
 
