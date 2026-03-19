@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+using System;
 using System.Collections.Generic;
 
 namespace MMMapEditor
@@ -26,6 +27,8 @@ namespace MMMapEditor
         private Dictionary<string, string> registerSources = new Dictionary<string, string>();
         private Dictionary<string, (ushort addr, bool fromTable, ushort originalBx, string sourceTable)> registerSources2 =
             new Dictionary<string, (ushort, bool, ushort, string)>();
+        private HashSet<string> externallyDerivedRegisters = new HashSet<string>();
+        private HashSet<string> pendingExternalCallRegisters = new HashSet<string>();
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -34,9 +37,38 @@ namespace MMMapEditor
         public bool OverflowFlag { get; set; }
         public bool FlagsKnown { get; set; }
 
+        public enum FlagsOriginKind
+        {
+            Unknown,
+            CompareImmediate,
+            CompareMemory,
+            Arithmetic,
+            Test
+        }
+
+        public string LastFlagsRegister { get; set; }
+        public FlagsOriginKind LastFlagsOrigin { get; set; }
+        public uint? LastFlagsInstructionAddress { get; set; }
+
+        public void SetFlagsMetadata(string register, FlagsOriginKind origin, uint? instructionAddress = null)
+        {
+            LastFlagsRegister = register?.ToUpperInvariant();
+            LastFlagsOrigin = origin;
+            LastFlagsInstructionAddress = instructionAddress;
+        }
+
+        public void ClearFlagsMetadata()
+        {
+            LastFlagsRegister = null;
+            LastFlagsOrigin = FlagsOriginKind.Unknown;
+            LastFlagsInstructionAddress = null;
+        }
+
         public void SetRegisterValue(string reg, ushort value, uint address, string instruction)
         {
             string regUpper = reg.ToUpper();
+            ClearExternalDerivation(regUpper);
+            ClearPendingExternalCallResult(regUpper);
             registers[regUpper] = value;
             registerSources[regUpper] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
 
@@ -226,6 +258,239 @@ namespace MMMapEditor
             return null;
         }
 
+        public void MarkRegisterAsPendingExternalCallResult(string reg)
+        {
+            string regUpper = reg.ToUpper();
+            pendingExternalCallRegisters.Add(regUpper);
+
+            if (regUpper == "AX")
+            {
+                pendingExternalCallRegisters.Add("AL");
+                pendingExternalCallRegisters.Add("AH");
+            }
+            else if (regUpper == "BX")
+            {
+                pendingExternalCallRegisters.Add("BL");
+                pendingExternalCallRegisters.Add("BH");
+            }
+            else if (regUpper == "CX")
+            {
+                pendingExternalCallRegisters.Add("CL");
+                pendingExternalCallRegisters.Add("CH");
+            }
+            else if (regUpper == "DX")
+            {
+                pendingExternalCallRegisters.Add("DL");
+                pendingExternalCallRegisters.Add("DH");
+            }
+            else if (regUpper == "AL" || regUpper == "AH")
+            {
+                pendingExternalCallRegisters.Add("AX");
+            }
+            else if (regUpper == "BL" || regUpper == "BH")
+            {
+                pendingExternalCallRegisters.Add("BX");
+            }
+            else if (regUpper == "CL" || regUpper == "CH")
+            {
+                pendingExternalCallRegisters.Add("CX");
+            }
+            else if (regUpper == "DL" || regUpper == "DH")
+            {
+                pendingExternalCallRegisters.Add("DX");
+            }
+        }
+
+        public bool HasPendingExternalCallResult(string reg)
+        {
+            string regUpper = reg.ToUpper();
+            if (pendingExternalCallRegisters.Contains(regUpper))
+                return true;
+
+            if (regUpper == "AL" || regUpper == "AH")
+                return pendingExternalCallRegisters.Contains("AX");
+            if (regUpper == "BL" || regUpper == "BH")
+                return pendingExternalCallRegisters.Contains("BX");
+            if (regUpper == "CL" || regUpper == "CH")
+                return pendingExternalCallRegisters.Contains("CX");
+            if (regUpper == "DL" || regUpper == "DH")
+                return pendingExternalCallRegisters.Contains("DX");
+
+            return false;
+        }
+
+        public void MaterializePendingExternalCallResult(string reg)
+        {
+            if (HasPendingExternalCallResult(reg))
+            {
+                ClearPendingExternalCallResult(reg);
+                MarkRegisterAsExternallyDerived(reg);
+            }
+        }
+
+        public void ClearPendingExternalCallResult(string reg)
+        {
+            string regUpper = reg.ToUpper();
+            pendingExternalCallRegisters.Remove(regUpper);
+
+            if (regUpper == "AX")
+            {
+                pendingExternalCallRegisters.Remove("AL");
+                pendingExternalCallRegisters.Remove("AH");
+            }
+            else if (regUpper == "BX")
+            {
+                pendingExternalCallRegisters.Remove("BL");
+                pendingExternalCallRegisters.Remove("BH");
+            }
+            else if (regUpper == "CX")
+            {
+                pendingExternalCallRegisters.Remove("CL");
+                pendingExternalCallRegisters.Remove("CH");
+            }
+            else if (regUpper == "DX")
+            {
+                pendingExternalCallRegisters.Remove("DL");
+                pendingExternalCallRegisters.Remove("DH");
+            }
+            else if (regUpper == "AL" || regUpper == "AH")
+            {
+                pendingExternalCallRegisters.Remove("AL");
+                pendingExternalCallRegisters.Remove("AH");
+                pendingExternalCallRegisters.Remove("AX");
+            }
+            else if (regUpper == "BL" || regUpper == "BH")
+            {
+                pendingExternalCallRegisters.Remove("BL");
+                pendingExternalCallRegisters.Remove("BH");
+                pendingExternalCallRegisters.Remove("BX");
+            }
+            else if (regUpper == "CL" || regUpper == "CH")
+            {
+                pendingExternalCallRegisters.Remove("CL");
+                pendingExternalCallRegisters.Remove("CH");
+                pendingExternalCallRegisters.Remove("CX");
+            }
+            else if (regUpper == "DL" || regUpper == "DH")
+            {
+                pendingExternalCallRegisters.Remove("DL");
+                pendingExternalCallRegisters.Remove("DH");
+                pendingExternalCallRegisters.Remove("DX");
+            }
+        }
+
+        public void MarkRegisterAsExternallyDerived(string reg)
+        {
+            string regUpper = reg.ToUpper();
+            externallyDerivedRegisters.Add(regUpper);
+
+            if (regUpper == "AX")
+            {
+                externallyDerivedRegisters.Add("AL");
+                externallyDerivedRegisters.Add("AH");
+            }
+            else if (regUpper == "BX")
+            {
+                externallyDerivedRegisters.Add("BL");
+                externallyDerivedRegisters.Add("BH");
+            }
+            else if (regUpper == "CX")
+            {
+                externallyDerivedRegisters.Add("CL");
+                externallyDerivedRegisters.Add("CH");
+            }
+            else if (regUpper == "DX")
+            {
+                externallyDerivedRegisters.Add("DL");
+                externallyDerivedRegisters.Add("DH");
+            }
+            else if (regUpper == "AL" || regUpper == "AH")
+            {
+                externallyDerivedRegisters.Add("AX");
+            }
+            else if (regUpper == "BL" || regUpper == "BH")
+            {
+                externallyDerivedRegisters.Add("BX");
+            }
+            else if (regUpper == "CL" || regUpper == "CH")
+            {
+                externallyDerivedRegisters.Add("CX");
+            }
+            else if (regUpper == "DL" || regUpper == "DH")
+            {
+                externallyDerivedRegisters.Add("DX");
+            }
+        }
+
+        public bool IsRegisterExternallyDerived(string reg)
+        {
+            string regUpper = reg.ToUpper();
+            if (externallyDerivedRegisters.Contains(regUpper))
+                return true;
+
+            if (regUpper == "AL" || regUpper == "AH")
+                return externallyDerivedRegisters.Contains("AX");
+            if (regUpper == "BL" || regUpper == "BH")
+                return externallyDerivedRegisters.Contains("BX");
+            if (regUpper == "CL" || regUpper == "CH")
+                return externallyDerivedRegisters.Contains("CX");
+            if (regUpper == "DL" || regUpper == "DH")
+                return externallyDerivedRegisters.Contains("DX");
+
+            return false;
+        }
+
+        public void ClearExternalDerivation(string reg)
+        {
+            string regUpper = reg.ToUpper();
+            externallyDerivedRegisters.Remove(regUpper);
+
+            if (regUpper == "AX")
+            {
+                externallyDerivedRegisters.Remove("AL");
+                externallyDerivedRegisters.Remove("AH");
+            }
+            else if (regUpper == "BX")
+            {
+                externallyDerivedRegisters.Remove("BL");
+                externallyDerivedRegisters.Remove("BH");
+            }
+            else if (regUpper == "CX")
+            {
+                externallyDerivedRegisters.Remove("CL");
+                externallyDerivedRegisters.Remove("CH");
+            }
+            else if (regUpper == "DX")
+            {
+                externallyDerivedRegisters.Remove("DL");
+                externallyDerivedRegisters.Remove("DH");
+            }
+            else if (regUpper == "AL" || regUpper == "AH")
+            {
+                externallyDerivedRegisters.Remove("AL");
+                externallyDerivedRegisters.Remove("AH");
+                externallyDerivedRegisters.Remove("AX");
+            }
+            else if (regUpper == "BL" || regUpper == "BH")
+            {
+                externallyDerivedRegisters.Remove("BL");
+                externallyDerivedRegisters.Remove("BH");
+                externallyDerivedRegisters.Remove("BX");
+            }
+            else if (regUpper == "CL" || regUpper == "CH")
+            {
+                externallyDerivedRegisters.Remove("CL");
+                externallyDerivedRegisters.Remove("CH");
+                externallyDerivedRegisters.Remove("CX");
+            }
+            else if (regUpper == "DL" || regUpper == "DH")
+            {
+                externallyDerivedRegisters.Remove("DL");
+                externallyDerivedRegisters.Remove("DH");
+                externallyDerivedRegisters.Remove("DX");
+            }
+        }
+
         public bool TryGetRegisterValue(string reg, out ushort value)
         {
             return registers.TryGetValue(reg.ToUpper(), out value);
@@ -246,6 +511,8 @@ namespace MMMapEditor
         {
             string regUpper = reg.ToUpper();
 
+            ClearExternalDerivation(regUpper);
+            ClearPendingExternalCallResult(regUpper);
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
@@ -293,6 +560,8 @@ namespace MMMapEditor
             registers.Clear();
             registerSources.Clear();
             registerSources2.Clear();
+            externallyDerivedRegisters.Clear();
+            pendingExternalCallRegisters.Clear();
             ZeroFlag = false;
             CarryFlag = false;
             SignFlag = false;
@@ -305,6 +574,18 @@ namespace MMMapEditor
         {
             string fullRegUpper = fullReg.ToUpper();
             string partialRegUpper = partialReg.ToUpper();
+
+            string mnemonicUpper = string.Empty;
+            if (!string.IsNullOrWhiteSpace(instruction))
+            {
+                int spaceIndex = instruction.IndexOf(' ');
+                mnemonicUpper = (spaceIndex >= 0 ? instruction.Substring(0, spaceIndex) : instruction)
+                    .Trim()
+                    .ToUpperInvariant();
+            }
+
+            bool preserveExternalDerivation = IsRegisterExternallyDerived(fullRegUpper) &&
+                mnemonicUpper != "MOV";
 
             ushort currentValue = 0;
             if (registers.TryGetValue(fullRegUpper, out ushort existingValue))
@@ -334,6 +615,11 @@ namespace MMMapEditor
                     {
                         currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
                     }
+                    if (!preserveExternalDerivation)
+                    {
+                        ClearExternalDerivation(fullRegUpper);
+                        ClearPendingExternalCallResult(fullRegUpper);
+                    }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
                 }
@@ -349,6 +635,11 @@ namespace MMMapEditor
                     else if (partialRegUpper == "CH")
                     {
                         currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
+                    }
+                    if (!preserveExternalDerivation)
+                    {
+                        ClearExternalDerivation(fullRegUpper);
+                        ClearPendingExternalCallResult(fullRegUpper);
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
@@ -366,6 +657,11 @@ namespace MMMapEditor
                     {
                         currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
                     }
+                    if (!preserveExternalDerivation)
+                    {
+                        ClearExternalDerivation(fullRegUpper);
+                        ClearPendingExternalCallResult(fullRegUpper);
+                    }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
                 }
@@ -381,6 +677,11 @@ namespace MMMapEditor
                     else if (partialRegUpper == "BH")
                     {
                         currentValue = (ushort)((currentValue & 0x00FF) | (value << 8));
+                    }
+                    if (!preserveExternalDerivation)
+                    {
+                        ClearExternalDerivation(fullRegUpper);
+                        ClearPendingExternalCallResult(fullRegUpper);
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
@@ -403,11 +704,22 @@ namespace MMMapEditor
             {
                 clone.registerSources2[kvp.Key] = kvp.Value;
             }
+            foreach (var reg in externallyDerivedRegisters)
+            {
+                clone.externallyDerivedRegisters.Add(reg);
+            }
+            foreach (var reg in pendingExternalCallRegisters)
+            {
+                clone.pendingExternalCallRegisters.Add(reg);
+            }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;
             clone.SignFlag = this.SignFlag;
             clone.OverflowFlag = this.OverflowFlag;
             clone.FlagsKnown = this.FlagsKnown;
+            clone.LastFlagsRegister = this.LastFlagsRegister;
+            clone.LastFlagsOrigin = this.LastFlagsOrigin;
+            clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             return clone;
         }
     }

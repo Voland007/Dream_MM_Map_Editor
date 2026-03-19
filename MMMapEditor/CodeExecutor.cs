@@ -45,7 +45,8 @@ namespace MMMapEditor
         public PathAnalysisResult ExecuteCodeAtAddress(BinaryReader br, uint startAddress,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
             int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
-            HashSet<(uint From, uint To)> processedBackEdges = null)
+            HashSet<(uint From, uint To)> processedBackEdges = null,
+            bool invalidateReturnRegistersAfterExternalCall = false)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = debugObject != null || (pathId > 0 && debugObject?.X == 8 && debugObject?.Y == 0);
@@ -150,7 +151,8 @@ namespace MMMapEditor
                     // Обработка инструкций перехода и возврата
                     var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
                         globallyAnalyzedAddresses, depth, callDepth, debugObject, pathId, targetX, targetY,
-                        processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode);
+                        processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode,
+                        invalidateReturnRegistersAfterExternalCall);
 
                     if (handlingResult.ShouldReturn)
                         return handlingResult.Result;
@@ -249,7 +251,8 @@ namespace MMMapEditor
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
             int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
-            PathAnalysisResult result, uint currentAddress, uint nextAddress, long fileLength, bool debugMode)
+            PathAnalysisResult result, uint currentAddress, uint nextAddress, long fileLength, bool debugMode,
+            bool invalidateReturnRegistersAfterExternalCall)
         {
             string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
 
@@ -286,7 +289,8 @@ namespace MMMapEditor
             if (mnemonicUpper.StartsWith("CALL"))
             {
                 return HandleCall(insn, br, registerTracker, globallyAnalyzedAddresses, depth, callDepth,
-                    debugObject, pathId, targetX, targetY, processedBackEdges, result, nextAddress, debugMode);
+                    debugObject, pathId, targetX, targetY, processedBackEdges, result, nextAddress, debugMode,
+                    invalidateReturnRegistersAfterExternalCall);
             }
 
             // УСЛОВНЫЕ ПЕРЕХОДЫ
@@ -396,11 +400,13 @@ namespace MMMapEditor
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
             int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
-            PathAnalysisResult result, uint nextAddress, bool debugMode)
+            PathAnalysisResult result, uint nextAddress, bool debugMode,
+            bool invalidateReturnRegistersAfterExternalCall)
         {
             uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
+            bool isInternalCall = callTarget < br.BaseStream.Length && callTarget != 0;
 
-            if (callTarget < br.BaseStream.Length && callTarget != 0)
+            if (isInternalCall)
             {
                 if (debugMode)
                     Debug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
@@ -408,7 +414,7 @@ namespace MMMapEditor
                 var subroutineTracker = registerTracker.Clone();
                 var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
                     globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId, targetX, targetY,
-                    processedBackEdges);
+                    processedBackEdges, invalidateReturnRegistersAfterExternalCall);
 
                 // Добавляем результаты из подпрограммы
                 var foundTextsInThisPath = new HashSet<string>();
@@ -451,11 +457,16 @@ namespace MMMapEditor
 
                 result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
             }
+            else if (invalidateReturnRegistersAfterExternalCall)
+            {
+                // Не инвалидируем AX/AL глобально. Только помечаем, что значение AX/AL
+                // потенциально зависит от результата внешней функции. Эта пометка будет
+                // учтена позже только при вычислении количества монстров в полной битве.
+                registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
 
-            // После любого CALL не сохраняем в вызывающем трекере устаревшее значение возвратных регистров.
-            // Это критично и для внешних вызовов за пределы оверлея (например CALL 0x509A), которые мы не можем
-            // прозрачно проанализировать: последующий ADD AL, imm не должен использовать старое значение AL.
-           // registerTracker.InvalidateRegister("AX");
+                if (debugMode)
+                    Debug.WriteLine("        Помечаем AX/AL как кандидата на зависимость от внешнего CALL для табличного объекта");
+            }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
         }
@@ -470,6 +481,35 @@ namespace MMMapEditor
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
+                bool? branchTaken = EvaluateConditionalJump(insn.Mnemonic, registerTracker);
+                if (branchTaken.HasValue)
+                {
+                    uint resolvedTarget = branchTaken.Value ? condJumpTarget : nextAddress;
+
+                    if (condJumpTarget < currentAddress && branchTaken.Value)
+                    {
+                        var backEdge = (From: currentAddress, To: condJumpTarget);
+
+                        if (!processedBackEdges.Add(backEdge))
+                        {
+                            if (debugMode)
+                                Debug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
+                            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                        }
+
+                        if (debugMode)
+                            Debug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, переход определён по флагам");
+                    }
+
+                    if (debugMode)
+                    {
+                        string branchText = branchTaken.Value ? $"0x{condJumpTarget:X4}" : $"0x{nextAddress:X4}";
+                        Debug.WriteLine($"      Условный переход {insn.Mnemonic} разрешён по известным флагам -> {branchText}");
+                    }
+
+                    return new ControlFlowResult { ShouldReturn = false, NextAddress = resolvedTarget };
+                }
+
                 if (condJumpTarget < currentAddress)
                 {
                     var backEdge = (From: currentAddress, To: condJumpTarget);
@@ -541,6 +581,33 @@ namespace MMMapEditor
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
         }
 
+        private bool? EvaluateConditionalJump(string mnemonic, RegisterTracker registerTracker)
+        {
+            if (registerTracker == null || !registerTracker.FlagsKnown)
+                return null;
+
+            // Разрешаем схлопывание условного перехода только для координатных сравнений.
+            // Это сохраняет фикс для веток по X/Y и не ломает внутренние циклы объектов.
+            string flagsReg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
+                (flagsReg != "BL" && flagsReg != "BH"))
+            {
+                return null;
+            }
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            return jump switch
+            {
+                "JE" or "JZ" => registerTracker.ZeroFlag,
+                "JNE" or "JNZ" => !registerTracker.ZeroFlag,
+                "JB" or "JC" or "JNAE" => registerTracker.CarryFlag,
+                "JAE" or "JNB" or "JNC" => !registerTracker.CarryFlag,
+                "JBE" or "JNA" => registerTracker.CarryFlag || registerTracker.ZeroFlag,
+                "JA" or "JNBE" => !registerTracker.CarryFlag && !registerTracker.ZeroFlag,
+                _ => (bool?)null
+            };
+        }
+
         private static void SetArithmeticFlagsForAdd8(RegisterTracker registerTracker, byte left, byte right, byte result)
         {
             int wideResult = left + right;
@@ -549,20 +616,23 @@ namespace MMMapEditor
             registerTracker.SignFlag = (result & 0x80) != 0;
             registerTracker.OverflowFlag = (((left ^ result) & (right ^ result) & 0x80) != 0);
             registerTracker.FlagsKnown = true;
+            registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Arithmetic);
         }
 
-        private static void SetArithmeticFlagsForSub8(RegisterTracker registerTracker, byte left, byte right, byte result)
+        private static void SetArithmeticFlagsForSub8(RegisterTracker registerTracker, byte left, byte right, byte result, string comparedRegister = null, RegisterTracker.FlagsOriginKind origin = RegisterTracker.FlagsOriginKind.Arithmetic, uint? instructionAddress = null)
         {
             registerTracker.CarryFlag = left < right;
             registerTracker.ZeroFlag = result == 0;
             registerTracker.SignFlag = (result & 0x80) != 0;
             registerTracker.OverflowFlag = (((left ^ right) & (left ^ result) & 0x80) != 0);
             registerTracker.FlagsKnown = true;
+            registerTracker.SetFlagsMetadata(comparedRegister, origin, instructionAddress);
         }
 
         private static void InvalidateFlags(RegisterTracker registerTracker)
         {
             registerTracker.FlagsKnown = false;
+            registerTracker.ClearFlagsMetadata();
         }
 
 
@@ -777,6 +847,19 @@ namespace MMMapEditor
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
+            string mnemonicUpper = insn.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            string operandUpper = insn.Operand?.ToUpperInvariant() ?? string.Empty;
+
+            if ((mnemonicUpper == "ADD" || mnemonicUpper == "ADC") &&
+                (operandUpper.StartsWith("AL,") || operandUpper.StartsWith("AX,")) &&
+                (registerTracker.HasPendingExternalCallResult("AX") || registerTracker.IsRegisterExternallyDerived("AX")))
+            {
+                registerTracker.MaterializePendingExternalCallResult("AX");
+                registerTracker.MarkRegisterAsExternallyDerived("AX");
+
+                if (debugMode)
+                    Debug.WriteLine("        Материализуем зависимость AX/AL от внешнего CALL из-за арифметики ADD/ADC");
+            }
 
             // Инструкции, меняющие флаги, но не моделируемые точно, делают состояние флагов недостоверным
             if (instructionBytes.Length >= 1)
@@ -936,7 +1019,7 @@ namespace MMMapEditor
                     if (regIndex < regNames8.Length && registerTracker.TryGetByteRegisterValue(regNames8[regIndex], out byte regValue))
                     {
                         byte cmpResult = (byte)(regValue - immediateValue);
-                        SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult);
+                        SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult, regNames8[regIndex], RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                     }
                 }
             }

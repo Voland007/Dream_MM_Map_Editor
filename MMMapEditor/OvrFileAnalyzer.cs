@@ -143,7 +143,7 @@ namespace MMMapEditor
 
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
                 new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0, ovrObject.X, ovrObject.Y,
-                processedBackEdges);
+                processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
 
             // Сбор результатов основного пути
             var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
@@ -167,7 +167,8 @@ namespace MMMapEditor
                 _pathAnalyzer.ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
                     mainContextTexts, mainLocalTexts,
                     mainPathResult.FirstLocalTextAddress, br, debugMode ? ovrObject : null,
-                    ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges);
+                    ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges,
+                    invalidateReturnRegistersAfterExternalCall: true);
             }
 
             // Формирование финальных путей
@@ -569,13 +570,31 @@ namespace MMMapEditor
                 target.MonsterPower = source.MonsterPower.Value;
             if (source.MonsterLevel.HasValue)
                 target.MonsterLevel = source.MonsterLevel.Value;
+
             if (source.IsBattleMonsterCountIndeterminate)
             {
-                target.IsBattleMonsterCountIndeterminate = true;
                 target.BattleMonsterCount = null;
+                target.IsBattleMonsterCountIndeterminate = true;
             }
             else if (source.BattleMonsterCount.HasValue)
-                target.BattleMonsterCount = source.BattleMonsterCount.Value;
+            {
+                if (target.IsBattleMonsterCountIndeterminate)
+                {
+                    // Уже обнаружен хотя бы один неопределённый путь для табличного объекта.
+                    // Конкретное значение из другой ветки не должно перетирать x?.
+                }
+                else if (target.BattleMonsterCount.HasValue && target.BattleMonsterCount.Value != source.BattleMonsterCount.Value)
+                {
+                    // Разные конкретные значения в разных ветках для табличного объекта считаем неопределёнными.
+                    target.BattleMonsterCount = null;
+                    target.IsBattleMonsterCountIndeterminate = true;
+                }
+                else
+                {
+                    target.BattleMonsterCount = source.BattleMonsterCount.Value;
+                    target.IsBattleMonsterCountIndeterminate = false;
+                }
+            }
 
             foreach (var entry in source.BattleMonsterEntries)
             {
@@ -639,13 +658,15 @@ namespace MMMapEditor
             if (source.MonsterLevel.HasValue)
                 monsterLevel = source.MonsterLevel;
 
-            if (source.IsBattleMonsterCountIndeterminate)
+            if (source.BattleMonsterCount.HasValue)
             {
-                battleMonsterCount = null;
+                battleMonsterCount = source.BattleMonsterCount;
+                isBattleMonsterCountIndeterminate = false;
+            }
+            else if (source.IsBattleMonsterCountIndeterminate && !battleMonsterCount.HasValue)
+            {
                 isBattleMonsterCountIndeterminate = true;
             }
-            else if (source.BattleMonsterCount.HasValue)
-                battleMonsterCount = source.BattleMonsterCount;
 
             foreach (var entry in source.BattleMonsterEntries)
                 battleMonsters[entry.Key] = entry.Value;
@@ -672,12 +693,40 @@ namespace MMMapEditor
 
             if (comparison.IsLinear)
             {
-                Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}]");
-                for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
+                Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}] [{comparison.CoordType}]");
+
+                if (isX)
                 {
-                    for (byte x = 0; x < 16; x++)
+                    for (byte x = comparison.LinearStart; x <= comparison.LinearEnd && x < 16; x++)
                     {
-                        targetCells.Add(new Point(x, y));
+                        for (byte y = 0; y < 16; y++)
+                        {
+                            targetCells.Add(new Point(x, y));
+                        }
+                    }
+                }
+                else if (isY)
+                {
+                    for (byte y = comparison.LinearStart; y <= comparison.LinearEnd && y < 16; y++)
+                    {
+                        for (byte x = 0; x < 16; x++)
+                        {
+                            targetCells.Add(new Point(x, y));
+                        }
+                    }
+                }
+                else if (isFull)
+                {
+                    // Для полной координаты линейный диапазон обычно не ожидается,
+                    // но на всякий случай интерпретируем значение как диапазон packed-координат.
+                    for (int value = comparison.LinearStart; value <= comparison.LinearEnd && value <= 0xFF; value++)
+                    {
+                        byte x = (byte)(value & 0x0F);
+                        byte y = (byte)(value >> 4);
+                        if (x < 16 && y < 16)
+                        {
+                            targetCells.Add(new Point(x, y));
+                        }
                     }
                 }
             }

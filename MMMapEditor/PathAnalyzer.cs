@@ -40,7 +40,8 @@ namespace MMMapEditor
             List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
             uint firstLocalTextAddress, BinaryReader br, OvrObject debugObject,
             byte targetX, byte targetY, List<PathResult> allResults, OvrObject ovrObject,
-            HashSet<(uint From, uint To)> processedBackEdges = null)
+            HashSet<(uint From, uint To)> processedBackEdges = null,
+            bool invalidateReturnRegistersAfterExternalCall = false)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -69,7 +70,7 @@ namespace MMMapEditor
                 var pathRegisterTracker = path.RegisterState?.Clone() ?? new RegisterTracker();
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), depth + 1, 0, debugObject, currentPathId, targetX, targetY,
-                    processedBackEdges);
+                    processedBackEdges, invalidateReturnRegistersAfterExternalCall);
 
                 // Формируем тексты для этого пути с сохранением порядка
                 var pathTexts = BuildPathTexts(path, pathResult, inheritedContextTexts,
@@ -112,7 +113,8 @@ namespace MMMapEditor
                     ProcessPaths(pathResult.AlternativePaths, currentPathId, depth + 1,
                         newInheritedContextTexts, newInheritedLocalTexts,
                         firstLocalTextAddress, br, debugObject, targetX, targetY,
-                        allResults, ovrObject, processedBackEdges);
+                        allResults, ovrObject, processedBackEdges,
+                        invalidateReturnRegistersAfterExternalCall);
                 }
             }
         }
@@ -238,11 +240,28 @@ namespace MMMapEditor
 
             if (source.IsBattleMonsterCountIndeterminate)
             {
-                target.IsBattleMonsterCountIndeterminate = true;
                 target.BattleMonsterCount = null;
+                target.IsBattleMonsterCountIndeterminate = true;
             }
-            else if (source.BattleMonsterCount.HasValue && !target.BattleMonsterCount.HasValue)
-                target.BattleMonsterCount = source.BattleMonsterCount.Value;
+            else if (source.BattleMonsterCount.HasValue)
+            {
+                if (target.IsBattleMonsterCountIndeterminate)
+                {
+                    // Уже обнаружен хотя бы один неопределённый путь для табличного объекта.
+                    // Конкретное значение из другой ветки не должно перетирать x?.
+                }
+                else if (target.BattleMonsterCount.HasValue && target.BattleMonsterCount.Value != source.BattleMonsterCount.Value)
+                {
+                    // Разные конкретные значения в разных ветках для табличного объекта считаем неопределёнными.
+                    target.BattleMonsterCount = null;
+                    target.IsBattleMonsterCountIndeterminate = true;
+                }
+                else
+                {
+                    target.BattleMonsterCount = source.BattleMonsterCount.Value;
+                    target.IsBattleMonsterCountIndeterminate = false;
+                }
+            }
 
             foreach (var entry in source.BattleMonsterEntries)
             {

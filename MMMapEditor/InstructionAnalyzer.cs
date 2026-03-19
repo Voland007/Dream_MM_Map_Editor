@@ -216,7 +216,13 @@ namespace MMMapEditor
                 instructionBytes[0] == 0xA2 &&
                 instructionBytes[1] == 0x1D && instructionBytes[2] == 0x3C)
             {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                if (registerTracker.IsRegisterExternallyDerived("AX"))
+                {
+                    result.BattleMonsterCount = null;
+                    result.IsBattleMonsterCountIndeterminate = true;
+                    Debug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL зависит от арифметики с результатом внешнего CALL)");
+                }
+                else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.BattleMonsterCount = alValue;
                     result.IsBattleMonsterCountIndeterminate = false;
