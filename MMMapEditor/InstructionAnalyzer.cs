@@ -196,19 +196,38 @@ namespace MMMapEditor
                 result.IsInLoop = true;
                 result.LoopStartAddress = address;
 
-                bool hasBxGreaterThanZero = result.BattleMonsterEntries.Any(kvp => kvp.Key > 0);
                 int markedCount = 0;
                 foreach (var key in result.BattleMonsterEntries.Keys.ToList())
                 {
-                    bool shouldMark = hasBxGreaterThanZero ? key > 0 : true;
-                    if (shouldMark)
+                    var entry = result.BattleMonsterEntries[key];
+                    bool isFullyDefined = entry.val1 != 0 && entry.val2 != 0;
+                    if (!isFullyDefined)
                     {
-                        var entry = result.BattleMonsterEntries[key];
                         result.BattleMonsterEntries[key] = (entry.val1, entry.val2, true);
                         markedCount++;
                     }
                 }
                 Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, помечено {markedCount} записей как неопределенные");
+                return;
+            }
+
+            // MOV [3C1D], AL - количество монстров в полной битве
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0xA2 &&
+                instructionBytes[1] == 0x1D && instructionBytes[2] == 0x3C)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    result.BattleMonsterCount = alValue;
+                    result.IsBattleMonsterCountIndeterminate = false;
+                    Debug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ: {alValue}");
+                }
+                else
+                {
+                    result.BattleMonsterCount = null;
+                    result.IsBattleMonsterCountIndeterminate = true;
+                    Debug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL неизвестен)");
+                }
                 return;
             }
 

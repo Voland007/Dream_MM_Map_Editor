@@ -293,7 +293,7 @@ namespace MMMapEditor
             if (IsConditionalJump(insn, out uint condJumpTarget))
             {
                 return HandleConditionalJump(insn, condJumpTarget, nextAddress, fileLength,
-                    debugMode, processedBackEdges, result, currentAddress);
+                    debugMode, processedBackEdges, result, currentAddress, registerTracker);
             }
 
             // Обычная инструкция - продолжаем линейно
@@ -431,6 +431,12 @@ namespace MMMapEditor
                 if (subroutineResult.MonsterLevel.HasValue && !result.MonsterLevel.HasValue)
                     result.MonsterLevel = subroutineResult.MonsterLevel;
 
+                if (subroutineResult.BattleMonsterCount.HasValue && !result.BattleMonsterCount.HasValue)
+                    result.BattleMonsterCount = subroutineResult.BattleMonsterCount;
+
+                result.IsBattleMonsterCountIndeterminate =
+                    result.IsBattleMonsterCountIndeterminate || subroutineResult.IsBattleMonsterCountIndeterminate;
+
                 foreach (var entry in subroutineResult.BattleMonsterEntries)
                     if (!result.BattleMonsterEntries.ContainsKey(entry.Key))
                         result.BattleMonsterEntries[entry.Key] = entry.Value;
@@ -446,6 +452,11 @@ namespace MMMapEditor
                 result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
             }
 
+            // После любого CALL не сохраняем в вызывающем трекере устаревшее значение возвратных регистров.
+            // Это критично и для внешних вызовов за пределы оверлея (например CALL 0x509A), которые мы не можем
+            // прозрачно проанализировать: последующий ADD AL, imm не должен использовать старое значение AL.
+           // registerTracker.InvalidateRegister("AX");
+
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
         }
 
@@ -453,8 +464,9 @@ namespace MMMapEditor
         /// Обрабатывает условный переход
         /// </summary>
         private ControlFlowResult HandleConditionalJump(X86Instruction insn, uint condJumpTarget,
-            uint nextAddress, long fileLength, bool debugMode,
-            HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress)
+    uint nextAddress, long fileLength, bool debugMode,
+    HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress,
+    RegisterTracker registerTracker)
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
@@ -466,13 +478,13 @@ namespace MMMapEditor
                     {
                         if (debugMode)
                             Debug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
-
                         return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
                     }
 
                     if (debugMode)
                         Debug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, разрешаем одну развилку");
                 }
+
                 // Добавляем целевой адрес перехода как альтернативный путь
                 var altPath = new AlternativePath
                 {
@@ -480,7 +492,8 @@ namespace MMMapEditor
                     TargetAddress = condJumpTarget,
                     Condition = $"{insn.Mnemonic} {insn.Operand}",
                     Analyzed = false,
-                    PathNumber = result.AlternativePaths.Count + 1
+                    PathNumber = result.AlternativePaths.Count + 1,
+                    RegisterState = registerTracker.Clone()
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
@@ -498,7 +511,8 @@ namespace MMMapEditor
                     TargetAddress = nextAddress,
                     Condition = $"LINEAR after {insn.Mnemonic}",
                     Analyzed = false,
-                    PathNumber = result.AlternativePaths.Count + 1
+                    PathNumber = result.AlternativePaths.Count + 1,
+                    RegisterState = registerTracker.Clone()
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
@@ -509,7 +523,7 @@ namespace MMMapEditor
                         Debug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
                 }
 
-                // Завершаем текущий путь - не продолжаем выполнение
+                // Завершаем текущий путь – не продолжаем выполнение
                 if (debugMode)
                     Debug.WriteLine($"      Останавливаем анализ текущего пути после условного перехода");
 
@@ -526,6 +540,31 @@ namespace MMMapEditor
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
         }
+
+        private static void SetArithmeticFlagsForAdd8(RegisterTracker registerTracker, byte left, byte right, byte result)
+        {
+            int wideResult = left + right;
+            registerTracker.CarryFlag = wideResult > 0xFF;
+            registerTracker.ZeroFlag = result == 0;
+            registerTracker.SignFlag = (result & 0x80) != 0;
+            registerTracker.OverflowFlag = (((left ^ result) & (right ^ result) & 0x80) != 0);
+            registerTracker.FlagsKnown = true;
+        }
+
+        private static void SetArithmeticFlagsForSub8(RegisterTracker registerTracker, byte left, byte right, byte result)
+        {
+            registerTracker.CarryFlag = left < right;
+            registerTracker.ZeroFlag = result == 0;
+            registerTracker.SignFlag = (result & 0x80) != 0;
+            registerTracker.OverflowFlag = (((left ^ right) & (left ^ result) & 0x80) != 0);
+            registerTracker.FlagsKnown = true;
+        }
+
+        private static void InvalidateFlags(RegisterTracker registerTracker)
+        {
+            registerTracker.FlagsKnown = false;
+        }
+
 
         /// <summary>
         /// Проверяет, является ли инструкция возвратом
@@ -739,6 +778,45 @@ namespace MMMapEditor
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
 
+            // Инструкции, меняющие флаги, но не моделируемые точно, делают состояние флагов недостоверным
+            if (instructionBytes.Length >= 1)
+            {
+                byte opcode = instructionBytes[0];
+                bool invalidateFlags = false;
+
+                if ((opcode >= 0x20 && opcode <= 0x23) || opcode == 0x24 || opcode == 0x25) // AND
+                    invalidateFlags = true;
+                else if ((opcode >= 0x08 && opcode <= 0x0D)) // OR
+                    invalidateFlags = true;
+                else if ((opcode >= 0x30 && opcode <= 0x35)) // XOR
+                    invalidateFlags = true;
+                else if (opcode == 0x84 || opcode == 0x85 || opcode == 0xA8 || opcode == 0xA9) // TEST
+                    invalidateFlags = true;
+                else if ((opcode >= 0x40 && opcode <= 0x4F)) // INC/DEC reg16
+                    invalidateFlags = true;
+                else if (opcode == 0xD0 || opcode == 0xD1 || opcode == 0xD2 || opcode == 0xD3) // shifts/rotates
+                    invalidateFlags = true;
+                else if (opcode == 0xFE || opcode == 0xFF) // INC/DEC r/m
+                    invalidateFlags = true;
+                else if (opcode == 0x80 || opcode == 0x81 || opcode == 0x83)
+                {
+                    if (instructionBytes.Length >= 2)
+                    {
+                        byte modRm = instructionBytes[1];
+                        byte operation = (byte)((modRm >> 3) & 0x07);
+                        // Невалидируем только для точно поддержанных нами ADD/CMP
+                        if (!(opcode == 0x80 && operation == 0x07 && ((modRm >> 6) & 0x03) == 0x03) &&
+                            !(opcode == 0x04))
+                        {
+                            invalidateFlags = true;
+                        }
+                    }
+                }
+
+                if (invalidateFlags)
+                    InvalidateFlags(registerTracker);
+            }
+
             // Загрузка непосредственных значений в регистры
             if (instructionBytes.Length >= 3 && (instructionBytes[0] & 0xF8) == 0xB8)
             {
@@ -832,6 +910,37 @@ namespace MMMapEditor
             }
 
             // Арифметические операции
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x04)
+            {
+                byte immediateValue = instructionBytes[1];
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    byte newValue = (byte)(alValue + immediateValue);
+                    registerTracker.TrackPartialRegisterOperation("AX", "AL", newValue,
+                        address, $"ADD AL, 0x{immediateValue:X2}");
+                    SetArithmeticFlagsForAdd8(registerTracker, alValue, immediateValue, newValue);
+                }
+            }
+
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0x80)
+            {
+                byte modRm = instructionBytes[1];
+                byte operation = (byte)((modRm >> 3) & 0x07);
+                byte mode = (byte)((modRm >> 6) & 0x03);
+                byte regIndex = (byte)(modRm & 0x07);
+                byte immediateValue = instructionBytes[2];
+
+                if (mode == 0x03 && operation == 0x07)
+                {
+                    string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                    if (regIndex < regNames8.Length && registerTracker.TryGetByteRegisterValue(regNames8[regIndex], out byte regValue))
+                    {
+                        byte cmpResult = (byte)(regValue - immediateValue);
+                        SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult);
+                    }
+                }
+            }
+
             if (instructionBytes.Length >= 2 &&
                 instructionBytes[0] == 0xFE &&
                 instructionBytes[1] == 0xC3)

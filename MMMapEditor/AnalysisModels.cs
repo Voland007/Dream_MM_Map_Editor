@@ -54,6 +54,7 @@ namespace MMMapEditor
         public int PathNumber { get; set; }
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
+        public RegisterTracker RegisterState { get; set; }
     }
 
     public class MemoryAccess
@@ -167,6 +168,8 @@ namespace MMMapEditor
         public byte? MonsterLevel { get; set; }
         public byte? MonsterIndex1 { get; set; }
         public byte? MonsterIndex2 { get; set; }
+        public byte? BattleMonsterCount { get; set; }
+        public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> BattleMonsterEntries { get; set; }
             = new Dictionary<int, (byte, byte, bool)>();
         public bool HasPartialBattlePattern { get; set; } = false;

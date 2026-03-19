@@ -48,6 +48,8 @@ namespace MMMapEditor
         #region Информация о битве (полностью определённые)
 
         public List<BattleMonster> BattleMonsters { get; set; } = new List<BattleMonster>();
+        public byte? BattleMonsterCount { get; set; }
+        public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
         public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue;
 
@@ -311,7 +313,11 @@ namespace MMMapEditor
                 foreach (var g in grouped)
                 {
                     string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
-                    string countDisplay = g.IsIndeterminate ? "? (Random count)" : g.Count.ToString();
+                    bool unknownCount = IsBattleMonsterCountIndeterminate;
+                    int displayCount = (grouped.Count == 1 && BattleMonsterCount.HasValue && !unknownCount)
+                        ? BattleMonsterCount.Value
+                        : g.Count;
+                    string countDisplay = (g.IsIndeterminate || unknownCount) ? "? (Random count)" : displayCount.ToString();
                     result += $"\n  • {cleanName} x{countDisplay}";
                 }
 

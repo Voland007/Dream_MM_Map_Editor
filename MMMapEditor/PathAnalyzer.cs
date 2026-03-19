@@ -65,8 +65,8 @@ namespace MMMapEditor
                     Debug.WriteLine($"\n  Анализ пути {currentPathId} (глубина {depth}) -> 0x{path.TargetAddress:X4} ({path.Condition})");
                 }
 
-                // Создаём НОВЫЙ RegisterTracker для каждого пути
-                var pathRegisterTracker = new RegisterTracker();
+                // Продолжаем путь с тем состоянием регистров, которое было в точке ветвления
+                var pathRegisterTracker = path.RegisterState?.Clone() ?? new RegisterTracker();
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), depth + 1, 0, debugObject, currentPathId, targetX, targetY,
                     processedBackEdges);
@@ -235,6 +235,14 @@ namespace MMMapEditor
 
             if (source.MonsterLevel.HasValue && !target.MonsterLevel.HasValue)
                 target.MonsterLevel = source.MonsterLevel.Value;
+
+            if (source.IsBattleMonsterCountIndeterminate)
+            {
+                target.IsBattleMonsterCountIndeterminate = true;
+                target.BattleMonsterCount = null;
+            }
+            else if (source.BattleMonsterCount.HasValue && !target.BattleMonsterCount.HasValue)
+                target.BattleMonsterCount = source.BattleMonsterCount.Value;
 
             foreach (var entry in source.BattleMonsterEntries)
             {

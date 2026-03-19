@@ -227,8 +227,8 @@ namespace MMMapEditor
                 _macroAnalyzer.CollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
 
                 // Анализ результатов
-                var (allTexts, monsterPower, monsterLevel, battleMonsters, partialBattles, hasPartialBattlePattern) =
-                    AnalyzeMacroResults(br, comparison, alternativePaths, targetX, targetY);
+                var (allTexts, monsterPower, monsterLevel, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern) =
+    AnalyzeMacroResults(br, comparison, alternativePaths, targetX, targetY);
 
                 bool hasSignificantCode = allTexts.Count > 0 ||
                                           monsterPower.HasValue ||
@@ -274,8 +274,8 @@ namespace MMMapEditor
                 int objectsCreated = 0;
                 foreach (var cellPos in validCells)
                 {
-                    var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel,
-                        battleMonsters, partialBattles, hasPartialBattlePattern);
+                    var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel, battleMonsterCount,
+                        isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
                     objects.Add(obj);
                     objectsCreated++;
                 }
@@ -286,7 +286,8 @@ namespace MMMapEditor
             return objects;
         }
 
-        private (HashSet<string> texts, byte? monsterPower, byte? monsterLevel,
+        private (HashSet<string> texts, byte? monsterPower, byte? monsterLevel, byte? battleMonsterCount,
+            bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte, byte, bool)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles, bool hasPartialBattlePattern)
             AnalyzeMacroResults(BinaryReader br, CoordinateComparison comparison,
@@ -295,6 +296,8 @@ namespace MMMapEditor
             var allTexts = new HashSet<string>();
             byte? monsterPower = null;
             byte? monsterLevel = null;
+            byte? battleMonsterCount = null;
+            bool isBattleMonsterCountIndeterminate = false;
             var battleMonsters = new Dictionary<int, (byte val1, byte val2, bool isIndeterminate)>();
             var partialBattles = new List<PartiallyDefinedBattle>();
             var partialBattleInfo = new List<PartialBattleInfo>();
@@ -306,8 +309,8 @@ namespace MMMapEditor
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
                 new HashSet<uint>(), 0, 0, null, 0, targetX, targetY, macroProcessedBackEdges);
 
-            MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel,
-                battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
+            MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel, ref battleMonsterCount,
+                ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
 
             // Анализ альтернативных путей
             var processedTargets = new HashSet<uint>();
@@ -322,11 +325,11 @@ namespace MMMapEditor
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), 0, 0, null, 0, targetX, targetY);
 
-                MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel,
-                    battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
+                MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel, ref battleMonsterCount,
+                    ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
             }
 
-            return (allTexts, monsterPower, monsterLevel, battleMonsters, partialBattles, hasPartialBattlePattern);
+            return (allTexts, monsterPower, monsterLevel, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
         }
 
         private List<OvrObject> ProcessDefaultPath(BinaryReader br, List<X86Instruction> allInstructions,
@@ -566,8 +569,14 @@ namespace MMMapEditor
                 target.MonsterPower = source.MonsterPower.Value;
             if (source.MonsterLevel.HasValue)
                 target.MonsterLevel = source.MonsterLevel.Value;
+            if (source.IsBattleMonsterCountIndeterminate)
+            {
+                target.IsBattleMonsterCountIndeterminate = true;
+                target.BattleMonsterCount = null;
+            }
+            else if (source.BattleMonsterCount.HasValue)
+                target.BattleMonsterCount = source.BattleMonsterCount.Value;
 
-            bool isMainPathIndeterminate = source.IsIndeterminateLoop;
             foreach (var entry in source.BattleMonsterEntries)
             {
                 if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
@@ -576,7 +585,7 @@ namespace MMMapEditor
                         entry.Key,
                         entry.Value.val1,
                         entry.Value.val2,
-                        isMainPathIndeterminate || entry.Value.isIndeterminate
+                        entry.Value.isIndeterminate
                     );
                 }
             }
@@ -610,7 +619,8 @@ namespace MMMapEditor
         }
 
         private void MergeMacroResults(PathAnalysisResult source, HashSet<string> allTexts,
-            ref byte? monsterPower, ref byte? monsterLevel,
+            ref byte? monsterPower, ref byte? monsterLevel, ref byte? battleMonsterCount,
+            ref bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles,
             List<PartialBattleInfo> partialBattleInfo,
@@ -628,6 +638,14 @@ namespace MMMapEditor
 
             if (source.MonsterLevel.HasValue)
                 monsterLevel = source.MonsterLevel;
+
+            if (source.IsBattleMonsterCountIndeterminate)
+            {
+                battleMonsterCount = null;
+                isBattleMonsterCountIndeterminate = true;
+            }
+            else if (source.BattleMonsterCount.HasValue)
+                battleMonsterCount = source.BattleMonsterCount;
 
             foreach (var entry in source.BattleMonsterEntries)
                 battleMonsters[entry.Key] = entry.Value;
@@ -731,7 +749,7 @@ namespace MMMapEditor
         }
 
         private OvrObject CreateMacroObject(Point cellPos, HashSet<string> texts,
-            byte? monsterPower, byte? monsterLevel,
+            byte? monsterPower, byte? monsterLevel, byte? battleMonsterCount, bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles, bool hasPartialBattlePattern)
         {
@@ -742,6 +760,8 @@ namespace MMMapEditor
                 DirectionByte = 0,
                 MonsterPower = monsterPower,
                 MonsterLevel = monsterLevel,
+                BattleMonsterCount = battleMonsterCount,
+                IsBattleMonsterCountIndeterminate = isBattleMonsterCountIndeterminate,
                 IsFromTable = false,
                 HasAnyTableLoad = hasPartialBattlePattern
             };
@@ -779,6 +799,8 @@ namespace MMMapEditor
                 DirectionByte = 0,
                 MonsterPower = result.MonsterPower,
                 MonsterLevel = result.MonsterLevel,
+                BattleMonsterCount = result.BattleMonsterCount,
+                IsBattleMonsterCountIndeterminate = result.IsBattleMonsterCountIndeterminate,
                 IsFromTable = false
             };
 

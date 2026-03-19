@@ -32,6 +32,7 @@ namespace MMMapEditor
         public bool CarryFlag { get; set; }
         public bool SignFlag { get; set; }
         public bool OverflowFlag { get; set; }
+        public bool FlagsKnown { get; set; }
 
         public void SetRegisterValue(string reg, ushort value, uint address, string instruction)
         {
@@ -241,6 +242,52 @@ namespace MMMapEditor
             return false;
         }
 
+        public void InvalidateRegister(string reg)
+        {
+            string regUpper = reg.ToUpper();
+
+            registers.Remove(regUpper);
+            registerSources.Remove(regUpper);
+            registerSources2.Remove(regUpper);
+
+            if (regUpper == "AX")
+            {
+                registers.Remove("AL");
+                registers.Remove("AH");
+                registerSources.Remove("AL");
+                registerSources.Remove("AH");
+                registerSources2.Remove("AL");
+                registerSources2.Remove("AH");
+            }
+            else if (regUpper == "BX")
+            {
+                registers.Remove("BL");
+                registers.Remove("BH");
+                registerSources.Remove("BL");
+                registerSources.Remove("BH");
+                registerSources2.Remove("BL");
+                registerSources2.Remove("BH");
+            }
+            else if (regUpper == "CX")
+            {
+                registers.Remove("CL");
+                registers.Remove("CH");
+                registerSources.Remove("CL");
+                registerSources.Remove("CH");
+                registerSources2.Remove("CL");
+                registerSources2.Remove("CH");
+            }
+            else if (regUpper == "DX")
+            {
+                registers.Remove("DL");
+                registers.Remove("DH");
+                registerSources.Remove("DL");
+                registerSources.Remove("DH");
+                registerSources2.Remove("DL");
+                registerSources2.Remove("DH");
+            }
+        }
+
         public void Clear()
         {
             registers.Clear();
@@ -250,6 +297,7 @@ namespace MMMapEditor
             CarryFlag = false;
             SignFlag = false;
             OverflowFlag = false;
+            FlagsKnown = false;
         }
 
         public void TrackPartialRegisterOperation(string fullReg, string partialReg,
@@ -359,6 +407,7 @@ namespace MMMapEditor
             clone.CarryFlag = this.CarryFlag;
             clone.SignFlag = this.SignFlag;
             clone.OverflowFlag = this.OverflowFlag;
+            clone.FlagsKnown = this.FlagsKnown;
             return clone;
         }
     }
