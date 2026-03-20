@@ -1,0 +1,137 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
+
+namespace MMMapEditor
+{
+    public sealed class OvrOverlayLoadResult
+    {
+        public Dictionary<Point, string> NotesPerCell { get; set; } = new Dictionary<Point, string>();
+        public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
+        public Dictionary<Point, Tuple<bool, bool, bool, bool>> MessageStates { get; set; }
+            = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
+
+        public int TotalObjects { get; set; }
+        public int TableObjects { get; set; }
+        public int SpecObjects { get; set; }
+
+        public Point? MostDangerousCell { get; set; }
+        public Point? MostPeacefulCell { get; set; }
+
+        public byte MonsterPower { get; set; }
+        public byte MonsterLevel { get; set; }
+        public byte MonsterBatchCount { get; set; }
+
+        public Tuple<byte, byte> SurfaceCoords { get; set; }
+        public string SectorMap { get; set; }
+    }
+
+    public static class OvrOverlayLoader
+    {
+        public static OvrOverlayLoadResult Load(
+            string filename,
+            Dictionary<Point, string> seedCentralOptions = null,
+            Dictionary<Point, string> seedNotes = null,
+            Dictionary<Point, Tuple<bool, bool, bool, bool>> seedMessageStates = null)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+
+            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+                throw new InvalidOperationException($"Конфигурация для файла {fileNameOnly} не найдена.");
+
+            var config = OvrFileConfigs.Configs[fileNameOnly];
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            var buildResult = OvrNotesBuilder.BuildNotes(
+                filename,
+                seedCentralOptions,
+                seedNotes,
+                seedMessageStates);
+
+            var result = new OvrOverlayLoadResult
+            {
+                NotesPerCell = buildResult.NotesPerCell,
+                CentralOptions = buildResult.CentralOptions,
+                MessageStates = buildResult.MessageStates,
+                TotalObjects = buildResult.TotalObjects,
+                TableObjects = buildResult.TableObjects,
+                SpecObjects = buildResult.SpecObjects
+            };
+
+            result.MostDangerousCell = ReadCell(fileData, config.MostDangerousCell);
+            result.MostPeacefulCell = ReadCell(fileData, config.MostPeacefulCell);
+
+            PrependNote(result.NotesPerCell, result.MostDangerousCell,
+                "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+            PrependNote(result.NotesPerCell, result.MostPeacefulCell,
+                "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+
+            result.MonsterPower = ReadByte(fileData, config.MonsterPower);
+            result.MonsterLevel = ReadByte(fileData, config.MonsterLevel);
+            result.MonsterBatchCount = ReadByte(fileData, config.MonsterBatchCount);
+            result.SurfaceCoords = ReadSurface(fileData, config.SurfaceX, config.SurfaceY);
+            result.SectorMap = ReadSectorMap(fileData, config.SectorMapLetter, config.SectorMapDigit);
+
+            return result;
+        }
+
+        private static void PrependNote(Dictionary<Point, string> notesPerCell, Point? cell, string text)
+        {
+            if (!cell.HasValue)
+                return;
+
+            if (notesPerCell.TryGetValue(cell.Value, out var currentNotes) &&
+                !string.IsNullOrWhiteSpace(currentNotes))
+            {
+                if (!currentNotes.StartsWith(text))
+                    notesPerCell[cell.Value] = text + "\n" + currentNotes;
+            }
+            else
+            {
+                notesPerCell[cell.Value] = text;
+            }
+        }
+
+        private static Point? ReadCell(byte[] fileData, int address)
+        {
+            if (address < 0 || address + 1 >= fileData.Length)
+                return null;
+
+            byte x = fileData[address];
+            byte y = fileData[address + 1];
+
+            return new Point(x & 0xF, y & 0xF);
+        }
+
+        private static byte ReadByte(byte[] fileData, int address)
+        {
+            if (address < 0 || address >= fileData.Length)
+                return 0;
+
+            return fileData[address];
+        }
+
+        private static Tuple<byte, byte> ReadSurface(byte[] fileData, int xAddress, int yAddress)
+        {
+            if (xAddress < 0 || yAddress < 0 || xAddress >= fileData.Length || yAddress >= fileData.Length)
+                return null;
+
+            return Tuple.Create(fileData[xAddress], fileData[yAddress]);
+        }
+
+        private static string ReadSectorMap(byte[] fileData, int highAddress, int lowAddress)
+        {
+            if (highAddress < 0 || lowAddress < 0 || highAddress >= fileData.Length || lowAddress >= fileData.Length)
+                return null;
+
+            byte highByte = fileData[highAddress];
+            byte lowByte = fileData[lowAddress];
+
+            char highChar = (char)(highByte - 0xC1 + 65);
+            char lowChar = (char)(lowByte - 0xB1 + 49);
+
+            return $"{highChar}-{lowChar}";
+        }
+    }
+}

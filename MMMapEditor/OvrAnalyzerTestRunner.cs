@@ -203,8 +203,7 @@ namespace MMMapEditor.Tests
 
         public TestResult RunTest(
     TestCase testCase,
-    Dictionary<Point, string> existingCentralOptions = null,
-    Dictionary<Point, string> existingNotes = null)
+    Dictionary<Point, string> existingCentralOptions = null)
         {
             var result = new TestResult { TestCase = testCase };
 
@@ -273,20 +272,19 @@ namespace MMMapEditor.Tests
                             centralOptions[kvp.Key] = kvp.Value;
                     }
 
-                    System.Diagnostics.Debug.WriteLine("Запуск OvrNotesBuilder.BuildNotes(...)...");
+                    System.Diagnostics.Debug.WriteLine("Запуск OvrOverlayLoader.Load(...)...");
 
-                    // КЛЮЧЕВОЙ МОМЕНТ:
-                    // строим боевые заметки тем же кодом, что использует MainForm
-                    var buildResult = OvrNotesBuilder.BuildNotes(
+                    // Строим полный боевой результат тем же кодом, что использует MainForm
+                    var loadResult = OvrOverlayLoader.Load(
                         testCase.OvrFilePath,
                         centralOptions,
-                        existingNotes,
+                        null,
                         null);
 
                     System.Diagnostics.Debug.WriteLine(
-                        $"BuildNotes завершён. NotesPerCell={buildResult.NotesPerCell.Count}, " +
-                        $"CentralOptions={buildResult.CentralOptions.Count}, " +
-                        $"Objects: total={buildResult.TotalObjects}, table={buildResult.TableObjects}, spec={buildResult.SpecObjects}");
+                        $"Load завершён. NotesPerCell={loadResult.NotesPerCell.Count}, " +
+                        $"CentralOptions={loadResult.CentralOptions.Count}, " +
+                        $"Objects: total={loadResult.TotalObjects}, table={loadResult.TableObjects}, spec={loadResult.SpecObjects}");
 
                     // Проверяем каждую ожидаемую клетку
                     if (testCase.ExpectedCellTexts != null)
@@ -300,7 +298,7 @@ namespace MMMapEditor.Tests
                             System.Diagnostics.Debug.WriteLine($"  Ожидание: {expectation.GetDescription()}");
 
                             string actualText = "";
-                            if (buildResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
+                            if (loadResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
                             {
                                 actualText = noteText ?? "";
                             }
@@ -355,9 +353,8 @@ namespace MMMapEditor.Tests
         /// Запустить несколько тестов
         /// </summary>
         /// <param name="testCases">Список тестовых случаев для запуска</param>
-        /// <param name="existingNotes">Заметки из notesPerCell (необязательно)</param>
         /// <returns>Список результатов тестов</returns>
-        public List<TestResult> RunTests(List<TestCase> testCases, Dictionary<Point, string> existingNotes = null)
+        public List<TestResult> RunTests(List<TestCase> testCases)
         {
             var results = new List<TestResult>();
 
@@ -376,7 +373,7 @@ namespace MMMapEditor.Tests
                 System.Diagnostics.Debug.WriteLine($"========================================");
 
                 // Запускаем тест
-                var result = RunTest(testCase, null, existingNotes);
+                var result = RunTest(testCase, null);
                 results.Add(result);
 
                 if (result.Passed)
@@ -422,12 +419,6 @@ namespace MMMapEditor.Tests
             return results;
         }
 
-        /// <summary>
-        /// Запустить несколько тестов (перегрузка без параметров)
-        /// </summary>
-        public List<TestResult> RunTests(List<TestCase> testCases)
-        {
-            return RunTests(testCases, null);
-        }
+
     }
 }

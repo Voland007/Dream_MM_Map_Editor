@@ -21,6 +21,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Diagnostics;
+using System.IO;
 using System.Xml;
 using Newtonsoft.Json; // Необходим пакет Newtonsoft.Json для сериализации
 using Newtonsoft.Json.Linq;
@@ -1050,7 +1051,7 @@ namespace MMMapEditor
             }
 
             // Запускаем тесты
-            var results = runner.RunTests(testCases, notesPerCell);
+            var results = runner.RunTests(testCases);
 
             // Показываем результаты
             var viewer = new MMMapEditor.Tests.TestResultsViewer(results);
@@ -1169,37 +1170,37 @@ namespace MMMapEditor
                 }
             }
 
-            // Если имеется строка с объектом, обрабатываем ее отдельно
-            if (!string.IsNullOrWhiteSpace(lines[32]))
-            {
-                ProcessOvrObjectsWithAdvancedAnalyzer(filename);
-            }
+            var loadResult = OvrOverlayLoader.Load(
+                filename,
+                centralOptions,
+                notesPerCell,
+                messageStates);
 
-            // Читаем самые опасные и безопасные клетки
-            Point? mostDangerousCell = ReadMostDangerousCell(filename);
-            Point? mostPeacefulCell = ReadMostPeacefulCell(filename);
+            centralOptions = loadResult.CentralOptions;
+            notesPerCell = loadResult.NotesPerCell;
+            messageStates = loadResult.MessageStates;
 
-            // Читаем характеристики монстров
-            byte monsterPower = ReadMonsterPower(filename);
-            byte monsterLevel = ReadMonsterLevel(filename);
-            byte monsterBatchCount = ReadMonsterBatchCount(filename);
+            this.mostDangerousCell = loadResult.MostDangerousCell;
+            this.mostPeacefulCell = loadResult.MostPeacefulCell;
+            mapSector = loadResult.SectorMap ?? "";
+            surface = loadResult.SurfaceCoords != null
+                ? $"X = {loadResult.SurfaceCoords.Item1} Y = {loadResult.SurfaceCoords.Item2}"
+                : "";
 
-            // Читаем координаты поверхности
-            Tuple<byte, byte> surfaceCoords = ReadSurfaceCoordinates(filename);
-
-            // Читаем глобальный сектор карты
-            string sectorMap = ReadSectorMap(filename);
+            string surfaceText = loadResult.SurfaceCoords != null
+                ? $"X = {loadResult.SurfaceCoords.Item1} Y = {loadResult.SurfaceCoords.Item2}"
+                : "X = 0 Y = 0";
 
             // Формируем сообщение для отображения
             string message =
                 $"Название файла: {Path.GetFileName(filename)}\n" +
-                $"MAP SECTOR: {sectorMap}\n" +
-                $"SURFACE: X = {surfaceCoords.Item1} Y = {surfaceCoords.Item2}\n\n" +
-                $"Самая опасная клетка: {mostDangerousCell}\n" +
-                $"Самая безопасная клетка: {mostPeacefulCell}\n\n" +
-                $"Сила монстров: {monsterPower}\n" +
-                $"Уровень монстров: {monsterLevel}\n" +
-                $"Количество монстров в группе: {monsterBatchCount}";
+                $"MAP SECTOR: {loadResult.SectorMap}\n" +
+                $"SURFACE: {surfaceText}\n\n" +
+                $"Самая опасная клетка: {loadResult.MostDangerousCell}\n" +
+                $"Самая безопасная клетка: {loadResult.MostPeacefulCell}\n\n" +
+                $"Сила монстров: {loadResult.MonsterPower}\n" +
+                $"Уровень монстров: {loadResult.MonsterLevel}\n" +
+                $"Количество монстров в группе: {loadResult.MonsterBatchCount}";
 
             // Перерисовываем интерфейс
             foreach (var button in gridButtons)
