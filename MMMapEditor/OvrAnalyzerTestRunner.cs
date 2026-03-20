@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -239,10 +239,20 @@ namespace MMMapEditor.Tests
                 {
                     result.Logger = logger;
 
-                    // Готовим centralOptions только для тестируемых клеток:
-                    // для непустых ожиданий ставим "Случайная встреча",
-                    // чтобы builder построил текст так же, как в боевом коде.
-                    var centralOptions = new Dictionary<Point, string>();
+                    // Строим базовые centralOptions из самого OVR-файла
+                    // по той же логике, что использует Draft_Laboratory / MainForm.
+                    var centralOptions = BuildCentralOptionsFromOvr(testCase.OvrFilePath, configKey);
+
+                    // Если были переданы внешние centralOptions, накладываем их сверху
+                    if (existingCentralOptions != null)
+                    {
+                        foreach (var kvp in existingCentralOptions)
+                        {
+                            centralOptions[kvp.Key] = kvp.Value;
+                            System.Diagnostics.Debug.WriteLine(
+                                $"  external centralOptions[{kvp.Key.X},{kvp.Key.Y}] = \"{kvp.Value}\"");
+                        }
+                    }
 
                     if (testCase.ExpectedCellTexts != null)
                     {
@@ -251,26 +261,14 @@ namespace MMMapEditor.Tests
                             var cellPos = kvp.Key;
                             var expectation = kvp.Value;
 
-                            if (!expectation.ShouldBeEmpty)
-                            {
-                                centralOptions[cellPos] = "Случайная встреча";
-                                System.Diagnostics.Debug.WriteLine(
-                                    $"  centralOptions[{cellPos.X},{cellPos.Y}] = \"Случайная встреча\"");
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine(
-                                    $"  Клетка ({cellPos.X},{cellPos.Y}) должна быть пустой");
-                            }
+                            centralOptions.TryGetValue(cellPos, out var actualCentralOption);
+
+                            System.Diagnostics.Debug.WriteLine(
+                                $"  centralOptions[{cellPos.X},{cellPos.Y}] из OVR = \"{actualCentralOption ?? "<нет>"}\"; " +
+                                $"ожидание пустоты: {expectation.ShouldBeEmpty}");
                         }
                     }
 
-                    // Если были переданы внешние centralOptions, накладываем их сверху
-                    if (existingCentralOptions != null)
-                    {
-                        foreach (var kvp in existingCentralOptions)
-                            centralOptions[kvp.Key] = kvp.Value;
-                    }
 
                     System.Diagnostics.Debug.WriteLine("Запуск OvrOverlayLoader.Load(...)...");
 
@@ -347,6 +345,62 @@ namespace MMMapEditor.Tests
             }
 
             return result;
+        }
+
+
+        private Dictionary<Point, string> BuildCentralOptionsFromOvr(string filename, string configKey = null)
+        {
+            var centralOptions = new Dictionary<Point, string>();
+
+            string resolvedConfigKey = configKey ?? Path.GetFileName(filename).ToUpper();
+
+            if (!_configs.TryGetValue(resolvedConfigKey, out var config))
+                throw new InvalidOperationException($"Конфигурация {resolvedConfigKey} не найдена");
+
+            string[] lines = new string[33];
+
+            Array.Copy(config.First16Lines, 0, lines, 0, 16);
+            Array.Copy(config.Second16Lines, 0, lines, 16, 16);
+
+            byte[] fileData = File.ReadAllBytes(filename);
+            int startAddress = config.StartAddress;
+
+            if (fileData.Length < startAddress)
+                throw new InvalidOperationException(
+                    $"Файл слишком мал. Длина файла: {fileData.Length}, требуемый адрес: {startAddress}.");
+
+            var dataLine = new StringBuilder();
+            for (int i = startAddress; i < fileData.Length; i++)
+            {
+                if (i > startAddress) dataLine.Append(" ");
+                dataLine.AppendFormat("{0:X2}", fileData[i]);
+            }
+            lines[32] = dataLine.ToString();
+
+            for (int y = 0; y < 16; y++)
+            {
+                if (string.IsNullOrWhiteSpace(lines[y]) || string.IsNullOrWhiteSpace(lines[y + 16]))
+                    continue;
+
+                string[] cellValuesFirstLayer = lines[y].Split();
+                string[] cellValuesSecondLayer = lines[y + 16].Split();
+
+                if (cellValuesFirstLayer.Length != 16 || cellValuesSecondLayer.Length != 16)
+                    continue;
+
+                for (int x = 0; x < 16; x++)
+                {
+                    int secondDecimalValue = Convert.ToInt32(cellValuesSecondLayer[x], 16);
+                    string secondBinaryRepresentation = Convert.ToString(secondDecimalValue, 2).PadLeft(16, '0');
+
+                    Point pos = new Point(x, y);
+                    centralOptions[pos] = secondBinaryRepresentation[^8] == '1'
+                        ? "Случайная встреча"
+                        : "Пустота";
+                }
+            }
+
+            return centralOptions;
         }
 
         /// <summary>
