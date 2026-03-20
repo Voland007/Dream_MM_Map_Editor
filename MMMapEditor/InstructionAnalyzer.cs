@@ -197,17 +197,41 @@ namespace MMMapEditor
                 result.LoopStartAddress = address;
 
                 int markedCount = 0;
-                foreach (var key in result.BattleMonsterEntries.Keys.ToList())
+
+                // Для полной битвы хвост неопределённого цикла формируется ПОСЛЕ уже записанной
+                // итерации. К моменту CMP BL,[3C1D] в BL находится индекс следующей записи,
+                // поэтому запись с индексом BL-1 — это последняя фактически добавленная запись,
+                // которая уже принадлежит случайному хвосту.
+                if (registerTracker.TryGetByteRegisterValue("BL", out byte blValue) && blValue > 0)
                 {
-                    var entry = result.BattleMonsterEntries[key];
-                    bool isFullyDefined = entry.val1 != 0 && entry.val2 != 0;
-                    if (!isFullyDefined)
+                    int lastWrittenIndex = blValue - 1;
+                    if (result.BattleMonsterEntries.ContainsKey(lastWrittenIndex))
                     {
-                        result.BattleMonsterEntries[key] = (entry.val1, entry.val2, true);
-                        markedCount++;
+                        var entry = result.BattleMonsterEntries[lastWrittenIndex];
+                        if (!entry.isIndeterminate)
+                        {
+                            result.BattleMonsterEntries[lastWrittenIndex] = (entry.val1, entry.val2, true);
+                            markedCount++;
+                        }
                     }
                 }
-                Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, помечено {markedCount} записей как неопределенные");
+                else
+                {
+                    // Fallback для старых/неполных случаев: помечаем неполные записи,
+                    // как и раньше, чтобы не ломать существующую логику.
+                    foreach (var key in result.BattleMonsterEntries.Keys.ToList())
+                    {
+                        var entry = result.BattleMonsterEntries[key];
+                        bool isFullyDefined = entry.val1 != 0 && entry.val2 != 0;
+                        if (!isFullyDefined)
+                        {
+                            result.BattleMonsterEntries[key] = (entry.val1, entry.val2, true);
+                            markedCount++;
+                        }
+                    }
+                }
+
+                Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, BL={(registerTracker.TryGetByteRegisterValue("BL", out byte debugBl) ? $"0x{debugBl:X2}" : "??")}, помечено {markedCount} записей как неопределенные");
                 return;
             }
 

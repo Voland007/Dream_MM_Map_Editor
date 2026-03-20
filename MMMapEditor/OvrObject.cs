@@ -212,8 +212,10 @@ namespace MMMapEditor
                     MonsterId = g.Key,
                     MonsterName = g.First().MonsterName,
                     Count = g.Count(),
+                    FixedCount = g.Count(m => !m.IsIndeterminate),
+                    HasRandomPart = g.Any(m => m.IsIndeterminate),
                     Indices = g.Select(m => m.Index).OrderBy(i => i).ToList(),
-                    IsIndeterminate = g.Any(m => m.IsIndeterminate)
+                    IsIndeterminate = g.All(m => m.IsIndeterminate)
                 })
                 .OrderBy(g => g.MonsterId)
                 .ToList();
@@ -308,16 +310,34 @@ namespace MMMapEditor
                 var grouped = GetGroupedBattleMonsters();
                 grouped = grouped.OrderBy(g => g.Indices.Min()).ToList();
 
-                // ВСЕГДА используем формат группы
+                // Общий BattleMonsterCount безопасно использовать только для одной группы.
+                // Для нескольких групп он ломает смешанные случаи вида x1+? / x?.
+                bool canUseGlobalBattleCount =
+                    grouped.Count == 1 &&
+                    BattleMonsterCount.HasValue &&
+                    !IsBattleMonsterCountIndeterminate;
+
                 var result = "Битва с группой монстров:";
                 foreach (var g in grouped)
                 {
                     string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
-                    bool unknownCount = IsBattleMonsterCountIndeterminate;
-                    int displayCount = (grouped.Count == 1 && BattleMonsterCount.HasValue && !unknownCount)
-                        ? BattleMonsterCount.Value
-                        : g.Count;
-                    string countDisplay = (g.IsIndeterminate || unknownCount) ? "? (Random count)" : displayCount.ToString();
+                    string countDisplay;
+
+                    if (canUseGlobalBattleCount)
+                    {
+                        countDisplay = BattleMonsterCount.Value.ToString();
+                    }
+                    else if (g.HasRandomPart)
+                    {
+                        countDisplay = g.FixedCount > 0
+                            ? $"{g.FixedCount}+? (Random count)"
+                            : "? (Random count)";
+                    }
+                    else
+                    {
+                        countDisplay = (g.FixedCount > 0 ? g.FixedCount : g.Count).ToString();
+                    }
+
                     result += $"\n  • {cleanName} x{countDisplay}";
                 }
 
@@ -623,6 +643,8 @@ namespace MMMapEditor
         public int MonsterId { get; set; }
         public string MonsterName { get; set; }
         public int Count { get; set; }
+        public int FixedCount { get; set; }
+        public bool HasRandomPart { get; set; }
         public bool IsIndeterminate { get; set; }
         public List<int> Indices { get; set; } = new List<int>();
 
@@ -632,7 +654,12 @@ namespace MMMapEditor
                 char.IsLetterOrDigit(c) ||
                 char.IsWhiteSpace(c) ||
                 char.IsPunctuation(c)).ToArray()).Trim();
-            return IsIndeterminate ? $"{cleanName} x?" : $"{cleanName} x{Count}";
+
+            if (HasRandomPart && FixedCount > 0)
+                return $"{cleanName} x{FixedCount}+?";
+            if (IsIndeterminate)
+                return $"{cleanName} x?";
+            return $"{cleanName} x{Count}";
         }
     }
 
