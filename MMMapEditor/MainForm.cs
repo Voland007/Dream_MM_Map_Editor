@@ -468,6 +468,28 @@ namespace MMMapEditor
             notesTextBox.Clear();
         }
 
+        private void ClearCurrentMapState()
+        {
+            mapSector = "";
+            surface = "";
+            mostDangerousCell = null;
+            mostPeacefulCell = null;
+            copiedCellInfo = null;
+            lastSavedFilename = "";
+
+            InitializeAllCells();
+            ResetForm();
+            UpdatePreview();
+
+            foreach (var button in gridButtons)
+            {
+                button.Invalidate();
+            }
+
+            this.Text = "Редактор моей мечты";
+            isMapModified = false;
+        }
+
         private void CreateGrid()
         {
             Panel leftPanel = new Panel
@@ -975,7 +997,7 @@ namespace MMMapEditor
             fileMenuItem.DropDownItems.Add(metadataItem);
 
             // Добавляем пункт "Draft_Laboratory" в меню "Карта"
-            ToolStripMenuItem draftLaboratoryItem = new ToolStripMenuItem("Draft_Laboratory");
+            ToolStripMenuItem draftLaboratoryItem = new ToolStripMenuItem("Открыть оригинальный .OVR");
             draftLaboratoryItem.Click += DraftLaboratoryItem_Click;
             fileMenuItem.DropDownItems.Add(draftLaboratoryItem);
 
@@ -1070,20 +1092,20 @@ namespace MMMapEditor
             {
                 dialog.InitialDirectory = AppDomain.CurrentDomain.BaseDirectory;
                 dialog.Filter = "OVR Files (*.ovr)|*.ovr|Text Files (*.txt)|*.txt|All files (*.*)|*.*";
-                dialog.Title = "Select a file to load as a laboratory draft";
+                dialog.Title = "Select a file to load as a Original Resource Overlay Map File";
                 dialog.DefaultExt = ".ovr";
 
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     string filename = dialog.FileName;
-                    LoadDraftLaboratory(filename);
+                    OpenOriginalResourceOverlayMapFile(filename);
                     lastSavedFilename = "";
                     UpdateWindowTitle();
                 }
             }
         }
 
-        private void LoadDraftLaboratory(string filename)
+        private void OpenOriginalResourceOverlayMapFile(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             string fileExtension = Path.GetExtension(filename).ToUpper();
@@ -1098,6 +1120,8 @@ namespace MMMapEditor
                 );
                 return;
             }
+
+            ClearCurrentMapState();
 
             // Определение общего количества строк (33 строки)
             string[] lines = new string[33];
@@ -2975,39 +2999,12 @@ namespace MMMapEditor
 
                 if (result == DialogResult.OK)
                 {
-                    // Сбрасываем метаданные
-                    mapSector = "";
-                    surface = "";
-                    // Обновляем заголовок окна
-                    this.Text = "Редактор моей мечты";
-                    lastSavedFilename = "";
-
-                    InitializeAllCells();
-                    ResetForm();
-                    UpdatePreview();
-                    foreach (var button in gridButtons)
-                    {
-                        button.Invalidate(); // вызываем перерисовку для каждой кнопки
-                    }
-                    isMapModified = false;
+                    ClearCurrentMapState();
                 }
             }
             else
             {
-                // Сбрасываем метаданные
-                mapSector = "";
-                surface = "";
-                // Обновляем заголовок окна
-                this.Text = "Редактор моей мечты";
-                lastSavedFilename = "";
-                InitializeAllCells();
-                ResetForm();
-                UpdatePreview();
-                foreach (var button in gridButtons)
-                {
-                    button.Invalidate(); // вызываем перерисовку для каждой кнопки
-                }
-                isMapModified = false;
+                ClearCurrentMapState();
             }
         }
 
