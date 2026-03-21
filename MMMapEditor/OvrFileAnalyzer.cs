@@ -124,10 +124,7 @@ namespace MMMapEditor
             };
 
             uint patchAddress = CalculatePatchAddress(patchKey);
-            bool debugMode = (ovrObject.X == 12 && ovrObject.Y == 2) ||
-                             (ovrObject.X == 5 && ovrObject.Y == 8) ||
-                             (ovrObject.X == 8 && ovrObject.Y == 0) ||
-                             (ovrObject.X == 8 && ovrObject.Y == 5);
+            bool debugMode = (ovrObject.X == 0 && ovrObject.Y == 14);
 
             if (debugMode)
             {

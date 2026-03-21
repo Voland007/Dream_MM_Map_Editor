@@ -39,6 +39,9 @@ namespace MMMapEditor
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
+            int initialCount = output.Count;
+
+            ProcessContainerTexts(address, instructionBytes, registerTracker, output);
 
             // MOV word ptr [0x3BD4], imm16
             if (instructionBytes.Length >= 6 &&
@@ -108,6 +111,69 @@ namespace MMMapEditor
                         output.Add(textEntry);
                     }
                 }
+            }
+
+            if (output.Count > initialCount)
+            {
+                Debug.WriteLine($"        FindTextsInInstruction: instruction 0x{address:X4} добавила {output.Count - initialCount} текст(ов)");
+                foreach (var text in output)
+                    Debug.WriteLine($"          -> {text}");
+            }
+        }
+
+        private void ProcessContainerTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
+            HashSet<string> output)
+        {
+            // MOV byte ptr [0x3C79], imm8
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
+            {
+                Debug.WriteLine($"    КОНТЕЙНЕР: прямая запись [3C79] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                AddContainerText(instructionAddress, output, instructionBytes[4]);
+                return;
+            }
+
+            // MOV byte ptr [0x3C79], reg8
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x88 && instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
+            {
+                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
+                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                if (regField < regNames.Length &&
+                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
+                {
+                    Debug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                    AddContainerText(instructionAddress, output, value);
+                }
+                return;
+            }
+
+            // MOV [0x3C79], AL
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0xA2 &&
+                instructionBytes[1] == 0x79 && instructionBytes[2] == 0x3C)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    Debug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                    AddContainerText(instructionAddress, output, alValue);
+                }
+            }
+        }
+
+        private void AddContainerText(uint instructionAddress, HashSet<string> output, byte containerIndex)
+        {
+            if (ContainerDatabase.TryGetContainerName(containerIndex, out string containerName))
+            {
+                Debug.WriteLine($"    КОНТЕЙНЕР РАСПОЗНАН: индекс 0x{containerIndex:X2} -> {containerName} (инструкция 0x{instructionAddress:X4})");
+                output.Add($"На ячейке находится {containerName} в котором лежит:");
+            }
+            else
+            {
+                Debug.WriteLine($"    КОНТЕЙНЕР НЕ РАСПОЗНАН: индекс 0x{containerIndex:X2} (инструкция 0x{instructionAddress:X4})");
+                output.Add($"На ячейке находится контейнер #{containerIndex} в котором лежит:");
             }
         }
 

@@ -161,17 +161,9 @@ namespace MMMapEditor
 
                         foreach (var text in kvp.Value)
                         {
-                            int colonIndex = text.IndexOf(':');
-                            if (colonIndex >= 0 && colonIndex + 1 < text.Length)
-                            {
-                                string textPart = text.Substring(colonIndex + 1).Trim();
-                                string decodedText = DecodeTextString(textPart);
-                                if (!string.IsNullOrEmpty(decodedText))
-                                {
-                                    decodedText = decodedText.TrimEnd('\r');
-                                    variantContents[variantNumber].Add(decodedText);
-                                }
-                            }
+                            string decodedText = ExtractNoteText(text);
+                            if (!string.IsNullOrEmpty(decodedText))
+                                variantContents[variantNumber].Add(decodedText);
                         }
                     }
                 }
@@ -188,17 +180,9 @@ namespace MMMapEditor
 
                         foreach (var text in kvp.Value)
                         {
-                            int colonIndex = text.IndexOf(':');
-                            if (colonIndex >= 0 && colonIndex + 1 < text.Length)
-                            {
-                                string textPart = text.Substring(colonIndex + 1).Trim();
-                                string decodedText = DecodeTextString(textPart);
-                                if (!string.IsNullOrEmpty(decodedText))
-                                {
-                                    decodedText = decodedText.TrimEnd('\r');
-                                    variantContents[variantNumber].Add(decodedText);
-                                }
-                            }
+                            string decodedText = ExtractNoteText(text);
+                            if (!string.IsNullOrEmpty(decodedText))
+                                variantContents[variantNumber].Add(decodedText);
                         }
                     }
                 }
@@ -280,6 +264,33 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static string ExtractNoteText(string rawText)
+        {
+            if (string.IsNullOrWhiteSpace(rawText))
+                return null;
+
+            int colonIndex = rawText.IndexOf(':');
+            string candidate;
+
+            if (colonIndex >= 0)
+            {
+                string afterColon = rawText.Substring(colonIndex + 1).Trim();
+                candidate = !string.IsNullOrEmpty(afterColon)
+                    ? afterColon
+                    : rawText.Trim();
+            }
+            else
+            {
+                candidate = rawText.Trim();
+            }
+
+            string decodedText = DecodeTextString(candidate);
+            if (string.IsNullOrWhiteSpace(decodedText))
+                return null;
+
+            return decodedText.TrimEnd('\r');
         }
 
         private static string DecodeTextString(string encodedText)
