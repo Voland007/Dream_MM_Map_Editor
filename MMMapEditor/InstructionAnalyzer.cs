@@ -42,6 +42,7 @@ namespace MMMapEditor
             int initialCount = output.Count;
 
             ProcessContainerTexts(address, instructionBytes, registerTracker, output);
+            ProcessItemTexts(address, instructionBytes, registerTracker, output);
 
             // MOV word ptr [0x3BD4], imm16
             if (instructionBytes.Length >= 6 &&
@@ -174,6 +175,65 @@ namespace MMMapEditor
             {
                 Debug.WriteLine($"    КОНТЕЙНЕР НЕ РАСПОЗНАН: индекс 0x{containerIndex:X2} (инструкция 0x{instructionAddress:X4})");
                 output.Add($"На ячейке находится контейнер #{containerIndex} в котором лежит:");
+            }
+        }
+
+        private void ProcessItemTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
+            HashSet<string> output)
+        {
+            // MOV byte ptr [0x3C7C], imm8
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
+            {
+                Debug.WriteLine($"    ПРЕДМЕТ: прямая запись [3C7C] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                AddItemText(instructionAddress, output, instructionBytes[4]);
+                return;
+            }
+
+            // MOV byte ptr [0x3C7C], reg8
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x88 &&
+                instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
+            {
+                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
+                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                if (regField < regNames.Length &&
+                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
+                {
+                    Debug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                    AddItemText(instructionAddress, output, value);
+                }
+                return;
+            }
+
+            // MOV [0x3C7C], AL
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0xA2 &&
+                instructionBytes[1] == 0x7C && instructionBytes[2] == 0x3C)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    Debug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                    AddItemText(instructionAddress, output, alValue);
+                }
+            }
+        }
+
+        private void AddItemText(uint instructionAddress, HashSet<string> output, byte itemIndex)
+        {
+            int databaseIndex = itemIndex > 0 ? itemIndex - 1 : 0;
+
+            if (ItemDatabase.TryGetItemName(databaseIndex, out string itemName))
+            {
+                Debug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemName} (инструкция 0x{instructionAddress:X4})");
+                output.Add(itemName);
+            }
+            else
+            {
+                Debug.WriteLine($"    ПРЕДМЕТ НЕ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} (инструкция 0x{instructionAddress:X4})");
+                output.Add($"предмет #{itemIndex}");
             }
         }
 
