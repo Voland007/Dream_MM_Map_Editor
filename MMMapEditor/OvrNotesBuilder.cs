@@ -98,7 +98,7 @@ namespace MMMapEditor
                 if (!result.CentralOptions.TryGetValue(pos, out string existingOption))
                     continue;
 
-                if (!tableObjectCoords.Contains(coordKey) && existingOption != "Случайная встреча")
+                if (obj.IsFromTable && !(tableObjectCoords.Contains(coordKey) && existingOption == "Случайная встреча"))
                     continue;
 
                 string existingCellNotes = result.NotesPerCell.TryGetValue(pos, out var notes)
