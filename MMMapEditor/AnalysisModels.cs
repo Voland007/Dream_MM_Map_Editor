@@ -126,6 +126,7 @@ namespace MMMapEditor
         public HashSet<string> Texts { get; set; } = new HashSet<string>();
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? RandomEncounterChance { get; set; }
         public List<(int Index, byte Val1, byte Val2, bool IsIndeterminate)> BattleMonsters { get; set; } = new List<(int, byte, byte, bool)>();
         public byte DirectionByte { get; set; }
         public bool HasSignificantCode { get; set; }
@@ -166,6 +167,7 @@ namespace MMMapEditor
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? RandomEncounterChance { get; set; }
         public byte? MonsterIndex1 { get; set; }
         public byte? MonsterIndex2 { get; set; }
         public byte? BattleMonsterCount { get; set; }

@@ -404,6 +404,37 @@ namespace MMMapEditor
                     Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ AL: {alValue}");
                 }
             }
+            // MOV byte ptr [C95D], imm8 - шанс случайной встречи
+            else if (instructionBytes.Length >= 5 &&
+                     instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                     instructionBytes[2] == 0x5D && instructionBytes[3] == 0xC9)
+            {
+                byte encounterChance = instructionBytes[4];
+                result.RandomEncounterChance = encounterChance;
+                Debug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ: 0x{encounterChance:X2}");
+            }
+            // MOV [C95D], CH
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                     instructionBytes[2] == 0x5D && instructionBytes[3] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
+                {
+                    result.RandomEncounterChance = chValue;
+                    Debug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ ИЗ CH: 0x{chValue:X2}");
+                }
+            }
+            // MOV [C95D], AL
+            else if (instructionBytes.Length >= 3 &&
+                     instructionBytes[0] == 0xA2 &&
+                     instructionBytes[1] == 0x5D && instructionBytes[2] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    result.RandomEncounterChance = alValue;
+                    Debug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ ИЗ AL: 0x{alValue:X2}");
+                }
+            }
         }
 
         public void FindMonsterBattleInfo(X86Instruction insn, BinaryReader br,

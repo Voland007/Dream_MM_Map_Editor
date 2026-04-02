@@ -42,6 +42,7 @@ namespace MMMapEditor
 
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? RandomEncounterChance { get; set; }
 
         #endregion
 
@@ -51,7 +52,7 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue;
+        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || RandomEncounterChance.HasValue;
 
         #endregion
 
@@ -292,6 +293,37 @@ namespace MMMapEditor
             if (newLevel > defaultLevel) return $"Уровень монстров увеличивается с {defaultLevel} до {newLevel}";
             if (newLevel < defaultLevel) return $"Уровень монстров уменьшается с {defaultLevel} до {newLevel}";
             return $"Уровень монстров остаётся прежним: {newLevel}";
+        }
+
+        public string GetRandomEncounterChanceDescription(byte defaultChance)
+        {
+            if (!RandomEncounterChance.HasValue) return null;
+
+            byte newChance = RandomEncounterChance.Value;
+            double defaultPercent = DecodeRandomEncounterChance(defaultChance);
+            double newPercent = DecodeRandomEncounterChance(newChance);
+
+            string defaultPercentText = FormatPercent(defaultPercent);
+            string newPercentText = FormatPercent(newPercent);
+
+            if (newPercent > defaultPercent)
+                return $"Шанс случайной встречи увеличивается с {defaultPercentText} (0x{defaultChance:X2}) до {newPercentText} (0x{newChance:X2})";
+            if (newPercent < defaultPercent)
+                return $"Шанс случайной встречи уменьшается с {defaultPercentText} (0x{defaultChance:X2}) до {newPercentText} (0x{newChance:X2})";
+            return $"Шанс случайной встречи остаётся прежним: {newPercentText} (0x{newChance:X2})";
+        }
+
+        private static double DecodeRandomEncounterChance(byte value)
+        {
+            if (value == 0x00 || value == 0xFF)
+                return 0;
+
+            return (256 - value) * 100.0 / 256.0;
+        }
+
+        private static string FormatPercent(double value)
+        {
+            return $"{value:0.##}%";
         }
 
         /// <summary>
@@ -566,7 +598,7 @@ namespace MMMapEditor
             return result;
         }
 
-        public string GetFullMonsterDescription(byte defaultPower, byte defaultLevel)
+        public string GetFullMonsterDescription(byte defaultPower, byte defaultLevel, byte defaultRandomEncounterChance)
         {
             var descriptions = new List<string>();
 
@@ -575,6 +607,9 @@ namespace MMMapEditor
 
             var levelDesc = GetMonsterLevelDescription(defaultLevel);
             if (levelDesc != null) descriptions.Add(levelDesc);
+
+            var chanceDesc = GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
+            if (chanceDesc != null) descriptions.Add(chanceDesc);
 
             var battleDesc = GetBattleDescription();
             if (battleDesc != null) descriptions.Add(battleDesc);
@@ -607,6 +642,11 @@ namespace MMMapEditor
                 parts.Add($"Level={MonsterLevel.Value}");
             else
                 parts.Add("Level=none");
+
+            if (RandomEncounterChance.HasValue)
+                parts.Add($"EncounterChance={RandomEncounterChance.Value}");
+            else
+                parts.Add("EncounterChance=none");
 
             parts.Add($"BattleMonsters={BattleMonsters.Count}");
             parts.Add($"PartiallyDefined={PartiallyDefinedBattles.Count}");

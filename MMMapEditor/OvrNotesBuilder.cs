@@ -67,6 +67,7 @@ namespace MMMapEditor
 
             byte defaultMonsterPower = 0;
             byte defaultMonsterLevel = 0;
+            byte defaultRandomEncounterChance = 0;
 
             try
             {
@@ -75,6 +76,8 @@ namespace MMMapEditor
                     defaultMonsterPower = fileData[config.MonsterPower];
                 if (config.MonsterLevel < fileData.Length)
                     defaultMonsterLevel = fileData[config.MonsterLevel];
+                if (config.RandomEncounterChance < fileData.Length)
+                    defaultRandomEncounterChance = fileData[config.RandomEncounterChance];
             }
             catch
             {
@@ -138,6 +141,9 @@ namespace MMMapEditor
 
                     var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
                     if (levelDesc != null) monsterStatLines.Add(levelDesc);
+
+                    var randomEncounterDesc = obj.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
+                    if (randomEncounterDesc != null) monsterStatLines.Add(randomEncounterDesc);
                 }
 
                 List<string> partialBattleLines = new List<string>();
