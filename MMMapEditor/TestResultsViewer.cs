@@ -497,6 +497,7 @@ namespace MMMapEditor.Tests
 
                 if (passedNode.Nodes.Count > 0)
                     _treeView.Nodes.Add(passedNode);
+
                 if (failedNode.Nodes.Count > 0)
                     _treeView.Nodes.Add(failedNode);
 
@@ -521,8 +522,13 @@ namespace MMMapEditor.Tests
                 // Заполняем сводную таблицу
                 FillSummaryGrid();
 
-                // Раскрываем все узлы
-                _treeView.ExpandAll();
+                // По умолчанию список пройденных тестов схлопываем,
+                // а список проваленных раскрываем
+                if (passedNode.Nodes.Count > 0)
+                    passedNode.Collapse();
+
+                if (failedNode.Nodes.Count > 0)
+                    failedNode.Expand();
             }
             finally
             {
