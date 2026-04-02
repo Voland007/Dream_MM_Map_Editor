@@ -1663,10 +1663,17 @@ namespace MMMapEditor
                 if (!match.Success || match.Groups.Count < 2)
                     continue;
 
+                // Сначала перекрашиваем всю строку контейнера в холодный оттенок,
+                // чтобы она заметно отличалась от тёплого цвета ITEM/предметов
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(170, 205, 255);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
                 Group containerNameGroup = match.Groups[1];
                 if (containerNameGroup.Length <= 0)
                     continue;
 
+                // Затем усиливаем только имя контейнера
                 rt.Select(containerNameGroup.Index, containerNameGroup.Length);
                 rt.SelectionColor = Color.FromArgb(255, 215, 0);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
