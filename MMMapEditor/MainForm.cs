@@ -1540,42 +1540,48 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(0xB539FF);
         }
 
-        // ПЕРЕИМЕНОВАННЫЙ МЕТОД: теперь только для силы и уровня монстров
-        private void FormatMonsterStatChanges(RichTextBox rt, string noteText)
+        // Теперь форматируем силу, уровень и шанс случайной встречи
+        private void FormatMonsterStatsAndEncounterChance(RichTextBox rt, string noteText)
         {
-            // Ищем сообщения о силе монстров (более тёмный светло-голубой #87CEFA = RGB(135, 206, 250))
-            var powerMatches = Regex.Matches(noteText, @"Сила монстров (увеличивается|уменьшается|остаётся прежней) с \d+ до \d+");
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            // Сила монстров
+            var powerMatches = Regex.Matches(
+                noteText,
+                @"Сила монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежней: \d+)"
+            );
+
             foreach (Match match in powerMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(135, 206, 250); // #87CEFA - светло-голубой для силы
+                rt.SelectionColor = Color.FromArgb(135, 206, 250); // светло-голубой
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
-            // Ищем сообщения об уровне монстров (более светлый светло-голубой #B0E0E6 = RGB(176, 224, 230))
-            var levelMatches = Regex.Matches(noteText, @"Уровень монстров (увеличивается|уменьшается|остаётся прежним) с \d+ до \d+");
+            // Уровень монстров
+            var levelMatches = Regex.Matches(
+                noteText,
+                @"Уровень монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+            );
+
             foreach (Match match in levelMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(176, 224, 230); // #B0E0E6 - светло-голубой для уровня
+                rt.SelectionColor = Color.FromArgb(176, 224, 230); // более светлый голубой
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
-            // Также ищем альтернативные формулировки для силы монстров
-            var powerAltMatches = Regex.Matches(noteText, @"Сила монстров остаётся прежней: \d+");
-            foreach (Match match in powerAltMatches)
-            {
-                rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(135, 206, 250);
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
-            }
+            // Шанс случайной встречи
+            var chanceMatches = Regex.Matches(
+                noteText,
+                @"Шанс случайной встречи (увеличивается с [\d.,]+% \(0x[0-9A-F]{2}\) до [\d.,]+% \(0x[0-9A-F]{2}\)|уменьшается с [\d.,]+% \(0x[0-9A-F]{2}\) до [\d.,]+% \(0x[0-9A-F]{2}\)|остаётся прежним: [\d.,]+% \(0x[0-9A-F]{2}\))",
+                RegexOptions.IgnoreCase
+            );
 
-            // Альтернативные формулировки для уровня монстров
-            var levelAltMatches = Regex.Matches(noteText, @"Уровень монстров остаётся прежним: \d+");
-            foreach (Match match in levelAltMatches)
+            foreach (Match match in chanceMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(176, 224, 230);
+                rt.SelectionColor = Color.FromArgb(100, 215, 240); // тоже примерно светло-голубой
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
         }
@@ -1803,8 +1809,8 @@ namespace MMMapEditor
                     }
                 }
 
-                // Форматирование для силы и уровня монстров
-                FormatMonsterStatChanges(notesTextBox, noteText);
+                // Форматирование для силы и уровня монстров, а так же шанса случайной встречи
+                FormatMonsterStatsAndEncounterChance(notesTextBox, noteText);
 
                 // Форматирование для информации о битве с монстрами
                 FormatMonsterBattleInfo(notesTextBox, noteText);
