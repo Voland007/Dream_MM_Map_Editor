@@ -1222,6 +1222,7 @@ namespace MMMapEditor
                 $"SURFACE: {surfaceText}\n\n" +
                 $"Самая опасная клетка: {loadResult.MostDangerousCell}\n" +
                 $"Самая безопасная клетка: {loadResult.MostPeacefulCell}\n\n" +
+                $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
                 $"Сила монстров: {loadResult.MonsterPower}\n" +
                 $"Уровень монстров: {loadResult.MonsterLevel}\n" +
                 $"Количество монстров в группе: {loadResult.MonsterBatchCount}";

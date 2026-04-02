@@ -261,6 +261,7 @@ namespace MMMapEditor
             public int PatchBase { get; set; }
         public int MostDangerousCell => StartAddress - 24;
         public int MostPeacefulCell => StartAddress - 27;
+        public int RandomEncounterChance => StartAddress - 21;
         public int MonsterPower => StartAddress - 17;
         public int MonsterLevel => StartAddress - 3;
         public int MonsterBatchCount => StartAddress - 16;

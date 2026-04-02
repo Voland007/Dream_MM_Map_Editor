@@ -38,6 +38,8 @@ namespace MMMapEditor
         public byte MonsterPower { get; set; }
         public byte MonsterLevel { get; set; }
         public byte MonsterBatchCount { get; set; }
+        public byte RandomEncounterChanceRaw { get; set; } //исходное шестнадцатеричное число из оверлейного файла
+        public double RandomEncounterChancePercent { get; set; } //рассчитанный % на основании RandomEncounterChanceRaw
 
         public Tuple<byte, byte> SurfaceCoords { get; set; }
         public string SectorMap { get; set; }
@@ -83,6 +85,8 @@ namespace MMMapEditor
             PrependNote(result.NotesPerCell, result.MostPeacefulCell,
                 "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
 
+            result.RandomEncounterChanceRaw = ReadByte(fileData, config.RandomEncounterChance);
+            result.RandomEncounterChancePercent = DecodeRandomEncounterChance(ReadByte(fileData, config.RandomEncounterChance));
             result.MonsterPower = ReadByte(fileData, config.MonsterPower);
             result.MonsterLevel = ReadByte(fileData, config.MonsterLevel);
             result.MonsterBatchCount = ReadByte(fileData, config.MonsterBatchCount);
@@ -126,6 +130,14 @@ namespace MMMapEditor
                 return 0;
 
             return fileData[address];
+        }
+
+        private static double DecodeRandomEncounterChance(byte value)
+        {
+            if (value == 0x00 || value == 0xFF)
+                return 0;
+
+            return (256 - value) * 100.0 / 256.0;
         }
 
         private static Tuple<byte, byte> ReadSurface(byte[] fileData, int xAddress, int yAddress)
