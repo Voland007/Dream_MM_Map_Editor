@@ -228,6 +228,9 @@ namespace MMMapEditor
                     variantContents[0] = monsterStatLines;
                 }
 
+                foreach (var key in variantContents.Keys.ToList())
+                    variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
+
                 StringBuilder newNotes = new StringBuilder();
 
                 if (variantContents.Count == 0)
@@ -264,6 +267,167 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+
+        private static List<string> NumberLootBlockIfNeeded(List<string> lines)
+        {
+            if (lines == null || lines.Count == 0)
+                return lines;
+
+            var result = new List<string>(lines);
+            var numberedIndexes = new HashSet<int>();
+
+            for (int i = 0; i < result.Count; i++)
+            {
+                if (!IsExplicitLootValueLine(result[i]))
+                    continue;
+
+                var entries = CollectLootEntries(result, i);
+                if (entries.Count <= 1)
+                    continue;
+
+                for (int entryNumber = 0; entryNumber < entries.Count; entryNumber++)
+                {
+                    int entryIndex = entries[entryNumber];
+                    if (numberedIndexes.Contains(entryIndex))
+                        continue;
+
+                    result[entryIndex] = $"{entryNumber + 1}) {RemoveExistingLootNumbering(result[entryIndex])}";
+                    numberedIndexes.Add(entryIndex);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<int> CollectLootEntries(List<string> lines, int anchorIndex)
+        {
+            var entries = new List<int> { anchorIndex };
+
+            for (int i = anchorIndex - 1; i >= 0; i--)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i]) || IsLootIntroLine(lines[i]))
+                    break;
+
+                if (IsPossibleLootItemLine(lines[i]))
+                {
+                    entries.Insert(0, i);
+                    continue;
+                }
+
+                break;
+            }
+
+            for (int i = anchorIndex + 1; i < lines.Count; i++)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i]) || IsLootIntroLine(lines[i]))
+                    break;
+
+                if (IsExplicitLootValueLine(lines[i]) || IsPossibleLootItemLine(lines[i]))
+                {
+                    entries.Add(i);
+                    continue;
+                }
+
+                break;
+            }
+
+            return entries.Distinct().ToList();
+        }
+
+        private static bool IsExplicitLootValueLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveExistingLootNumbering(line.Trim());
+            string upper = trimmed.ToUpperInvariant();
+
+            if (trimmed.StartsWith("предмет", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (upper.StartsWith("ITEM ") || upper.StartsWith("ITEM:"))
+                return true;
+
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^\d+\s+GEMS?$"))
+                return true;
+
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^GEMS?[:\s]+\d+$"))
+                return true;
+
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^\d+\s+GOLD$"))
+                return true;
+
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^GOLD[:\s]+\d+$"))
+                return true;
+
+            return false;
+        }
+
+        private static bool IsPossibleLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveExistingLootNumbering(line.Trim());
+            if (trimmed.Length == 0 || IsLootIntroLine(trimmed))
+                return false;
+
+            if (IsExplicitLootValueLine(trimmed))
+                return true;
+
+            if (trimmed.Length > 60)
+                return false;
+
+            if (trimmed.Contains("\"") || trimmed.Contains("...") || trimmed.Contains("! ") || trimmed.Contains("? "))
+                return false;
+
+            if (trimmed.Any(char.IsDigit))
+                return false;
+
+            if (trimmed.Contains(":") || trimmed.Contains(";") || trimmed.Contains(",") || trimmed.Contains("(") || trimmed.Contains(")"))
+                return false;
+
+            int letterCount = trimmed.Count(char.IsLetter);
+            if (letterCount == 0)
+                return false;
+
+            int upperCount = trimmed.Count(char.IsUpper);
+            return upperCount >= Math.Max(3, letterCount * 3 / 4);
+        }
+
+        private static bool IsLootIntroLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.Trim();
+            return trimmed.EndsWith(":");
+        }
+
+        private static string RemoveExistingLootNumbering(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+            int pos = 0;
+            while (pos < trimmed.Length && char.IsDigit(trimmed[pos]))
+                pos++;
+
+            if (pos == 0 || pos >= trimmed.Length)
+                return trimmed;
+
+            if (trimmed[pos] == '.' || trimmed[pos] == ')')
+            {
+                pos++;
+                while (pos < trimmed.Length && char.IsWhiteSpace(trimmed[pos]))
+                    pos++;
+                return trimmed.Substring(pos);
+            }
+
+            return trimmed;
         }
 
         private static string ExtractNoteText(string rawText)
