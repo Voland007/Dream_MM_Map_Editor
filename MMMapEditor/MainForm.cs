@@ -1644,6 +1644,80 @@ namespace MMMapEditor
         }
 
         /// <summary>
+        /// Форматирование для loot-блоков
+        /// </summary>
+        private void FormatLootBlocks(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText))
+                return;
+
+            // Подчёркиваем только имя контейнера внутри строки:
+            // "На ячейке находится GOLD CHEST в котором лежит:"
+            var containerLineMatches = Regex.Matches(
+                noteText,
+                @"На ячейке находится\s+(.*?)\s+в котором лежит:",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+            foreach (Match match in containerLineMatches)
+            {
+                if (!match.Success || match.Groups.Count < 2)
+                    continue;
+
+                Group containerNameGroup = match.Groups[1];
+                if (containerNameGroup.Length <= 0)
+                    continue;
+
+                rt.Select(containerNameGroup.Index, containerNameGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 215, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
+            var numberedLootMatches = Regex.Matches(noteText, @"^(\d+[\)\.]\s+)([^\n]+)$", RegexOptions.Multiline);
+            foreach (Match match in numberedLootMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 236, 139);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group numberGroup = match.Groups[1];
+                rt.Select(numberGroup.Index, numberGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 170, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                string body = match.Groups[2].Value;
+                int bodyStart = match.Groups[2].Index;
+
+                var valueMatch = Regex.Match(body, @"\b(\d+\s+GEMS?|GEMS?[:\s]+\d+|\d+\s+GOLD|GOLD[:\s]+\d+)\b", RegexOptions.IgnoreCase);
+                if (valueMatch.Success)
+                {
+                    rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(144, 238, 144);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                var itemMatch = Regex.Match(body, @"^(предмет\b|ITEM\b[:\s]*)", RegexOptions.IgnoreCase);
+                if (itemMatch.Success)
+                {
+                    rt.Select(bodyStart + itemMatch.Index, itemMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+                }
+            }
+
+            var singleLootValueMatches = Regex.Matches(noteText, @"^(предмет\b.*|ITEM[: ].*|\d+\s+GEMS?$|GEMS?[:\s]+\d+$|\d+\s+GOLD$|GOLD[:\s]+\d+$)$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            foreach (Match match in singleLootValueMatches)
+            {
+                bool startsWithNumbering = match.Value.Length > 0 && char.IsDigit(match.Value[0]);
+                if (startsWithNumbering)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 228, 120);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+        }
+
+        /// <summary>
         /// Вспомогательный метод для определения номера строки по позиции в тексте
         /// </summary>
         private int GetLineNumber(string text, int position)
@@ -1729,6 +1803,9 @@ namespace MMMapEditor
 
                 // НОВОЕ: Форматирование для частично определённых битв
                 FormatPartiallyDefinedBattles(notesTextBox, noteText);
+
+                // Форматирование для loot-блоков
+                FormatLootBlocks(notesTextBox, noteText);
             }
         }
 
