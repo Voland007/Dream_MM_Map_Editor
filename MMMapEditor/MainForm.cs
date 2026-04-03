@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1557,8 +1557,8 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(0xB539FF);
         }
 
-        // Теперь форматируем силу, уровень и шанс случайной встречи
-        private void FormatMonsterStatsAndEncounterChance(RichTextBox rt, string noteText)
+        // Теперь форматируем силу, уровень, освещённость и шанс случайной встречи
+        private void FormatMapLevelMetaParameters(RichTextBox rt, string noteText)
         {
             if (string.IsNullOrEmpty(noteText)) return;
 
@@ -1585,6 +1585,19 @@ namespace MMMapEditor
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(176, 224, 230); // более светлый голубой
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Уровень освещённости
+            var lightingMatches = Regex.Matches(
+                noteText,
+                @"Уровень освещённости (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+            );
+
+            foreach (Match match in lightingMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(140, 220, 255); // холодный голубой для освещённости
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
@@ -1826,8 +1839,8 @@ namespace MMMapEditor
                     }
                 }
 
-                // Форматирование для силы и уровня монстров, а так же шанса случайной встречи
-                FormatMonsterStatsAndEncounterChance(notesTextBox, noteText);
+                // Форматирование для силы, уровня, освещённости и шанса случайной встречи
+                FormatMapLevelMetaParameters(notesTextBox, noteText);
 
                 // Форматирование для информации о битве с монстрами
                 FormatMonsterBattleInfo(notesTextBox, noteText);
