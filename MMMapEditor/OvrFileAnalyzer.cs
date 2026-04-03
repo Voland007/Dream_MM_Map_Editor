@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -76,7 +76,8 @@ namespace MMMapEditor
                 }
 
                 // Чтение табличных объектов
-                var tableObjects = ReadTableObjects(br);
+                var tableReachableAddresses = new HashSet<uint>();
+                var tableObjects = ReadTableObjects(br, tableReachableAddresses);
                 objects.AddRange(tableObjects);
 
                 var tableObjectCoords = new HashSet<string>();
@@ -94,6 +95,9 @@ namespace MMMapEditor
                 var comparisons = _macroAnalyzer.FindAllCoordinateComparisons(br, allInstructions);
                 Debug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
 
+                comparisons = FilterComparisonsOutsideTableCode(comparisons, tableReachableAddresses);
+                Debug.WriteLine($"Сравнений координат после исключения кода табличных объектов: {comparisons.Count}");
+
                 // Обработка макросов (второй режим)
                 var macroObjects = ProcessMacros(br, comparisons, tableObjectCoords, existingCentralOptions);
                 objects.AddRange(macroObjects);
@@ -108,7 +112,35 @@ namespace MMMapEditor
             return objects;
         }
 
-        private List<OvrObject> ReadTableObjects(BinaryReader br)
+        private List<CoordinateComparison> FilterComparisonsOutsideTableCode(
+            List<CoordinateComparison> comparisons, HashSet<uint> tableReachableAddresses)
+        {
+            if (comparisons == null || comparisons.Count == 0 ||
+                tableReachableAddresses == null || tableReachableAddresses.Count == 0)
+            {
+                return comparisons ?? new List<CoordinateComparison>();
+            }
+
+            var filtered = new List<CoordinateComparison>();
+
+            foreach (var comparison in comparisons)
+            {
+                bool compareInTableCode = tableReachableAddresses.Contains(comparison.CompareAddress);
+                bool targetInTableCode = tableReachableAddresses.Contains(comparison.JumpTarget);
+
+                if (compareInTableCode || targetInTableCode)
+                {
+                    Debug.WriteLine($"Пропускаем comparison 0x{comparison.CompareAddress:X4} -> 0x{comparison.JumpTarget:X4}: адрес относится к коду табличного объекта");
+                    continue;
+                }
+
+                filtered.Add(comparison);
+            }
+
+            return filtered;
+        }
+
+        private List<OvrObject> ReadTableObjects(BinaryReader br, HashSet<uint> tableReachableAddresses)
         {
             var objects = new List<OvrObject>();
 
@@ -121,7 +153,7 @@ namespace MMMapEditor
 
             for (int i = 0; i < numObjects; i++)
             {
-                var obj = ProcessTableObject(br, i + 1, coordinates[i], directions[i], patchKeys[i]);
+                var obj = ProcessTableObject(br, i + 1, coordinates[i], directions[i], patchKeys[i], tableReachableAddresses);
                 obj.IsFromTable = true;
                 objects.Add(obj);
             }
@@ -130,7 +162,7 @@ namespace MMMapEditor
         }
 
         private OvrObject ProcessTableObject(BinaryReader br, int objIndex, Tuple<byte, byte> coords,
-            byte direction, ushort patchKey)
+            byte direction, ushort patchKey, HashSet<uint> tableReachableAddresses)
         {
             var ovrObject = new OvrObject
             {
@@ -158,6 +190,9 @@ namespace MMMapEditor
                 new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0, ovrObject.X, ovrObject.Y,
                 processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
 
+            foreach (var visitedAddress in mainPathResult.VisitedAddresses)
+                tableReachableAddresses.Add(visitedAddress);
+
             // Сбор результатов основного пути
             var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
             MergeMonsterInfo(mainPathResult, ovrObject);
@@ -181,7 +216,8 @@ namespace MMMapEditor
                     mainContextTexts, mainLocalTexts,
                     mainPathResult.FirstLocalTextAddress, br, debugMode ? ovrObject : null,
                     ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges,
-                    invalidateReturnRegistersAfterExternalCall: true);
+                    invalidateReturnRegistersAfterExternalCall: true,
+                    reachableAddresses: tableReachableAddresses);
             }
 
             // Формирование финальных путей

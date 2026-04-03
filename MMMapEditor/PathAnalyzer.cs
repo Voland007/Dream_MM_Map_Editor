@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -41,7 +41,8 @@ namespace MMMapEditor
             uint firstLocalTextAddress, BinaryReader br, OvrObject debugObject,
             byte targetX, byte targetY, List<PathResult> allResults, OvrObject ovrObject,
             HashSet<(uint From, uint To)> processedBackEdges = null,
-            bool invalidateReturnRegistersAfterExternalCall = false)
+            bool invalidateReturnRegistersAfterExternalCall = false,
+            HashSet<uint> reachableAddresses = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -73,6 +74,12 @@ namespace MMMapEditor
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall);
 
                 // Формируем тексты для этого пути с сохранением порядка
+                if (reachableAddresses != null)
+                {
+                    foreach (var visitedAddress in pathResult.VisitedAddresses)
+                        reachableAddresses.Add(visitedAddress);
+                }
+
                 var pathTexts = BuildPathTexts(path, pathResult, inheritedContextTexts,
                     inheritedLocalTexts, firstLocalTextAddress);
 
@@ -114,7 +121,7 @@ namespace MMMapEditor
                         newInheritedContextTexts, newInheritedLocalTexts,
                         firstLocalTextAddress, br, debugObject, targetX, targetY,
                         allResults, ovrObject, processedBackEdges,
-                        invalidateReturnRegistersAfterExternalCall);
+                        invalidateReturnRegistersAfterExternalCall, reachableAddresses);
                 }
             }
         }

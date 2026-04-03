@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -49,7 +49,11 @@ namespace MMMapEditor
             bool invalidateReturnRegistersAfterExternalCall = false)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
-            bool debugMode = debugObject != null || (pathId > 0 && debugObject?.X == 8 && debugObject?.Y == 0);
+            bool debugMode = debugObject != null || (pathId > 0 && (
+                (debugObject?.X == 8 && debugObject?.Y == 0) ||
+                (debugObject?.X == 5 && debugObject?.Y == 11) ||
+                (debugObject?.X == 14 && debugObject?.Y == 10)
+            ));
 
             if (depth > MAX_DEPTH || callDepth > MAX_CALL_DEPTH)
             {
@@ -94,6 +98,7 @@ namespace MMMapEditor
                         return result;
                     }
                     visitedInThisPath.Add(currentAddress);
+                    result.VisitedAddresses.Add(currentAddress);
 
                     if (!TryDisassembleNext(br, currentAddress, out X86Instruction insn))
                     {
@@ -417,6 +422,9 @@ namespace MMMapEditor
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall);
 
                 // Добавляем результаты из подпрограммы
+                foreach (var visitedAddress in subroutineResult.VisitedAddresses)
+                    result.VisitedAddresses.Add(visitedAddress);
+
                 var foundTextsInThisPath = new HashSet<string>();
                 foreach (var text in subroutineResult.FoundTexts)
                     if (!foundTextsInThisPath.Contains(text))
