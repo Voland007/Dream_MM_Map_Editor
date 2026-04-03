@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2025. All rights reserved.
+﻿// Copyright (c) Voland007 2025. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1225,6 +1225,7 @@ namespace MMMapEditor
                 $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
                 $"Сила монстров: {loadResult.MonsterPower}\n" +
                 $"Уровень монстров: {loadResult.MonsterLevel}\n" +
+                $"Уровень освещённости: {loadResult.LightingLevel}\n" +
                 $"Количество монстров в группе: {loadResult.MonsterBatchCount}";
 
             // Перерисовываем интерфейс
@@ -1815,7 +1816,7 @@ namespace MMMapEditor
                 // Форматирование для информации о битве с монстрами
                 FormatMonsterBattleInfo(notesTextBox, noteText);
 
-                // НОВОЕ: Форматирование для частично определённых битв
+                // Форматирование для частично определённых битв
                 FormatPartiallyDefinedBattles(notesTextBox, noteText);
 
                 // Форматирование для loot-блоков

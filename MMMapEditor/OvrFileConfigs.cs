@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -264,6 +264,7 @@ namespace MMMapEditor
         public int RandomEncounterChance => StartAddress - 21;
         public int MonsterPower => StartAddress - 17;
         public int MonsterLevel => StartAddress - 3;
+        public int LightingLevel => StartAddress - 4;
         public int MonsterBatchCount => StartAddress - 16;
         public int SurfaceX => StartAddress - 8;
         public int SurfaceY => StartAddress - 7;
