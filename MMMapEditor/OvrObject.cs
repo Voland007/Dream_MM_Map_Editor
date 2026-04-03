@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -42,6 +42,7 @@ namespace MMMapEditor
 
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? LightingLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
 
         #endregion
@@ -52,7 +53,7 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || RandomEncounterChance.HasValue;
+        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || LightingLevel.HasValue || RandomEncounterChance.HasValue;
 
         #endregion
 
@@ -293,6 +294,15 @@ namespace MMMapEditor
             if (newLevel > defaultLevel) return $"Уровень монстров увеличивается с {defaultLevel} до {newLevel}";
             if (newLevel < defaultLevel) return $"Уровень монстров уменьшается с {defaultLevel} до {newLevel}";
             return $"Уровень монстров остаётся прежним: {newLevel}";
+        }
+
+        public string GetLightingLevelDescription(byte defaultLightingLevel)
+        {
+            if (!LightingLevel.HasValue) return null;
+            byte newLightingLevel = LightingLevel.Value;
+            if (newLightingLevel > defaultLightingLevel) return $"Уровень освещённости увеличивается с {defaultLightingLevel} до {newLightingLevel}";
+            if (newLightingLevel < defaultLightingLevel) return $"Уровень освещённости уменьшается с {defaultLightingLevel} до {newLightingLevel}";
+            return $"Уровень освещённости остаётся прежним: {newLightingLevel}";
         }
 
         public string GetRandomEncounterChanceDescription(byte defaultChance)
@@ -596,25 +606,6 @@ namespace MMMapEditor
             result = Regex.Replace(result, @"\s+", " ");
 
             return result;
-        }
-
-        public string GetFullMonsterDescription(byte defaultPower, byte defaultLevel, byte defaultRandomEncounterChance)
-        {
-            var descriptions = new List<string>();
-
-            var powerDesc = GetMonsterPowerDescription(defaultPower);
-            if (powerDesc != null) descriptions.Add(powerDesc);
-
-            var levelDesc = GetMonsterLevelDescription(defaultLevel);
-            if (levelDesc != null) descriptions.Add(levelDesc);
-
-            var chanceDesc = GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
-            if (chanceDesc != null) descriptions.Add(chanceDesc);
-
-            var battleDesc = GetBattleDescription();
-            if (battleDesc != null) descriptions.Add(battleDesc);
-
-            return descriptions.Count > 0 ? string.Join("\n", descriptions) : null;
         }
 
         public bool HasAnyInfo =>

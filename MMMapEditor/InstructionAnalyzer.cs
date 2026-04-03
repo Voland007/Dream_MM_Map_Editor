@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -360,6 +360,15 @@ namespace MMMapEditor
                 result.MonsterLevel = monsterLevel;
                 Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ: {monsterLevel}");
             }
+            // MOV byte ptr [C96E], imm8 - уровень освещённости
+            else if (instructionBytes.Length >= 5 &&
+                     instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                     instructionBytes[2] == 0x6E && instructionBytes[3] == 0xC9)
+            {
+                byte lightingLevel = instructionBytes[4];
+                result.LightingLevel = lightingLevel;
+                Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ: {lightingLevel}");
+            }
             // MOV [C96F], CH
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
@@ -382,6 +391,17 @@ namespace MMMapEditor
                     Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ CH: {chValue}");
                 }
             }
+            // MOV [C95E], CH
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                     instructionBytes[2] == 0x5E && instructionBytes[3] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
+                {
+                    result.LightingLevel = chValue;
+                    Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ CH: {chValue}");
+                }
+            }
             // MOV [C96F], AL
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
@@ -402,6 +422,17 @@ namespace MMMapEditor
                 {
                     result.MonsterLevel = alValue;
                     Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ AL: {alValue}");
+                }
+            }
+            // MOV [C95E], AL
+            else if (instructionBytes.Length >= 3 &&
+                     instructionBytes[0] == 0xA2 &&
+                     instructionBytes[1] == 0x5E && instructionBytes[2] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    result.LightingLevel = alValue;
+                    Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ AL: {alValue}");
                 }
             }
             // MOV byte ptr [C95D], imm8 - шанс случайной встречи
