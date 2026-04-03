@@ -1600,7 +1600,7 @@ namespace MMMapEditor
             foreach (Match match in levelMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(176, 224, 230); // более светлый голубой
+                rt.SelectionColor = Color.FromArgb(120, 180, 245); // более светлый голубой
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
@@ -1613,7 +1613,7 @@ namespace MMMapEditor
             foreach (Match match in lightingMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(140, 220, 255); // холодный голубой для освещённости
+                rt.SelectionColor = Color.FromArgb(145, 130, 235); // 
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
@@ -1627,7 +1627,7 @@ namespace MMMapEditor
             foreach (Match match in chanceMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(100, 215, 240); // тоже примерно светло-голубой
+                rt.SelectionColor = Color.FromArgb(150, 160, 175); // 
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
         }
