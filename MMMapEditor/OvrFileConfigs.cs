@@ -1,35 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 ﻿using System.Collections.Generic;
 
 namespace MMMapEditor
@@ -260,6 +228,50 @@ namespace MMMapEditor
                 "5B 5B 5B 5B 5B 4F 48 48 D9 41 44 44 50 51 45 50"
             },
                 TextBaseAddr = 0xC59A,
+                PatchBase = 0x0B7F
+            },
+            ["CAVE1.OVR"] = new OvrFileConfig
+            {
+                StartAddress = 0x41D,
+                First16Lines = new[]
+                    {
+                "45 64 16 05 44 44 44 44 14 05 44 44 74 07 14 15",
+                "45 64 12 51 D5 D5 D5 D5 51 11 15 05 64 42 10 11",
+                "05 24 82 44 CC CC CC CC 44 50 11 11 05 54 11 11",
+                "41 50 09 14 5D 5D 5D 5D 45 44 50 11 11 75 13 11",
+                "45 54 41 50 05 44 04 44 44 44 44 50 01 54 11 11",
+                "95 95 45 54 11 15 11 15 05 44 44 54 11 75 13 11",
+                "89 08 44 84 90 51 11 11 91 95 95 55 41 54 11 11",
+                "19 11 05 18 09 14 11 11 09 48 58 15 05 44 50 11",
+                "51 11 41 50 41 50 11 11 11 05 14 11 D1 45 54 D1",
+                "45 D0 15 05 44 84 50 11 11 41 90 51 0D 44 44 1C",
+                "55 DD 51 11 05 18 05 50 41 44 48 44 10 05 54 11",
+                "45 8C 44 10 41 50 11 05 44 44 04 44 50 11 45 10",
+                "05 08 14 11 05 44 50 11 05 14 11 05 04 40 54 11",
+                "01 00 10 11 11 05 44 50 41 50 11 41 10 05 44 50",
+                "41 80 50 11 11 51 05 14 05 44 00 54 11 11 45 54",
+                "45 48 44 50 41 44 40 50 51 55 51 45 50 41 44 54"
+            },
+                Second16Lines = new[]
+                   {
+                "45 C4 15 05 44 44 44 44 14 05 44 44 44 05 94 95",
+                "45 C4 11 51 D5 55 55 55 51 11 15 05 44 40 10 11",
+                "05 84 41 44 80 80 80 80 44 50 11 11 05 54 11 11",
+                "41 50 81 14 D5 55 55 55 45 44 50 11 11 C5 11 11",
+                "45 54 41 50 05 44 04 44 44 44 44 50 01 54 11 11",
+                "15 15 45 54 11 15 11 15 A5 64 64 74 11 FF 10 11",
+                "01 00 44 04 10 51 11 11 31 15 15 55 41 54 11 11",
+                "91 11 05 90 81 14 11 11 01 40 50 15 05 44 50 11",
+                "51 11 41 50 41 50 11 11 11 05 14 11 51 45 54 11",
+                "45 50 15 05 44 04 50 11 11 41 90 51 01 44 44 14",
+                "55 FF 51 11 05 90 05 50 41 44 40 44 10 05 54 11",
+                "45 80 44 10 41 50 11 05 44 44 04 44 50 11 45 10",
+                "0D 08 1C 11 05 44 50 11 05 14 11 05 04 40 54 11",
+                "09 88 18 11 11 05 44 50 41 50 11 41 10 05 44 50",
+                "49 08 58 11 11 D1 05 14 05 44 00 54 11 11 45 54",
+                "45 C0 44 50 41 44 40 50 D1 55 D1 45 50 41 44 D4"
+            },
+                TextBaseAddr = 0xC555,
                 PatchBase = 0x0B7F
             },
 
