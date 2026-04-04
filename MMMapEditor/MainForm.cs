@@ -14,38 +14,6 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2025. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -2524,68 +2492,151 @@ namespace MMMapEditor
             Tuple<string, string, string, string> currentBorders = borders[pos];
             // Получаем текущие проходы клетки
             Tuple<int, int, int, int> currentPassages = passageDict[pos];
-            // Получаем текущие состоянии и закрытых дверях
+            // Получаем текущие состояния закрытых проходов
             Tuple<bool, bool, bool, bool> currentClosedStates = closedStates[pos];
 
-            // Проверяем нужные позиции и устанавливаем стены соответственно
-            if (firstBinaryRepresentation[^1] == '1') // самый младший бит
+            // ===== ЛЕВО =====
+            char leftFirstHi = firstBinaryRepresentation[^2];
+            char leftFirstLo = firstBinaryRepresentation[^1];
+            char leftSecondHi = secondBinaryRepresentation[^2];
+            char leftSecondLo = secondBinaryRepresentation[^1];
+
+            if (leftFirstLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, wallType, currentBorders.Item4); // стена слева
-                if (secondBinaryRepresentation[^1] == '0')
+                    currentBorders.Item1, currentBorders.Item2, wallType, currentBorders.Item4);
+
+                bool isOpenGrateOrSecret = leftSecondLo == '0';
+                bool isClosedDungeonGrate =
+                    isDungeon &&
+                    leftFirstHi == '1' && leftFirstLo == '1' &&
+                    leftSecondHi == '0' && leftSecondLo == '1';
+
+                if (isClosedDungeonGrate)
+                {
                     currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, currentPassages.Item2, isDungeon ? 2 : 3, currentPassages.Item4); // Решётка/секрет слева
+                        currentPassages.Item1, currentPassages.Item2, 2, currentPassages.Item4);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        currentClosedStates.Item1, currentClosedStates.Item2, true, currentClosedStates.Item4);
+                }
+                else if (isOpenGrateOrSecret)
+                {
+                    currentPassages = new Tuple<int, int, int, int>(
+                        currentPassages.Item1, currentPassages.Item2, isDungeon ? 2 : 3, currentPassages.Item4);
+                }
             }
-            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены, но во втором слое есть - ставим Барьер
-            else if (firstBinaryRepresentation[^1] == '0' && secondBinaryRepresentation[^1] == '1')
+            else if (leftFirstLo == '0' && leftSecondLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, "Барьер", currentBorders.Item4); // барьер слева
+                    currentBorders.Item1, currentBorders.Item2, "Барьер", currentBorders.Item4);
             }
 
-            if (firstBinaryRepresentation[^3] == '1') // третий бит справа
+            // ===== НИЗ =====
+            char bottomFirstHi = firstBinaryRepresentation[^4];
+            char bottomFirstLo = firstBinaryRepresentation[^3];
+            char bottomSecondHi = secondBinaryRepresentation[^4];
+            char bottomSecondLo = secondBinaryRepresentation[^3];
+
+            if (bottomFirstLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, wallType, currentBorders.Item3, currentBorders.Item4); // стена снизу
-                if (secondBinaryRepresentation[^3] == '0')
+                    currentBorders.Item1, wallType, currentBorders.Item3, currentBorders.Item4);
+
+                bool isOpenGrateOrSecret = bottomSecondLo == '0';
+                bool isClosedDungeonGrate =
+                    isDungeon &&
+                    bottomFirstHi == '1' && bottomFirstLo == '1' &&
+                    bottomSecondHi == '0' && bottomSecondLo == '1';
+
+                if (isClosedDungeonGrate)
+                {
                     currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, isDungeon ? 2 : 3, currentPassages.Item3, currentPassages.Item4); // Решётка/секрет снизу
+                        currentPassages.Item1, 2, currentPassages.Item3, currentPassages.Item4);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        currentClosedStates.Item1, true, currentClosedStates.Item3, currentClosedStates.Item4);
+                }
+                else if (isOpenGrateOrSecret)
+                {
+                    currentPassages = new Tuple<int, int, int, int>(
+                        currentPassages.Item1, isDungeon ? 2 : 3, currentPassages.Item3, currentPassages.Item4);
+                }
             }
-            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены снизу, но во втором слое есть - ставим Барьер
-            else if (firstBinaryRepresentation[^3] == '0' && secondBinaryRepresentation[^3] == '1')
+            else if (bottomFirstLo == '0' && bottomSecondLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, "Барьер", currentBorders.Item3, currentBorders.Item4); // барьер снизу
+                    currentBorders.Item1, "Барьер", currentBorders.Item3, currentBorders.Item4);
             }
 
-            if (firstBinaryRepresentation[^5] == '1') // пятый бит справа
+            // ===== ПРАВО =====
+            char rightFirstHi = firstBinaryRepresentation[^6];
+            char rightFirstLo = firstBinaryRepresentation[^5];
+            char rightSecondHi = secondBinaryRepresentation[^6];
+            char rightSecondLo = secondBinaryRepresentation[^5];
+
+            if (rightFirstLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, wallType); // стена справа
-                if (secondBinaryRepresentation[^5] == '0')
+                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, wallType);
+
+                bool isOpenGrateOrSecret = rightSecondLo == '0';
+                bool isClosedDungeonGrate =
+                    isDungeon &&
+                    rightFirstHi == '1' && rightFirstLo == '1' &&
+                    rightSecondHi == '0' && rightSecondLo == '1';
+
+                if (isClosedDungeonGrate)
+                {
                     currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, isDungeon ? 2 : 3); // Решётка/секрет справа
+                        currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 2);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        currentClosedStates.Item1, currentClosedStates.Item2, currentClosedStates.Item3, true);
+                }
+                else if (isOpenGrateOrSecret)
+                {
+                    currentPassages = new Tuple<int, int, int, int>(
+                        currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, isDungeon ? 2 : 3);
+                }
             }
-            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены справа, но во втором слое есть - ставим Барьер
-            else if (firstBinaryRepresentation[^5] == '0' && secondBinaryRepresentation[^5] == '1')
+            else if (rightFirstLo == '0' && rightSecondLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Барьер"); // барьер справа
+                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Барьер");
             }
 
-            if (firstBinaryRepresentation[^7] == '1') // седьмой бит справа
+            // ===== ВЕРХ =====
+            char topFirstHi = firstBinaryRepresentation[^8];
+            char topFirstLo = firstBinaryRepresentation[^7];
+            char topSecondHi = secondBinaryRepresentation[^8];
+            char topSecondLo = secondBinaryRepresentation[^7];
+
+            if (topFirstLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    wallType, currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // стена сверху
-                if (secondBinaryRepresentation[^7] == '0')
+                    wallType, currentBorders.Item2, currentBorders.Item3, currentBorders.Item4);
+
+                bool isOpenGrateOrSecret = topSecondLo == '0';
+                bool isClosedDungeonGrate =
+                    isDungeon &&
+                    topFirstHi == '1' && topFirstLo == '1' &&
+                    topSecondHi == '0' && topSecondLo == '1';
+
+                if (isClosedDungeonGrate)
+                {
                     currentPassages = new Tuple<int, int, int, int>(
-                    isDungeon ? 2 : 3, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4); // Решётка/секрет сверху
+                        2, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
+                }
+                else if (isOpenGrateOrSecret)
+                {
+                    currentPassages = new Tuple<int, int, int, int>(
+                        isDungeon ? 2 : 3, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
+                }
             }
-            // НОВОЕ УСЛОВИЕ: если в первом слое нет стены сверху, но во втором слое есть - ставим Барьер
-            else if (firstBinaryRepresentation[^7] == '0' && secondBinaryRepresentation[^7] == '1')
+            else if (topFirstLo == '0' && topSecondLo == '1')
             {
                 currentBorders = new Tuple<string, string, string, string>(
-                    "Барьер", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // барьер сверху
+                    "Барьер", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4);
             }
 
             // Дополнительные проверки для установки стен и проходов типа "дверь"
@@ -2595,11 +2646,12 @@ namespace MMMapEditor
                 bool isClosedDoor = secondBinaryRepresentation[^1] == '1';
 
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, wallType, currentBorders.Item4); // Стена слева
+                    currentBorders.Item1, currentBorders.Item2, wallType, currentBorders.Item4);
                 currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, currentPassages.Item2, isClosedGrate ? 2 : 1, currentPassages.Item4); // Дверь слева / закрытая решётка слева
+                    currentPassages.Item1, currentPassages.Item2, isClosedGrate ? 2 : 1, currentPassages.Item4);
                 if (isClosedGrate || isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(currentClosedStates.Item1, currentClosedStates.Item2, true, currentClosedStates.Item4);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        currentClosedStates.Item1, currentClosedStates.Item2, true, currentClosedStates.Item4);
             }
 
             if (firstBinaryRepresentation[^4] == '1' && firstBinaryRepresentation[^3] == '0')
@@ -2608,11 +2660,12 @@ namespace MMMapEditor
                 bool isClosedDoor = secondBinaryRepresentation[^3] == '1';
 
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, wallType, currentBorders.Item3, currentBorders.Item4); // Стена снизу
+                    currentBorders.Item1, wallType, currentBorders.Item3, currentBorders.Item4);
                 currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, isClosedGrate ? 2 : 1, currentPassages.Item3, currentPassages.Item4); // Дверь снизу / закрытая решётка снизу
+                    currentPassages.Item1, isClosedGrate ? 2 : 1, currentPassages.Item3, currentPassages.Item4);
                 if (isClosedGrate || isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(currentClosedStates.Item1, true, currentClosedStates.Item3, currentClosedStates.Item4);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        currentClosedStates.Item1, true, currentClosedStates.Item3, currentClosedStates.Item4);
             }
 
             if (firstBinaryRepresentation[^6] == '1' && firstBinaryRepresentation[^5] == '0')
@@ -2621,11 +2674,12 @@ namespace MMMapEditor
                 bool isClosedDoor = secondBinaryRepresentation[^5] == '1';
 
                 currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, wallType); // Стена справа
+                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, wallType);
                 currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, isClosedGrate ? 2 : 1); // Дверь справа / закрытая решётка справа
+                    currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, isClosedGrate ? 2 : 1);
                 if (isClosedGrate || isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(currentClosedStates.Item1, currentClosedStates.Item2, currentClosedStates.Item3, true);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        currentClosedStates.Item1, currentClosedStates.Item2, currentClosedStates.Item3, true);
             }
 
             if (firstBinaryRepresentation[^8] == '1' && firstBinaryRepresentation[^7] == '0')
@@ -2634,24 +2688,28 @@ namespace MMMapEditor
                 bool isClosedDoor = secondBinaryRepresentation[^7] == '1';
 
                 currentBorders = new Tuple<string, string, string, string>(
-                    wallType, currentBorders.Item2, currentBorders.Item3, currentBorders.Item4); // Стена сверху
+                    wallType, currentBorders.Item2, currentBorders.Item3, currentBorders.Item4);
                 currentPassages = new Tuple<int, int, int, int>(
-                    isClosedGrate ? 2 : 1, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4); // Дверь сверху / закрытая решётка сверху
+                    isClosedGrate ? 2 : 1, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
                 if (isClosedGrate || isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
+                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
+                        true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
             }
 
             if (secondBinaryRepresentation[^4] == '1')
                 isDangerStates[pos] = true;
-            else isDangerStates[pos] = false;
+            else
+                isDangerStates[pos] = false;
 
             if (secondBinaryRepresentation[^6] == '1')
                 lightingLevels[pos] = Lighting.Dark;
-            else lightingLevels[pos] = Lighting.Light;
+            else
+                lightingLevels[pos] = Lighting.Light;
 
             if (secondBinaryRepresentation[^2] == '1')
                 noMagicStates[pos] = true;
-            else noMagicStates[pos] = false;
+            else
+                noMagicStates[pos] = false;
 
             if (secondBinaryRepresentation[^8] == '1')
             {
@@ -2660,13 +2718,9 @@ namespace MMMapEditor
             else
                 centralOptions[pos] = "Пустота";
 
-
-            // Обновляем границы клетки
             borders[pos] = currentBorders;
             passageDict[pos] = currentPassages;
             closedStates[pos] = currentClosedStates;
-
-            // Остальные параметры клеток устанавливаются стандартно
 
             messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
             notesPerCell[pos] = "";
