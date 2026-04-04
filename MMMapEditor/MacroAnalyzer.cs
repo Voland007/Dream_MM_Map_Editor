@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -103,7 +103,7 @@ namespace MMMapEditor
                     IsLinear = false
                 });
 
-                Debug.WriteLine($"  Найдено сравнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={firstImmValue} -> 0x{jumpTarget:X4} ({nextInsn.Mnemonic}) [{coordType}]");
+                AnalysisDebug.WriteLine($"  Найдено сравнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={firstImmValue} -> 0x{jumpTarget:X4} ({nextInsn.Mnemonic}) [{coordType}]");
 
                 j++;
             }
@@ -116,7 +116,7 @@ namespace MMMapEditor
                 // Если следующая инструкция - снова сравнение, пропускаем линейное выполнение
                 if (IsCompareWithImmediate(nextInsn, out _, out _))
                 {
-                    Debug.WriteLine($"  Пропуск линейного выполнения: следующая инструкция - сравнение по адресу 0x{nextInsn.Address:X4}");
+                    AnalysisDebug.WriteLine($"  Пропуск линейного выполнения: следующая инструкция - сравнение по адресу 0x{nextInsn.Address:X4}");
                     return result;
                 }
 
@@ -138,7 +138,7 @@ namespace MMMapEditor
                         LinearEnd = linearRange.Value.end
                     });
 
-                    Debug.WriteLine($"  Найдено линейное выполнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={lastCompareValue} -> 0x{allInstructions[j].Address:X4} для значений [{linearRange.Value.start}-{linearRange.Value.end}] [{coordType}]");
+                    AnalysisDebug.WriteLine($"  Найдено линейное выполнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={lastCompareValue} -> 0x{allInstructions[j].Address:X4} для значений [{linearRange.Value.start}-{linearRange.Value.end}] [{coordType}]");
                 }
             }
 
@@ -518,7 +518,7 @@ namespace MMMapEditor
 
         public uint? FindDefaultPathAfterTableLoop(List<X86Instruction> allInstructions)
         {
-            Debug.WriteLine("Поиск пути по умолчанию после табличного цикла...");
+            AnalysisDebug.WriteLine("Поиск пути по умолчанию после табличного цикла...");
 
             for (int i = 0; i < allInstructions.Count - 10; i++)
             {
@@ -544,7 +544,7 @@ namespace MMMapEditor
                             allInstructions[i + 2].Bytes[2] == 0x73 &&
                             allInstructions[i + 2].Bytes[3] == 0xC9)
                         {
-                            Debug.WriteLine($"  Найден паттерн начала табличного цикла по адресу 0x{allInstructions[i].Address:X4}");
+                            AnalysisDebug.WriteLine($"  Найден паттерн начала табличного цикла по адресу 0x{allInstructions[i].Address:X4}");
 
                             // Ищем JC/JB для возврата в цикл
                             for (int j = i + 3; j < i + 15 && j < allInstructions.Count; j++)
@@ -554,7 +554,7 @@ namespace MMMapEditor
                                      allInstructions[j].Mnemonic.ToUpper() == "JB" ||
                                      allInstructions[j].Mnemonic.ToUpper() == "JNAE"))
                                 {
-                                    Debug.WriteLine($"  Найден переход цикла по адресу 0x{allInstructions[j].Address:X4}");
+                                    AnalysisDebug.WriteLine($"  Найден переход цикла по адресу 0x{allInstructions[j].Address:X4}");
 
                                     // Ищем инструкцию после цикла (путь по умолчанию)
                                     for (int k = j + 1; k < j + 10 && k < allInstructions.Count; k++)
@@ -569,8 +569,8 @@ namespace MMMapEditor
                                             uint defaultPathAddress = (uint)allInstructions[k].Address;
                                             ushort textAddr = BitConverter.ToUInt16(allInstructions[k].Bytes, 4);
 
-                                            Debug.WriteLine($"  Найден путь по умолчанию после табличного цикла: 0x{defaultPathAddress:X4}");
-                                            Debug.WriteLine($"    Загружается текст из 0x{textAddr:X4}");
+                                            AnalysisDebug.WriteLine($"  Найден путь по умолчанию после табличного цикла: 0x{defaultPathAddress:X4}");
+                                            AnalysisDebug.WriteLine($"    Загружается текст из 0x{textAddr:X4}");
 
                                             return defaultPathAddress;
                                         }
@@ -580,7 +580,7 @@ namespace MMMapEditor
                                     if (j + 1 < allInstructions.Count)
                                     {
                                         uint defaultPathAddress = (uint)allInstructions[j + 1].Address;
-                                        Debug.WriteLine($"  Путь по умолчанию (первая инструкция после цикла): 0x{defaultPathAddress:X4}");
+                                        AnalysisDebug.WriteLine($"  Путь по умолчанию (первая инструкция после цикла): 0x{defaultPathAddress:X4}");
                                         return defaultPathAddress;
                                     }
                                 }
@@ -619,15 +619,15 @@ namespace MMMapEditor
                         uint defaultPathAddress = (uint)allInstructions[i].Address;
                         ushort textAddr = BitConverter.ToUInt16(allInstructions[i].Bytes, 4);
 
-                        Debug.WriteLine($"  Найден путь по умолчанию (альтернативный поиск): 0x{defaultPathAddress:X4}");
-                        Debug.WriteLine($"    Загружается текст из 0x{textAddr:X4}");
+                        AnalysisDebug.WriteLine($"  Найден путь по умолчанию (альтернативный поиск): 0x{defaultPathAddress:X4}");
+                        AnalysisDebug.WriteLine($"    Загружается текст из 0x{textAddr:X4}");
 
                         return defaultPathAddress;
                     }
                 }
             }
 
-            Debug.WriteLine("  Путь по умолчанию не найден");
+            AnalysisDebug.WriteLine("  Путь по умолчанию не найден");
             return null;
         }
     }

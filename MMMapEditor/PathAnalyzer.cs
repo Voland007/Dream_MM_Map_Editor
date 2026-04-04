@@ -29,6 +29,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -54,7 +70,7 @@ namespace MMMapEditor
 
         public void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
             List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
-            uint firstLocalTextAddress, BinaryReader br, OvrObject debugObject,
+            uint firstLocalTextAddress, BinaryReader br,
             byte targetX, byte targetY, List<PathResult> allResults, OvrObject ovrObject,
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false,
@@ -76,17 +92,17 @@ namespace MMMapEditor
                 int currentPathId = basePathId * 10 + localCounter;
                 localCounter++;
 
-                bool debugMode = debugObject != null;
+                bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
 
                 if (debugMode)
                 {
-                    Debug.WriteLine($"\n  Анализ пути {currentPathId} (глубина {depth}) -> 0x{path.TargetAddress:X4} ({path.Condition})");
+                    AnalysisDebug.WriteLine($"\n  Анализ пути {currentPathId} (глубина {depth}) -> 0x{path.TargetAddress:X4} ({path.Condition})");
                 }
 
                 // Продолжаем путь с тем состоянием регистров, которое было в точке ветвления
                 var pathRegisterTracker = path.RegisterState?.Clone() ?? new RegisterTracker();
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
-                    new HashSet<uint>(), depth + 1, 0, debugObject, currentPathId, targetX, targetY,
+                    new HashSet<uint>(), depth + 1, 0, currentPathId, targetX, targetY,
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -112,10 +128,10 @@ namespace MMMapEditor
 
                 if (debugMode && pathTexts.Count > 0)
                 {
-                    Debug.WriteLine($"      Найдено текстов в пути {currentPathId}: {pathTexts.Count} (листовой: {isLeaf})");
+                    AnalysisDebug.WriteLine($"      Найдено текстов в пути {currentPathId}: {pathTexts.Count} (листовой: {isLeaf})");
                     foreach (var text in pathTexts.OrderBy(t => t.Order))
                     {
-                        Debug.WriteLine($"        [{text.Order}] {(text.IsContextual ? "C" : "L")}: {text.Text}");
+                        AnalysisDebug.WriteLine($"        [{text.Order}] {(text.IsContextual ? "C" : "L")}: {text.Text}");
                     }
                 }
 
@@ -131,11 +147,11 @@ namespace MMMapEditor
                 {
                     if (debugMode)
                     {
-                        Debug.WriteLine($"      Найдено {pathResult.AlternativePaths.Count} вложенных путей");
+                        AnalysisDebug.WriteLine($"      Найдено {pathResult.AlternativePaths.Count} вложенных путей");
                     }
                     ProcessPaths(pathResult.AlternativePaths, currentPathId, depth + 1,
                         newInheritedContextTexts, newInheritedLocalTexts,
-                        firstLocalTextAddress, br, debugObject, targetX, targetY,
+                        firstLocalTextAddress, br, targetX, targetY,
                         allResults, ovrObject, processedBackEdges,
                         invalidateReturnRegistersAfterExternalCall, reachableAddresses);
                 }

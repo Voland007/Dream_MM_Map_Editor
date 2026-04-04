@@ -1,3 +1,19 @@
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -62,10 +78,10 @@ namespace MMMapEditor
 
                 // Поиск макросов
                 var comparisons = _macroAnalyzer.FindAllCoordinateComparisons(br, allInstructions);
-                Debug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
+                AnalysisDebug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
 
                 comparisons = FilterComparisonsOutsideTableCode(comparisons, tableReachableAddresses);
-                Debug.WriteLine($"Сравнений координат после исключения кода табличных объектов: {comparisons.Count}");
+                AnalysisDebug.WriteLine($"Сравнений координат после исключения кода табличных объектов: {comparisons.Count}");
 
                 // Обработка макросов (второй режим)
                 var macroObjects = ProcessMacros(br, comparisons, tableObjectCoords, existingCentralOptions);
@@ -75,7 +91,7 @@ namespace MMMapEditor
                 var defaultPathObjects = ProcessDefaultPath(br, allInstructions, tableObjectCoords, existingCentralOptions, objects);
                 objects.AddRange(defaultPathObjects);
 
-                Debug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
+                AnalysisDebug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
             }
 
             return objects;
@@ -99,7 +115,7 @@ namespace MMMapEditor
 
                 if (compareInTableCode || targetInTableCode)
                 {
-                    Debug.WriteLine($"Пропускаем comparison 0x{comparison.CompareAddress:X4} -> 0x{comparison.JumpTarget:X4}: адрес относится к коду табличного объекта");
+                    AnalysisDebug.WriteLine($"Пропускаем comparison 0x{comparison.CompareAddress:X4} -> 0x{comparison.JumpTarget:X4}: адрес относится к коду табличного объекта");
                     continue;
                 }
 
@@ -140,83 +156,86 @@ namespace MMMapEditor
                 DirectionByte = direction
             };
 
-            uint patchAddress = CalculatePatchAddress(patchKey);
-            bool debugMode = (ovrObject.X == 7 && ovrObject.Y == 2);
-
-            if (debugMode)
+            using (AnalysisDebug.BeginCellScope(ovrObject))
             {
-                Debug.WriteLine($"\n=== ОБРАБОТКА ОБЪЕКТА ({ovrObject.X},{ovrObject.Y}) ===");
-                Debug.WriteLine($"PatchAddress: 0x{patchAddress:X4}");
-            }
+                uint patchAddress = CalculatePatchAddress(patchKey);
+                bool debugMode = AnalysisDebug.IsEnabledFor(ovrObject);
 
-            // Анализ основного пути
-            var mainRegisterTracker = new RegisterTracker();
-            SetInitialRegistersFromCoordinates(mainRegisterTracker, ovrObject.X, ovrObject.Y, patchAddress);
-
-            var processedBackEdges = new HashSet<(uint From, uint To)>();
-
-            var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
-                new HashSet<uint>(), 0, 0, debugMode ? ovrObject : null, 0, ovrObject.X, ovrObject.Y,
-                processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
-
-            foreach (var visitedAddress in mainPathResult.VisitedAddresses)
-                tableReachableAddresses.Add(visitedAddress);
-
-            // Сбор результатов основного пути
-            var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
-            MergeMonsterInfo(mainPathResult, ovrObject);
-
-            // Обработка альтернативных путей
-            var allResults = new List<PathResult>();
-            allResults.Add(CreatePathResult(1, mainLocalTexts, mainContextTexts, mainPathResult.AlternativePaths.Count == 0));
-
-            if (mainPathResult.AlternativePaths.Count > 0)
-            {
                 if (debugMode)
                 {
-                    Debug.WriteLine($"\nСобрано путей из основного анализа: {mainPathResult.AlternativePaths.Count}");
-                    foreach (var path in mainPathResult.AlternativePaths)
-                    {
-                        Debug.WriteLine($"  Путь: 0x{path.Address:X4} -> 0x{path.TargetAddress:X4} ({path.Condition})");
-                    }
+                    AnalysisDebug.WriteLine($"\n=== ОБРАБОТКА ОБЪЕКТА ({ovrObject.X},{ovrObject.Y}) ===");
+                    AnalysisDebug.WriteLine($"PatchAddress: 0x{patchAddress:X4}");
                 }
 
-                _pathAnalyzer.ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
-                    mainContextTexts, mainLocalTexts,
-                    mainPathResult.FirstLocalTextAddress, br, debugMode ? ovrObject : null,
-                    ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges,
-                    invalidateReturnRegistersAfterExternalCall: true,
-                    reachableAddresses: tableReachableAddresses);
-            }
+                // Анализ основного пути
+                var mainRegisterTracker = new RegisterTracker();
+                SetInitialRegistersFromCoordinates(mainRegisterTracker, ovrObject.X, ovrObject.Y, patchAddress);
 
-            // Формирование финальных путей
-            var finalOrderedPaths = _pathAnalyzer.BuildFinalPaths(allResults);
+                var processedBackEdges = new HashSet<(uint From, uint To)>();
 
-            // Сохраняем оба представления
-            ovrObject.PathTexts = new Dictionary<int, HashSet<string>>();
-            ovrObject.PathTextsOrdered = new Dictionary<int, List<string>>();
+                var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
+                    new HashSet<uint>(), 0, 0, 0, ovrObject.X, ovrObject.Y,
+                    processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
 
-            foreach (var kvp in finalOrderedPaths)
-            {
-                ovrObject.PathTexts[kvp.Key] = new HashSet<string>(kvp.Value);
-                ovrObject.PathTextsOrdered[kvp.Key] = kvp.Value;
-            }
+                foreach (var visitedAddress in mainPathResult.VisitedAddresses)
+                    tableReachableAddresses.Add(visitedAddress);
 
-            if (debugMode)
-            {
-                Debug.WriteLine($"\n    ИТОГО для клетки ({ovrObject.X},{ovrObject.Y}):");
-                Debug.WriteLine($"      Всего путей: {ovrObject.PathTextsOrdered.Count}");
-                foreach (var kvp in ovrObject.PathTextsOrdered.OrderBy(k => k.Key))
+                // Сбор результатов основного пути
+                var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
+                MergeMonsterInfo(mainPathResult, ovrObject);
+
+                // Обработка альтернативных путей
+                var allResults = new List<PathResult>();
+                allResults.Add(CreatePathResult(1, mainLocalTexts, mainContextTexts, mainPathResult.AlternativePaths.Count == 0));
+
+                if (mainPathResult.AlternativePaths.Count > 0)
                 {
-                    Debug.WriteLine($"      Path {kvp.Key}: {kvp.Value.Count} текстов");
-                    foreach (var text in kvp.Value)
+                    if (debugMode)
                     {
-                        Debug.WriteLine($"        {text}");
+                        AnalysisDebug.WriteLine($"\nСобрано путей из основного анализа: {mainPathResult.AlternativePaths.Count}");
+                        foreach (var path in mainPathResult.AlternativePaths)
+                        {
+                            AnalysisDebug.WriteLine($"  Путь: 0x{path.Address:X4} -> 0x{path.TargetAddress:X4} ({path.Condition})");
+                        }
+                    }
+
+                    _pathAnalyzer.ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
+                        mainContextTexts, mainLocalTexts,
+                        mainPathResult.FirstLocalTextAddress, br,
+                        ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges,
+                        invalidateReturnRegistersAfterExternalCall: true,
+                        reachableAddresses: tableReachableAddresses);
+                }
+
+                // Формирование финальных путей
+                var finalOrderedPaths = _pathAnalyzer.BuildFinalPaths(allResults);
+
+                // Сохраняем оба представления
+                ovrObject.PathTexts = new Dictionary<int, HashSet<string>>();
+                ovrObject.PathTextsOrdered = new Dictionary<int, List<string>>();
+
+                foreach (var kvp in finalOrderedPaths)
+                {
+                    ovrObject.PathTexts[kvp.Key] = new HashSet<string>(kvp.Value);
+                    ovrObject.PathTextsOrdered[kvp.Key] = kvp.Value;
+                }
+
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine($"\n    ИТОГО для клетки ({ovrObject.X},{ovrObject.Y}):");
+                    AnalysisDebug.WriteLine($"      Всего путей: {ovrObject.PathTextsOrdered.Count}");
+                    foreach (var kvp in ovrObject.PathTextsOrdered.OrderBy(k => k.Key))
+                    {
+                        AnalysisDebug.WriteLine($"      Path {kvp.Key}: {kvp.Value.Count} текстов");
+                        foreach (var text in kvp.Value)
+                        {
+                            AnalysisDebug.WriteLine($"        {text}");
+                        }
                     }
                 }
-            }
 
-            return ovrObject;
+                return ovrObject;
+            }
         }
 
         private List<OvrObject> ProcessMacros(BinaryReader br, List<CoordinateComparison> comparisons,
@@ -226,7 +245,7 @@ namespace MMMapEditor
 
             foreach (var comparison in comparisons)
             {
-                Debug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
+                AnalysisDebug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
 
                 bool isX = (comparison.CoordType == CoordType.XCoord);
                 bool isY = (comparison.CoordType == CoordType.YCoord);
@@ -238,7 +257,7 @@ namespace MMMapEditor
                 {
                     targetX = (byte)(comparison.Value & 0x0F);
                     targetY = (byte)(comparison.Value >> 4);
-                    Debug.WriteLine($"  Полная координата: X={targetX}, Y={targetY} (значение 0x{comparison.Value:X2})");
+                    AnalysisDebug.WriteLine($"  Полная координата: X={targetX}, Y={targetY} (значение 0x{comparison.Value:X2})");
                 }
 
                 // Сбор альтернативных путей
@@ -262,12 +281,12 @@ namespace MMMapEditor
                     (comparison.JumpType.ToUpper() == "JE" || comparison.JumpType.ToUpper() == "JZ") && isFull)
                 {
                     hasSignificantCode = true;
-                    Debug.WriteLine($"  Макрос JE/JZ для полной координаты считается значимым по умолчанию");
+                    AnalysisDebug.WriteLine($"  Макрос JE/JZ для полной координаты считается значимым по умолчанию");
                 }
 
                 if (!hasSignificantCode)
                 {
-                    Debug.WriteLine("  -> нет значимого кода, пропускаем");
+                    AnalysisDebug.WriteLine("  -> нет значимого кода, пропускаем");
                     continue;
                 }
 
@@ -286,11 +305,11 @@ namespace MMMapEditor
 
                 if (validCells.Count == 0)
                 {
-                    Debug.WriteLine("  Нет подходящих клеток для применения макроса.");
+                    AnalysisDebug.WriteLine("  Нет подходящих клеток для применения макроса.");
                     continue;
                 }
 
-                Debug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
+                AnalysisDebug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
 
                 int objectsCreated = 0;
                 foreach (var cellPos in validCells)
@@ -301,7 +320,7 @@ namespace MMMapEditor
                     objectsCreated++;
                 }
 
-                Debug.WriteLine($"  -> создано объектов из макроса: {objectsCreated}");
+                AnalysisDebug.WriteLine($"  -> создано объектов из макроса: {objectsCreated}");
             }
 
             return objects;
@@ -326,11 +345,17 @@ namespace MMMapEditor
             var partialBattleInfo = new List<PartialBattleInfo>();
             bool hasPartialBattlePattern = false;
 
+            IDisposable debugScope = comparison.CoordType == CoordType.FullCoord
+                ? AnalysisDebug.BeginCellScope(targetX, targetY)
+                : null;
+            try
+            {
+
             // Анализ основного пути
             var mainRegisterTracker = new RegisterTracker();
             var macroProcessedBackEdges = new HashSet<(uint From, uint To)>();
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
-                new HashSet<uint>(), 0, 0, null, 0, targetX, targetY, macroProcessedBackEdges);
+                new HashSet<uint>(), 0, 0, 0, targetX, targetY, macroProcessedBackEdges);
 
             MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel, ref lightingLevel, ref randomEncounterChance, ref battleMonsterCount,
                 ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
@@ -346,13 +371,18 @@ namespace MMMapEditor
 
                 var pathRegisterTracker = new RegisterTracker();
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
-                    new HashSet<uint>(), 0, 0, null, 0, targetX, targetY);
+                    new HashSet<uint>(), 0, 0, 0, targetX, targetY);
 
                 MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel, ref lightingLevel, ref randomEncounterChance, ref battleMonsterCount,
                     ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
             }
 
             return (allTexts, monsterPower, monsterLevel, lightingLevel, randomEncounterChance, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
+            }
+            finally
+            {
+                debugScope?.Dispose();
+            }
         }
 
         private List<OvrObject> ProcessDefaultPath(BinaryReader br, List<X86Instruction> allInstructions,
@@ -366,72 +396,75 @@ namespace MMMapEditor
             if (!defaultPathAddress.HasValue)
                 return objects;
 
-            Debug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
-            Debug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
-
-            var defaultRegisterTracker = new RegisterTracker();
-            var defaultPathResult = _codeExecutor.ExecuteCodeAtAddress(br, defaultPathAddress.Value, defaultRegisterTracker,
-                new HashSet<uint>(), 0, 0, null, 0, 0, 0);
-
-            // Сбор текстов
-            var defaultTexts = new HashSet<string>();
-            foreach (var text in defaultPathResult.FoundTexts)
-                defaultTexts.Add(text);
-            foreach (var text in defaultPathResult.ContextTexts)
-                defaultTexts.Add(text);
-
-            bool hasSignificantCode = defaultTexts.Count > 0 ||
-                                      defaultPathResult.MonsterPower.HasValue ||
-                                      defaultPathResult.MonsterLevel.HasValue ||
-                                      defaultPathResult.LightingLevel.HasValue ||
-                                      defaultPathResult.RandomEncounterChance.HasValue ||
-                                      defaultPathResult.BattleMonsterEntries.Count > 0 ||
-                                      defaultPathResult.PartialBattles.Count > 0;
-
-            if (!hasSignificantCode)
+            using (AnalysisDebug.BeginCellScope(0, 0))
             {
-                Debug.WriteLine($"  Путь по умолчанию не содержит значимого кода");
+                AnalysisDebug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
+                AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
+
+                var defaultRegisterTracker = new RegisterTracker();
+                var defaultPathResult = _codeExecutor.ExecuteCodeAtAddress(br, defaultPathAddress.Value, defaultRegisterTracker,
+                    new HashSet<uint>(), 0, 0, 0, 0, 0);
+
+                // Сбор текстов
+                var defaultTexts = new HashSet<string>();
+                foreach (var text in defaultPathResult.FoundTexts)
+                    defaultTexts.Add(text);
+                foreach (var text in defaultPathResult.ContextTexts)
+                    defaultTexts.Add(text);
+
+                bool hasSignificantCode = defaultTexts.Count > 0 ||
+                                          defaultPathResult.MonsterPower.HasValue ||
+                                          defaultPathResult.MonsterLevel.HasValue ||
+                                          defaultPathResult.LightingLevel.HasValue ||
+                                          defaultPathResult.RandomEncounterChance.HasValue ||
+                                          defaultPathResult.BattleMonsterEntries.Count > 0 ||
+                                          defaultPathResult.PartialBattles.Count > 0;
+
+                if (!hasSignificantCode)
+                {
+                    AnalysisDebug.WriteLine($"  Путь по умолчанию не содержит значимого кода");
+                    return objects;
+                }
+
+                AnalysisDebug.WriteLine($"  Найден значимый код в пути по умолчанию:");
+                AnalysisDebug.WriteLine($"    Текстов: {defaultTexts.Count}");
+                AnalysisDebug.WriteLine($"    MonsterPower: {defaultPathResult.MonsterPower}");
+                AnalysisDebug.WriteLine($"    MonsterLevel: {defaultPathResult.MonsterLevel}");
+                AnalysisDebug.WriteLine($"    LightingLevel: {defaultPathResult.LightingLevel}");
+                AnalysisDebug.WriteLine($"    RandomEncounterChance: {defaultPathResult.RandomEncounterChance}");
+                AnalysisDebug.WriteLine($"    BattleMonsters: {defaultPathResult.BattleMonsterEntries.Count}");
+
+                // Создание объектов для всех подходящих клеток
+                int objectsCreated = 0;
+                for (byte x = 0; x < 16; x++)
+                {
+                    for (byte y = 0; y < 16; y++)
+                    {
+                        var cellPos = new Point(x, y);
+                        string coordKey = $"{x},{y}";
+
+                        if (tableObjectCoords.Contains(coordKey))
+                            continue;
+
+                        bool isRandomEncounter = existingCentralOptions.TryGetValue(cellPos, out string option) &&
+                                                 option == "Случайная встреча";
+
+                        if (!isRandomEncounter)
+                            continue;
+
+                        bool alreadyExists = existingObjects.Any(o => o.X == x && o.Y == y);
+                        if (alreadyExists)
+                            continue;
+
+                        var obj = CreateDefaultObject(cellPos, defaultPathResult, defaultTexts);
+                        objects.Add(obj);
+                        objectsCreated++;
+                    }
+                }
+
+                AnalysisDebug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
                 return objects;
             }
-
-            Debug.WriteLine($"  Найден значимый код в пути по умолчанию:");
-            Debug.WriteLine($"    Текстов: {defaultTexts.Count}");
-            Debug.WriteLine($"    MonsterPower: {defaultPathResult.MonsterPower}");
-            Debug.WriteLine($"    MonsterLevel: {defaultPathResult.MonsterLevel}");
-            Debug.WriteLine($"    LightingLevel: {defaultPathResult.LightingLevel}");
-            Debug.WriteLine($"    RandomEncounterChance: {defaultPathResult.RandomEncounterChance}");
-            Debug.WriteLine($"    BattleMonsters: {defaultPathResult.BattleMonsterEntries.Count}");
-
-            // Создание объектов для всех подходящих клеток
-            int objectsCreated = 0;
-            for (byte x = 0; x < 16; x++)
-            {
-                for (byte y = 0; y < 16; y++)
-                {
-                    var cellPos = new Point(x, y);
-                    string coordKey = $"{x},{y}";
-
-                    if (tableObjectCoords.Contains(coordKey))
-                        continue;
-
-                    bool isRandomEncounter = existingCentralOptions.TryGetValue(cellPos, out string option) &&
-                                             option == "Случайная встреча";
-
-                    if (!isRandomEncounter)
-                        continue;
-
-                    bool alreadyExists = existingObjects.Any(o => o.X == x && o.Y == y);
-                    if (alreadyExists)
-                        continue;
-
-                    var obj = CreateDefaultObject(cellPos, defaultPathResult, defaultTexts);
-                    objects.Add(obj);
-                    objectsCreated++;
-                }
-            }
-
-            Debug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
-            return objects;
         }
 
         // Вспомогательные методы
@@ -503,7 +536,7 @@ namespace MMMapEditor
                 }
             }
 
-            Debug.WriteLine($"Дизассемблировано инструкций: {instructions.Count}");
+            AnalysisDebug.WriteLine($"Дизассемблировано инструкций: {instructions.Count}");
             return instructions;
         }
 
@@ -756,7 +789,7 @@ namespace MMMapEditor
 
             if (comparison.IsLinear)
             {
-                Debug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}] [{comparison.CoordType}]");
+                AnalysisDebug.WriteLine($"  Линейный макрос для значений [{comparison.LinearStart}-{comparison.LinearEnd}] [{comparison.CoordType}]");
 
                 if (isX)
                 {

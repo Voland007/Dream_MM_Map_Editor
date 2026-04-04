@@ -1,35 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -793,7 +762,7 @@ namespace MMMapEditor
         {
             var result = new List<PossibleMonster>();
 
-            Debug.WriteLine($"      GetPossibleMonsters: диапазоны [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]");
+            AnalysisDebug.WriteLine($"      GetPossibleMonsters: диапазоны [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]");
 
             for (byte val1 = RangeStart1; val1 <= RangeEnd1; val1++)
             {
@@ -811,7 +780,7 @@ namespace MMMapEditor
                     // Вариант 3: с другим смещением
                     int monsterId3 = val1 + 16 * val2 - 1;
 
-                    Debug.WriteLine($"        val1={val1:X2}, val2={val2:X2} -> ID1={monsterId1}, ID2={monsterId2}, ID3={monsterId3}");
+                    AnalysisDebug.WriteLine($"        val1={val1:X2}, val2={val2:X2} -> ID1={monsterId1}, ID2={monsterId2}, ID3={monsterId3}");
 
                     // Проверяем все варианты
                     if (monsterId1 >= 0 && monsterId1 < 256)
@@ -826,7 +795,7 @@ namespace MMMapEditor
                                 MonsterId = monsterId1,
                                 MonsterName = monsterName
                             });
-                            Debug.WriteLine($"          Добавлен (вариант 1): {monsterName} (ID={monsterId1})");
+                            AnalysisDebug.WriteLine($"          Добавлен (вариант 1): {monsterName} (ID={monsterId1})");
                         }
                     }
                     else if (monsterId2 >= 0 && monsterId2 < 256)
@@ -841,7 +810,7 @@ namespace MMMapEditor
                                 MonsterId = monsterId2,
                                 MonsterName = monsterName
                             });
-                            Debug.WriteLine($"          Добавлен (вариант 2): {monsterName} (ID={monsterId2})");
+                            AnalysisDebug.WriteLine($"          Добавлен (вариант 2): {monsterName} (ID={monsterId2})");
                         }
                     }
                     else if (monsterId3 >= 0 && monsterId3 < 256)
@@ -856,13 +825,13 @@ namespace MMMapEditor
                                 MonsterId = monsterId3,
                                 MonsterName = monsterName
                             });
-                            Debug.WriteLine($"          Добавлен (вариант 3): {monsterName} (ID={monsterId3})");
+                            AnalysisDebug.WriteLine($"          Добавлен (вариант 3): {monsterName} (ID={monsterId3})");
                         }
                     }
                 }
             }
 
-            Debug.WriteLine($"      Найдено монстров: {result.Count}");
+            AnalysisDebug.WriteLine($"      Найдено монстров: {result.Count}");
             return result;
         }
 

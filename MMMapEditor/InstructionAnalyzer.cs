@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -134,9 +134,9 @@ namespace MMMapEditor
 
             if (output.Count > initialCount)
             {
-                Debug.WriteLine($"        FindTextsInInstruction: instruction 0x{address:X4} добавила {output.Count - initialCount} текст(ов)");
+                AnalysisDebug.WriteLine($"        FindTextsInInstruction: instruction 0x{address:X4} добавила {output.Count - initialCount} текст(ов)");
                 foreach (var text in output)
-                    Debug.WriteLine($"          -> {text}");
+                    AnalysisDebug.WriteLine($"          -> {text}");
             }
         }
 
@@ -148,7 +148,7 @@ namespace MMMapEditor
                 instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                 instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
             {
-                Debug.WriteLine($"    КОНТЕЙНЕР: прямая запись [3C79] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: прямая запись [3C79] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
                 AddContainerText(instructionAddress, output, instructionBytes[4]);
                 return;
             }
@@ -163,7 +163,7 @@ namespace MMMapEditor
                 if (regField < regNames.Length &&
                     registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
                 {
-                    Debug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
                     AddContainerText(instructionAddress, output, value);
                 }
                 return;
@@ -176,7 +176,7 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    Debug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
                     AddContainerText(instructionAddress, output, alValue);
                 }
             }
@@ -186,12 +186,12 @@ namespace MMMapEditor
         {
             if (ContainerDatabase.TryGetContainerName(containerIndex, out string containerName))
             {
-                Debug.WriteLine($"    КОНТЕЙНЕР РАСПОЗНАН: индекс 0x{containerIndex:X2} -> {containerName} (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР РАСПОЗНАН: индекс 0x{containerIndex:X2} -> {containerName} (инструкция 0x{instructionAddress:X4})");
                 output.Add($"На ячейке находится {containerName} в котором лежит:");
             }
             else
             {
-                Debug.WriteLine($"    КОНТЕЙНЕР НЕ РАСПОЗНАН: индекс 0x{containerIndex:X2} (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР НЕ РАСПОЗНАН: индекс 0x{containerIndex:X2} (инструкция 0x{instructionAddress:X4})");
                 output.Add($"На ячейке находится контейнер #{containerIndex} в котором лежит:");
             }
         }
@@ -204,7 +204,7 @@ namespace MMMapEditor
                 instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                 instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
             {
-                Debug.WriteLine($"    ПРЕДМЕТ: прямая запись [3C7C] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ: прямая запись [3C7C] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
                 AddItemText(instructionAddress, output, instructionBytes[4]);
                 return;
             }
@@ -220,7 +220,7 @@ namespace MMMapEditor
                 if (regField < regNames.Length &&
                     registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
                 {
-                    Debug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
                     AddItemText(instructionAddress, output, value);
                 }
                 return;
@@ -233,7 +233,7 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    Debug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
                     AddItemText(instructionAddress, output, alValue);
                 }
             }
@@ -245,12 +245,12 @@ namespace MMMapEditor
 
             if (ItemDatabase.TryGetItemName(databaseIndex, out string itemName))
             {
-                Debug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemName} (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemName} (инструкция 0x{instructionAddress:X4})");
                 output.Add(itemName);
             }
             else
             {
-                Debug.WriteLine($"    ПРЕДМЕТ НЕ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ НЕ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} (инструкция 0x{instructionAddress:X4})");
                 output.Add($"предмет #{itemIndex}");
             }
         }
@@ -263,7 +263,7 @@ namespace MMMapEditor
                 instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                 instructionBytes[2] == 0x7F && instructionBytes[3] == 0x3C)
             {
-                Debug.WriteLine($"    GEMS: прямая запись [3C7F] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                AnalysisDebug.WriteLine($"    GEMS: прямая запись [3C7F] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
                 AddGemsText(instructionAddress, output, instructionBytes[4]);
                 return;
             }
@@ -279,7 +279,7 @@ namespace MMMapEditor
                 if (regField < regNames.Length &&
                     registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
                 {
-                    Debug.WriteLine($"    GEMS: запись [3C7F] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    GEMS: запись [3C7F] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
                     AddGemsText(instructionAddress, output, value);
                 }
                 return;
@@ -292,7 +292,7 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    Debug.WriteLine($"    GEMS: запись [3C7F] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    GEMS: запись [3C7F] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
                     AddGemsText(instructionAddress, output, alValue);
                 }
             }
@@ -300,7 +300,7 @@ namespace MMMapEditor
 
         private void AddGemsText(uint instructionAddress, HashSet<string> output, byte gemsValue)
         {
-            Debug.WriteLine($"    GEMS РАСПОЗНАНЫ: {gemsValue} GEMS (инструкция 0x{instructionAddress:X4})");
+            AnalysisDebug.WriteLine($"    GEMS РАСПОЗНАНЫ: {gemsValue} GEMS (инструкция 0x{instructionAddress:X4})");
             output.Add($"{gemsValue} GEMS");
         }
 
@@ -312,7 +312,7 @@ namespace MMMapEditor
                 instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                 instructionBytes[2] == 0x7D && instructionBytes[3] == 0x3C)
             {
-                Debug.WriteLine($"    GOLD: прямая запись [3C7D] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                AnalysisDebug.WriteLine($"    GOLD: прямая запись [3C7D] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
                 AddGoldText(instructionAddress, output, instructionBytes[4]);
                 return;
             }
@@ -328,7 +328,7 @@ namespace MMMapEditor
                 if (regField < regNames.Length &&
                     registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
                 {
-                    Debug.WriteLine($"    GOLD: запись [3C7D] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
                     AddGoldText(instructionAddress, output, value);
                 }
                 return;
@@ -341,7 +341,7 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    Debug.WriteLine($"    GOLD: запись [3C7D] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                    AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
                     AddGoldText(instructionAddress, output, alValue);
                 }
             }
@@ -349,7 +349,7 @@ namespace MMMapEditor
 
         private void AddGoldText(uint instructionAddress, HashSet<string> output, byte goldValue)
         {
-            Debug.WriteLine($"    GOLD РАСПОЗНАНО: {goldValue} GOLD (инструкция 0x{instructionAddress:X4})");
+            AnalysisDebug.WriteLine($"    GOLD РАСПОЗНАНО: {goldValue} GOLD (инструкция 0x{instructionAddress:X4})");
             output.Add($"{goldValue} GOLD");
         }
 
@@ -365,7 +365,7 @@ namespace MMMapEditor
             {
                 byte monsterPower = instructionBytes[4];
                 result.MonsterPower = monsterPower;
-                Debug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ: {monsterPower}");
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ: {monsterPower}");
             }
             // MOV byte ptr [C961], imm8 - уровень монстров
             else if (instructionBytes.Length >= 5 &&
@@ -374,7 +374,7 @@ namespace MMMapEditor
             {
                 byte monsterLevel = instructionBytes[4];
                 result.MonsterLevel = monsterLevel;
-                Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ: {monsterLevel}");
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ: {monsterLevel}");
             }
             // MOV byte ptr [C96E], imm8 - уровень освещённости
             else if (instructionBytes.Length >= 5 &&
@@ -383,7 +383,7 @@ namespace MMMapEditor
             {
                 byte lightingLevel = instructionBytes[4];
                 result.LightingLevel = lightingLevel;
-                Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ: {lightingLevel}");
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ: {lightingLevel}");
             }
             // MOV [C96F], CH
             else if (instructionBytes.Length >= 4 &&
@@ -393,7 +393,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
                     result.MonsterPower = chValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ CH: {chValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C961], CH
@@ -404,7 +404,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
                     result.MonsterLevel = chValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ CH: {chValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C95E], CH
@@ -415,7 +415,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
                     result.LightingLevel = chValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ CH: {chValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C96F], AL
@@ -426,7 +426,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.MonsterPower = alValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ AL: {alValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ AL: {alValue}");
                 }
             }
             // MOV [C961], AL
@@ -437,7 +437,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.MonsterLevel = alValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ AL: {alValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ AL: {alValue}");
                 }
             }
             // MOV [C95E], AL
@@ -448,7 +448,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.LightingLevel = alValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ AL: {alValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ AL: {alValue}");
                 }
             }
             // MOV byte ptr [C95D], imm8 - шанс случайной встречи
@@ -458,7 +458,7 @@ namespace MMMapEditor
             {
                 byte encounterChance = instructionBytes[4];
                 result.RandomEncounterChance = encounterChance;
-                Debug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ: 0x{encounterChance:X2}");
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ: 0x{encounterChance:X2}");
             }
             // MOV [C95D], CH
             else if (instructionBytes.Length >= 4 &&
@@ -468,7 +468,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
                     result.RandomEncounterChance = chValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ ИЗ CH: 0x{chValue:X2}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ ИЗ CH: 0x{chValue:X2}");
                 }
             }
             // MOV [C95D], AL
@@ -479,7 +479,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.RandomEncounterChance = alValue;
-                    Debug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ ИЗ AL: 0x{alValue:X2}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН ШАНС СЛУЧАЙНОЙ ВСТРЕЧИ ИЗ AL: 0x{alValue:X2}");
                 }
             }
         }
@@ -535,7 +535,7 @@ namespace MMMapEditor
                     }
                 }
 
-                Debug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, BL={(registerTracker.TryGetByteRegisterValue("BL", out byte debugBl) ? $"0x{debugBl:X2}" : "??")}, помечено {markedCount} записей как неопределенные");
+                AnalysisDebug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, BL={(registerTracker.TryGetByteRegisterValue("BL", out byte debugBl) ? $"0x{debugBl:X2}" : "??")}, помечено {markedCount} записей как неопределенные");
                 return;
             }
 
@@ -548,19 +548,19 @@ namespace MMMapEditor
                 {
                     result.BattleMonsterCount = null;
                     result.IsBattleMonsterCountIndeterminate = true;
-                    Debug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL зависит от арифметики с результатом внешнего CALL)");
+                    AnalysisDebug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL зависит от арифметики с результатом внешнего CALL)");
                 }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.BattleMonsterCount = alValue;
                     result.IsBattleMonsterCountIndeterminate = false;
-                    Debug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ: {alValue}");
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ: {alValue}");
                 }
                 else
                 {
                     result.BattleMonsterCount = null;
                     result.IsBattleMonsterCountIndeterminate = true;
-                    Debug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL неизвестен)");
+                    AnalysisDebug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL неизвестен)");
                 }
                 return;
             }
@@ -670,7 +670,7 @@ namespace MMMapEditor
                     sourceAddr = (ushort)(0xCDBD + effectiveBx);
                     fileOffset = sourceAddr - _config.TextBaseAddr;
                     debugInfo = $" (using targetX={targetX})";
-                    Debug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
                 }
 
                 try
@@ -682,12 +682,12 @@ namespace MMMapEditor
                         actualValue = br.ReadByte();
                         br.BaseStream.Position = originalPos;
                         readSuccess = true;
-                        Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}]: 0x{actualValue:X2}{debugInfo}");
+                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}]: 0x{actualValue:X2}{debugInfo}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
                 tracker.SetRegisterValueWithSource(
@@ -701,7 +701,7 @@ namespace MMMapEditor
                     "CDBD"
                 );
 
-                Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDBD+: AL = [BX+CDBD] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDBD+: AL = [BX+CDBD] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
             }
         }
 
@@ -727,7 +727,7 @@ namespace MMMapEditor
                     sourceAddr = (ushort)(0xCDB5 + effectiveBx);
                     fileOffset = sourceAddr - _config.TextBaseAddr;
                     debugInfo = $" (using targetX={targetX})";
-                    Debug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
                 }
 
                 try
@@ -741,12 +741,12 @@ namespace MMMapEditor
                         actualValue = (ushort)((highByte << 8) | lowByte);
                         br.BaseStream.Position = originalPos;
                         readSuccess = true;
-                        Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}]: 0x{actualValue:X4}{debugInfo} (low=0x{lowByte:X2}, high=0x{highByte:X2})");
+                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}]: 0x{actualValue:X4}{debugInfo} (low=0x{lowByte:X2}, high=0x{highByte:X2})");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
                 // Сохраняем полное слово только в BP. НЕ трогаем AL.
@@ -764,7 +764,7 @@ namespace MMMapEditor
                 // УДАЛЕНО: автоматическая установка AL и AH.
                 // Информация о high и low байтах будет доступна через BP и последующее копирование в CX.
 
-                Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+: BP = [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+: BP = [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
             }
         }
 
@@ -790,7 +790,7 @@ namespace MMMapEditor
                     sourceAddr = (ushort)(0xCDB5 + effectiveBx);
                     fileOffset = sourceAddr - _config.TextBaseAddr;
                     debugInfo = $" (using targetX={targetX})";
-                    Debug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
                 }
 
                 try
@@ -802,16 +802,16 @@ namespace MMMapEditor
                         actualValue = br.ReadByte();
                         br.BaseStream.Position = originalPos;
                         readSuccess = true;
-                        Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}{debugInfo}");
+                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}{debugInfo}");
                     }
                     else
                     {
-                        Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
                 tracker.SetRegisterValueWithSource(
@@ -825,7 +825,7 @@ namespace MMMapEditor
                     "CDB5"
                 );
 
-                Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+ (младший байт): AL = [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4})");
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+ (младший байт): AL = [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4})");
             }
         }
 
@@ -852,16 +852,16 @@ namespace MMMapEditor
                         actualValue = br.ReadByte();
                         br.BaseStream.Position = originalPos;
                         readSuccess = true;
-                        Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}");
+                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}");
                     }
                     else
                     {
-                        Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
                 tracker.SetRegisterValueWithSource(
@@ -875,7 +875,7 @@ namespace MMMapEditor
                     "CDA9"
                 );
 
-                Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDA9+: AL = [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4})");
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDA9+: AL = [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4})");
             }
         }
 
@@ -904,16 +904,16 @@ namespace MMMapEditor
                         actualValue = (ushort)((highByte << 8) | lowByte);
                         br.BaseStream.Position = originalPos;
                         readSuccess = true;
-                        Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}");
+                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}");
                     }
                     else
                     {
-                        Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
                 tracker.SetRegisterValueWithSource(
@@ -930,7 +930,7 @@ namespace MMMapEditor
                 // УДАЛЕНО: автоматическая установка AL из младшего байта.
                 // Младший байт будет доступен позже, если произойдет MOV CX, BP и затем использование CL.
 
-                Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+: BP = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+: BP = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
             }
         }
 
@@ -957,16 +957,16 @@ namespace MMMapEditor
                         actualValue = br.ReadByte();
                         br.BaseStream.Position = originalPos;
                         readSuccess = true;
-                        Debug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2} (младший байт)");
+                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2} (младший байт)");
                     }
                     else
                     {
-                        Debug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
                 tracker.SetRegisterValueWithSource(
@@ -980,7 +980,7 @@ namespace MMMapEditor
                     "CDB1"
                 );
 
-                Debug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+ (младший байт): AL = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+ (младший байт): AL = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
             }
         }
 
@@ -1014,7 +1014,7 @@ namespace MMMapEditor
                 tracker.TrackPartialRegisterOperation("CX", "CL", clValue, address, "MOV CL, low byte of BP");
                 tracker.TrackPartialRegisterOperation("CX", "CH", chValue, address, "MOV CH, high byte of BP");
 
-                Debug.WriteLine($"    КОПИРОВАНИЕ ИЗ ТАБЛИЦЫ: CX = BP (source={sourceAddr:X4}, table={sourceTable}, originalBX={originalBx}, val={bpValue:X4})");
+                AnalysisDebug.WriteLine($"    КОПИРОВАНИЕ ИЗ ТАБЛИЦЫ: CX = BP (source={sourceAddr:X4}, table={sourceTable}, originalBX={originalBx}, val={bpValue:X4})");
             }
             else
             {
@@ -1028,7 +1028,7 @@ namespace MMMapEditor
                     tracker.TrackPartialRegisterOperation("CX", "CL", clValue, address, "MOV CL, low byte of BP");
                     tracker.TrackPartialRegisterOperation("CX", "CH", chValue, address, "MOV CH, high byte of BP");
 
-                    Debug.WriteLine($"    КОПИРОВАНИЕ: CX = BP (0x{bpValue:X4})");
+                    AnalysisDebug.WriteLine($"    КОПИРОВАНИЕ: CX = BP (0x{bpValue:X4})");
                 }
             }
         }
@@ -1128,13 +1128,13 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val1={alValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val1={alValue:X2})");
                                 break;
 
                             case "CDB5":
                                 // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в AL? Это нестандартная ситуация
                                 // В оригинале такого не должно быть, но если случилось, сохраняем как val1
-                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val1={alValue:X2})");
+                                AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val1={alValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
@@ -1160,7 +1160,7 @@ namespace MMMapEditor
                                     SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
                                 break;
 
                             default:
@@ -1174,7 +1174,7 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = AL (BX={bxValue}, val1={alValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = AL (BX={bxValue}, val1={alValue:X2})");
                                 break;
                         }
                     }
@@ -1190,7 +1190,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = AL (BX={bxValue}, val1={alValue:X2})");
+                        AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = AL (BX={bxValue}, val1={alValue:X2})");
                     }
                 }
             }
@@ -1227,12 +1227,12 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (0, clValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val2={clValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val2={clValue:X2})");
                                 break;
 
                             case "CDBD":
                                 // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в CL? Нестандартно
-                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val2={clValue:X2})");
+                                AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val2={clValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
@@ -1258,7 +1258,7 @@ namespace MMMapEditor
                                     SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
                                 break;
 
                             default:
@@ -1272,7 +1272,7 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (0, clValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = CL (BX={bxValue}, val2={clValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = CL (BX={bxValue}, val2={clValue:X2})");
                                 break;
                         }
                     }
@@ -1288,7 +1288,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (0, clValue, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = CL (BX={bxValue}, val2={clValue:X2})");
+                        AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = CL (BX={bxValue}, val2={clValue:X2})");
                     }
                 }
             }
@@ -1325,12 +1325,12 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
                                 break;
 
                             case "CDB5":
                                 // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в DL? Нестандартно
-                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val1={dlValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
@@ -1356,7 +1356,7 @@ namespace MMMapEditor
                                     SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                                 break;
 
                             default:
@@ -1370,7 +1370,7 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
                                 break;
                         }
                     }
@@ -1386,7 +1386,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
+                        AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
                     }
                 }
             }
@@ -1423,12 +1423,12 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
                                 break;
 
                             case "CDBD":
                                 // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в DL? Нестандартно
-                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val2={dlValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
@@ -1454,7 +1454,7 @@ namespace MMMapEditor
                                     SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                                 break;
 
                             default:
@@ -1468,7 +1468,7 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
                                 break;
                         }
                     }
@@ -1484,7 +1484,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
+                        AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
                     }
                 }
             }
@@ -1521,12 +1521,12 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (CDBD): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
                                 break;
 
                             case "CDB5":
                                 // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в BL? Нестандартно
-                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDB5 в 3C58? Нестандартно): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val1={blValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
@@ -1552,7 +1552,7 @@ namespace MMMapEditor
                                     SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                                 break;
 
                             default:
@@ -1566,7 +1566,7 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
                                 break;
                         }
                     }
@@ -1582,7 +1582,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
+                        AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
                     }
                 }
             }
@@ -1619,12 +1619,12 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (CDB5): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
                                 break;
 
                             case "CDBD":
                                 // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в BL? Нестандартно
-                                Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (CDBD в 3C29? Нестандартно): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val2={blValue:X2})");
                                 if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                                 {
                                     var existing = result.BattleMonsterEntries[saveIndex];
@@ -1650,7 +1650,7 @@ namespace MMMapEditor
                                     SourceTable = sourceTable
                                 });
                                 result.HasPartialBattlePattern = true;
-                                Debug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                                 break;
 
                             default:
@@ -1664,7 +1664,7 @@ namespace MMMapEditor
                                 {
                                     result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
                                 }
-                                Debug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
+                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
                                 break;
                         }
                     }
@@ -1680,7 +1680,7 @@ namespace MMMapEditor
                         {
                             result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
                         }
-                        Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
+                        AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямое): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
                     }
                 }
             }
@@ -1715,12 +1715,12 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                             }
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDBD): [3C58] = AL (val1={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDBD): [3C58] = AL (val1={alValue:X2})");
                             break;
 
                         case "CDB5":
                             // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС в AL? Нестандартно
-                            Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDB5 в 3C58? Нестандартно): [3C58] = AL (val1={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDB5 в 3C58? Нестандартно): [3C58] = AL (val1={alValue:X2})");
                             if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                             {
                                 var existing = result.BattleMonsterEntries[saveIndex];
@@ -1746,7 +1746,7 @@ namespace MMMapEditor
                                 SourceTable = sourceTable
                             });
                             result.HasPartialBattlePattern = true;
-                            Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
                             break;
 
                         default:
@@ -1760,7 +1760,7 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                             }
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C58] = AL (val1={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C58] = AL (val1={alValue:X2})");
                             break;
                     }
                 }
@@ -1776,7 +1776,7 @@ namespace MMMapEditor
                     {
                         result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
                     }
-                    Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C58] = AL (val1={alValue:X2})");
+                    AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C58] = AL (val1={alValue:X2})");
                 }
             }
         }
@@ -1810,12 +1810,12 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
                             }
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDB5): [3C29] = AL (val2={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDB5): [3C29] = AL (val2={alValue:X2})");
                             break;
 
                         case "CDBD":
                             // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в AL? Нестандартно
-                            Debug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDBD в 3C29? Нестандартно): [3C29] = AL (val2={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDBD в 3C29? Нестандартно): [3C29] = AL (val2={alValue:X2})");
                             if (result.BattleMonsterEntries.ContainsKey(saveIndex))
                             {
                                 var existing = result.BattleMonsterEntries[saveIndex];
@@ -1841,7 +1841,7 @@ namespace MMMapEditor
                                 SourceTable = sourceTable
                             });
                             result.HasPartialBattlePattern = true;
-                            Debug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
                             break;
 
                         default:
@@ -1855,7 +1855,7 @@ namespace MMMapEditor
                             {
                                 result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
                             }
-                            Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C29] = AL (val2={alValue:X2})");
+                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C29] = AL (val2={alValue:X2})");
                             break;
                     }
                 }
@@ -1871,7 +1871,7 @@ namespace MMMapEditor
                     {
                         result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
                     }
-                    Debug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = AL (val2={alValue:X2})");
+                    AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = AL (val2={alValue:X2})");
                 }
             }
         }

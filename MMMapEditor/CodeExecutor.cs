@@ -1,20 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -46,19 +30,17 @@ namespace MMMapEditor
 
         public PathAnalysisResult ExecuteCodeAtAddress(BinaryReader br, uint startAddress,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
-            int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
+            int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
-            bool debugMode = debugObject != null || (pathId > 0 && (
-                (debugObject?.X == 7 && debugObject?.Y == 2)
-            ));
+            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
 
             if (depth > MAX_DEPTH || callDepth > MAX_CALL_DEPTH)
             {
                 if (debugMode)
-                    Debug.WriteLine($"      Достигнут лимит глубины ({depth}/{callDepth}), прекращаем анализ");
+                    AnalysisDebug.WriteLine($"      Достигнут лимит глубины ({depth}/{callDepth}), прекращаем анализ");
                 return new PathAnalysisResult { IsTerminated = false };
             }
 
@@ -83,12 +65,12 @@ namespace MMMapEditor
                     if (visitedInThisPath.Contains(currentAddress))
                     {
                         if (debugMode)
-                            Debug.WriteLine($"      Обнаружен цикл по адресу 0x{currentAddress:X4}");
+                            AnalysisDebug.WriteLine($"      Обнаружен цикл по адресу 0x{currentAddress:X4}");
 
                         if (IsTableLoadLoop(br, currentAddress, registerTracker))
                         {
                             if (debugMode)
-                                Debug.WriteLine($"      Обнаружен цикл загрузки из таблиц");
+                                AnalysisDebug.WriteLine($"      Обнаружен цикл загрузки из таблиц");
                             result.HasPartialBattlePattern = true;
                             result.IsInLoop = true;
                             result.LoopStartAddress = currentAddress;
@@ -103,7 +85,7 @@ namespace MMMapEditor
                     if (!TryDisassembleNext(br, currentAddress, out X86Instruction insn))
                     {
                         if (debugMode)
-                            Debug.WriteLine($"      Не удалось дизассемблировать по адресу 0x{currentAddress:X4}, пропускаем байт");
+                            AnalysisDebug.WriteLine($"      Не удалось дизассемблировать по адресу 0x{currentAddress:X4}, пропускаем байт");
                         currentAddress++;
                         continue;
                     }
@@ -113,7 +95,7 @@ namespace MMMapEditor
                     uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
                     if (debugMode)
-                        Debug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
+                        AnalysisDebug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
 
                     byte[] bytes = insn.Bytes;
 
@@ -122,7 +104,7 @@ namespace MMMapEditor
                     {
                         lastAlValue = bytes[1];
                         if (debugMode)
-                            Debug.WriteLine($"        Запомнили AL = 0x{lastAlValue:X2}");
+                            AnalysisDebug.WriteLine($"        Запомнили AL = 0x{lastAlValue:X2}");
                     }
 
                     // Отслеживание MOV BP, imm16
@@ -130,7 +112,7 @@ namespace MMMapEditor
                     {
                         lastBpValue = BitConverter.ToUInt16(bytes, 1);
                         if (debugMode)
-                            Debug.WriteLine($"        Запомнили BP = 0x{lastBpValue:X4}");
+                            AnalysisDebug.WriteLine($"        Запомнили BP = 0x{lastBpValue:X4}");
                     }
 
                     // Поиск косвенных текстов (MOV AL, imm8 + MOV BP, imm16)
@@ -155,7 +137,7 @@ namespace MMMapEditor
 
                     // Обработка инструкций перехода и возврата
                     var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
-                        globallyAnalyzedAddresses, depth, callDepth, debugObject, pathId, targetX, targetY,
+                        globallyAnalyzedAddresses, depth, callDepth, pathId, targetX, targetY,
                         processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode,
                         invalidateReturnRegistersAfterExternalCall);
 
@@ -202,11 +184,11 @@ namespace MMMapEditor
                             {
                                 result.FirstLocalTextAddress = (uint)insn.Address;
                                 if (debugMode)
-                                    Debug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
+                                    AnalysisDebug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
                             }
 
                             if (debugMode)
-                                Debug.WriteLine($"        Найден косвенный текст по адресу 0x{combinedAddr:X4}: {text}");
+                                AnalysisDebug.WriteLine($"        Найден косвенный текст по адресу 0x{combinedAddr:X4}: {text}");
                         }
                     }
                 }
@@ -229,7 +211,7 @@ namespace MMMapEditor
                     {
                         result.ContextTexts.Add(text);
                         if (debugMode)
-                            Debug.WriteLine($"        Найден контекстный текст (из CALL): {text}");
+                            AnalysisDebug.WriteLine($"        Найден контекстный текст (из CALL): {text}");
                     }
                     else
                     {
@@ -239,11 +221,11 @@ namespace MMMapEditor
                         {
                             result.FirstLocalTextAddress = (uint)insn.Address;
                             if (debugMode)
-                                Debug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
+                                AnalysisDebug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
                         }
 
                         if (debugMode)
-                            Debug.WriteLine($"        Найден прямой текст: {text}");
+                            AnalysisDebug.WriteLine($"        Найден прямой текст: {text}");
                     }
                 }
             }
@@ -254,7 +236,7 @@ namespace MMMapEditor
         /// </summary>
         private ControlFlowResult HandleControlFlowInstructions(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
-            int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
+            int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint currentAddress, uint nextAddress, long fileLength, bool debugMode,
             bool invalidateReturnRegistersAfterExternalCall)
@@ -265,7 +247,7 @@ namespace MMMapEditor
             if (IsReturnInstruction(mnemonicUpper))
             {
                 if (debugMode)
-                    Debug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
+                    AnalysisDebug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
                 result.IsTerminated = true;
                 result.HasSignificantCode = true;
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
@@ -294,7 +276,7 @@ namespace MMMapEditor
             if (mnemonicUpper.StartsWith("CALL"))
             {
                 return HandleCall(insn, br, registerTracker, globallyAnalyzedAddresses, depth, callDepth,
-                    debugObject, pathId, targetX, targetY, processedBackEdges, result, nextAddress, debugMode,
+                    pathId, targetX, targetY, processedBackEdges, result, nextAddress, debugMode,
                     invalidateReturnRegistersAfterExternalCall);
             }
 
@@ -330,7 +312,7 @@ namespace MMMapEditor
             if (jumpTarget >= fileLength)
             {
                 if (debugMode)
-                    Debug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
+                    AnalysisDebug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
                 result.IsTerminated = true;
                 result.HasSignificantCode = true;
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
@@ -339,7 +321,7 @@ namespace MMMapEditor
             if (jumpTarget != 0 && jumpTarget < fileLength)
             {
                 if (debugMode)
-                    Debug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
+                    AnalysisDebug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
             }
 
@@ -360,7 +342,7 @@ namespace MMMapEditor
                 if (jumpTarget >= fileLength)
                 {
                     if (debugMode)
-                        Debug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
+                        AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
                     result.IsTerminated = true;
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
@@ -368,7 +350,7 @@ namespace MMMapEditor
                 if (jumpTarget < fileLength && jumpTarget != 0)
                 {
                     if (debugMode)
-                        Debug.WriteLine($"      JMP (по опкоду 0xE9) к 0x{jumpTarget:X4}");
+                        AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) к 0x{jumpTarget:X4}");
                     return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
                 }
             }
@@ -390,7 +372,7 @@ namespace MMMapEditor
                 if (jumpTarget < fileLength)
                 {
                     if (debugMode)
-                        Debug.WriteLine($"      SHORT JMP к 0x{jumpTarget:X4}");
+                        AnalysisDebug.WriteLine($"      SHORT JMP к 0x{jumpTarget:X4}");
                     return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
                 }
             }
@@ -403,7 +385,7 @@ namespace MMMapEditor
         /// </summary>
         private ControlFlowResult HandleCall(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
-            int depth, int callDepth, OvrObject debugObject, int pathId, byte targetX, byte targetY,
+            int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint nextAddress, bool debugMode,
             bool invalidateReturnRegistersAfterExternalCall)
@@ -414,11 +396,11 @@ namespace MMMapEditor
             if (isInternalCall)
             {
                 if (debugMode)
-                    Debug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
+                    AnalysisDebug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
 
                 var subroutineTracker = registerTracker.Clone();
                 var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
-                    globallyAnalyzedAddresses, depth + 1, callDepth + 1, debugObject, pathId, targetX, targetY,
+                    globallyAnalyzedAddresses, depth + 1, callDepth + 1, pathId, targetX, targetY,
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall);
 
                 // Добавляем результаты из подпрограммы
@@ -499,7 +481,7 @@ namespace MMMapEditor
                 registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
 
                 if (debugMode)
-                    Debug.WriteLine("        Помечаем AX/AL как кандидата на зависимость от внешнего CALL для табличного объекта");
+                    AnalysisDebug.WriteLine("        Помечаем AX/AL как кандидата на зависимость от внешнего CALL для табличного объекта");
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
@@ -527,18 +509,18 @@ namespace MMMapEditor
                         if (!processedBackEdges.Add(backEdge))
                         {
                             if (debugMode)
-                                Debug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
+                                AnalysisDebug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
                             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
                         }
 
                         if (debugMode)
-                            Debug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, переход определён по флагам");
+                            AnalysisDebug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, переход определён по флагам");
                     }
 
                     if (debugMode)
                     {
                         string branchText = branchTaken.Value ? $"0x{condJumpTarget:X4}" : $"0x{nextAddress:X4}";
-                        Debug.WriteLine($"      Условный переход {insn.Mnemonic} разрешён по известным флагам -> {branchText}");
+                        AnalysisDebug.WriteLine($"      Условный переход {insn.Mnemonic} разрешён по известным флагам -> {branchText}");
                     }
 
                     return new ControlFlowResult { ShouldReturn = false, NextAddress = resolvedTarget };
@@ -551,12 +533,12 @@ namespace MMMapEditor
                     if (!processedBackEdges.Add(backEdge))
                     {
                         if (debugMode)
-                            Debug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
+                            AnalysisDebug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
                         return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
                     }
 
                     if (debugMode)
-                        Debug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, разрешаем одну развилку");
+                        AnalysisDebug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, разрешаем одну развилку");
                 }
 
                 // Добавляем целевой адрес перехода как альтернативный путь
@@ -575,7 +557,7 @@ namespace MMMapEditor
                 {
                     result.AlternativePaths.Add(altPath);
                     if (debugMode)
-                        Debug.WriteLine($"      Найден альтернативный путь: 0x{insn.Address:X4} -> 0x{condJumpTarget:X4}");
+                        AnalysisDebug.WriteLine($"      Найден альтернативный путь: 0x{insn.Address:X4} -> 0x{condJumpTarget:X4}");
                 }
 
                 // Добавляем линейное продолжение как отдельный путь
@@ -594,12 +576,12 @@ namespace MMMapEditor
                 {
                     result.AlternativePaths.Add(linearPath);
                     if (debugMode)
-                        Debug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
+                        AnalysisDebug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
                 }
 
                 // Завершаем текущий путь – не продолжаем выполнение
                 if (debugMode)
-                    Debug.WriteLine($"      Останавливаем анализ текущего пути после условного перехода");
+                    AnalysisDebug.WriteLine($"      Останавливаем анализ текущего пути после условного перехода");
 
                 result.IsTerminated = true;
                 result.HasSignificantCode = result.FoundTexts.Count > 0 ||
@@ -892,7 +874,7 @@ namespace MMMapEditor
                 registerTracker.MarkRegisterAsExternallyDerived("AX");
 
                 if (debugMode)
-                    Debug.WriteLine("        Материализуем зависимость AX/AL от внешнего CALL из-за арифметики ADD/ADC");
+                    AnalysisDebug.WriteLine("        Материализуем зависимость AX/AL от внешнего CALL из-за арифметики ADD/ADC");
             }
 
             // Инструкции, меняющие флаги, но не моделируемые точно, делают состояние флагов недостоверным
@@ -943,7 +925,7 @@ namespace MMMapEditor
                     _emulatedMemory8[memAddr] = alValue;
 
                     if (debugMode)
-                        Debug.WriteLine($"        Сохранили AL=0x{alValue:X2} в эмулируемую память [0x{memAddr:X4}]");
+                        AnalysisDebug.WriteLine($"        Сохранили AL=0x{alValue:X2} в эмулируемую память [0x{memAddr:X4}]");
                 }
             }
             else if (instructionBytes.Length >= 5 &&
@@ -955,7 +937,7 @@ namespace MMMapEditor
                 _emulatedMemory8[memAddr] = immValue;
 
                 if (debugMode)
-                    Debug.WriteLine($"        Сохранили imm8=0x{immValue:X2} в эмулируемую память [0x{memAddr:X4}]");
+                    AnalysisDebug.WriteLine($"        Сохранили imm8=0x{immValue:X2} в эмулируемую память [0x{memAddr:X4}]");
             }
 
             // Загрузка непосредственных значений в регистры
@@ -1015,7 +997,7 @@ namespace MMMapEditor
                     );
 
                     if (debugMode)
-                        Debug.WriteLine($"        Загрузили AL из эмулируемой памяти [0x{memAddr:X4}] = 0x{value:X2}");
+                        AnalysisDebug.WriteLine($"        Загрузили AL из эмулируемой памяти [0x{memAddr:X4}] = 0x{value:X2}");
                 }
                 else
                 {
@@ -1037,12 +1019,12 @@ namespace MMMapEditor
                         );
 
                         if (debugMode)
-                            Debug.WriteLine($"        Загрузили AL из файла [0x{memAddr:X4}] = 0x{value:X2}");
+                            AnalysisDebug.WriteLine($"        Загрузили AL из файла [0x{memAddr:X4}] = 0x{value:X2}");
                     }
                     else
                     {
                         if (debugMode)
-                            Debug.WriteLine($"        Не удалось загрузить AL из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                            AnalysisDebug.WriteLine($"        Не удалось загрузить AL из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
                     }
                 }
             }
@@ -1163,8 +1145,8 @@ namespace MMMapEditor
                 return;
             }
 
-            Debug.WriteLine($"    АНАЛИЗ ЧАСТИЧНЫХ БИТВ: найдено {result.PartialBattleInfo.Count} записей");
-            Debug.WriteLine($"    Состояние цикла: IsInLoop={result.IsInLoop}, LoopStartAddress=0x{result.LoopStartAddress:X4}, LoopIterationCount={result.LoopIterationCount}");
+            AnalysisDebug.WriteLine($"    АНАЛИЗ ЧАСТИЧНЫХ БИТВ: найдено {result.PartialBattleInfo.Count} записей");
+            AnalysisDebug.WriteLine($"    Состояние цикла: IsInLoop={result.IsInLoop}, LoopStartAddress=0x{result.LoopStartAddress:X4}, LoopIterationCount={result.LoopIterationCount}");
 
             // Группируем записи по BX индексу (индекс в массиве, куда сохраняются значения)
             var groupedByBx = result.PartialBattleInfo.GroupBy(p => p.BxIndex).OrderBy(g => g.Key);
@@ -1174,7 +1156,7 @@ namespace MMMapEditor
                 int saveBxIndex = group.Key;
                 var entries = group.ToList();
 
-                Debug.WriteLine($"      Группа BX(сохранения)={saveBxIndex}: {entries.Count} записей");
+                AnalysisDebug.WriteLine($"      Группа BX(сохранения)={saveBxIndex}: {entries.Count} записей");
 
                 // Находим записи для 3C58 и 3C29
                 var entry58 = entries.FirstOrDefault(e => e.DestAddr == 0x3C58);
@@ -1182,7 +1164,7 @@ namespace MMMapEditor
 
                 if (entry58 == null || entry29 == null)
                 {
-                    Debug.WriteLine($"        -> НЕТ ПОЛНОЙ ПАРЫ ЗАПИСЕЙ для создания частичной битвы");
+                    AnalysisDebug.WriteLine($"        -> НЕТ ПОЛНОЙ ПАРЫ ЗАПИСЕЙ для создания частичной битвы");
                     continue;
                 }
 
@@ -1196,7 +1178,7 @@ namespace MMMapEditor
                     // Если оба значения не нулевые, значит битва уже полностью определена
                     if (existing.val1 != 0 || existing.val2 != 0)
                     {
-                        Debug.WriteLine($"        -> БИТВА УЖЕ ПОЛНОСТЬЮ ОПРЕДЕЛЕНА: val1={existing.val1:X2}, val2={existing.val2:X2}, пропускаем создание частичной");
+                        AnalysisDebug.WriteLine($"        -> БИТВА УЖЕ ПОЛНОСТЬЮ ОПРЕДЕЛЕНА: val1={existing.val1:X2}, val2={existing.val2:X2}, пропускаем создание частичной");
                         alreadyDefined = true;
                     }
                 }
@@ -1214,7 +1196,7 @@ namespace MMMapEditor
                     if (result.LoopIterationCount > 0)
                     {
                         iterationCount = result.LoopIterationCount;
-                        Debug.WriteLine($"        Обнаружен цикл с {iterationCount} итерациями");
+                        AnalysisDebug.WriteLine($"        Обнаружен цикл с {iterationCount} итерациями");
                     }
                     else
                     {
@@ -1224,13 +1206,13 @@ namespace MMMapEditor
                         {
                             // Количество итераций = максимальный BX индекс + 1
                             iterationCount = maxSaveBx + 1;
-                            Debug.WriteLine($"        Количество итераций определено по BX сохранения: {iterationCount}");
+                            AnalysisDebug.WriteLine($"        Количество итераций определено по BX сохранения: {iterationCount}");
                         }
                         else
                         {
                             // Если не можем определить, используем значение по умолчанию
                             iterationCount = 8;
-                            Debug.WriteLine($"        Количество итераций неизвестно, предполагаем {iterationCount}");
+                            AnalysisDebug.WriteLine($"        Количество итераций неизвестно, предполагаем {iterationCount}");
                         }
                     }
                 }
@@ -1246,7 +1228,7 @@ namespace MMMapEditor
                         var existing = result.BattleMonsterEntries[currentBxIndex];
                         if (existing.val1 != 0 || existing.val2 != 0)
                         {
-                            Debug.WriteLine($"        -> БИТВА ДЛЯ BX={currentBxIndex} УЖЕ ОПРЕДЕЛЕНА, пропускаем");
+                            AnalysisDebug.WriteLine($"        -> БИТВА ДЛЯ BX={currentBxIndex} УЖЕ ОПРЕДЕЛЕНА, пропускаем");
                             continue;
                         }
                     }
@@ -1283,21 +1265,21 @@ namespace MMMapEditor
                             iterVal2 = lowByte;
                             readSuccess2 = true;
 
-                            Debug.WriteLine($"        ЧТЕНИЕ ИЗ ТАБЛИЦЫ ДЛЯ ИТЕРАЦИИ {iteration}:");
-                            Debug.WriteLine($"          [{table1Addr:X4}] = 0x{iterVal1:X2}");
-                            Debug.WriteLine($"          [{table2Addr:X4}] = 0x{iterVal2:X2} (младший байт из 0x{highByte:X2}{lowByte:X2})");
+                            AnalysisDebug.WriteLine($"        ЧТЕНИЕ ИЗ ТАБЛИЦЫ ДЛЯ ИТЕРАЦИИ {iteration}:");
+                            AnalysisDebug.WriteLine($"          [{table1Addr:X4}] = 0x{iterVal1:X2}");
+                            AnalysisDebug.WriteLine($"          [{table2Addr:X4}] = 0x{iterVal2:X2} (младший байт из 0x{highByte:X2}{lowByte:X2})");
                         }
 
                         br.BaseStream.Position = originalPos;
                     }
                     catch (Exception ex)
                     {
-                        Debug.WriteLine($"        ОШИБКА ЧТЕНИЯ ИЗ ТАБЛИЦЫ: {ex.Message}");
+                        AnalysisDebug.WriteLine($"        ОШИБКА ЧТЕНИЯ ИЗ ТАБЛИЦЫ: {ex.Message}");
                     }
 
                     if (!readSuccess1 || !readSuccess2)
                     {
-                        Debug.WriteLine($"        НЕ УДАЛОСЬ ПРОЧИТАТЬ ЗНАЧЕНИЯ ДЛЯ ИТЕРАЦИИ {iteration}, пропускаем");
+                        AnalysisDebug.WriteLine($"        НЕ УДАЛОСЬ ПРОЧИТАТЬ ЗНАЧЕНИЯ ДЛЯ ИТЕРАЦИИ {iteration}, пропускаем");
                         continue;
                     }
 
@@ -1308,7 +1290,7 @@ namespace MMMapEditor
 
                     if (rangeStart1 > rangeEnd1 || rangeStart2 > rangeEnd2)
                     {
-                        Debug.WriteLine($"        -> НЕКОРРЕКТНЫЕ ДИАПАЗОНЫ ДЛЯ ИТЕРАЦИИ {iteration}: [{rangeStart1:X2}-{rangeEnd1:X2}] [{rangeStart2:X2}-{rangeEnd2:X2}]");
+                        AnalysisDebug.WriteLine($"        -> НЕКОРРЕКТНЫЕ ДИАПАЗОНЫ ДЛЯ ИТЕРАЦИИ {iteration}: [{rangeStart1:X2}-{rangeEnd1:X2}] [{rangeStart2:X2}-{rangeEnd2:X2}]");
                         continue;
                     }
 
@@ -1325,7 +1307,7 @@ namespace MMMapEditor
 
                     if (matchesExisting)
                     {
-                        Debug.WriteLine($"        -> ЗНАЧЕНИЯ СОВПАДАЮТ С УЖЕ ОПРЕДЕЛЁННОЙ БИТВОЙ, пропускаем");
+                        AnalysisDebug.WriteLine($"        -> ЗНАЧЕНИЯ СОВПАДАЮТ С УЖЕ ОПРЕДЕЛЁННОЙ БИТВОЙ, пропускаем");
                         continue;
                     }
 
@@ -1343,11 +1325,11 @@ namespace MMMapEditor
                     {
                         result.PartialBattles.Add(partialBattle);
                         int combinations = (rangeEnd1 - rangeStart1 + 1) * (rangeEnd2 - rangeStart2 + 1);
-                        Debug.WriteLine($"        -> СОЗДАНА ЧАСТИЧНАЯ БИТВА: BX(сохранения)={currentBxIndex}, BX(загрузки)={loadBx}, {combinations} комбинация (итерация {iteration})");
+                        AnalysisDebug.WriteLine($"        -> СОЗДАНА ЧАСТИЧНАЯ БИТВА: BX(сохранения)={currentBxIndex}, BX(загрузки)={loadBx}, {combinations} комбинация (итерация {iteration})");
                     }
                     else
                     {
-                        Debug.WriteLine($"        -> ЧАСТИЧНАЯ БИТВА ДЛЯ BX={currentBxIndex} УЖЕ СУЩЕСТВУЕТ, пропускаем");
+                        AnalysisDebug.WriteLine($"        -> ЧАСТИЧНАЯ БИТВА ДЛЯ BX={currentBxIndex} УЖЕ СУЩЕСТВУЕТ, пропускаем");
                     }
                 }
             }
@@ -1362,13 +1344,13 @@ namespace MMMapEditor
             if (instructionCount >= MAX_INSTRUCTIONS_PER_PATH)
             {
                 if (debugMode)
-                    Debug.WriteLine($"      Достигнут лимит инструкций ({MAX_INSTRUCTIONS_PER_PATH}) - путь прерван");
+                    AnalysisDebug.WriteLine($"      Достигнут лимит инструкций ({MAX_INSTRUCTIONS_PER_PATH}) - путь прерван");
                 result.IsTerminated = false;
             }
             else if (currentAddress >= fileLength)
             {
                 if (debugMode)
-                    Debug.WriteLine($"      Достигнут конец оверлея - конец пути");
+                    AnalysisDebug.WriteLine($"      Достигнут конец оверлея - конец пути");
                 result.IsTerminated = true;
             }
 
