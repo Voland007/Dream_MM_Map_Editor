@@ -9,6 +9,7 @@ namespace MMMapEditor
         {
             ["SORPIGAL.OVR"] = new OvrFileConfig
             {
+                OverlayType = "town",
                 StartAddress = 0x386,
                 First16Lines = new[]
                     {
@@ -54,6 +55,7 @@ namespace MMMapEditor
 
             ["PORTSMIT.OVR"] = new OvrFileConfig
             {
+                OverlayType = "town",
                 StartAddress = 0x412,
                 First16Lines = new[]
                    {
@@ -99,6 +101,7 @@ namespace MMMapEditor
 
             ["ERLIQUIN.OVR"] = new OvrFileConfig
             {
+                OverlayType = "town",
                 StartAddress = 0x489,
                 First16Lines = new[]
                     {
@@ -144,6 +147,7 @@ namespace MMMapEditor
 
             ["ALGARY.OVR"] = new OvrFileConfig
             {
+                OverlayType = "town",
                 StartAddress = 0x41D,
                 First16Lines = new[]
                     {
@@ -188,6 +192,7 @@ namespace MMMapEditor
             },
             ["DUSK.OVR"] = new OvrFileConfig
             {
+                OverlayType = "town",
                 StartAddress = 0x3D8,
                 First16Lines = new[]
                     {
@@ -232,6 +237,7 @@ namespace MMMapEditor
             },
             ["CAVE1.OVR"] = new OvrFileConfig
             {
+                OverlayType = "dungeon",
                 StartAddress = 0x41D,
                 First16Lines = new[]
                     {
@@ -282,6 +288,7 @@ namespace MMMapEditor
 
         public class OvrFileConfig
         {
+            public string OverlayType { get; set; } = "town";
             public int StartAddress { get; set; }
             public string[] First16Lines { get; set; }
             public string[] Second16Lines { get; set; }
