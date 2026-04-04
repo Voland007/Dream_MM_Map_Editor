@@ -2472,160 +2472,262 @@ namespace MMMapEditor
             }
         }
 
-        private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer, OvrFileConfig config)
+        private enum CellSide
+        {
+            Top,
+            Bottom,
+            Left,
+            Right
+        }
+
+        private sealed class DirectionBits
+        {
+            public bool HasWallBit { get; init; }
+            public bool HasDoorBit { get; init; }
+            public bool SecondLowBit { get; init; }
+            public bool SecondHighBit { get; init; }
+        }
+
+        private sealed class DirectionState
+        {
+            public string BorderType { get; init; } = "Пустота";
+            public int PassageType { get; init; }
+            public bool IsClosed { get; init; }
+        }
+
+        private sealed class CellDraftContext
+        {
+            public bool IsDungeon { get; init; }
+            public string WallType { get; init; } = "Кирпичная стена";
+        }
+
+        private static readonly (CellSide Side, int HighBit, int LowBit)[] DraftSideMappings =
+        {
+            (CellSide.Left, 2, 1),
+            (CellSide.Bottom, 4, 3),
+            (CellSide.Right, 6, 5),
+            (CellSide.Top, 8, 7)
+        };
+
+        private static bool IsBitSet(int value, int bitFromRight)
+        {
+            int zeroBased = bitFromRight - 1;
+            return (value & (1 << zeroBased)) != 0;
+        }
+
+        private CellDraftContext BuildDraftContext(OvrFileConfig config)
         {
             bool isDungeon = string.Equals(config?.OverlayType, "dungeon", StringComparison.OrdinalIgnoreCase);
-            string wallType = isDungeon ? "Каменная стена" : "Кирпичная стена";
 
-            int firstDecimalValue = Convert.ToInt32(hexValueFirstLayer, 16);
-            int secondDecimalValue = Convert.ToInt32(hexValueSecondLayer, 16);
+            return new CellDraftContext
+            {
+                IsDungeon = isDungeon,
+                WallType = isDungeon ? "Каменная стена" : "Кирпичная стена"
+            };
+        }
 
-            string firstBinaryRepresentation = Convert.ToString(firstDecimalValue, 2).PadLeft(16, '0');
-            string secondBinaryRepresentation = Convert.ToString(secondDecimalValue, 2).PadLeft(16, '0');
+        private DirectionBits ReadDirectionBits(int firstLayerValue, int secondLayerValue, int highBitFromRight, int lowBitFromRight)
+        {
+            return new DirectionBits
+            {
+                HasDoorBit = IsBitSet(firstLayerValue, highBitFromRight),
+                HasWallBit = IsBitSet(firstLayerValue, lowBitFromRight),
+                SecondHighBit = IsBitSet(secondLayerValue, highBitFromRight),
+                SecondLowBit = IsBitSet(secondLayerValue, lowBitFromRight)
+            };
+        }
+
+        private DirectionState ResolveDirectionState(DirectionBits bits, CellDraftContext context)
+        {
+            bool anyStructure = bits.HasWallBit || bits.HasDoorBit;
+
+            if (!anyStructure)
+            {
+                return new DirectionState
+                {
+                    BorderType = bits.SecondLowBit ? "Барьер" : "Пустота"
+                };
+            }
+
+            return context.IsDungeon
+                ? ResolveDungeonDirectionState(bits, context.WallType)
+                : ResolveTownDirectionState(bits, context.WallType);
+        }
+
+        private DirectionState ResolveTownDirectionState(DirectionBits bits, string wallType)
+        {
+            int passageType = 0;
+            bool isClosed = false;
+
+            if (bits.HasWallBit && !bits.HasDoorBit)
+            {
+                if (!bits.SecondLowBit)
+                    passageType = 3;
+            }
+            else if (!bits.HasWallBit && bits.HasDoorBit)
+            {
+                passageType = 1;
+                isClosed = bits.SecondLowBit;
+            }
+            else if (bits.HasWallBit && bits.HasDoorBit)
+            {
+                if (!bits.SecondLowBit)
+                    passageType = 3;
+            }
+
+            return new DirectionState
+            {
+                BorderType = wallType,
+                PassageType = passageType,
+                IsClosed = isClosed
+            };
+        }
+
+        private DirectionState ResolveDungeonDirectionState(DirectionBits bits, string wallType)
+        {
+            int passageType = 0;
+            bool isClosed = false;
+
+            if (bits.HasWallBit && !bits.HasDoorBit)
+            {
+                if (!bits.SecondLowBit)
+                    passageType = 2;
+            }
+            else if (!bits.HasWallBit && bits.HasDoorBit)
+            {
+                passageType = 1;
+                isClosed = bits.SecondLowBit;
+            }
+            else if (bits.HasWallBit && bits.HasDoorBit)
+            {
+                passageType = 2;
+                isClosed = bits.SecondLowBit;
+            }
+
+            return new DirectionState
+            {
+                BorderType = wallType,
+                PassageType = passageType,
+                IsClosed = isClosed
+            };
+        }
+
+        private void ApplyDirectionState(
+            CellSide side,
+            DirectionState state,
+            ref Tuple<string, string, string, string> currentBorders,
+            ref Tuple<int, int, int, int> currentPassages,
+            ref Tuple<bool, bool, bool, bool> currentClosedStates)
+        {
+            currentBorders = SetBorder(currentBorders, side, state.BorderType);
+
+            if (state.PassageType != 0)
+                currentPassages = SetPassage(currentPassages, side, state.PassageType);
+
+            if (state.IsClosed)
+                currentClosedStates = SetClosed(currentClosedStates, side, true);
+        }
+
+        private Tuple<string, string, string, string> SetBorder(
+            Tuple<string, string, string, string> source,
+            CellSide side,
+            string value)
+        {
+            return side switch
+            {
+                CellSide.Top => new Tuple<string, string, string, string>(value, source.Item2, source.Item3, source.Item4),
+                CellSide.Bottom => new Tuple<string, string, string, string>(source.Item1, value, source.Item3, source.Item4),
+                CellSide.Left => new Tuple<string, string, string, string>(source.Item1, source.Item2, value, source.Item4),
+                CellSide.Right => new Tuple<string, string, string, string>(source.Item1, source.Item2, source.Item3, value),
+                _ => source
+            };
+        }
+
+        private Tuple<int, int, int, int> SetPassage(
+            Tuple<int, int, int, int> source,
+            CellSide side,
+            int value)
+        {
+            return side switch
+            {
+                CellSide.Top => new Tuple<int, int, int, int>(value, source.Item2, source.Item3, source.Item4),
+                CellSide.Bottom => new Tuple<int, int, int, int>(source.Item1, value, source.Item3, source.Item4),
+                CellSide.Left => new Tuple<int, int, int, int>(source.Item1, source.Item2, value, source.Item4),
+                CellSide.Right => new Tuple<int, int, int, int>(source.Item1, source.Item2, source.Item3, value),
+                _ => source
+            };
+        }
+
+        private Tuple<bool, bool, bool, bool> SetClosed(
+            Tuple<bool, bool, bool, bool> source,
+            CellSide side,
+            bool value)
+        {
+            return side switch
+            {
+                CellSide.Top => new Tuple<bool, bool, bool, bool>(value, source.Item2, source.Item3, source.Item4),
+                CellSide.Bottom => new Tuple<bool, bool, bool, bool>(source.Item1, value, source.Item3, source.Item4),
+                CellSide.Left => new Tuple<bool, bool, bool, bool>(source.Item1, source.Item2, value, source.Item4),
+                CellSide.Right => new Tuple<bool, bool, bool, bool>(source.Item1, source.Item2, source.Item3, value),
+                _ => source
+            };
+        }
+
+        private void ApplyCellWideDraftFlags(Point pos, int secondLayerValue)
+        {
+            isDangerStates[pos] = IsBitSet(secondLayerValue, 4);
+            noMagicStates[pos] = IsBitSet(secondLayerValue, 2);
+            lightingLevels[pos] = IsBitSet(secondLayerValue, 6)
+                ? Lighting.Dark
+                : Lighting.Light;
+            centralOptions[pos] = IsBitSet(secondLayerValue, 8)
+                ? "Случайная встреча"
+                : "Пустота";
+        }
+
+        private void ResetDraftTransientState(Point pos)
+        {
+            messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+            notesPerCell[pos] = "";
+            imagesPerCell[pos] = null;
+        }
+
+        private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer, OvrFileConfig config)
+        {
+            int firstLayerValue = Convert.ToInt32(hexValueFirstLayer, 16);
+            int secondLayerValue = Convert.ToInt32(hexValueSecondLayer, 16);
 
             Point pos = new Point(x, y);
+            CellDraftContext context = BuildDraftContext(config);
 
             var currentBorders = borders[pos];
             var currentPassages = passageDict[pos];
             var currentClosedStates = closedStates[pos];
 
-            void ApplyDirection(
-                int highBitFromRight,
-                int lowBitFromRight,
-                Func<Tuple<string, string, string, string>, string, Tuple<string, string, string, string>> setBorder,
-                Func<Tuple<int, int, int, int>, int, Tuple<int, int, int, int>> setPassage,
-                Func<Tuple<bool, bool, bool, bool>, bool, Tuple<bool, bool, bool, bool>> setClosed)
+            foreach (var mapping in DraftSideMappings)
             {
-                char firstHigh = firstBinaryRepresentation[^highBitFromRight];
-                char firstLow = firstBinaryRepresentation[^lowBitFromRight];
-                char secondHigh = secondBinaryRepresentation[^highBitFromRight];
-                char secondLow = secondBinaryRepresentation[^lowBitFromRight];
+                DirectionBits bits = ReadDirectionBits(
+                    firstLayerValue,
+                    secondLayerValue,
+                    mapping.HighBit,
+                    mapping.LowBit);
 
-                bool hasWallBit = firstLow == '1';
-                bool hasDoorBit = firstHigh == '1';
+                DirectionState state = ResolveDirectionState(bits, context);
 
-                bool secondHighSet = secondHigh == '1';
-                bool secondLowSet = secondLow == '1';
-
-                bool anyStructure = hasWallBit || hasDoorBit;
-                if (!anyStructure)
-                {
-                    if (secondLowSet)
-                        currentBorders = setBorder(currentBorders, "Барьер");
-                    return;
-                }
-
-                currentBorders = setBorder(currentBorders, wallType);
-
-                int passageType = 0;
-                bool isClosed = false;
-
-                if (!isDungeon)
-                {
-                    // TOWN: оставляем старую логику
-                    if (hasWallBit && !hasDoorBit)
-                    {
-                        if (!secondLowSet)
-                            passageType = 3; // секрет
-                    }
-                    else if (!hasWallBit && hasDoorBit)
-                    {
-                        passageType = 1;   // дверь
-                        isClosed = secondLowSet;
-                    }
-                    else if (hasWallBit && hasDoorBit)
-                    {
-                        // В town комбинация 11 остаётся стеной/секретом, не дверью
-                        if (!secondLowSet)
-                            passageType = 3; // секрет
-                    }
-                }
-                else
-                {
-                    // DUNGEON: новая логика
-                    if (hasWallBit && !hasDoorBit)
-                    {
-                        if (!secondLowSet)
-                            passageType = 2; // открытая решётка
-                    }
-                    else if (!hasWallBit && hasDoorBit)
-                    {
-                        passageType = 1;   // дверь
-                        isClosed = secondLowSet;
-                    }
-                    else if (hasWallBit && hasDoorBit)
-                    {
-                        passageType = 2;   // решётка
-                        isClosed = secondLowSet; // закрытость только по младшему биту второго слоя
-                    }
-                }
-
-                if (passageType != 0)
-                    currentPassages = setPassage(currentPassages, passageType);
-
-                if (isClosed)
-                    currentClosedStates = setClosed(currentClosedStates, true);
+                ApplyDirectionState(
+                    mapping.Side,
+                    state,
+                    ref currentBorders,
+                    ref currentPassages,
+                    ref currentClosedStates);
             }
-
-            // Лево: биты 2/1
-            ApplyDirection(
-                2, 1,
-                (b, wall) => new Tuple<string, string, string, string>(b.Item1, b.Item2, wall, b.Item4),
-                (p, val) => new Tuple<int, int, int, int>(p.Item1, p.Item2, val, p.Item4),
-                (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, c.Item2, val, c.Item4)
-            );
-
-            // Низ: биты 4/3
-            ApplyDirection(
-                4, 3,
-                (b, wall) => new Tuple<string, string, string, string>(b.Item1, wall, b.Item3, b.Item4),
-                (p, val) => new Tuple<int, int, int, int>(p.Item1, val, p.Item3, p.Item4),
-                (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, val, c.Item3, c.Item4)
-            );
-
-            // Право: биты 6/5
-            ApplyDirection(
-                6, 5,
-                (b, wall) => new Tuple<string, string, string, string>(b.Item1, b.Item2, b.Item3, wall),
-                (p, val) => new Tuple<int, int, int, int>(p.Item1, p.Item2, p.Item3, val),
-                (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, c.Item2, c.Item3, val)
-            );
-
-            // Верх: биты 8/7
-            ApplyDirection(
-                8, 7,
-                (b, wall) => new Tuple<string, string, string, string>(wall, b.Item2, b.Item3, b.Item4),
-                (p, val) => new Tuple<int, int, int, int>(val, p.Item2, p.Item3, p.Item4),
-                (c, val) => new Tuple<bool, bool, bool, bool>(val, c.Item2, c.Item3, c.Item4)
-            );
-
-            if (secondBinaryRepresentation[^4] == '1')
-                isDangerStates[pos] = true;
-            else
-                isDangerStates[pos] = false;
-
-            if (secondBinaryRepresentation[^6] == '1')
-                lightingLevels[pos] = Lighting.Dark;
-            else
-                lightingLevels[pos] = Lighting.Light;
-
-            if (secondBinaryRepresentation[^2] == '1')
-                noMagicStates[pos] = true;
-            else
-                noMagicStates[pos] = false;
-
-            if (secondBinaryRepresentation[^8] == '1')
-                centralOptions[pos] = "Случайная встреча";
-            else
-                centralOptions[pos] = "Пустота";
 
             borders[pos] = currentBorders;
             passageDict[pos] = currentPassages;
             closedStates[pos] = currentClosedStates;
 
-            messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
-            notesPerCell[pos] = "";
-            imagesPerCell[pos] = null;
+            ApplyCellWideDraftFlags(pos, secondLayerValue);
+            ResetDraftTransientState(pos);
         }
 
         // Обработчик события пункта меню "Метаданные"
