@@ -1,3 +1,19 @@
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -2501,36 +2517,47 @@ namespace MMMapEditor
 
                 currentBorders = setBorder(currentBorders, wallType);
 
-                int passageType = 0;   // 0 = нет прохода, 1 = дверь, 2 = решётка, 3 = секрет
+                int passageType = 0;
                 bool isClosed = false;
 
-                // 01 => "стена" с потенциальной открытой решёткой/секретом
-                if (hasWallBit && !hasDoorBit)
+                if (!isDungeon)
                 {
-                    if (!secondLowSet)
+                    // TOWN: оставляем старую логику
+                    if (hasWallBit && !hasDoorBit)
                     {
-                        passageType = isDungeon ? 2 : 3;
+                        if (!secondLowSet)
+                            passageType = 3; // секрет
                     }
-                }
-                // 11 => для dungeon это решётка
-                else if (hasWallBit && hasDoorBit)
-                {
-                    if (isDungeon)
+                    else if (!hasWallBit && hasDoorBit)
                     {
-                        passageType = 2;
+                        passageType = 1;   // дверь
                         isClosed = secondLowSet;
                     }
-                    else
+                    else if (hasWallBit && hasDoorBit)
                     {
-                        passageType = 1;
-                        isClosed = secondLowSet;
+                        // В town комбинация 11 остаётся стеной/секретом, не дверью
+                        if (!secondLowSet)
+                            passageType = 3; // секрет
                     }
                 }
-                // 10 => всегда дверь
-                else if (!hasWallBit && hasDoorBit)
+                else
                 {
-                    passageType = 1;
-                    isClosed = secondLowSet;
+                    // DUNGEON: новая логика
+                    if (hasWallBit && !hasDoorBit)
+                    {
+                        if (!secondLowSet)
+                            passageType = 2; // открытая решётка
+                    }
+                    else if (!hasWallBit && hasDoorBit)
+                    {
+                        passageType = 1;   // дверь
+                        isClosed = secondLowSet;
+                    }
+                    else if (hasWallBit && hasDoorBit)
+                    {
+                        passageType = 2;   // решётка
+                        isClosed = secondLowSet; // закрытость только по младшему биту второго слоя
+                    }
                 }
 
                 if (passageType != 0)
@@ -2540,7 +2567,7 @@ namespace MMMapEditor
                     currentClosedStates = setClosed(currentClosedStates, true);
             }
 
-            // Лево: пара битов 2/1
+            // Лево: биты 2/1
             ApplyDirection(
                 2, 1,
                 (b, wall) => new Tuple<string, string, string, string>(b.Item1, b.Item2, wall, b.Item4),
@@ -2548,7 +2575,7 @@ namespace MMMapEditor
                 (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, c.Item2, val, c.Item4)
             );
 
-            // Низ: пара битов 4/3
+            // Низ: биты 4/3
             ApplyDirection(
                 4, 3,
                 (b, wall) => new Tuple<string, string, string, string>(b.Item1, wall, b.Item3, b.Item4),
@@ -2556,7 +2583,7 @@ namespace MMMapEditor
                 (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, val, c.Item3, c.Item4)
             );
 
-            // Право: пара битов 6/5
+            // Право: биты 6/5
             ApplyDirection(
                 6, 5,
                 (b, wall) => new Tuple<string, string, string, string>(b.Item1, b.Item2, b.Item3, wall),
@@ -2564,7 +2591,7 @@ namespace MMMapEditor
                 (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, c.Item2, c.Item3, val)
             );
 
-            // Верх: пара битов 8/7
+            // Верх: биты 8/7
             ApplyDirection(
                 8, 7,
                 (b, wall) => new Tuple<string, string, string, string>(wall, b.Item2, b.Item3, b.Item4),
