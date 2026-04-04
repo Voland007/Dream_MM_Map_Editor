@@ -1,19 +1,3 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -2485,216 +2469,108 @@ namespace MMMapEditor
 
             Point pos = new Point(x, y);
 
-            Tuple<string, string, string, string> currentBorders = borders[pos];
-            Tuple<int, int, int, int> currentPassages = passageDict[pos];
-            Tuple<bool, bool, bool, bool> currentClosedStates = closedStates[pos];
+            var currentBorders = borders[pos];
+            var currentPassages = passageDict[pos];
+            var currentClosedStates = closedStates[pos];
 
-            // ===== ЛЕВО =====
-            char leftFirstHi = firstBinaryRepresentation[^2];
-            char leftFirstLo = firstBinaryRepresentation[^1];
-            char leftSecondHi = secondBinaryRepresentation[^2];
-            char leftSecondLo = secondBinaryRepresentation[^1];
-
-            if (leftFirstLo == '1')
+            void ApplyDirection(
+                int highBitFromRight,
+                int lowBitFromRight,
+                Func<Tuple<string, string, string, string>, string, Tuple<string, string, string, string>> setBorder,
+                Func<Tuple<int, int, int, int>, int, Tuple<int, int, int, int>> setPassage,
+                Func<Tuple<bool, bool, bool, bool>, bool, Tuple<bool, bool, bool, bool>> setClosed)
             {
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, wallType, currentBorders.Item4);
+                char firstHigh = firstBinaryRepresentation[^highBitFromRight];
+                char firstLow = firstBinaryRepresentation[^lowBitFromRight];
+                char secondHigh = secondBinaryRepresentation[^highBitFromRight];
+                char secondLow = secondBinaryRepresentation[^lowBitFromRight];
 
-                bool isClosedDungeonGrate =
-                    isDungeon &&
-                    leftFirstHi == '1' && leftFirstLo == '1' &&
-                    leftSecondHi == '0' && leftSecondLo == '1';
+                bool hasWallBit = firstLow == '1';
+                bool hasDoorBit = firstHigh == '1';
 
-                bool isOpenGrateOrSecret = leftSecondLo == '0';
+                bool secondHighSet = secondHigh == '1';
+                bool secondLowSet = secondLow == '1';
 
-                if (isClosedDungeonGrate)
+                bool anyStructure = hasWallBit || hasDoorBit;
+                if (!anyStructure)
                 {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        currentPassages.Item1, currentPassages.Item2, 2, currentPassages.Item4);
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        currentClosedStates.Item1, currentClosedStates.Item2, true, currentClosedStates.Item4);
+                    if (secondLowSet)
+                        currentBorders = setBorder(currentBorders, "Барьер");
+                    return;
                 }
-                else if (isOpenGrateOrSecret)
+
+                currentBorders = setBorder(currentBorders, wallType);
+
+                int passageType = 0;   // 0 = нет прохода, 1 = дверь, 2 = решётка, 3 = секрет
+                bool isClosed = false;
+
+                // 01 => "стена" с потенциальной открытой решёткой/секретом
+                if (hasWallBit && !hasDoorBit)
                 {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        currentPassages.Item1, currentPassages.Item2, isDungeon ? 2 : 3, currentPassages.Item4);
+                    if (!secondLowSet)
+                    {
+                        passageType = isDungeon ? 2 : 3;
+                    }
                 }
-            }
-            else if (leftFirstLo == '0' && leftSecondLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, "Барьер", currentBorders.Item4);
-            }
-
-            // ===== НИЗ =====
-            char bottomFirstHi = firstBinaryRepresentation[^4];
-            char bottomFirstLo = firstBinaryRepresentation[^3];
-            char bottomSecondHi = secondBinaryRepresentation[^4];
-            char bottomSecondLo = secondBinaryRepresentation[^3];
-
-            if (bottomFirstLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, wallType, currentBorders.Item3, currentBorders.Item4);
-
-                bool isClosedDungeonGrate =
-                    isDungeon &&
-                    bottomFirstHi == '1' && bottomFirstLo == '1' &&
-                    bottomSecondHi == '0' && bottomSecondLo == '1';
-
-                bool isOpenGrateOrSecret = bottomSecondLo == '0';
-
-                if (isClosedDungeonGrate)
+                // 11 => для dungeon это решётка
+                else if (hasWallBit && hasDoorBit)
                 {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        currentPassages.Item1, 2, currentPassages.Item3, currentPassages.Item4);
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        currentClosedStates.Item1, true, currentClosedStates.Item3, currentClosedStates.Item4);
+                    if (isDungeon)
+                    {
+                        passageType = 2;
+                        isClosed = secondLowSet;
+                    }
+                    else
+                    {
+                        passageType = 1;
+                        isClosed = secondLowSet;
+                    }
                 }
-                else if (isOpenGrateOrSecret)
+                // 10 => всегда дверь
+                else if (!hasWallBit && hasDoorBit)
                 {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        currentPassages.Item1, isDungeon ? 2 : 3, currentPassages.Item3, currentPassages.Item4);
+                    passageType = 1;
+                    isClosed = secondLowSet;
                 }
-            }
-            else if (bottomFirstLo == '0' && bottomSecondLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, "Барьер", currentBorders.Item3, currentBorders.Item4);
-            }
 
-            // ===== ПРАВО =====
-            char rightFirstHi = firstBinaryRepresentation[^6];
-            char rightFirstLo = firstBinaryRepresentation[^5];
-            char rightSecondHi = secondBinaryRepresentation[^6];
-            char rightSecondLo = secondBinaryRepresentation[^5];
+                if (passageType != 0)
+                    currentPassages = setPassage(currentPassages, passageType);
 
-            if (rightFirstLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, wallType);
-
-                bool isClosedDungeonGrate =
-                    isDungeon &&
-                    rightFirstHi == '1' && rightFirstLo == '1' &&
-                    rightSecondHi == '0' && rightSecondLo == '1';
-
-                bool isOpenGrateOrSecret = rightSecondLo == '0';
-
-                if (isClosedDungeonGrate)
-                {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 2);
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        currentClosedStates.Item1, currentClosedStates.Item2, currentClosedStates.Item3, true);
-                }
-                else if (isOpenGrateOrSecret)
-                {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, isDungeon ? 2 : 3);
-                }
-            }
-            else if (rightFirstLo == '0' && rightSecondLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, "Барьер");
+                if (isClosed)
+                    currentClosedStates = setClosed(currentClosedStates, true);
             }
 
-            // ===== ВЕРХ =====
-            char topFirstHi = firstBinaryRepresentation[^8];
-            char topFirstLo = firstBinaryRepresentation[^7];
-            char topSecondHi = secondBinaryRepresentation[^8];
-            char topSecondLo = secondBinaryRepresentation[^7];
+            // Лево: пара битов 2/1
+            ApplyDirection(
+                2, 1,
+                (b, wall) => new Tuple<string, string, string, string>(b.Item1, b.Item2, wall, b.Item4),
+                (p, val) => new Tuple<int, int, int, int>(p.Item1, p.Item2, val, p.Item4),
+                (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, c.Item2, val, c.Item4)
+            );
 
-            if (topFirstLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    wallType, currentBorders.Item2, currentBorders.Item3, currentBorders.Item4);
+            // Низ: пара битов 4/3
+            ApplyDirection(
+                4, 3,
+                (b, wall) => new Tuple<string, string, string, string>(b.Item1, wall, b.Item3, b.Item4),
+                (p, val) => new Tuple<int, int, int, int>(p.Item1, val, p.Item3, p.Item4),
+                (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, val, c.Item3, c.Item4)
+            );
 
-                bool isClosedDungeonGrate =
-                    isDungeon &&
-                    topFirstHi == '1' && topFirstLo == '1' &&
-                    topSecondHi == '0' && topSecondLo == '1';
+            // Право: пара битов 6/5
+            ApplyDirection(
+                6, 5,
+                (b, wall) => new Tuple<string, string, string, string>(b.Item1, b.Item2, b.Item3, wall),
+                (p, val) => new Tuple<int, int, int, int>(p.Item1, p.Item2, p.Item3, val),
+                (c, val) => new Tuple<bool, bool, bool, bool>(c.Item1, c.Item2, c.Item3, val)
+            );
 
-                bool isOpenGrateOrSecret = topSecondLo == '0';
-
-                if (isClosedDungeonGrate)
-                {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        2, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
-                }
-                else if (isOpenGrateOrSecret)
-                {
-                    currentPassages = new Tuple<int, int, int, int>(
-                        isDungeon ? 2 : 3, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
-                }
-            }
-            else if (topFirstLo == '0' && topSecondLo == '1')
-            {
-                currentBorders = new Tuple<string, string, string, string>(
-                    "Барьер", currentBorders.Item2, currentBorders.Item3, currentBorders.Item4);
-            }
-
-            // ===== ДВЕРИ (паттерн 10) =====
-            // Здесь ТОЛЬКО двери. Решётки уже обработаны выше.
-
-            if (firstBinaryRepresentation[^2] == '1' && firstBinaryRepresentation[^1] == '0')
-            {
-                bool isClosedDoor = secondBinaryRepresentation[^1] == '1';
-
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, wallType, currentBorders.Item4);
-                currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, currentPassages.Item2, 1, currentPassages.Item4);
-
-                if (isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        currentClosedStates.Item1, currentClosedStates.Item2, true, currentClosedStates.Item4);
-            }
-
-            if (firstBinaryRepresentation[^4] == '1' && firstBinaryRepresentation[^3] == '0')
-            {
-                bool isClosedDoor = secondBinaryRepresentation[^3] == '1';
-
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, wallType, currentBorders.Item3, currentBorders.Item4);
-                currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, 1, currentPassages.Item3, currentPassages.Item4);
-
-                if (isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        currentClosedStates.Item1, true, currentClosedStates.Item3, currentClosedStates.Item4);
-            }
-
-            if (firstBinaryRepresentation[^6] == '1' && firstBinaryRepresentation[^5] == '0')
-            {
-                bool isClosedDoor = secondBinaryRepresentation[^5] == '1';
-
-                currentBorders = new Tuple<string, string, string, string>(
-                    currentBorders.Item1, currentBorders.Item2, currentBorders.Item3, wallType);
-                currentPassages = new Tuple<int, int, int, int>(
-                    currentPassages.Item1, currentPassages.Item2, currentPassages.Item3, 1);
-
-                if (isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        currentClosedStates.Item1, currentClosedStates.Item2, currentClosedStates.Item3, true);
-            }
-
-            if (firstBinaryRepresentation[^8] == '1' && firstBinaryRepresentation[^7] == '0')
-            {
-                bool isClosedDoor = secondBinaryRepresentation[^7] == '1';
-
-                currentBorders = new Tuple<string, string, string, string>(
-                    wallType, currentBorders.Item2, currentBorders.Item3, currentBorders.Item4);
-                currentPassages = new Tuple<int, int, int, int>(
-                    1, currentPassages.Item2, currentPassages.Item3, currentPassages.Item4);
-
-                if (isClosedDoor)
-                    currentClosedStates = new Tuple<bool, bool, bool, bool>(
-                        true, currentClosedStates.Item2, currentClosedStates.Item3, currentClosedStates.Item4);
-            }
+            // Верх: пара битов 8/7
+            ApplyDirection(
+                8, 7,
+                (b, wall) => new Tuple<string, string, string, string>(wall, b.Item2, b.Item3, b.Item4),
+                (p, val) => new Tuple<int, int, int, int>(val, p.Item2, p.Item3, p.Item4),
+                (c, val) => new Tuple<bool, bool, bool, bool>(val, c.Item2, c.Item3, c.Item4)
+            );
 
             if (secondBinaryRepresentation[^4] == '1')
                 isDangerStates[pos] = true;
