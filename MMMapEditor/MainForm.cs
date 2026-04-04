@@ -59,12 +59,12 @@ namespace MMMapEditor
             "Барьер"
         };
         private ComboBox topComboBox, bottomComboBox, leftComboBox, rightComboBox; // Комбобоксы для границ
-        private Dictionary<Point, Tuple<int, int, int, int>> settingsDict = new Dictionary<Point, Tuple<int, int, int, int>>();
+        private Dictionary<Point, SideValues<int>> settingsDict = new Dictionary<Point, SideValues<int>>();
         private Point? selectedPosition = null; // Текущая выделенная позиция
-        private Dictionary<Point, Tuple<string, string, string, string>> borders = new Dictionary<Point, Tuple<string, string, string, string>>();
-        private Dictionary<Point, Tuple<int, int, int, int>> passageDict = new Dictionary<Point, Tuple<int, int, int, int>>();
-        private Dictionary<Point, Tuple<bool, bool, bool, bool>> closedStates = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
-        private Dictionary<Point, Tuple<bool, bool, bool, bool>> messageStates = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
+        private Dictionary<Point, SideValues<string>> borders = new Dictionary<Point, SideValues<string>>();
+        private Dictionary<Point, SideValues<int>> passageDict = new Dictionary<Point, SideValues<int>>();
+        private Dictionary<Point, SideValues<bool>> closedStates = new Dictionary<Point, SideValues<bool>>();
+        private Dictionary<Point, SideValues<bool>> messageStates = new Dictionary<Point, SideValues<bool>>();
         private Dictionary<Point, string> centralOptions = new Dictionary<Point, string>(); // Словарь для хранения значения тела каждой ячейки
         private PictureBox magnifierPictureBox; // Объявление картинки, увеличивающей выделенную ячейку
         private ComboBox passTopComboBox, passBottomComboBox, passLeftComboBox, passRightComboBox; // Комбобоксы для прохода
@@ -359,10 +359,10 @@ namespace MMMapEditor
                 Point pos = selectedPosition.Value;
 
                 // Вставляем состояние из буфера в текущую ячейку
-                borders[pos] = copiedCellInfo.Value.Borders;
-                passageDict[pos] = copiedCellInfo.Value.Passages;
-                closedStates[pos] = copiedCellInfo.Value.ClosedStates;
-                messageStates[pos] = copiedCellInfo.Value.Messages;
+                borders[pos] = copiedCellInfo.Value.Borders.Clone();
+                passageDict[pos] = copiedCellInfo.Value.Passages.Clone();
+                closedStates[pos] = copiedCellInfo.Value.ClosedStates.Clone();
+                messageStates[pos] = copiedCellInfo.Value.Messages.Clone();
                 centralOptions[pos] = copiedCellInfo.Value.CentralOption;
                 isDangerStates[pos] = copiedCellInfo.Value.IsDanger;
                 noMagicStates[pos] = copiedCellInfo.Value.NoMagic;
@@ -387,10 +387,10 @@ namespace MMMapEditor
                 // Копируем текущее состояние выбранной ячейки
                 copiedCellInfo = new CopiedCellInfo
                 {
-                    Borders = borders[pos],
-                    Passages = passageDict[pos],
-                    ClosedStates = closedStates[pos],
-                    Messages = messageStates[pos],
+                    Borders = borders[pos].Clone(),
+                    Passages = passageDict[pos].Clone(),
+                    ClosedStates = closedStates[pos].Clone(),
+                    Messages = messageStates[pos].Clone(),
                     CentralOption = centralOptions[pos],
                     IsDanger = isDangerStates[pos],
                     NoMagic = noMagicStates[pos],
@@ -430,10 +430,10 @@ namespace MMMapEditor
 
             // Дополнительно можно добавить восстановление дефолтных значений, если это требуется
             // Например:
-            borders[pos] = new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
-            passageDict[pos] = new Tuple<int, int, int, int>(0, 0, 0, 0);
-            closedStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
-            messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+            borders[pos] = new SideValues<string>("Пустота", "Пустота", "Пустота", "Пустота");
+            passageDict[pos] = new SideValues<int>(0, 0, 0, 0);
+            closedStates[pos] = new SideValues<bool>(false, false, false, false);
+            messageStates[pos] = new SideValues<bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
             isDangerStates[pos] = false;
@@ -544,74 +544,44 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                // 1. Сначала сохраним текущее состояние закрытыъ дверей и сообщений ячейки
-                Tuple<bool, bool, bool, bool>? previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed) ? prevClosed : null;
-                Tuple<bool, bool, bool, bool>? previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg) ? prevMsg : null;
+                SideValues<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
+                    ? prevClosed.Clone()
+                    : new SideValues<bool>(false, false, false, false);
+
+                SideValues<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
+                    ? prevMsg.Clone()
+                    : new SideValues<bool>(false, false, false, false);
 
                 CheckBox checkbox = (CheckBox)sender;
                 bool checkedState = checkbox.Checked;
 
-                // Индексация чекбоксов по порядку следования
-                int index = -1;
-                if (checkbox == topCheck) index = 0;
-                else if (checkbox == bottomCheck) index = 1;
-                else if (checkbox == leftCheck) index = 2;
-                else if (checkbox == rightCheck) index = 3;
-                else if (checkbox == topMessageCheck) index = 4;
-                else if (checkbox == bottomMessageCheck) index = 5;
-                else if (checkbox == leftMessageCheck) index = 6;
-                else if (checkbox == rightMessageCheck) index = 7;
+                if (checkbox == topCheck)
+                    closedStates[pos].Top = checkedState;
+                else if (checkbox == bottomCheck)
+                    closedStates[pos].Bottom = checkedState;
+                else if (checkbox == leftCheck)
+                    closedStates[pos].Left = checkedState;
+                else if (checkbox == rightCheck)
+                    closedStates[pos].Right = checkedState;
+                else if (checkbox == topMessageCheck)
+                    messageStates[pos].Top = checkedState;
+                else if (checkbox == bottomMessageCheck)
+                    messageStates[pos].Bottom = checkedState;
+                else if (checkbox == leftMessageCheck)
+                    messageStates[pos].Left = checkedState;
+                else if (checkbox == rightMessageCheck)
+                    messageStates[pos].Right = checkedState;
 
-                if (index >= 0 && index <= 3)
-                {
-                    // Обновляем состояние закрытых границ
-                    var existingClosed = closedStates.ContainsKey(pos)
-                                            ? closedStates[pos]
-                                            : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                SideValues<bool> currentClosedStates = closedStates[pos];
+                SideValues<bool> currentMessageStates = messageStates[pos];
 
-                    var updatedClosed = index switch
-                    {
-                        0 => new Tuple<bool, bool, bool, bool>(checkedState, existingClosed.Item2, existingClosed.Item3, existingClosed.Item4),
-                        1 => new Tuple<bool, bool, bool, bool>(existingClosed.Item1, checkedState, existingClosed.Item3, existingClosed.Item4),
-                        2 => new Tuple<bool, bool, bool, bool>(existingClosed.Item1, existingClosed.Item2, checkedState, existingClosed.Item4),
-                        3 => new Tuple<bool, bool, bool, bool>(existingClosed.Item1, existingClosed.Item2, existingClosed.Item3, checkedState),
-                        _ => existingClosed
-                    };
-
-                    closedStates[pos] = updatedClosed;
-                }
-                else if (index >= 4 && index <= 7)
-                {
-                    // Обновляем состояние чекбоксов "Текст"
-                    var existingMessages = messageStates.ContainsKey(pos)
-                                              ? messageStates[pos]
-                                              : new Tuple<bool, bool, bool, bool>(false, false, false, false);
-
-                    var updatedMessages = index switch
-                    {
-                        4 => new Tuple<bool, bool, bool, bool>(checkedState, existingMessages.Item2, existingMessages.Item3, existingMessages.Item4),
-                        5 => new Tuple<bool, bool, bool, bool>(existingMessages.Item1, checkedState, existingMessages.Item3, existingMessages.Item4),
-                        6 => new Tuple<bool, bool, bool, bool>(existingMessages.Item1, existingMessages.Item2, checkedState, existingMessages.Item4),
-                        7 => new Tuple<bool, bool, bool, bool>(existingMessages.Item1, existingMessages.Item2, existingMessages.Item3, checkedState),
-                        _ => existingMessages
-                    };
-
-                    messageStates[pos] = updatedMessages;
-                }
-
-                Tuple<bool, bool, bool, bool> currentClosedStates = closedStates[pos];
-                Tuple<bool, bool, bool, bool> currentMessageStates = messageStates[pos];
-
-
-                // Теперь сравним сохранённые ранее значения с новыми
                 bool hasChanged =
                     !previousClosedStates.Equals(currentClosedStates) ||
                     !previousMessageStates.Equals(currentMessageStates);
 
                 if (hasChanged)
                 {
-                    gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
-
+                    gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
                     UpdatePreview();
                     isMapModified = true;
                 }
@@ -2212,18 +2182,25 @@ namespace MMMapEditor
                                 // Устанавливаем флаг сообщения для направления
                                 var currentMessages = messageStates.TryGetValue(pos, out var prev)
                                     ? prev
-                                    : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                                    : new SideValues<bool>(false, false, false, false);
 
-                                var updatedMessages = directionFlag switch
+                                switch (directionFlag)
                                 {
-                                    Direction.Top => new Tuple<bool, bool, bool, bool>(true, currentMessages.Item2, currentMessages.Item3, currentMessages.Item4),
-                                    Direction.Left => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, true, currentMessages.Item3, currentMessages.Item4),
-                                    Direction.Bottom => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, true, currentMessages.Item4),
-                                    Direction.Right => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, currentMessages.Item3, true),
-                                    _ => currentMessages
-                                };
+                                    case Direction.Top:
+                                        currentMessages.Top = true;
+                                        break;
+                                    case Direction.Left:
+                                        currentMessages.Left = true;
+                                        break;
+                                    case Direction.Bottom:
+                                        currentMessages.Bottom = true;
+                                        break;
+                                    case Direction.Right:
+                                        currentMessages.Right = true;
+                                        break;
+                                }
 
-                                messageStates[pos] = updatedMessages;
+                                messageStates[pos] = currentMessages;
                             }
                         }
 
@@ -2427,18 +2404,25 @@ namespace MMMapEditor
                                         // Устанавливаем флаг сообщения для направления
                                         var currentMessages = messageStates.TryGetValue(newPos, out var prev)
                                             ? prev
-                                            : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                                            : new SideValues<bool>(false, false, false, false);
 
-                                        var updatedMessages = directionFlag switch
+                                        switch (directionFlag)
                                         {
-                                            Direction.Top => new Tuple<bool, bool, bool, bool>(true, currentMessages.Item2, currentMessages.Item3, currentMessages.Item4),
-                                            Direction.Left => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, true, currentMessages.Item3, currentMessages.Item4),
-                                            Direction.Bottom => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, true, currentMessages.Item4),
-                                            Direction.Right => new Tuple<bool, bool, bool, bool>(currentMessages.Item1, currentMessages.Item2, currentMessages.Item3, true),
-                                            _ => currentMessages
-                                        };
+                                            case Direction.Top:
+                                                currentMessages.Top = true;
+                                                break;
+                                            case Direction.Left:
+                                                currentMessages.Left = true;
+                                                break;
+                                            case Direction.Bottom:
+                                                currentMessages.Bottom = true;
+                                                break;
+                                            case Direction.Right:
+                                                currentMessages.Right = true;
+                                                break;
+                                        }
 
-                                        messageStates[newPos] = updatedMessages;
+                                        messageStates[newPos] = currentMessages;
 
                                         // Добавляем текст сообщения, если есть
                                         if (messageIndex < messages.Length)
@@ -2472,12 +2456,95 @@ namespace MMMapEditor
             }
         }
 
-        private enum CellSide
+        public sealed class SideValues<T> : IEquatable<SideValues<T>>
         {
-            Top,
-            Bottom,
-            Left,
-            Right
+            [JsonProperty("Item1")]
+            public T Top { get; set; }
+
+            [JsonProperty("Item2")]
+            public T Bottom { get; set; }
+
+            [JsonProperty("Item3")]
+            public T Left { get; set; }
+
+            [JsonProperty("Item4")]
+            public T Right { get; set; }
+
+            public SideValues()
+            {
+            }
+
+            public SideValues(T top, T bottom, T left, T right)
+            {
+                Top = top;
+                Bottom = bottom;
+                Left = left;
+                Right = right;
+            }
+
+            public T Get(Direction side)
+            {
+                return side switch
+                {
+                    Direction.Top => Top,
+                    Direction.Bottom => Bottom,
+                    Direction.Left => Left,
+                    Direction.Right => Right,
+                    _ => throw new ArgumentOutOfRangeException(nameof(side))
+                };
+            }
+
+            public void Set(Direction side, T value)
+            {
+                switch (side)
+                {
+                    case Direction.Top:
+                        Top = value;
+                        break;
+                    case Direction.Bottom:
+                        Bottom = value;
+                        break;
+                    case Direction.Left:
+                        Left = value;
+                        break;
+                    case Direction.Right:
+                        Right = value;
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(side));
+                }
+            }
+
+            public SideValues<T> Clone()
+            {
+                return new SideValues<T>(Top, Bottom, Left, Right);
+            }
+
+            public bool Equals(SideValues<T> other)
+            {
+                if (ReferenceEquals(other, null))
+                    return false;
+
+                return EqualityComparer<T>.Default.Equals(Top, other.Top)
+                    && EqualityComparer<T>.Default.Equals(Bottom, other.Bottom)
+                    && EqualityComparer<T>.Default.Equals(Left, other.Left)
+                    && EqualityComparer<T>.Default.Equals(Right, other.Right);
+            }
+
+            public override bool Equals(object obj)
+            {
+                return Equals(obj as SideValues<T>);
+            }
+
+            public override int GetHashCode()
+            {
+                int hash = 17;
+                hash = hash * 31 + (Top == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Top));
+                hash = hash * 31 + (Bottom == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Bottom));
+                hash = hash * 31 + (Left == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Left));
+                hash = hash * 31 + (Right == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Right));
+                return hash;
+            }
         }
 
         private sealed class DirectionBits
@@ -2501,12 +2568,12 @@ namespace MMMapEditor
             public string WallType { get; init; } = "Кирпичная стена";
         }
 
-        private static readonly (CellSide Side, int HighBit, int LowBit)[] DraftSideMappings =
+        private static readonly (Direction Side, int HighBit, int LowBit)[] DraftSideMappings =
         {
-            (CellSide.Left, 2, 1),
-            (CellSide.Bottom, 4, 3),
-            (CellSide.Right, 6, 5),
-            (CellSide.Top, 8, 7)
+            (Direction.Left, 2, 1),
+            (Direction.Bottom, 4, 3),
+            (Direction.Right, 6, 5),
+            (Direction.Top, 8, 7)
         };
 
         private static bool IsBitSet(int value, int bitFromRight)
@@ -2613,64 +2680,19 @@ namespace MMMapEditor
         }
 
         private void ApplyDirectionState(
-            CellSide side,
+            Direction side,
             DirectionState state,
-            ref Tuple<string, string, string, string> currentBorders,
-            ref Tuple<int, int, int, int> currentPassages,
-            ref Tuple<bool, bool, bool, bool> currentClosedStates)
+            SideValues<string> currentBorders,
+            SideValues<int> currentPassages,
+            SideValues<bool> currentClosedStates)
         {
-            currentBorders = SetBorder(currentBorders, side, state.BorderType);
+            currentBorders.Set(side, state.BorderType);
 
             if (state.PassageType != 0)
-                currentPassages = SetPassage(currentPassages, side, state.PassageType);
+                currentPassages.Set(side, state.PassageType);
 
             if (state.IsClosed)
-                currentClosedStates = SetClosed(currentClosedStates, side, true);
-        }
-
-        private Tuple<string, string, string, string> SetBorder(
-            Tuple<string, string, string, string> source,
-            CellSide side,
-            string value)
-        {
-            return side switch
-            {
-                CellSide.Top => new Tuple<string, string, string, string>(value, source.Item2, source.Item3, source.Item4),
-                CellSide.Bottom => new Tuple<string, string, string, string>(source.Item1, value, source.Item3, source.Item4),
-                CellSide.Left => new Tuple<string, string, string, string>(source.Item1, source.Item2, value, source.Item4),
-                CellSide.Right => new Tuple<string, string, string, string>(source.Item1, source.Item2, source.Item3, value),
-                _ => source
-            };
-        }
-
-        private Tuple<int, int, int, int> SetPassage(
-            Tuple<int, int, int, int> source,
-            CellSide side,
-            int value)
-        {
-            return side switch
-            {
-                CellSide.Top => new Tuple<int, int, int, int>(value, source.Item2, source.Item3, source.Item4),
-                CellSide.Bottom => new Tuple<int, int, int, int>(source.Item1, value, source.Item3, source.Item4),
-                CellSide.Left => new Tuple<int, int, int, int>(source.Item1, source.Item2, value, source.Item4),
-                CellSide.Right => new Tuple<int, int, int, int>(source.Item1, source.Item2, source.Item3, value),
-                _ => source
-            };
-        }
-
-        private Tuple<bool, bool, bool, bool> SetClosed(
-            Tuple<bool, bool, bool, bool> source,
-            CellSide side,
-            bool value)
-        {
-            return side switch
-            {
-                CellSide.Top => new Tuple<bool, bool, bool, bool>(value, source.Item2, source.Item3, source.Item4),
-                CellSide.Bottom => new Tuple<bool, bool, bool, bool>(source.Item1, value, source.Item3, source.Item4),
-                CellSide.Left => new Tuple<bool, bool, bool, bool>(source.Item1, source.Item2, value, source.Item4),
-                CellSide.Right => new Tuple<bool, bool, bool, bool>(source.Item1, source.Item2, source.Item3, value),
-                _ => source
-            };
+                currentClosedStates.Set(side, true);
         }
 
         private void ApplyCellWideDraftFlags(Point pos, int secondLayerValue)
@@ -2687,7 +2709,7 @@ namespace MMMapEditor
 
         private void ResetDraftTransientState(Point pos)
         {
-            messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+            messageStates[pos] = new SideValues<bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
         }
@@ -2717,9 +2739,9 @@ namespace MMMapEditor
                 ApplyDirectionState(
                     mapping.Side,
                     state,
-                    ref currentBorders,
-                    ref currentPassages,
-                    ref currentClosedStates);
+                    currentBorders,
+                    currentPassages,
+                    currentClosedStates);
             }
 
             borders[pos] = currentBorders;
@@ -3047,19 +3069,19 @@ namespace MMMapEditor
                 Point pos = new Point(i % GridSize, i / GridSize);
 
                 // Границы: приводим значения к строкам
-                borders[pos] = new Tuple<string, string, string, string>(
+                borders[pos] = new SideValues<string>(
                     (string)cellInfo.Borders.Item1, (string)cellInfo.Borders.Item2, (string)cellInfo.Borders.Item3, (string)cellInfo.Borders.Item4);
 
                 // Проходы: приводим значения к целочисленным
-                passageDict[pos] = new Tuple<int, int, int, int>(
+                passageDict[pos] = new SideValues<int>(
                     (int)cellInfo.Passages.Item1, (int)cellInfo.Passages.Item2, (int)cellInfo.Passages.Item3, (int)cellInfo.Passages.Item4);
 
                 // Закрытость: приводим значения к булевым
-                closedStates[pos] = new Tuple<bool, bool, bool, bool>(
+                closedStates[pos] = new SideValues<bool>(
                     (bool)cellInfo.ClosedStates.Item1, (bool)cellInfo.ClosedStates.Item2, (bool)cellInfo.ClosedStates.Item3, (bool)cellInfo.ClosedStates.Item4);
 
                 // Сообщения: приводим значения к булевым
-                messageStates[pos] = new Tuple<bool, bool, bool, bool>(
+                messageStates[pos] = new SideValues<bool>(
                     (bool)cellInfo.Messages.Item1, (bool)cellInfo.Messages.Item2, (bool)cellInfo.Messages.Item3, (bool)cellInfo.Messages.Item4);
 
                 // Центральный элемент
@@ -3502,40 +3524,40 @@ namespace MMMapEditor
             if (borders.TryGetValue(pos, out var borderValues))
             {
                 // Устанавливаем значения комбинационных списков
-                topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item1);
-                bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item2);
-                leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item3);
-                rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item4);
+                topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Top);
+                bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Bottom);
+                leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Left);
+                rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Right);
             }
 
             // Проверяем, существует ли запись в словаре переходов
             if (passageDict.TryGetValue(pos, out var passageValues))
             {
                 // Устанавливаем значения комбинационных списков перехода
-                passTopComboBox.SelectedIndex = passageValues.Item1;
-                passBottomComboBox.SelectedIndex = passageValues.Item2;
-                passLeftComboBox.SelectedIndex = passageValues.Item3;
-                passRightComboBox.SelectedIndex = passageValues.Item4;
+                passTopComboBox.SelectedIndex = passageValues.Top;
+                passBottomComboBox.SelectedIndex = passageValues.Bottom;
+                passLeftComboBox.SelectedIndex = passageValues.Left;
+                passRightComboBox.SelectedIndex = passageValues.Right;
             }
 
             // Проверяем, существует ли запись в словаре закрытых состояний
             if (closedStates.TryGetValue(pos, out var closedValues))
             {
                 // Устанавливаем состояние чекбоксов закрытия
-                topCheck.Checked = closedValues.Item1;
-                bottomCheck.Checked = closedValues.Item2;
-                leftCheck.Checked = closedValues.Item3;
-                rightCheck.Checked = closedValues.Item4;
+                topCheck.Checked = closedValues.Top;
+                bottomCheck.Checked = closedValues.Bottom;
+                leftCheck.Checked = closedValues.Left;
+                rightCheck.Checked = closedValues.Right;
             }
 
             // Проверяем, существует ли запись в словаре сообщений
             if (messageStates.TryGetValue(pos, out var messageValues))
             {
                 // Устанавливаем состояние чекбоксов сообщений
-                topMessageCheck.Checked = messageValues.Item1;
-                bottomMessageCheck.Checked = messageValues.Item2;
-                leftMessageCheck.Checked = messageValues.Item3;
-                rightMessageCheck.Checked = messageValues.Item4;
+                topMessageCheck.Checked = messageValues.Top;
+                bottomMessageCheck.Checked = messageValues.Bottom;
+                leftMessageCheck.Checked = messageValues.Left;
+                rightMessageCheck.Checked = messageValues.Right;
             }
 
             //Считываем значение из тела ячейки
@@ -3618,23 +3640,23 @@ namespace MMMapEditor
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                Tuple<string, string, string, string> previousBorders = borders.TryGetValue(pos, out var prev) ? prev : new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
+                SideValues<string> previousBorders = borders.TryGetValue(pos, out var prev)
+                    ? prev.Clone()
+                    : new SideValues<string>("Пустота", "Пустота", "Пустота", "Пустота");
 
-                borders[pos] = new Tuple<string, string, string, string>(
+                borders[pos] = new SideValues<string>(
                     topComboBox.SelectedItem?.ToString() ?? "",
                     bottomComboBox.SelectedItem?.ToString() ?? "",
                     leftComboBox.SelectedItem?.ToString() ?? "",
                     rightComboBox.SelectedItem?.ToString() ?? ""
                 );
 
-                // Проверка на изменение
                 bool hasChanged = !previousBorders.Equals(borders[pos]);
 
                 if (hasChanged)
                 {
-                    gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
+                    gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
                     UpdatePreview();
-
                     isMapModified = true;
                 }
             }
@@ -3646,24 +3668,22 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                // Сначала сохраним текущее состояние данных о проходах
-                Tuple<int, int, int, int> previousPassages = passageDict.TryGetValue(pos, out var prev) ? prev : new Tuple<int, int, int, int>(0, 0, 0, 0);
+                SideValues<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
+                    ? prev.Clone()
+                    : new SideValues<int>(0, 0, 0, 0);
 
-                passageDict[selectedPosition.Value] = new Tuple<int, int, int, int>(
+                passageDict[selectedPosition.Value] = new SideValues<int>(
                     passTopComboBox.SelectedIndex,
                     passBottomComboBox.SelectedIndex,
                     passLeftComboBox.SelectedIndex,
                     passRightComboBox.SelectedIndex
                 );
 
-                // Проверка на изменение
                 bool hasChanged = !previousPassages.Equals(passageDict[pos]);
 
                 if (hasChanged)
                 {
-
-                    // Обновляем соответствующую ячейку на карте
-                    gridButtons[selectedPosition.Value.X, GridSize - 1 - (selectedPosition.Value.Y)].Invalidate();
+                    gridButtons[selectedPosition.Value.X, GridSize - 1 - selectedPosition.Value.Y].Invalidate();
                     UpdatePreview();
                     isMapModified = true;
                 }
@@ -5021,16 +5041,16 @@ namespace MMMapEditor
                     switch (i)
                     {
                         case 0:
-                            borderType = edgeTypes.Item1;
+                            borderType = edgeTypes.Top;
                             break;
                         case 1:
-                            borderType = edgeTypes.Item2;
+                            borderType = edgeTypes.Bottom;
                             break;
                         case 2:
-                            borderType = edgeTypes.Item3;
+                            borderType = edgeTypes.Left;
                             break;
                         case 3:
-                            borderType = edgeTypes.Item4;
+                            borderType = edgeTypes.Right;
                             break;
                         default:
                             throw new InvalidOperationException("Unexpected tuple item");
@@ -5084,149 +5104,149 @@ namespace MMMapEditor
                 if (passageDict.TryGetValue(pos, out var passageData))
                 {
                     // Проверяем каждое направление и рисуем тайник, если он найден
-                    if (passageData.Item1 == 3) // секретный проход сверху
+                    if (passageData.Top == 3) // секретный проход сверху
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item1, Direction.Top);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Top, Direction.Top);
                     }
-                    if (passageData.Item2 == 3) //  секретный проход снизу
+                    if (passageData.Bottom == 3) //  секретный проход снизу
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item2, Direction.Bottom);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Bottom, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 3) //  секретный проход слева
+                    if (passageData.Left == 3) //  секретный проход слева
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item3, Direction.Left);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Left, Direction.Left);
                     }
-                    if (passageData.Item4 == 3) //  секретный проход справа
+                    if (passageData.Right == 3) //  секретный проход справа
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item4, Direction.Right);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Right, Direction.Right);
                     }
 
                     // Остальные элементы (двери и решётки) остались прежними
-                    if (passageData.Item1 == 1) // Дверь сверху
+                    if (passageData.Top == 1) // Дверь сверху
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item1, Direction.Top);
+                        DrawCorrectDoor(g, bounds, edgeTypes.Top, Direction.Top);
                     }
-                    else if (passageData.Item1 == 2) // Решётка сверху
+                    else if (passageData.Top == 2) // Решётка сверху
                     {
                         DrawRoundedGrate(g, bounds, Direction.Top);
                     }
 
-                    if (passageData.Item2 == 1) // Дверь снизу
+                    if (passageData.Bottom == 1) // Дверь снизу
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item2, Direction.Bottom);
+                        DrawCorrectDoor(g, bounds, edgeTypes.Bottom, Direction.Bottom);
                     }
-                    else if (passageData.Item2 == 2) // Решётка снизу
+                    else if (passageData.Bottom == 2) // Решётка снизу
                     {
                         DrawRoundedGrate(g, bounds, Direction.Bottom);
                     }
 
-                    if (passageData.Item3 == 1) // Дверь слева
+                    if (passageData.Left == 1) // Дверь слева
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item3, Direction.Left);
+                        DrawCorrectDoor(g, bounds, edgeTypes.Left, Direction.Left);
                     }
-                    else if (passageData.Item3 == 2) // Решётка слева
+                    else if (passageData.Left == 2) // Решётка слева
                     {
                         DrawRoundedGrate(g, bounds, Direction.Left);
                     }
 
-                    if (passageData.Item4 == 1) // Дверь справа
+                    if (passageData.Right == 1) // Дверь справа
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item4, Direction.Right);
+                        DrawCorrectDoor(g, bounds, edgeTypes.Right, Direction.Right);
                     }
-                    else if (passageData.Item4 == 2) // Решётка справа
+                    else if (passageData.Right == 2) // Решётка справа
                     {
                         DrawRoundedGrate(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка лестниц вверх
-                    if (passageData.Item1 == 4) // Лестница вверх сверху
+                    if (passageData.Top == 4) // Лестница вверх сверху
                     {
                         DrawStairsUp(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 4) // Лестница вверх снизу
+                    if (passageData.Bottom == 4) // Лестница вверх снизу
                     {
                         DrawStairsUp(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 4) // Лестница вверх слева
+                    if (passageData.Left == 4) // Лестница вверх слева
                     {
                         DrawStairsUp(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 4) // Лестница вверх справа
+                    if (passageData.Right == 4) // Лестница вверх справа
                     {
                         DrawStairsUp(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка лестниц вниз
-                    if (passageData.Item1 == 5) // Лестница вниз сверху
+                    if (passageData.Top == 5) // Лестница вниз сверху
                     {
                         DrawStairsDown(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 5) // Лестница вниз снизу
+                    if (passageData.Bottom == 5) // Лестница вниз снизу
                     {
                         DrawStairsDown(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 5) // Лестница вниз слева
+                    if (passageData.Left == 5) // Лестница вниз слева
                     {
                         DrawStairsDown(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 5) // Лестница вниз справа
+                    if (passageData.Right == 5) // Лестница вниз справа
                     {
                         DrawStairsDown(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка портала
-                    if (passageData.Item1 == 6) // Портал сверху
+                    if (passageData.Top == 6) // Портал сверху
                     {
                         DrawPortal(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 6) // Портал снизу
+                    if (passageData.Bottom == 6) // Портал снизу
                     {
                         DrawPortal(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 6) // Портал слева
+                    if (passageData.Left == 6) // Портал слева
                     {
                         DrawPortal(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 6) // Портал справа
+                    if (passageData.Right == 6) // Портал справа
                     {
                         DrawPortal(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка надписи "Выход"
-                    if (passageData.Item1 == 7) // Выход сверху
+                    if (passageData.Top == 7) // Выход сверху
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item1 == "Кирпичная стена")
+                            if (borderValues.Top == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Top, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Top, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Top, Color.LightSkyBlue);
                     }
-                    if (passageData.Item2 == 7) // Выход снизу
+                    if (passageData.Bottom == 7) // Выход снизу
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item2 == "Кирпичная стена")
+                            if (borderValues.Bottom == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Bottom, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Bottom, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Bottom, Color.LightSkyBlue);
                     }
-                    if (passageData.Item3 == 7) // Выход слева
+                    if (passageData.Left == 7) // Выход слева
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item3 == "Кирпичная стена")
+                            if (borderValues.Left == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Left, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Left, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Left, Color.LightSkyBlue);
                     }
-                    if (passageData.Item4 == 7) // Выход справа
+                    if (passageData.Right == 7) // Выход справа
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item4 == "Кирпичная стена")
+                            if (borderValues.Right == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Right, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Right, Color.LightSkyBlue);
@@ -5292,19 +5312,19 @@ namespace MMMapEditor
             // Визуализация значков сообщений на клетке
             if (messageStates.TryGetValue(pos, out var messages))
             {
-                if (messages.Item1) // topMessageCheck
+                if (messages.Top) // topMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.Right - 7, bounds.Y));
                 }
-                if (messages.Item2) // bottomMessageCheck
+                if (messages.Bottom) // bottomMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.X, bounds.Bottom - 7));
                 }
-                if (messages.Item3) // leftMessageCheck
+                if (messages.Left) // leftMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.X, bounds.Y));
                 }
-                if (messages.Item4) // rightMessageCheck
+                if (messages.Right) // rightMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.Right - 7, bounds.Bottom - 7));
                 }
@@ -5476,14 +5496,14 @@ namespace MMMapEditor
                 centralOptions[position] = "Не исследовано";
 
                 // Инициализация состояний границ (старых чекбоксов)
-                closedStates[position] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                closedStates[position] = new SideValues<bool>(false, false, false, false);
 
                 // Инициализация состояний новых чекбоксов (текстов)
-                messageStates[position] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                messageStates[position] = new SideValues<bool>(false, false, false, false);
 
                 // Инициализация прочих необходимых данных
-                borders[position] = new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
-                passageDict[position] = new Tuple<int, int, int, int>(0, 0, 0, 0);
+                borders[position] = new SideValues<string>("Пустота", "Пустота", "Пустота", "Пустота");
+                passageDict[position] = new SideValues<int>(0, 0, 0, 0);
 
                 notesPerCell[position] = "";
                 imagesPerCell[position] = null;
@@ -6698,10 +6718,10 @@ namespace MMMapEditor
         // Временная структура для хранения состояния ячейки
         private struct CopiedCellInfo
         {
-            public Tuple<string, string, string, string> Borders;
-            public Tuple<int, int, int, int> Passages;
-            public Tuple<bool, bool, bool, bool> ClosedStates;
-            public Tuple<bool, bool, bool, bool> Messages;
+            public SideValues<string> Borders;
+            public SideValues<int> Passages;
+            public SideValues<bool> ClosedStates;
+            public SideValues<bool> Messages;
             public string CentralOption;
             public bool IsDanger;
             public bool NoMagic;

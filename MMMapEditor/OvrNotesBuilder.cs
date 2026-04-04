@@ -1,35 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -43,8 +11,8 @@ namespace MMMapEditor
     {
         public Dictionary<Point, string> NotesPerCell { get; set; } = new Dictionary<Point, string>();
         public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
-        public Dictionary<Point, Tuple<bool, bool, bool, bool>> MessageStates { get; set; }
-            = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
+        public Dictionary<Point, MainForm.SideValues<bool>> MessageStates { get; set; }
+            = new Dictionary<Point, MainForm.SideValues<bool>>();
 
         public int TotalObjects { get; set; }
         public int TableObjects { get; set; }
@@ -57,7 +25,7 @@ namespace MMMapEditor
             string filename,
             Dictionary<Point, string> existingCentralOptions,
             Dictionary<Point, string> existingNotes = null,
-            Dictionary<Point, Tuple<bool, bool, bool, bool>> existingMessageStates = null)
+            Dictionary<Point, MainForm.SideValues<bool>> existingMessageStates = null)
         {
             var result = new OvrNotesBuildResult
             {
@@ -70,8 +38,8 @@ namespace MMMapEditor
                     : new Dictionary<Point, string>(),
 
                 MessageStates = existingMessageStates != null
-                    ? new Dictionary<Point, Tuple<bool, bool, bool, bool>>(existingMessageStates)
-                    : new Dictionary<Point, Tuple<bool, bool, bool, bool>>()
+                    ? existingMessageStates.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone() ?? new MainForm.SideValues<bool>(false, false, false, false))
+                    : new Dictionary<Point, MainForm.SideValues<bool>>()
             };
 
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
@@ -132,15 +100,15 @@ namespace MMMapEditor
                 var directionsWithMessages = obj.GetDirectionsWithMessages();
 
                 var currentMessages = result.MessageStates.TryGetValue(pos, out var prev)
-                    ? prev
-                    : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                    ? prev.Clone()
+                    : new MainForm.SideValues<bool>(false, false, false, false);
 
-                bool top = currentMessages.Item1 || directionsWithMessages.Contains(Direction.Top);
-                bool left = currentMessages.Item2 || directionsWithMessages.Contains(Direction.Left);
-                bool bottom = currentMessages.Item3 || directionsWithMessages.Contains(Direction.Bottom);
-                bool right = currentMessages.Item4 || directionsWithMessages.Contains(Direction.Right);
+                currentMessages.Top = currentMessages.Top || directionsWithMessages.Contains(Direction.Top);
+                currentMessages.Left = currentMessages.Left || directionsWithMessages.Contains(Direction.Left);
+                currentMessages.Bottom = currentMessages.Bottom || directionsWithMessages.Contains(Direction.Bottom);
+                currentMessages.Right = currentMessages.Right || directionsWithMessages.Contains(Direction.Right);
 
-                result.MessageStates[pos] = new Tuple<bool, bool, bool, bool>(top, left, bottom, right);
+                result.MessageStates[pos] = currentMessages;
 
                 Dictionary<int, List<string>> variantContents = new Dictionary<int, List<string>>();
 
