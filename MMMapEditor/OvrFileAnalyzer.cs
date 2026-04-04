@@ -1,50 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -188,7 +141,7 @@ namespace MMMapEditor
             };
 
             uint patchAddress = CalculatePatchAddress(patchKey);
-            bool debugMode = (ovrObject.X == 0 && ovrObject.Y == 14);
+            bool debugMode = (ovrObject.X == 7 && ovrObject.Y == 2);
 
             if (debugMode)
             {
@@ -752,7 +705,34 @@ namespace MMMapEditor
             }
 
             foreach (var entry in source.BattleMonsterEntries)
-                battleMonsters[entry.Key] = entry.Value;
+            {
+                if (!battleMonsters.TryGetValue(entry.Key, out var existing))
+                {
+                    battleMonsters[entry.Key] = entry.Value;
+                    continue;
+                }
+
+                bool existingDefined = existing.val1 != 0 && existing.val2 != 0 && !existing.isIndeterminate;
+                bool newDefined = entry.Value.val1 != 0 && entry.Value.val2 != 0 && !entry.Value.isIndeterminate;
+
+                if (!existingDefined && newDefined)
+                {
+                    battleMonsters[entry.Key] = entry.Value;
+                }
+                else if (existing.isIndeterminate && !entry.Value.isIndeterminate)
+                {
+                    battleMonsters[entry.Key] = entry.Value;
+                }
+                else if (!existing.isIndeterminate && entry.Value.isIndeterminate)
+                {
+                    // Оставляем существующую определённую запись.
+                }
+                else
+                {
+                    // При одинаковой степени определённости оставляем последнюю.
+                    battleMonsters[entry.Key] = entry.Value;
+                }
+            }
 
             foreach (var partial in source.PartialBattles)
             {

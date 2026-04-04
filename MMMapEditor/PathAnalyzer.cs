@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -288,7 +288,7 @@ namespace MMMapEditor
 
             foreach (var entry in source.BattleMonsterEntries)
             {
-                if (!target.BattleMonsters.Any(m => m.Index == entry.Key))
+                if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
                 {
                     target.AddBattleMonster(
                         entry.Key,

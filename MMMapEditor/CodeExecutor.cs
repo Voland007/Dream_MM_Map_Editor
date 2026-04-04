@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@ namespace MMMapEditor
     {
         private readonly OvrFileConfig _config;
         private readonly InstructionAnalyzer _instructionAnalyzer;
+        private readonly Dictionary<ushort, byte> _emulatedMemory8 = new Dictionary<ushort, byte>();
 
         private const int MAX_DEPTH = 12;
         private const int MAX_CALL_DEPTH = 10;
@@ -51,9 +52,7 @@ namespace MMMapEditor
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = debugObject != null || (pathId > 0 && (
-                (debugObject?.X == 8 && debugObject?.Y == 0) ||
-                (debugObject?.X == 5 && debugObject?.Y == 11) ||
-                (debugObject?.X == 14 && debugObject?.Y == 10)
+                (debugObject?.X == 7 && debugObject?.Y == 2)
             ));
 
             if (depth > MAX_DEPTH || callDepth > MAX_CALL_DEPTH)
@@ -453,8 +452,34 @@ namespace MMMapEditor
                     result.IsBattleMonsterCountIndeterminate || subroutineResult.IsBattleMonsterCountIndeterminate;
 
                 foreach (var entry in subroutineResult.BattleMonsterEntries)
-                    if (!result.BattleMonsterEntries.ContainsKey(entry.Key))
+                {
+                    if (!result.BattleMonsterEntries.TryGetValue(entry.Key, out var existing))
+                    {
                         result.BattleMonsterEntries[entry.Key] = entry.Value;
+                        continue;
+                    }
+
+                    bool existingDefined = existing.val1 != 0 && existing.val2 != 0 && !existing.isIndeterminate;
+                    bool newDefined = entry.Value.val1 != 0 && entry.Value.val2 != 0 && !entry.Value.isIndeterminate;
+
+                    if (!existingDefined && newDefined)
+                    {
+                        result.BattleMonsterEntries[entry.Key] = entry.Value;
+                    }
+                    else if (existing.isIndeterminate && !entry.Value.isIndeterminate)
+                    {
+                        result.BattleMonsterEntries[entry.Key] = entry.Value;
+                    }
+                    else if (!existing.isIndeterminate && entry.Value.isIndeterminate)
+                    {
+                        // Оставляем existing.
+                    }
+                    else
+                    {
+                        // Одинаковая степень определённости: оставляем более позднюю запись.
+                        result.BattleMonsterEntries[entry.Key] = entry.Value;
+                    }
+                }
 
                 foreach (var partial in subroutineResult.PartialBattles)
                     if (!result.PartialBattles.Any(p => p.BxIndex == partial.BxIndex))
@@ -909,6 +934,30 @@ namespace MMMapEditor
                     InvalidateFlags(registerTracker);
             }
 
+            // Сохраняем изменения в эмулируемую память (runtime state)
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2)
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    _emulatedMemory8[memAddr] = alValue;
+
+                    if (debugMode)
+                        Debug.WriteLine($"        Сохранили AL=0x{alValue:X2} в эмулируемую память [0x{memAddr:X4}]");
+                }
+            }
+            else if (instructionBytes.Length >= 5 &&
+                     instructionBytes[0] == 0xC6 &&
+                     instructionBytes[1] == 0x06)
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                byte immValue = instructionBytes[4];
+                _emulatedMemory8[memAddr] = immValue;
+
+                if (debugMode)
+                    Debug.WriteLine($"        Сохранили imm8=0x{immValue:X2} в эмулируемую память [0x{memAddr:X4}]");
+            }
+
             // Загрузка непосредственных значений в регистры
             if (instructionBytes.Length >= 3 && (instructionBytes[0] & 0xF8) == 0xB8)
             {
@@ -946,6 +995,54 @@ namespace MMMapEditor
                     {
                         registerTracker.TrackPartialRegisterOperation(fullReg, regName, immediateValue,
                             address, $"MOV {regName}, 0x{immediateValue:X2}");
+                    }
+                }
+            }
+            // MOV AL, [moffs8]  (opcode A0)
+            else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA0)
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                byte value;
+
+                if (_emulatedMemory8.TryGetValue(memAddr, out value))
+                {
+                    registerTracker.TrackPartialRegisterOperation(
+                        "AX",
+                        "AL",
+                        value,
+                        address,
+                        $"MOV AL, [0x{memAddr:X4}]"
+                    );
+
+                    if (debugMode)
+                        Debug.WriteLine($"        Загрузили AL из эмулируемой памяти [0x{memAddr:X4}] = 0x{value:X2}");
+                }
+                else
+                {
+                    long fileOffset = memAddr - _config.TextBaseAddr;
+
+                    if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                    {
+                        long originalPos = br.BaseStream.Position;
+                        br.BaseStream.Position = fileOffset;
+                        value = br.ReadByte();
+                        br.BaseStream.Position = originalPos;
+
+                        registerTracker.TrackPartialRegisterOperation(
+                            "AX",
+                            "AL",
+                            value,
+                            address,
+                            $"MOV AL, [0x{memAddr:X4}]"
+                        );
+
+                        if (debugMode)
+                            Debug.WriteLine($"        Загрузили AL из файла [0x{memAddr:X4}] = 0x{value:X2}");
+                    }
+                    else
+                    {
+                        if (debugMode)
+                            Debug.WriteLine($"        Не удалось загрузить AL из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
                     }
                 }
             }

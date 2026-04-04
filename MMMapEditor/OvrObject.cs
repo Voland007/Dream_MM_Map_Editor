@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -207,9 +207,12 @@ namespace MMMapEditor
 
         public void AddBattleMonster(int index, byte val1, byte val2, bool isIndeterminate = false)
         {
-            if (!BattleMonsters.Any(m => m.Index == index &&
-                                         m.MonsterIndex1 == val1 &&
-                                         m.MonsterIndex2 == val2))
+            if (val1 == 0 && val2 == 0)
+                return;
+
+            var existing = BattleMonsters.FirstOrDefault(m => m.Index == index);
+
+            if (existing == null)
             {
                 BattleMonsters.Add(new BattleMonster
                 {
@@ -218,12 +221,49 @@ namespace MMMapEditor
                     MonsterIndex2 = val2,
                     IsIndeterminate = isIndeterminate
                 });
+                return;
             }
+
+            // Полный дубликат: только улучшаем определённость.
+            if (existing.MonsterIndex1 == val1 && existing.MonsterIndex2 == val2)
+            {
+                if (existing.IsIndeterminate && !isIndeterminate)
+                    existing.IsIndeterminate = false;
+                return;
+            }
+
+            // Определённая запись должна заменять неопределённую.
+            if (existing.IsIndeterminate && !isIndeterminate)
+            {
+                existing.MonsterIndex1 = val1;
+                existing.MonsterIndex2 = val2;
+                existing.IsIndeterminate = false;
+                return;
+            }
+
+            // Неопределённая запись не должна портить уже найденную определённую.
+            if (!existing.IsIndeterminate && isIndeterminate)
+                return;
+
+            // В остальных случаях оставляем последнюю запись для этого BX.
+            existing.MonsterIndex1 = val1;
+            existing.MonsterIndex2 = val2;
+            existing.IsIndeterminate = isIndeterminate;
         }
 
         public List<MonsterGroupInfo> GetGroupedBattleMonsters()
         {
-            return BattleMonsters
+            var normalized = BattleMonsters
+                .Where(m => m.IsValid)
+                .GroupBy(m => m.Index)
+                .Select(g =>
+                    g.OrderBy(m => m.IsIndeterminate ? 1 : 0)
+                     .ThenByDescending(m => m.MonsterIndex1)
+                     .ThenByDescending(m => m.MonsterIndex2)
+                     .First())
+                .ToList();
+
+            return normalized
                 .GroupBy(m => m.MonsterId)
                 .Select(g => new MonsterGroupInfo
                 {
@@ -235,7 +275,8 @@ namespace MMMapEditor
                     Indices = g.Select(m => m.Index).OrderBy(i => i).ToList(),
                     IsIndeterminate = g.All(m => m.IsIndeterminate)
                 })
-                .OrderBy(g => g.MonsterId)
+                .OrderBy(g => g.Indices.Min())
+                .ThenBy(g => g.MonsterId)
                 .ToList();
         }
 
