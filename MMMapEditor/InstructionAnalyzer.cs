@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -157,50 +157,141 @@ namespace MMMapEditor
             }
         }
 
+
+        private bool TryGetRegister8Value(RegisterTracker registerTracker, byte regField, out string regName, out byte value)
+        {
+            string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+            regName = null;
+            value = 0;
+
+            if (regField >= regNames.Length)
+                return false;
+
+            regName = regNames[regField];
+            return registerTracker.TryGetByteRegisterValue(regName, out value);
+        }
+
+        private bool TryResolveLootWrite(byte[] instructionBytes, RegisterTracker registerTracker,
+            ushort targetAddress, out byte value, out string sourceDescription)
+        {
+            value = 0;
+            sourceDescription = null;
+
+            // MOV byte ptr [abs], imm8 => C6 06 ll hh vv
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                BitConverter.ToUInt16(instructionBytes, 2) == targetAddress)
+            {
+                value = instructionBytes[4];
+                sourceDescription = "imm8";
+                return true;
+            }
+
+            // MOV byte ptr [abs], reg8 => 88 06/0E/16... ll hh
+            if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x88 &&
+                (instructionBytes[1] & 0xC7) == 0x06 &&
+                BitConverter.ToUInt16(instructionBytes, 2) == targetAddress)
+            {
+                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
+                if (TryGetRegister8Value(registerTracker, regField, out string regName, out value))
+                {
+                    sourceDescription = regName;
+                    return true;
+                }
+            }
+
+            // MOV [abs], AL => A2 ll hh
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2 &&
+                BitConverter.ToUInt16(instructionBytes, 1) == targetAddress &&
+                registerTracker.TryGetByteRegisterValue("AL", out value))
+            {
+                sourceDescription = "AL";
+                return true;
+            }
+
+            // MOV byte ptr [BX+disp16], reg8 => 88 87 ll hh
+            if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x88 && instructionBytes[1] == 0x87 &&
+                registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+            {
+                ushort disp = BitConverter.ToUInt16(instructionBytes, 2);
+                ushort effectiveAddress = (ushort)(bxValue + disp);
+                if (effectiveAddress == targetAddress)
+                {
+                    byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
+                    if (TryGetRegister8Value(registerTracker, regField, out string regName, out value))
+                    {
+                        sourceDescription = $"{regName} via [BX+0x{disp:X4}] (BX=0x{bxValue:X4})";
+                        return true;
+                    }
+                }
+            }
+
+            // MOV byte ptr [BX+disp16], imm8 => C6 87 ll hh vv
+            if (instructionBytes.Length >= 5 && instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x87 &&
+                registerTracker.TryGetRegisterValue("BX", out ushort bxValue2))
+            {
+                ushort disp = BitConverter.ToUInt16(instructionBytes, 2);
+                ushort effectiveAddress = (ushort)(bxValue2 + disp);
+                if (effectiveAddress == targetAddress)
+                {
+                    value = instructionBytes[4];
+                    sourceDescription = $"imm8 via [BX+0x{disp:X4}] (BX=0x{bxValue2:X4})";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryDetectLootClearLoop(byte[] instructionBytes, RegisterTracker registerTracker,
+            ushort targetAddress, out byte value, out string sourceDescription)
+        {
+            value = 0;
+            sourceDescription = null;
+
+            // Эвристика для цикла вида:
+            //   MOV AL,0
+            //   MOV BX,0
+            // loop: MOV [BX+3C77],AL / INC BL / CMP BL,9 / JB loop
+            // Анализатор обычно исполняет только первую итерацию, поэтому здесь
+            // явно разворачиваем диапазон очищаемых ячеек 3C77..3C7F.
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x88 && instructionBytes[1] == 0x87 &&
+                BitConverter.ToUInt16(instructionBytes, 2) == 0x3C77 &&
+                registerTracker.TryGetRegisterValue("BX", out ushort bxValue) && bxValue == 0 &&
+                registerTracker.TryGetByteRegisterValue("AL", out byte alValue) && alValue == 0)
+            {
+                if (targetAddress >= 0x3C77 && targetAddress <= 0x3C7F)
+                {
+                    value = 0;
+                    sourceDescription = "AL via zero-fill loop [BX+0x3C77], BX=0..8";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void ProcessContainerTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
             HashSet<string> output)
         {
-            // MOV byte ptr [0x3C79], imm8
-            if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
+            if (TryResolveLootWrite(instructionBytes, registerTracker, 0x3C79, out byte value, out string sourceDescription) ||
+                TryDetectLootClearLoop(instructionBytes, registerTracker, 0x3C79, out value, out sourceDescription))
             {
-                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: прямая запись [3C79] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddContainerText(instructionAddress, output, instructionBytes[4]);
-                return;
-            }
-
-            // MOV byte ptr [0x3C79], reg8
-            if (instructionBytes.Length >= 4 &&
-                instructionBytes[0] == 0x88 && instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
-            {
-                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-
-                if (regField < regNames.Length &&
-                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
-                {
-                    AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                    AddContainerText(instructionAddress, output, value);
-                }
-                return;
-            }
-
-            // MOV [0x3C79], AL
-            if (instructionBytes.Length >= 3 &&
-                instructionBytes[0] == 0xA2 &&
-                instructionBytes[1] == 0x79 && instructionBytes[2] == 0x3C)
-            {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
-                {
-                    AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddContainerText(instructionAddress, output, alValue);
-                }
+                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: запись [3C79] = 0x{value:X2} ({sourceDescription}) по адресу 0x{instructionAddress:X4}");
+                AddContainerText(instructionAddress, output, value);
             }
         }
 
         private void AddContainerText(uint instructionAddress, HashSet<string> output, byte containerIndex)
         {
+            if (containerIndex == 0)
+            {
+                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР УНИЧТОЖЕН: запись нуля в [3C79] (инструкция 0x{instructionAddress:X4})");
+                output.Add("Контейнер с лутом уничтожен");
+                return;
+            }
+
             if (ContainerDatabase.TryGetContainerName(containerIndex, out string containerName))
             {
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР РАСПОЗНАН: индекс 0x{containerIndex:X2} -> {containerName} (инструкция 0x{instructionAddress:X4})");
@@ -216,49 +307,24 @@ namespace MMMapEditor
         private void ProcessItemTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
             HashSet<string> output)
         {
-            // MOV byte ptr [0x3C7C], imm8
-            if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
+            if (TryResolveLootWrite(instructionBytes, registerTracker, 0x3C7C, out byte value, out string sourceDescription) ||
+                TryDetectLootClearLoop(instructionBytes, registerTracker, 0x3C7C, out value, out sourceDescription))
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ: прямая запись [3C7C] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddItemText(instructionAddress, output, instructionBytes[4]);
-                return;
-            }
-
-            // MOV byte ptr [0x3C7C], reg8
-            if (instructionBytes.Length >= 4 &&
-                instructionBytes[0] == 0x88 &&
-                instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
-            {
-                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-
-                if (regField < regNames.Length &&
-                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
-                {
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                    AddItemText(instructionAddress, output, value);
-                }
-                return;
-            }
-
-            // MOV [0x3C7C], AL
-            if (instructionBytes.Length >= 3 &&
-                instructionBytes[0] == 0xA2 &&
-                instructionBytes[1] == 0x7C && instructionBytes[2] == 0x3C)
-            {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
-                {
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddItemText(instructionAddress, output, alValue);
-                }
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] = 0x{value:X2} ({sourceDescription}) по адресу 0x{instructionAddress:X4}");
+                AddItemText(instructionAddress, output, value);
             }
         }
 
         private void AddItemText(uint instructionAddress, HashSet<string> output, byte itemIndex)
         {
-            int databaseIndex = itemIndex > 0 ? itemIndex - 1 : 0;
+            if (itemIndex == 0)
+            {
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ УНИЧТОЖЕН: запись нуля в [3C7C] (инструкция 0x{instructionAddress:X4})");
+                output.Add("Предмет уничтожен");
+                return;
+            }
+
+            int databaseIndex = itemIndex - 1;
 
             if (ItemDatabase.TryGetItemName(databaseIndex, out string itemName))
             {
@@ -275,48 +341,23 @@ namespace MMMapEditor
         private void ProcessGemsTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
             HashSet<string> output)
         {
-            // MOV byte ptr [0x3C7F], imm8
-            if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x7F && instructionBytes[3] == 0x3C)
+            if (TryResolveLootWrite(instructionBytes, registerTracker, 0x3C7F, out byte value, out string sourceDescription) ||
+                TryDetectLootClearLoop(instructionBytes, registerTracker, 0x3C7F, out value, out sourceDescription))
             {
-                AnalysisDebug.WriteLine($"    GEMS: прямая запись [3C7F] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddGemsText(instructionAddress, output, instructionBytes[4]);
-                return;
-            }
-
-            // MOV byte ptr [0x3C7F], reg8
-            if (instructionBytes.Length >= 4 &&
-                instructionBytes[0] == 0x88 &&
-                instructionBytes[2] == 0x7F && instructionBytes[3] == 0x3C)
-            {
-                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-
-                if (regField < regNames.Length &&
-                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
-                {
-                    AnalysisDebug.WriteLine($"    GEMS: запись [3C7F] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                    AddGemsText(instructionAddress, output, value);
-                }
-                return;
-            }
-
-            // MOV [0x3C7F], AL
-            if (instructionBytes.Length >= 3 &&
-                instructionBytes[0] == 0xA2 &&
-                instructionBytes[1] == 0x7F && instructionBytes[2] == 0x3C)
-            {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
-                {
-                    AnalysisDebug.WriteLine($"    GEMS: запись [3C7F] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddGemsText(instructionAddress, output, alValue);
-                }
+                AnalysisDebug.WriteLine($"    GEMS: запись [3C7F] = 0x{value:X2} ({sourceDescription}) по адресу 0x{instructionAddress:X4}");
+                AddGemsText(instructionAddress, output, value);
             }
         }
 
         private void AddGemsText(uint instructionAddress, HashSet<string> output, byte gemsValue)
         {
+            if (gemsValue == 0)
+            {
+                AnalysisDebug.WriteLine($"    GEMS УНИЧТОЖЕНЫ: запись нуля в [3C7F] (инструкция 0x{instructionAddress:X4})");
+                output.Add("Самоцветы уничтожены");
+                return;
+            }
+
             AnalysisDebug.WriteLine($"    GEMS РАСПОЗНАНЫ: {gemsValue} GEMS (инструкция 0x{instructionAddress:X4})");
             output.Add($"{gemsValue} GEMS");
         }
@@ -324,48 +365,23 @@ namespace MMMapEditor
         private void ProcessGoldTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
             HashSet<string> output)
         {
-            // MOV byte ptr [0x3C7D], imm8
-            if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x7D && instructionBytes[3] == 0x3C)
+            if (TryResolveLootWrite(instructionBytes, registerTracker, 0x3C7D, out byte value, out string sourceDescription) ||
+                TryDetectLootClearLoop(instructionBytes, registerTracker, 0x3C7D, out value, out sourceDescription))
             {
-                AnalysisDebug.WriteLine($"    GOLD: прямая запись [3C7D] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddGoldText(instructionAddress, output, instructionBytes[4]);
-                return;
-            }
-
-            // MOV byte ptr [0x3C7D], reg8
-            if (instructionBytes.Length >= 4 &&
-                instructionBytes[0] == 0x88 &&
-                instructionBytes[2] == 0x7D && instructionBytes[3] == 0x3C)
-            {
-                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-
-                if (regField < regNames.Length &&
-                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
-                {
-                    AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                    AddGoldText(instructionAddress, output, value);
-                }
-                return;
-            }
-
-            // MOV [0x3C7D], AL
-            if (instructionBytes.Length >= 3 &&
-                instructionBytes[0] == 0xA2 &&
-                instructionBytes[1] == 0x7D && instructionBytes[2] == 0x3C)
-            {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
-                {
-                    AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddGoldText(instructionAddress, output, alValue);
-                }
+                AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] = 0x{value:X2} ({sourceDescription}) по адресу 0x{instructionAddress:X4}");
+                AddGoldText(instructionAddress, output, value);
             }
         }
 
         private void AddGoldText(uint instructionAddress, HashSet<string> output, byte goldValue)
         {
+            if (goldValue == 0)
+            {
+                AnalysisDebug.WriteLine($"    GOLD УНИЧТОЖЕНО: запись нуля в [3C7D] (инструкция 0x{instructionAddress:X4})");
+                output.Add("Золото уничтожено");
+                return;
+            }
+
             AnalysisDebug.WriteLine($"    GOLD РАСПОЗНАНО: {goldValue} GOLD (инструкция 0x{instructionAddress:X4})");
             output.Add($"{goldValue} GOLD");
         }
