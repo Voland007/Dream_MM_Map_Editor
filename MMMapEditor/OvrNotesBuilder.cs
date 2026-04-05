@@ -1,35 +1,3 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -177,18 +145,18 @@ namespace MMMapEditor
                             if (randomEncounterDesc != null) variantLines.Add(randomEncounterDesc);
                         }
 
-                        if (variantObject.HasBattleInfo || variantObject.HasPartiallyDefinedBattles || (variantObject.HasAnyTableLoad && variantObject.LoadedValues.Count > 0))
-                        {
-                            string battleDesc = variantObject.GetBattleDescription();
-                            if (!string.IsNullOrEmpty(battleDesc))
-                                variantLines.Add(battleDesc);
-                        }
-
                         foreach (var textLine in variant.Texts ?? Enumerable.Empty<string>())
                         {
                             string decodedText = ExtractNoteText(textLine);
                             if (!string.IsNullOrEmpty(decodedText))
                                 variantLines.Add(decodedText);
+                        }
+
+                        if (variantObject.HasBattleInfo || variantObject.HasPartiallyDefinedBattles || (variantObject.HasAnyTableLoad && variantObject.LoadedValues.Count > 0))
+                        {
+                            string battleDesc = variantObject.GetBattleDescription();
+                            if (!string.IsNullOrEmpty(battleDesc))
+                                variantLines.Add(battleDesc);
                         }
 
                         variantContents[variantNumber] = variantLines;
@@ -311,6 +279,7 @@ namespace MMMapEditor
                         variantContents[0] = monsterStatLines;
                     }
                 }
+
                 foreach (var key in variantContents.Keys.ToList())
                     variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
 
@@ -354,9 +323,8 @@ namespace MMMapEditor
             return result;
         }
 
-
         private static Dictionary<int, List<string>> DeduplicateVariantContents(
-    Dictionary<int, List<string>> variantContents)
+            Dictionary<int, List<string>> variantContents)
         {
             var result = new Dictionary<int, List<string>>();
             var seenKeys = new HashSet<string>();
@@ -381,7 +349,6 @@ namespace MMMapEditor
 
             return result;
         }
-
 
         private static List<string> NumberLootBlockIfNeeded(List<string> lines)
         {
