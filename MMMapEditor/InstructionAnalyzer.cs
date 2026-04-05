@@ -1,3 +1,19 @@
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -354,6 +370,15 @@ namespace MMMapEditor
                 result.LightingLevel = lightingLevel;
                 AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ: {lightingLevel}");
             }
+            // MOV byte ptr [C962], imm8 - количество монстров в группе
+            else if (instructionBytes.Length >= 5 &&
+                     instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                     instructionBytes[2] == 0x62 && instructionBytes[3] == 0xC9)
+            {
+                byte monsterBatchCount = instructionBytes[4];
+                result.MonsterBatchCount = monsterBatchCount;
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ: {monsterBatchCount}");
+            }
             // MOV [C96F], CH
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
@@ -387,6 +412,17 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ CH: {chValue}");
                 }
             }
+            // MOV [C962], CH
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                     instructionBytes[2] == 0x62 && instructionBytes[3] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
+                {
+                    result.MonsterBatchCount = chValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ ИЗ CH: {chValue}");
+                }
+            }
             // MOV [C96F], AL
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
@@ -418,6 +454,17 @@ namespace MMMapEditor
                 {
                     result.LightingLevel = alValue;
                     AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ AL: {alValue}");
+                }
+            }
+            // MOV [C962], AL
+            else if (instructionBytes.Length >= 3 &&
+                     instructionBytes[0] == 0xA2 &&
+                     instructionBytes[1] == 0x62 && instructionBytes[2] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    result.MonsterBatchCount = alValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ ИЗ AL: {alValue}");
                 }
             }
             // MOV byte ptr [C95D], imm8 - шанс случайной встречи

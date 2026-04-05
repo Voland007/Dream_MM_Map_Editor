@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -158,6 +158,7 @@ namespace MMMapEditor
         public HashSet<string> Texts { get; set; } = new HashSet<string>();
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? MonsterBatchCount { get; set; }
         public byte? LightingLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public List<(int Index, byte Val1, byte Val2, bool IsIndeterminate)> BattleMonsters { get; set; } = new List<(int, byte, byte, bool)>();
@@ -200,6 +201,7 @@ namespace MMMapEditor
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? MonsterBatchCount { get; set; }
         public byte? LightingLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? MonsterIndex1 { get; set; }

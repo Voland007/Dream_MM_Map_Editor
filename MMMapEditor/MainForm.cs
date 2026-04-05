@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1539,6 +1539,19 @@ namespace MMMapEditor
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(120, 180, 245); // более светлый голубой
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Количество монстров в группе
+            var batchCountMatches = Regex.Matches(
+                noteText,
+                @"Количество монстров в группе (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+            );
+
+            foreach (Match match in batchCountMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(130, 200, 170);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 

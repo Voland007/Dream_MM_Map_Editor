@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -292,6 +292,9 @@ namespace MMMapEditor
 
             if (source.MonsterLevel.HasValue && !target.MonsterLevel.HasValue)
                 target.MonsterLevel = source.MonsterLevel.Value;
+
+            if (source.MonsterBatchCount.HasValue && !target.MonsterBatchCount.HasValue)
+                target.MonsterBatchCount = source.MonsterBatchCount.Value;
 
             if (source.IsBattleMonsterCountIndeterminate)
             {

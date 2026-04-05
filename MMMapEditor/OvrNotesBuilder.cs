@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -67,6 +67,7 @@ namespace MMMapEditor
 
             byte defaultMonsterPower = 0;
             byte defaultMonsterLevel = 0;
+            byte defaultMonsterBatchCount = 0;
             byte defaultLightingLevel = 0;
             byte defaultRandomEncounterChance = 0;
 
@@ -77,6 +78,8 @@ namespace MMMapEditor
                     defaultMonsterPower = fileData[config.MonsterPower];
                 if (config.MonsterLevel < fileData.Length)
                     defaultMonsterLevel = fileData[config.MonsterLevel];
+                if (config.MonsterBatchCount < fileData.Length)
+                    defaultMonsterBatchCount = fileData[config.MonsterBatchCount];
                 if (config.LightingLevel < fileData.Length)
                     defaultLightingLevel = fileData[config.LightingLevel];
                 if (config.RandomEncounterChance < fileData.Length)
@@ -144,6 +147,9 @@ namespace MMMapEditor
 
                     var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
                     if (levelDesc != null) monsterStatLines.Add(levelDesc);
+
+                    var batchCountDesc = obj.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
+                    if (batchCountDesc != null) monsterStatLines.Add(batchCountDesc);
 
                     var lightingDesc = obj.GetLightingLevelDescription(defaultLightingLevel);
                     if (lightingDesc != null) monsterStatLines.Add(lightingDesc);

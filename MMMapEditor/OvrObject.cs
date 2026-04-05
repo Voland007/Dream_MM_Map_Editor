@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -43,6 +43,7 @@ namespace MMMapEditor
 
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
+        public byte? MonsterBatchCount { get; set; }
         public byte? LightingLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
 
@@ -54,7 +55,7 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || LightingLevel.HasValue || RandomEncounterChance.HasValue;
+        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || LightingLevel.HasValue || RandomEncounterChance.HasValue;
 
         #endregion
 
@@ -336,6 +337,15 @@ namespace MMMapEditor
             if (newLevel > defaultLevel) return $"Уровень монстров увеличивается с {defaultLevel} до {newLevel}";
             if (newLevel < defaultLevel) return $"Уровень монстров уменьшается с {defaultLevel} до {newLevel}";
             return $"Уровень монстров остаётся прежним: {newLevel}";
+        }
+
+        public string GetMonsterBatchCountDescription(byte defaultBatchCount)
+        {
+            if (!MonsterBatchCount.HasValue) return null;
+            byte newBatchCount = MonsterBatchCount.Value;
+            if (newBatchCount > defaultBatchCount) return $"Количество монстров в группе увеличивается с {defaultBatchCount} до {newBatchCount}";
+            if (newBatchCount < defaultBatchCount) return $"Количество монстров в группе уменьшается с {defaultBatchCount} до {newBatchCount}";
+            return $"Количество монстров в группе остаётся прежним: {newBatchCount}";
         }
 
         public string GetLightingLevelDescription(byte defaultLightingLevel)
@@ -675,6 +685,11 @@ namespace MMMapEditor
                 parts.Add($"Level={MonsterLevel.Value}");
             else
                 parts.Add("Level=none");
+
+            if (MonsterBatchCount.HasValue)
+                parts.Add($"BatchCount={MonsterBatchCount.Value}");
+            else
+                parts.Add("BatchCount=none");
 
             if (RandomEncounterChance.HasValue)
                 parts.Add($"EncounterChance={RandomEncounterChance.Value}");
