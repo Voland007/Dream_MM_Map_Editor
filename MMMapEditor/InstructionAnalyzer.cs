@@ -1,3 +1,19 @@
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -486,19 +502,34 @@ namespace MMMapEditor
 
         public void FindMonsterBattleInfo(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, int depth, PathAnalysisResult result,
-            byte targetX, byte targetY)
+            byte targetX, byte targetY, Func<ushort, byte?> tryReadMemory8 = null)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
 
-            // Обнаружение неопределенного цикла (инструкция CMP BL, [3C1D])
+            // Обнаружение цикла по счётчику BL и лимиту в [3C1D]
             if (instructionBytes.Length >= 4 &&
                 instructionBytes[0] == 0x3A && instructionBytes[1] == 0x1E &&
                 instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
             {
-                result.IsIndeterminateLoop = true;
                 result.IsInLoop = true;
                 result.LoopStartAddress = address;
+
+                byte? knownLoopLimit = tryReadMemory8?.Invoke(0x3C1D);
+                bool blKnown = registerTracker.TryGetByteRegisterValue("BL", out byte blValue);
+
+                // Граница цикла считается действительно известной только если [3C1D] известно
+                // и само количество монстров в битве НЕ помечено как неопределённое.
+                // Иначе число в памяти может быть лишь материализованным следствием внешнего CALL,
+                // и random count должен сохраняться.
+                if (knownLoopLimit.HasValue && blKnown && !result.IsBattleMonsterCountIndeterminate)
+                {
+                    result.IsIndeterminateLoop = false;
+                    AnalysisDebug.WriteLine($"    ОБНАРУЖЕН ЦИКЛ С ИЗВЕСТНОЙ ГРАНИЦЕЙ по адресу 0x{address:X4}, BL=0x{blValue:X2}, [3C1D]=0x{knownLoopLimit.Value:X2} -> random count не выставляется");
+                    return;
+                }
+
+                result.IsIndeterminateLoop = true;
 
                 int markedCount = 0;
 
@@ -506,7 +537,7 @@ namespace MMMapEditor
                 // итерации. К моменту CMP BL,[3C1D] в BL находится индекс следующей записи,
                 // поэтому запись с индексом BL-1 — это последняя фактически добавленная запись,
                 // которая уже принадлежит случайному хвосту.
-                if (registerTracker.TryGetByteRegisterValue("BL", out byte blValue) && blValue > 0)
+                if (blKnown && blValue > 0)
                 {
                     int lastWrittenIndex = blValue - 1;
                     if (result.BattleMonsterEntries.ContainsKey(lastWrittenIndex))
@@ -535,7 +566,7 @@ namespace MMMapEditor
                     }
                 }
 
-                AnalysisDebug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, BL={(registerTracker.TryGetByteRegisterValue("BL", out byte debugBl) ? $"0x{debugBl:X2}" : "??")}, помечено {markedCount} записей как неопределенные");
+                AnalysisDebug.WriteLine($"    ОБНАРУЖЕН НЕОПРЕДЕЛЁННЫЙ ЦИКЛ по адресу 0x{address:X4}, BL={(blKnown ? $"0x{blValue:X2}" : "??")}, [3C1D]={(knownLoopLimit.HasValue ? $"0x{knownLoopLimit.Value:X2}" : "??")}, помечено {markedCount} записей как неопределенные");
                 return;
             }
 

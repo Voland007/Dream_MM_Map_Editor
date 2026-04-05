@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -147,123 +147,174 @@ namespace MMMapEditor
 
                 Dictionary<int, List<string>> variantContents = new Dictionary<int, List<string>>();
 
-                List<string> battleInfoLines = new List<string>();
-                if (obj.HasBattleInfo)
+                if (obj.PathVariants != null && obj.PathVariants.Count > 0)
                 {
-                    string battleDesc = obj.GetBattleDescription();
-                    if (!string.IsNullOrEmpty(battleDesc))
-                        battleInfoLines.Add(battleDesc);
-                }
-
-                List<string> monsterStatLines = new List<string>();
-                if (obj.HasMonsterStatChanges)
-                {
-                    var powerDesc = obj.GetMonsterPowerDescription(defaultMonsterPower);
-                    if (powerDesc != null) monsterStatLines.Add(powerDesc);
-
-                    var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
-                    if (levelDesc != null) monsterStatLines.Add(levelDesc);
-
-                    var batchCountDesc = obj.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
-                    if (batchCountDesc != null) monsterStatLines.Add(batchCountDesc);
-
-                    var lightingDesc = obj.GetLightingLevelDescription(defaultLightingLevel);
-                    if (lightingDesc != null) monsterStatLines.Add(lightingDesc);
-
-                    var randomEncounterDesc = obj.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
-                    if (randomEncounterDesc != null) monsterStatLines.Add(randomEncounterDesc);
-                }
-
-                List<string> partialBattleLines = new List<string>();
-                if (obj.HasPartiallyDefinedBattles)
-                {
-                    string battleDesc = obj.GetBattleDescription();
-                    if (!string.IsNullOrEmpty(battleDesc))
-                        partialBattleLines.Add(battleDesc);
-                }
-
-                if (obj.PathTextsOrdered != null && obj.PathTextsOrdered.Count > 0)
-                {
-                    foreach (var kvp in obj.PathTextsOrdered.OrderBy(p => p.Key))
+                    foreach (var kvp in obj.PathVariants.OrderBy(p => p.Key))
                     {
-                        if (kvp.Value == null || kvp.Value.Count == 0)
+                        var variant = kvp.Value;
+                        if (variant == null || !variant.HasAnyInfo)
                             continue;
 
                         int variantNumber = kvp.Key;
-                        if (!variantContents.ContainsKey(variantNumber))
-                            variantContents[variantNumber] = new List<string>();
+                        var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
+                        var variantLines = new List<string>();
 
-                        foreach (var text in kvp.Value)
+                        if (variantObject.HasMonsterStatChanges)
                         {
-                            string decodedText = ExtractNoteText(text);
-                            if (!string.IsNullOrEmpty(decodedText))
-                                variantContents[variantNumber].Add(decodedText);
+                            var powerDesc = variantObject.GetMonsterPowerDescription(defaultMonsterPower);
+                            if (powerDesc != null) variantLines.Add(powerDesc);
+
+                            var levelDesc = variantObject.GetMonsterLevelDescription(defaultMonsterLevel);
+                            if (levelDesc != null) variantLines.Add(levelDesc);
+
+                            var batchCountDesc = variantObject.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
+                            if (batchCountDesc != null) variantLines.Add(batchCountDesc);
+
+                            var lightingDesc = variantObject.GetLightingLevelDescription(defaultLightingLevel);
+                            if (lightingDesc != null) variantLines.Add(lightingDesc);
+
+                            var randomEncounterDesc = variantObject.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
+                            if (randomEncounterDesc != null) variantLines.Add(randomEncounterDesc);
                         }
+
+                        if (variantObject.HasBattleInfo || variantObject.HasPartiallyDefinedBattles || (variantObject.HasAnyTableLoad && variantObject.LoadedValues.Count > 0))
+                        {
+                            string battleDesc = variantObject.GetBattleDescription();
+                            if (!string.IsNullOrEmpty(battleDesc))
+                                variantLines.Add(battleDesc);
+                        }
+
+                        foreach (var textLine in variant.Texts ?? Enumerable.Empty<string>())
+                        {
+                            string decodedText = ExtractNoteText(textLine);
+                            if (!string.IsNullOrEmpty(decodedText))
+                                variantLines.Add(decodedText);
+                        }
+
+                        variantContents[variantNumber] = variantLines;
                     }
                 }
-                else if (obj.PathTexts != null && obj.PathTexts.Count > 0)
+                else
                 {
-                    foreach (var kvp in obj.PathTexts.OrderBy(p => p.Key))
+                    List<string> battleInfoLines = new List<string>();
+                    if (obj.HasBattleInfo)
                     {
-                        if (kvp.Value == null || kvp.Value.Count == 0)
-                            continue;
+                        string battleDesc = obj.GetBattleDescription();
+                        if (!string.IsNullOrEmpty(battleDesc))
+                            battleInfoLines.Add(battleDesc);
+                    }
 
-                        int variantNumber = kvp.Key;
-                        if (!variantContents.ContainsKey(variantNumber))
-                            variantContents[variantNumber] = new List<string>();
+                    List<string> monsterStatLines = new List<string>();
+                    if (obj.HasMonsterStatChanges)
+                    {
+                        var powerDesc = obj.GetMonsterPowerDescription(defaultMonsterPower);
+                        if (powerDesc != null) monsterStatLines.Add(powerDesc);
 
-                        foreach (var text in kvp.Value)
+                        var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
+                        if (levelDesc != null) monsterStatLines.Add(levelDesc);
+
+                        var batchCountDesc = obj.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
+                        if (batchCountDesc != null) monsterStatLines.Add(batchCountDesc);
+
+                        var lightingDesc = obj.GetLightingLevelDescription(defaultLightingLevel);
+                        if (lightingDesc != null) monsterStatLines.Add(lightingDesc);
+
+                        var randomEncounterDesc = obj.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
+                        if (randomEncounterDesc != null) monsterStatLines.Add(randomEncounterDesc);
+                    }
+
+                    List<string> partialBattleLines = new List<string>();
+                    if (obj.HasPartiallyDefinedBattles)
+                    {
+                        string battleDesc = obj.GetBattleDescription();
+                        if (!string.IsNullOrEmpty(battleDesc))
+                            partialBattleLines.Add(battleDesc);
+                    }
+
+                    if (obj.PathTextsOrdered != null && obj.PathTextsOrdered.Count > 0)
+                    {
+                        foreach (var kvp in obj.PathTextsOrdered.OrderBy(p => p.Key))
                         {
-                            string decodedText = ExtractNoteText(text);
-                            if (!string.IsNullOrEmpty(decodedText))
-                                variantContents[variantNumber].Add(decodedText);
+                            if (kvp.Value == null || kvp.Value.Count == 0)
+                                continue;
+
+                            int variantNumber = kvp.Key;
+                            if (!variantContents.ContainsKey(variantNumber))
+                                variantContents[variantNumber] = new List<string>();
+
+                            foreach (var textLine in kvp.Value)
+                            {
+                                string decodedText = ExtractNoteText(textLine);
+                                if (!string.IsNullOrEmpty(decodedText))
+                                    variantContents[variantNumber].Add(decodedText);
+                            }
                         }
                     }
-                }
-
-                bool hasBattle = battleInfoLines.Count > 0;
-                bool hasPartialBattle = partialBattleLines.Count > 0;
-
-                if (hasBattle || hasPartialBattle)
-                {
-                    List<string> battleVariantLines = new List<string>();
-
-                    if (hasBattle)
-                        battleVariantLines.AddRange(battleInfoLines);
-
-                    if (hasPartialBattle)
-                        battleVariantLines.AddRange(partialBattleLines);
-
-                    if (monsterStatLines.Count > 0)
-                        battleVariantLines.InsertRange(0, monsterStatLines);
-
-                    if (variantContents.Count == 0)
+                    else if (obj.PathTexts != null && obj.PathTexts.Count > 0)
                     {
-                        variantContents[0] = battleVariantLines;
+                        foreach (var kvp in obj.PathTexts.OrderBy(p => p.Key))
+                        {
+                            if (kvp.Value == null || kvp.Value.Count == 0)
+                                continue;
+
+                            int variantNumber = kvp.Key;
+                            if (!variantContents.ContainsKey(variantNumber))
+                                variantContents[variantNumber] = new List<string>();
+
+                            foreach (var textLine in kvp.Value)
+                            {
+                                string decodedText = ExtractNoteText(textLine);
+                                if (!string.IsNullOrEmpty(decodedText))
+                                    variantContents[variantNumber].Add(decodedText);
+                            }
+                        }
                     }
-                    else if (variantContents.Count == 1)
+
+                    bool hasBattle = battleInfoLines.Count > 0;
+                    bool hasPartialBattle = partialBattleLines.Count > 0;
+
+                    if (hasBattle || hasPartialBattle)
+                    {
+                        List<string> battleVariantLines = new List<string>();
+
+                        if (hasBattle)
+                            battleVariantLines.AddRange(battleInfoLines);
+
+                        if (hasPartialBattle)
+                            battleVariantLines.AddRange(partialBattleLines);
+
+                        if (monsterStatLines.Count > 0)
+                            battleVariantLines.InsertRange(0, monsterStatLines);
+
+                        if (variantContents.Count == 0)
+                        {
+                            variantContents[0] = battleVariantLines;
+                        }
+                        else if (variantContents.Count == 1)
+                        {
+                            int firstVariant = variantContents.Keys.Min();
+                            variantContents[firstVariant].AddRange(battleVariantLines);
+                        }
+                        else
+                        {
+                            int maxVariant = variantContents.Keys.Max();
+                            variantContents[maxVariant + 1] = battleVariantLines;
+                        }
+                    }
+                    else if (monsterStatLines.Count > 0 && variantContents.Count > 0)
                     {
                         int firstVariant = variantContents.Keys.Min();
-                        variantContents[firstVariant].AddRange(battleVariantLines);
+                        variantContents[firstVariant].InsertRange(0, monsterStatLines);
                     }
-                    else
+                    else if (monsterStatLines.Count > 0)
                     {
-                        int maxVariant = variantContents.Keys.Max();
-                        variantContents[maxVariant + 1] = battleVariantLines;
+                        variantContents[0] = monsterStatLines;
                     }
                 }
-                else if (monsterStatLines.Count > 0 && variantContents.Count > 0)
-                {
-                    int firstVariant = variantContents.Keys.Min();
-                    variantContents[firstVariant].InsertRange(0, monsterStatLines);
-                }
-                else if (monsterStatLines.Count > 0)
-                {
-                    variantContents[0] = monsterStatLines;
-                }
-
                 foreach (var key in variantContents.Keys.ToList())
                     variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
+
+                variantContents = DeduplicateVariantContents(variantContents);
 
                 StringBuilder newNotes = new StringBuilder();
 
@@ -298,6 +349,34 @@ namespace MMMapEditor
                 result.NotesPerCell[pos] = newNotes.Length > 0
                     ? newNotes.ToString().TrimEnd('\n')
                     : existingCellNotes;
+            }
+
+            return result;
+        }
+
+
+        private static Dictionary<int, List<string>> DeduplicateVariantContents(
+    Dictionary<int, List<string>> variantContents)
+        {
+            var result = new Dictionary<int, List<string>>();
+            var seenKeys = new HashSet<string>();
+
+            if (variantContents == null || variantContents.Count == 0)
+                return result;
+
+            foreach (var kvp in variantContents.OrderBy(v => v.Key))
+            {
+                var lines = (kvp.Value ?? new List<string>())
+                    .Select(l => l?.TrimEnd() ?? string.Empty)
+                    .ToList();
+
+                string key = string.Join("\n", lines);
+
+                if (seenKeys.Contains(key))
+                    continue;
+
+                seenKeys.Add(key);
+                result[result.Count] = lines;
             }
 
             return result;

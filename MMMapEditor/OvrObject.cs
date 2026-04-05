@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -50,6 +50,9 @@ namespace MMMapEditor
 
         // НОВОЕ: упорядоченные версии путей для отображения
         public Dictionary<int, List<string>> PathTextsOrdered { get; set; } = new Dictionary<int, List<string>>();
+
+        // Финальные leaf-варианты пути с привязанными branch-specific данными
+        public Dictionary<int, PathVariantInfo> PathVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
 
         public bool IsFromTable { get; set; } = false;
 
@@ -439,9 +442,20 @@ namespace MMMapEditor
                     }
                     else if (g.HasRandomPart)
                     {
-                        countDisplay = g.FixedCount > 0
-                            ? $"{g.FixedCount}+? (Random count)"
-                            : "? (Random count)";
+                        bool shouldCollapseToPureRandom =
+                            IsBattleMonsterCountIndeterminate ||
+                            grouped.Any(x => x.IsIndeterminate);
+
+                        if (shouldCollapseToPureRandom)
+                        {
+                            countDisplay = "? (Random count)";
+                        }
+                        else
+                        {
+                            countDisplay = g.FixedCount > 0
+                                ? $"{g.FixedCount}+? (Random count)"
+                                : "? (Random count)";
+                        }
                     }
                     else
                     {
@@ -718,6 +732,118 @@ namespace MMMapEditor
 
             return string.Join(", ", parts) + "]";
         }
+    }
+
+    public class PathVariantInfo
+    {
+        public int PathId { get; set; }
+        public bool IsLeaf { get; set; }
+
+        public List<string> Texts { get; set; } = new List<string>();
+
+        public byte? MonsterPower { get; set; }
+        public byte? MonsterLevel { get; set; }
+        public byte? MonsterBatchCount { get; set; }
+        public byte? LightingLevel { get; set; }
+        public byte? RandomEncounterChance { get; set; }
+
+        public byte? BattleMonsterCount { get; set; }
+        public bool IsBattleMonsterCountIndeterminate { get; set; }
+
+        public List<BattleMonster> BattleMonsters { get; set; } = new List<BattleMonster>();
+        public List<PartiallyDefinedBattle> PartiallyDefinedBattles { get; set; } = new List<PartiallyDefinedBattle>();
+
+        public bool HasAnyTableLoad { get; set; }
+        public List<OvrObject.LoadedValueInfo> LoadedValues { get; set; } = new List<OvrObject.LoadedValueInfo>();
+
+        public OvrObject ToOvrObject(byte x, byte y, byte directionByte)
+        {
+            var obj = new OvrObject
+            {
+                X = x,
+                Y = y,
+                DirectionByte = directionByte,
+                PathTexts = new Dictionary<int, HashSet<string>>(),
+                PathTextsOrdered = new Dictionary<int, List<string>>(),
+                PathVariants = new Dictionary<int, PathVariantInfo>(),
+                MonsterPower = MonsterPower,
+                MonsterLevel = MonsterLevel,
+                MonsterBatchCount = MonsterBatchCount,
+                LightingLevel = LightingLevel,
+                RandomEncounterChance = RandomEncounterChance,
+                BattleMonsterCount = BattleMonsterCount,
+                IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,
+                HasAnyTableLoad = HasAnyTableLoad
+            };
+
+            if (Texts != null && Texts.Count > 0)
+            {
+                obj.PathTexts[0] = new HashSet<string>(Texts);
+                obj.PathTextsOrdered[0] = new List<string>(Texts);
+            }
+
+            obj.PathVariants[0] = this;
+
+            if (BattleMonsters != null)
+            {
+                foreach (var battleMonster in BattleMonsters.OrderBy(m => m.Index))
+                {
+                    obj.AddBattleMonster(
+                        battleMonster.Index,
+                        battleMonster.MonsterIndex1,
+                        battleMonster.MonsterIndex2,
+                        battleMonster.IsIndeterminate);
+                }
+            }
+
+            if (PartiallyDefinedBattles != null)
+            {
+                foreach (var partial in PartiallyDefinedBattles.OrderBy(p => p.BxIndex))
+                {
+                    obj.AddPartiallyDefinedBattle(
+                        partial.BxIndex,
+                        partial.RangeStart1,
+                        partial.RangeEnd1,
+                        partial.RangeStart2,
+                        partial.RangeEnd2);
+                }
+            }
+
+            if (LoadedValues != null)
+            {
+                foreach (var loadedValue in LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.SourceAddr)
+                    .ThenBy(v => v.RegName))
+                {
+                    obj.AddLoadedValue(
+                        loadedValue.BxIndex,
+                        loadedValue.RegName,
+                        loadedValue.Value,
+                        loadedValue.SourceAddr,
+                        loadedValue.IsFirstTable,
+                        loadedValue.IsSaved);
+                }
+            }
+
+            return obj;
+        }
+
+        public bool HasMonsterStatChanges =>
+            MonsterPower.HasValue ||
+            MonsterLevel.HasValue ||
+            MonsterBatchCount.HasValue ||
+            LightingLevel.HasValue ||
+            RandomEncounterChance.HasValue;
+
+        public bool HasBattleInfo => BattleMonsters.Count > 0;
+        public bool HasPartiallyDefinedBattles => PartiallyDefinedBattles.Count > 0;
+        public bool HasAnyInfo =>
+            (Texts != null && Texts.Any(t => !string.IsNullOrWhiteSpace(t))) ||
+            HasMonsterStatChanges ||
+            HasBattleInfo ||
+            HasPartiallyDefinedBattles ||
+            HasAnyTableLoad;
     }
 
     #region Классы для полностью определённых битв

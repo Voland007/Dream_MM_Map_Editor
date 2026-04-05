@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -103,10 +103,11 @@ namespace MMMapEditor
         public void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
             List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
             uint firstLocalTextAddress, BinaryReader br,
-            byte targetX, byte targetY, List<PathResult> allResults, OvrObject ovrObject,
+            byte targetX, byte targetY, List<PathVariantInfo> allResults, OvrObject ovrObject,
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false,
-            HashSet<uint> reachableAddresses = null)
+            HashSet<uint> reachableAddresses = null,
+            PathAnalysisResult inheritedState = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -136,6 +137,7 @@ namespace MMMapEditor
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), depth + 1, 0, currentPathId, targetX, targetY,
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall);
+                var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
                 if (reachableAddresses != null)
@@ -151,12 +153,7 @@ namespace MMMapEditor
                 bool isLeaf = pathResult.AlternativePaths.Count == 0;
 
                 // Добавляем путь в результаты
-                allResults.Add(new PathResult
-                {
-                    PathId = currentPathId,
-                    Texts = pathTexts,
-                    IsLeaf = isLeaf
-                });
+                allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult));
 
                 if (debugMode && pathTexts.Count > 0)
                 {
@@ -166,9 +163,6 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"        [{text.Order}] {(text.IsContextual ? "C" : "L")}: {text.Text}");
                     }
                 }
-
-                // Добавляем информацию о монстрах
-                MergeMonsterInfo(pathResult, ovrObject);
 
                 // Формируем набор текстов для наследования вложенными путями
                 var (newInheritedContextTexts, newInheritedLocalTexts) = BuildInheritedTexts(
@@ -185,7 +179,8 @@ namespace MMMapEditor
                         newInheritedContextTexts, newInheritedLocalTexts,
                         firstLocalTextAddress, br, targetX, targetY,
                         allResults, ovrObject, processedBackEdges,
-                        invalidateReturnRegistersAfterExternalCall, reachableAddresses);
+                        invalidateReturnRegistersAfterExternalCall, reachableAddresses,
+                        effectivePathResult);
                 }
             }
         }
@@ -301,144 +296,270 @@ namespace MMMapEditor
             return (newInheritedContextTexts, newInheritedLocalTexts);
         }
 
-        private void MergeMonsterInfo(PathAnalysisResult source, OvrObject target)
+
+        private PathAnalysisResult MergeAnalysisStates(PathAnalysisResult inheritedState, PathAnalysisResult currentState)
         {
-            if (source.MonsterPower.HasValue && !target.MonsterPower.HasValue)
-                target.MonsterPower = source.MonsterPower.Value;
+            if (inheritedState == null)
+                return ClonePathAnalysisResult(currentState);
 
-            if (source.MonsterLevel.HasValue && !target.MonsterLevel.HasValue)
-                target.MonsterLevel = source.MonsterLevel.Value;
+            if (currentState == null)
+                return ClonePathAnalysisResult(inheritedState);
 
-            if (source.MonsterBatchCount.HasValue && !target.MonsterBatchCount.HasValue)
-                target.MonsterBatchCount = source.MonsterBatchCount.Value;
+            var merged = ClonePathAnalysisResult(inheritedState);
 
-            if (source.IsBattleMonsterCountIndeterminate)
+            if (currentState.MonsterPower.HasValue)
+                merged.MonsterPower = currentState.MonsterPower;
+            if (currentState.MonsterLevel.HasValue)
+                merged.MonsterLevel = currentState.MonsterLevel;
+            if (currentState.MonsterBatchCount.HasValue)
+                merged.MonsterBatchCount = currentState.MonsterBatchCount;
+            if (currentState.LightingLevel.HasValue)
+                merged.LightingLevel = currentState.LightingLevel;
+            if (currentState.RandomEncounterChance.HasValue)
+                merged.RandomEncounterChance = currentState.RandomEncounterChance;
+
+            if (currentState.IsBattleMonsterCountIndeterminate)
             {
-                target.BattleMonsterCount = null;
-                target.IsBattleMonsterCountIndeterminate = true;
+                merged.BattleMonsterCount = null;
+                merged.IsBattleMonsterCountIndeterminate = true;
             }
-            else if (source.BattleMonsterCount.HasValue)
+            else if (currentState.BattleMonsterCount.HasValue)
             {
-                if (target.IsBattleMonsterCountIndeterminate)
+                merged.BattleMonsterCount = currentState.BattleMonsterCount;
+                merged.IsBattleMonsterCountIndeterminate = false;
+            }
+
+            foreach (var entry in currentState.BattleMonsterEntries)
+                merged.BattleMonsterEntries[entry.Key] = entry.Value;
+
+            foreach (var partial in currentState.PartialBattles)
+            {
+                if (!merged.PartialBattles.Any(p =>
+                    p.BxIndex == partial.BxIndex &&
+                    p.RangeStart1 == partial.RangeStart1 &&
+                    p.RangeEnd1 == partial.RangeEnd1 &&
+                    p.RangeStart2 == partial.RangeStart2 &&
+                    p.RangeEnd2 == partial.RangeEnd2))
                 {
-                    // Уже обнаружен хотя бы один неопределённый путь для табличного объекта.
-                    // Конкретное значение из другой ветки не должно перетирать x?.
-                }
-                else if (target.BattleMonsterCount.HasValue && target.BattleMonsterCount.Value != source.BattleMonsterCount.Value)
-                {
-                    // Разные конкретные значения в разных ветках для табличного объекта считаем неопределёнными.
-                    target.BattleMonsterCount = null;
-                    target.IsBattleMonsterCountIndeterminate = true;
-                }
-                else
-                {
-                    target.BattleMonsterCount = source.BattleMonsterCount.Value;
-                    target.IsBattleMonsterCountIndeterminate = false;
+                    merged.PartialBattles.Add(new PartiallyDefinedBattle
+                    {
+                        BxIndex = partial.BxIndex,
+                        RangeStart1 = partial.RangeStart1,
+                        RangeEnd1 = partial.RangeEnd1,
+                        RangeStart2 = partial.RangeStart2,
+                        RangeEnd2 = partial.RangeEnd2
+                    });
                 }
             }
+
+            foreach (var info in currentState.PartialBattleInfo)
+            {
+                if (!merged.PartialBattleInfo.Any(i =>
+                    i.BxIndex == info.BxIndex &&
+                    i.DestAddr == info.DestAddr &&
+                    i.SrcReg == info.SrcReg &&
+                    i.SrcRegValue == info.SrcRegValue &&
+                    i.IsFromTable == info.IsFromTable &&
+                    i.SourceTableAddr == info.SourceTableAddr &&
+                    i.SourceTable == info.SourceTable))
+                {
+                    merged.PartialBattleInfo.Add(new PartialBattleInfo
+                    {
+                        BxIndex = info.BxIndex,
+                        DestAddr = info.DestAddr,
+                        SrcReg = info.SrcReg,
+                        SrcRegValue = info.SrcRegValue,
+                        IsFromTable = info.IsFromTable,
+                        SourceTableAddr = info.SourceTableAddr,
+                        SourceTable = info.SourceTable
+                    });
+                }
+            }
+
+            merged.HasPartialBattlePattern = merged.HasPartialBattlePattern || currentState.HasPartialBattlePattern;
+            return merged;
+        }
+
+        private PathAnalysisResult ClonePathAnalysisResult(PathAnalysisResult source)
+        {
+            var clone = new PathAnalysisResult();
+            if (source == null)
+                return clone;
+
+            clone.MonsterPower = source.MonsterPower;
+            clone.MonsterLevel = source.MonsterLevel;
+            clone.MonsterBatchCount = source.MonsterBatchCount;
+            clone.LightingLevel = source.LightingLevel;
+            clone.RandomEncounterChance = source.RandomEncounterChance;
+            clone.BattleMonsterCount = source.BattleMonsterCount;
+            clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
+            clone.HasPartialBattlePattern = source.HasPartialBattlePattern;
 
             foreach (var entry in source.BattleMonsterEntries)
-            {
-                if (entry.Value.val1 != 0 || entry.Value.val2 != 0)
-                {
-                    target.AddBattleMonster(
-                        entry.Key,
-                        entry.Value.val1,
-                        entry.Value.val2,
-                        entry.Value.isIndeterminate
-                    );
-                }
-            }
+                clone.BattleMonsterEntries[entry.Key] = entry.Value;
 
             foreach (var partial in source.PartialBattles)
             {
-                if (!target.PartiallyDefinedBattles.Any(p => p.BxIndex == partial.BxIndex))
+                clone.PartialBattles.Add(new PartiallyDefinedBattle
                 {
-                    target.AddPartiallyDefinedBattle(
-                        partial.BxIndex,
-                        partial.RangeStart1,
-                        partial.RangeEnd1,
-                        partial.RangeStart2,
-                        partial.RangeEnd2
-                    );
-                }
+                    BxIndex = partial.BxIndex,
+                    RangeStart1 = partial.RangeStart1,
+                    RangeEnd1 = partial.RangeEnd1,
+                    RangeStart2 = partial.RangeStart2,
+                    RangeEnd2 = partial.RangeEnd2
+                });
             }
 
-            if (source.HasPartialBattlePattern)
+            foreach (var info in source.PartialBattleInfo)
             {
-                target.HasAnyTableLoad = true;
-                foreach (var info in source.PartialBattleInfo)
+                clone.PartialBattleInfo.Add(new PartialBattleInfo
                 {
-                    if (!target.LoadedValues.Any(v => v.BxIndex == info.BxIndex &&
-                                                      v.RegName == info.SrcReg &&
-                                                      v.SourceAddr == (info.SourceTableAddr ?? 0)))
-                    {
-                        target.AddLoadedValue(
-                            info.BxIndex,
-                            info.SrcReg,
-                            info.SrcRegValue,
-                            info.SourceTableAddr ?? 0,
-                            info.IsFromTable,
-                            false
-                        );
-                    }
-                }
+                    BxIndex = info.BxIndex,
+                    DestAddr = info.DestAddr,
+                    SrcReg = info.SrcReg,
+                    SrcRegValue = info.SrcRegValue,
+                    IsFromTable = info.IsFromTable,
+                    SourceTableAddr = info.SourceTableAddr,
+                    SourceTable = info.SourceTable
+                });
             }
+
+            return clone;
         }
 
-        public Dictionary<int, List<string>> BuildFinalPaths(List<PathResult> allResults)
+        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source)
         {
-            var finalOrderedPaths = new Dictionary<int, List<string>>();
-
-            // Оставляем только листовые пути
-            var leafResults = allResults
-                .Where(r => r.IsLeaf && r.Texts.Count > 0)
-                .OrderBy(r => r.PathId)
-                .ToList();
-
-            // Группируем по уникальному содержимому текста, но с сохранением порядка
-            var uniqueTextGroups = new Dictionary<string, (int pathId, List<string> texts)>();
-
-            foreach (var result in leafResults)
+            return new PathVariantInfo
             {
-                // Преобразуем TextEntry в список строк, сохраняя порядок
-                var orderedTexts = result.Texts
+                PathId = pathId,
+                IsLeaf = isLeaf,
+                Texts = pathTexts
                     .OrderBy(t => t.Order)
                     .Select(t => t.Text)
                     .Where(t => !string.IsNullOrEmpty(t))
-                    .ToList();
+                    .ToList(),
+                MonsterPower = source.MonsterPower,
+                MonsterLevel = source.MonsterLevel,
+                MonsterBatchCount = source.MonsterBatchCount,
+                LightingLevel = source.LightingLevel,
+                RandomEncounterChance = source.RandomEncounterChance,
+                BattleMonsterCount = source.BattleMonsterCount,
+                IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                BattleMonsters = CloneBattleMonsters(source),
+                PartiallyDefinedBattles = ClonePartialBattles(source),
+                HasAnyTableLoad = source.HasPartialBattlePattern,
+                LoadedValues = CloneLoadedValues(source)
+            };
+        }
 
-                if (orderedTexts.Count == 0)
-                    continue;
-
-                // Создаём ключ из текстов для сравнения (порядок важен!)
-                string key = string.Join("|", orderedTexts);
-
-                // Если такой набор текстов ещё не встречался, добавляем его
-                if (!uniqueTextGroups.ContainsKey(key))
+        private List<BattleMonster> CloneBattleMonsters(PathAnalysisResult source)
+        {
+            return source.BattleMonsterEntries
+                .Where(entry => entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                .OrderBy(entry => entry.Key)
+                .Select(entry => new BattleMonster
                 {
-                    uniqueTextGroups[key] = (result.PathId, orderedTexts);
-                }
-            }
+                    Index = entry.Key,
+                    MonsterIndex1 = entry.Value.val1,
+                    MonsterIndex2 = entry.Value.val2,
+                    IsIndeterminate = entry.Value.isIndeterminate
+                })
+                .ToList();
+        }
 
-            // Преобразуем в список и сортируем по pathId
-            var uniqueResults = uniqueTextGroups.Values
-                .OrderBy(r => r.pathId)
+        private List<PartiallyDefinedBattle> ClonePartialBattles(PathAnalysisResult source)
+        {
+            return source.PartialBattles
+                .OrderBy(p => p.BxIndex)
+                .Select(p => new PartiallyDefinedBattle
+                {
+                    BxIndex = p.BxIndex,
+                    RangeStart1 = p.RangeStart1,
+                    RangeEnd1 = p.RangeEnd1,
+                    RangeStart2 = p.RangeStart2,
+                    RangeEnd2 = p.RangeEnd2
+                })
+                .ToList();
+        }
+
+        private List<OvrObject.LoadedValueInfo> CloneLoadedValues(PathAnalysisResult source)
+        {
+            return source.PartialBattleInfo
+                .OrderBy(i => i.BxIndex)
+                .ThenBy(i => i.SourceTableAddr ?? 0)
+                .ThenBy(i => i.SrcReg)
+                .Select(info => new OvrObject.LoadedValueInfo
+                {
+                    BxIndex = info.BxIndex,
+                    RegName = info.SrcReg,
+                    Value = info.SrcRegValue,
+                    SourceAddr = info.SourceTableAddr ?? 0,
+                    IsFirstTable = info.IsFromTable,
+                    IsSaved = false
+                })
+                .ToList();
+        }
+
+        public Dictionary<int, PathVariantInfo> BuildFinalPathVariants(List<PathVariantInfo> allResults)
+        {
+            var finalVariants = new Dictionary<int, PathVariantInfo>();
+
+            var leafResults = allResults
+                .Where(r => r.IsLeaf && r.HasAnyInfo)
+                .OrderBy(r => r.PathId)
                 .ToList();
 
-            if (uniqueResults.Count > 0)
-            {
-                // Первый путь всегда сохраняем с ключом 0
-                finalOrderedPaths[0] = uniqueResults[0].texts;
+            var uniqueVariants = new Dictionary<string, PathVariantInfo>();
 
-                // Остальные пути сохраняем с ключами 1,2,3...
-                for (int i = 1; i < uniqueResults.Count; i++)
-                {
-                    finalOrderedPaths[i] = uniqueResults[i].texts;
-                }
+            foreach (var result in leafResults)
+            {
+                string key = BuildVariantIdentityKey(result);
+                if (!uniqueVariants.ContainsKey(key))
+                    uniqueVariants[key] = result;
             }
 
-            return finalOrderedPaths;
+            var orderedUniqueVariants = uniqueVariants.Values
+                .OrderBy(v => v.PathId)
+                .ToList();
+
+            for (int i = 0; i < orderedUniqueVariants.Count; i++)
+            {
+                int key = i == 0 ? 0 : i;
+                finalVariants[key] = orderedUniqueVariants[i];
+            }
+
+            return finalVariants;
+        }
+
+        private string BuildVariantIdentityKey(PathVariantInfo variant)
+        {
+            string textKey = variant.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.LightingLevel}|{variant.RandomEncounterChance}|{variant.BattleMonsterCount}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+
+            string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(m => m.Index)
+                    .Select(m => $"{m.Index}:{m.MonsterIndex1:X2}:{m.MonsterIndex2:X2}:{m.IsIndeterminate}"))
+                : "<NO_BATTLE>";
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(p => p.BxIndex)
+                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                : "<NO_PARTIAL>";
+
+            string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
+                ? string.Join(";", variant.LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.SourceAddr)
+                    .ThenBy(v => v.RegName)
+                    .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
+                : "<NO_LOADS>";
+
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}";
         }
     }
 }

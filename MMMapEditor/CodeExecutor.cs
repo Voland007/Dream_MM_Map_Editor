@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -142,7 +142,7 @@ namespace MMMapEditor
 
                     // Поиск изменений статистики монстров и информации о битвах
                     _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                    _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY);
+                    _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY, TryGetEmulatedMemory8Value);
                     TrackRegisterOperations(insn, br, registerTracker, depth, debugMode);
 
                     // Анализ частичных битв
@@ -173,6 +173,14 @@ namespace MMMapEditor
             FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
             return result;
         }
+
+        private byte? TryGetEmulatedMemory8Value(ushort address)
+        {
+            return _emulatedMemory8.TryGetValue(address, out byte value)
+                ? value
+                : (byte?)null;
+        }
+
 
         /// <summary>
         /// Обрабатывает косвенные тексты (формируемые из AL и BP)
