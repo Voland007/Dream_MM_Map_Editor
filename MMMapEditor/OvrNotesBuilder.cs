@@ -1,4 +1,20 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
+// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -442,8 +458,10 @@ namespace MMMapEditor
         {
             var lines = new List<string>();
 
-            // Новая заметка должна отображаться только для табличных объектов.
-            if (obj.IsFromTable && obj.CallsRandomEncounter)
+            // Заметка про random encounter нужна только для табличных объектов
+            // без явного описания битвы. Если битва уже описана как группа монстров,
+            // то информация о random count выводится в самой строке битвы.
+            if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleInfo)
                 lines.Add("Вызывается random encaunter");
 
             return lines;
