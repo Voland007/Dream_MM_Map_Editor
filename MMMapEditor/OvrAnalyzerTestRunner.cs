@@ -315,7 +315,7 @@ namespace MMMapEditor.Tests
                             var cellResult = new CellCheckResult
                             {
                                 Cell = cellPos,
-                                Expected = expectation.GetDescription(),
+                                Expected = expectation.GetFullTextForDisplay(),
                                 Actual = actualText,
                                 Passed = passed,
                                 AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y),

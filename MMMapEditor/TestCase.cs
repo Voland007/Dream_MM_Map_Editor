@@ -156,26 +156,47 @@ namespace MMMapEditor.Tests
         }
 
         /// <summary>
-        /// Получить описание ожидания
+        /// Получить краткое описание ожидания
         /// </summary>
         public string GetDescription()
         {
             if (ShouldBeEmpty)
                 return "Пустой текст";
+
             if (ExpectedTexts != null && ExpectedTexts.Count > 0)
             {
                 var descriptions = new List<string>();
                 foreach (var text in ExpectedTexts)
                 {
-                    // Для отображения показываем текст с реальными переносами
+                    // Для краткого отображения показываем текст с реальными переносами,
+                    // но ограничиваем длину превью
                     string displayText = DecodeString(text);
                     if (displayText.Length > 50)
                         displayText = displayText.Substring(0, 50) + "...";
                     descriptions.Add(displayText);
                 }
+
                 return string.Join(" ИЛИ ", descriptions);
             }
+
             return "Любой текст";
+        }
+
+        /// <summary>
+        /// Получить полный ожидаемый текст для отображения без обрезки
+        /// </summary>
+        public string GetFullTextForDisplay()
+        {
+            if (ShouldBeEmpty)
+                return "Пустой текст";
+
+            if (ExpectedTexts == null || ExpectedTexts.Count == 0)
+                return "Любой текст";
+
+            return string.Join(
+                Environment.NewLine + "ИЛИ" + Environment.NewLine,
+                ExpectedTexts.Select(text => DecodeString(text ?? ""))
+            );
         }
     }
 
