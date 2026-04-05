@@ -1,20 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -343,19 +327,19 @@ namespace MMMapEditor
         {
             byte[] instructionBytes = insn.Bytes;
 
-            // MOV byte ptr [C96F], imm8 - уровень монстров
+            // MOV byte ptr [C961], imm8 - сила монстров
             if (instructionBytes.Length >= 5 &&
                 instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
+                instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
             {
                 byte monsterPower = instructionBytes[4];
                 result.MonsterPower = monsterPower;
                 AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ: {monsterPower}");
             }
-            // MOV byte ptr [C961], imm8 - сила монстров
+            // MOV byte ptr [C96F], imm8 - уровень монстров
             else if (instructionBytes.Length >= 5 &&
                      instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                     instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
+                     instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
             {
                 byte monsterLevel = instructionBytes[4];
                 result.MonsterLevel = monsterLevel;
@@ -379,17 +363,6 @@ namespace MMMapEditor
                 result.MonsterBatchCount = monsterBatchCount;
                 AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ: {monsterBatchCount}");
             }
-            // MOV [C96F], CH
-            else if (instructionBytes.Length >= 4 &&
-                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
-                     instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
-            {
-                if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
-                {
-                    result.MonsterPower = chValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ CH: {chValue}");
-                }
-            }
             // MOV [C961], CH
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
@@ -397,14 +370,25 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
+                    result.MonsterPower = chValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ CH: {chValue}");
+                }
+            }
+            // MOV [C96F], CH
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
+                     instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
+                {
                     result.MonsterLevel = chValue;
                     AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ CH: {chValue}");
                 }
             }
-            // MOV [C95E], CH
+            // MOV [C96E], CH
             else if (instructionBytes.Length >= 4 &&
                      instructionBytes[0] == 0x88 && instructionBytes[1] == 0x2E &&
-                     instructionBytes[2] == 0x5E && instructionBytes[3] == 0xC9)
+                     instructionBytes[2] == 0x6E && instructionBytes[3] == 0xC9)
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
@@ -423,17 +407,6 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ ИЗ CH: {chValue}");
                 }
             }
-            // MOV [C96F], AL
-            else if (instructionBytes.Length >= 3 &&
-                     instructionBytes[0] == 0xA2 &&
-                     instructionBytes[1] == 0x6F && instructionBytes[2] == 0xC9)
-            {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
-                {
-                    result.MonsterPower = alValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ AL: {alValue}");
-                }
-            }
             // MOV [C961], AL
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
@@ -441,14 +414,25 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
+                    result.MonsterPower = alValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ AL: {alValue}");
+                }
+            }
+            // MOV [C96F], AL
+            else if (instructionBytes.Length >= 3 &&
+                     instructionBytes[0] == 0xA2 &&
+                     instructionBytes[1] == 0x6F && instructionBytes[2] == 0xC9)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
                     result.MonsterLevel = alValue;
                     AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ AL: {alValue}");
                 }
             }
-            // MOV [C95E], AL
+            // MOV [C96E], AL
             else if (instructionBytes.Length >= 3 &&
                      instructionBytes[0] == 0xA2 &&
-                     instructionBytes[1] == 0x5E && instructionBytes[2] == 0xC9)
+                     instructionBytes[1] == 0x6E && instructionBytes[2] == 0xC9)
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
