@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -79,7 +79,7 @@ namespace MMMapEditor
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
         public byte? MonsterBatchCount { get; set; }
-        public byte? LightingLevel { get; set; }
+        public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
 
         #endregion
@@ -90,7 +90,7 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || LightingLevel.HasValue || RandomEncounterChance.HasValue;
+        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue;
 
         #endregion
 
@@ -383,13 +383,13 @@ namespace MMMapEditor
             return $"Количество монстров в группе остаётся прежним: {newBatchCount}";
         }
 
-        public string GetLightingLevelDescription(byte defaultLightingLevel)
+        public string GetDarkeningLevelDescription(byte defaultDarkeningLevel)
         {
-            if (!LightingLevel.HasValue) return null;
-            byte newLightingLevel = LightingLevel.Value;
-            if (newLightingLevel > defaultLightingLevel) return $"Уровень освещённости увеличивается с {defaultLightingLevel} до {newLightingLevel}";
-            if (newLightingLevel < defaultLightingLevel) return $"Уровень освещённости уменьшается с {defaultLightingLevel} до {newLightingLevel}";
-            return $"Уровень освещённости остаётся прежним: {newLightingLevel}";
+            if (!DarkeningLevel.HasValue) return null;
+            byte newDarkeningLevel = DarkeningLevel.Value;
+            if (newDarkeningLevel > defaultDarkeningLevel) return $"Уровень затемнённости увеличивается с {defaultDarkeningLevel} до {newDarkeningLevel}";
+            if (newDarkeningLevel < defaultDarkeningLevel) return $"Уровень затемнённости уменьшается с {defaultDarkeningLevel} до {newDarkeningLevel}";
+            return $"Уровень затемнённости остаётся прежним: {newDarkeningLevel}";
         }
 
         public string GetRandomEncounterChanceDescription(byte defaultChance)
@@ -760,7 +760,7 @@ namespace MMMapEditor
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
         public byte? MonsterBatchCount { get; set; }
-        public byte? LightingLevel { get; set; }
+        public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
 
         public byte? BattleMonsterCount { get; set; }
@@ -785,7 +785,7 @@ namespace MMMapEditor
                 MonsterPower = MonsterPower,
                 MonsterLevel = MonsterLevel,
                 MonsterBatchCount = MonsterBatchCount,
-                LightingLevel = LightingLevel,
+                DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
                 BattleMonsterCount = BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,
@@ -849,7 +849,7 @@ namespace MMMapEditor
             MonsterPower.HasValue ||
             MonsterLevel.HasValue ||
             MonsterBatchCount.HasValue ||
-            LightingLevel.HasValue ||
+            DarkeningLevel.HasValue ||
             RandomEncounterChance.HasValue;
 
         public bool HasBattleInfo => BattleMonsters.Count > 0;

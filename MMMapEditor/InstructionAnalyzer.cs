@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -377,14 +377,14 @@ namespace MMMapEditor
                 result.MonsterLevel = monsterLevel;
                 AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ: {monsterLevel}");
             }
-            // MOV byte ptr [C96E], imm8 - уровень освещённости
+            // MOV byte ptr [C96E], imm8 - уровень затемнённости
             else if (instructionBytes.Length >= 5 &&
                      instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                      instructionBytes[2] == 0x6E && instructionBytes[3] == 0xC9)
             {
-                byte lightingLevel = instructionBytes[4];
-                result.LightingLevel = lightingLevel;
-                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ: {lightingLevel}");
+                byte darkeningLevel = instructionBytes[4];
+                result.DarkeningLevel = darkeningLevel;
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ: {darkeningLevel}");
             }
             // MOV byte ptr [C962], imm8 - количество монстров в группе
             else if (instructionBytes.Length >= 5 &&
@@ -424,8 +424,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
-                    result.LightingLevel = chValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ CH: {chValue}");
+                    result.DarkeningLevel = chValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C962], CH
@@ -468,8 +468,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    result.LightingLevel = alValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ОСВЕЩЁННОСТИ ИЗ AL: {alValue}");
+                    result.DarkeningLevel = alValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ ИЗ AL: {alValue}");
                 }
             }
             // MOV [C962], AL

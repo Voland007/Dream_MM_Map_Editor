@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -121,9 +121,9 @@ namespace MMMapEditor
         private CheckBox isDangerCheckBox, noMagicCheckBox;
         private Dictionary<Point, bool> isDangerStates = new Dictionary<Point, bool>();
         private Dictionary<Point, bool> noMagicStates = new Dictionary<Point, bool>();
-        private RadioButton lightRadioButton, darkRadioButton, darknessRadioButton;
-        private GroupBox lightingGroupBox;
-        private Dictionary<Point, Lighting> lightingLevels = new Dictionary<Point, Lighting>();
+        private RadioButton lightRadioButton, darkRadioButton, darkeningRadioButton;
+        private GroupBox darkeningGroupBox;
+        private Dictionary<Point, Lighting> darkeningLevels = new Dictionary<Point, Lighting>();
         private Image mainMapImage;
         private ToolStripMenuItem fileMenuItem;
         private ToolStripMenuItem newMapItem, saveAsItem, loadItem, saveItem;
@@ -382,7 +382,7 @@ namespace MMMapEditor
                 centralOptions[pos] = copiedCellInfo.Value.CentralOption;
                 isDangerStates[pos] = copiedCellInfo.Value.IsDanger;
                 noMagicStates[pos] = copiedCellInfo.Value.NoMagic;
-                lightingLevels[pos] = copiedCellInfo.Value.LightingLevel;
+                darkeningLevels[pos] = copiedCellInfo.Value.DarkeningLevel;
                 imagesPerCell[pos] = copiedCellInfo.Value.CellImage;
                 notesPerCell[pos] = copiedCellInfo.Value.Notes;
 
@@ -410,7 +410,7 @@ namespace MMMapEditor
                     CentralOption = centralOptions[pos],
                     IsDanger = isDangerStates[pos],
                     NoMagic = noMagicStates[pos],
-                    LightingLevel = lightingLevels[pos],
+                    DarkeningLevel = darkeningLevels[pos],
                     CellImage = imagesPerCell[pos],
                     Notes = notesPerCell[pos]
                 };
@@ -441,7 +441,7 @@ namespace MMMapEditor
             imagesPerCell.Remove(pos);
             isDangerStates.Remove(pos);
             noMagicStates.Remove(pos);
-            lightingLevels.Remove(pos);
+            darkeningLevels.Remove(pos);
             centralOptions.Remove(pos);
 
             // Дополнительно можно добавить восстановление дефолтных значений, если это требуется
@@ -454,7 +454,7 @@ namespace MMMapEditor
             imagesPerCell[pos] = null;
             isDangerStates[pos] = false;
             noMagicStates[pos] = false;
-            lightingLevels[pos] = Lighting.Light;
+            darkeningLevels[pos] = Lighting.Light;
             centralOptions[pos] = "Не исследовано";
         }
 
@@ -467,7 +467,7 @@ namespace MMMapEditor
             // Сброс радиокнопок (возвращаем состояние обратно к первому варианту)
             lightRadioButton.Checked = true;
             darkRadioButton.Checked = false;
-            darknessRadioButton.Checked = false;
+            darkeningRadioButton.Checked = false;
 
             // Сброс комбо-боксов
             topComboBox.SelectedIndex = 0;
@@ -886,9 +886,9 @@ namespace MMMapEditor
             };
             noMagicCheckBox.CheckedChanged += NoMagicCheckBox_CheckedChanged;
 
-            lightingGroupBox = new GroupBox
+            darkeningGroupBox = new GroupBox
             {
-                Text = "Освещение",
+                Text = "Затемнённость",
                 ForeColor = Color.White,
                 Location = new Point(isDangerCheckBox.Right + 5, isDangerCheckBox.Top),
                 Width = 90,
@@ -904,7 +904,7 @@ namespace MMMapEditor
                 Checked = true, // По умолчанию выбран "светло"
                 Location = new Point(10, 15)
             };
-            lightRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
+            lightRadioButton.CheckedChanged += DarkeningRadioButton_CheckedChanged;
 
             darkRadioButton = new RadioButton
             {
@@ -913,28 +913,28 @@ namespace MMMapEditor
                 ForeColor = Color.White,
                 Location = new Point(10, 35)
             };
-            darkRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
+            darkRadioButton.CheckedChanged += DarkeningRadioButton_CheckedChanged;
 
-            darknessRadioButton = new RadioButton
+            darkeningRadioButton = new RadioButton
             {
                 Text = "Мрак",
                 AutoSize = true,
                 ForeColor = Color.White,
                 Location = new Point(10, 55)
             };
-            darknessRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
+            darkeningRadioButton.CheckedChanged += DarkeningRadioButton_CheckedChanged;
 
             // Добавляем радиокнопки внутрь группы
-            lightingGroupBox.Controls.Add(lightRadioButton);
-            lightingGroupBox.Controls.Add(darkRadioButton);
-            lightingGroupBox.Controls.Add(darknessRadioButton);
+            darkeningGroupBox.Controls.Add(lightRadioButton);
+            darkeningGroupBox.Controls.Add(darkRadioButton);
+            darkeningGroupBox.Controls.Add(darkeningRadioButton);
 
 
             topPanel.Controls.Add(centerLabel);
             topPanel.Controls.Add(centerComboBox);
             topPanel.Controls.Add(isDangerCheckBox);
             topPanel.Controls.Add(noMagicCheckBox);
-            topPanel.Controls.Add(lightingGroupBox);
+            topPanel.Controls.Add(darkeningGroupBox);
 
             // Добавляем таблицу компоновки на правую панель
             rightPanel.Controls.Add(layout);
@@ -1211,7 +1211,7 @@ namespace MMMapEditor
                 $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
                 $"Сила монстров: {loadResult.MonsterPower}\n" +
                 $"Уровень монстров: {loadResult.MonsterLevel}\n" +
-                $"Уровень освещённости: {loadResult.LightingLevel}\n" +
+                $"Уровень затемнённости: {loadResult.DarkeningLevel}\n" +
                 $"Количество монстров в группе: {loadResult.MonsterBatchCount}";
 
             // Перерисовываем интерфейс
@@ -1527,7 +1527,7 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(0xB539FF);
         }
 
-        // Теперь форматируем силу, уровень, освещённость и шанс случайной встречи
+        // Теперь форматируем силу, уровень, затемнённость и шанс случайной встречи
         private void FormatMapLevelMetaParameters(RichTextBox rt, string noteText)
         {
             if (string.IsNullOrEmpty(noteText)) return;
@@ -1571,10 +1571,10 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
-            // Уровень освещённости
+            // Уровень затемнённости
             var lightingMatches = Regex.Matches(
                 noteText,
-                @"Уровень освещённости (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+                @"Уровень затемнённости (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
             );
 
             foreach (Match match in lightingMatches)
@@ -1822,7 +1822,7 @@ namespace MMMapEditor
                     }
                 }
 
-                // Форматирование для силы, уровня, освещённости и шанса случайной встречи
+                // Форматирование для силы, уровня, затемнённости и шанса случайной встречи
                 FormatMapLevelMetaParameters(notesTextBox, noteText);
 
                 // Форматирование для информации о битве с монстрами
@@ -2728,7 +2728,7 @@ namespace MMMapEditor
         {
             isDangerStates[pos] = IsBitSet(secondLayerValue, 4);
             noMagicStates[pos] = IsBitSet(secondLayerValue, 2);
-            lightingLevels[pos] = IsBitSet(secondLayerValue, 6)
+            darkeningLevels[pos] = IsBitSet(secondLayerValue, 6)
                 ? Lighting.Dark
                 : Lighting.Light;
             centralOptions[pos] = IsBitSet(secondLayerValue, 8)
@@ -3120,8 +3120,9 @@ namespace MMMapEditor
                 isDangerStates[pos] = (bool)cellInfo.IsDanger;
                 noMagicStates[pos] = (bool)cellInfo.NoMagic;
 
-                // Освещение: приводим значение к перечислению
-                lightingLevels[pos] = (Lighting)Enum.Parse(typeof(Lighting), (string)cellInfo.Lighting);
+                // Затемнённость: поддерживаем и новое поле Darkening, и старое Lighting
+                var darkeningToken = cellInfo.Darkening ?? cellInfo.Lighting;
+                darkeningLevels[pos] = (Lighting)Enum.Parse(typeof(Lighting), (string)darkeningToken);
 
                 // Примечания
                 notesPerCell[pos] = (string)cellInfo.Note;
@@ -3221,7 +3222,7 @@ namespace MMMapEditor
                         ["CentralOption"] = centralOptions[pos],
                         ["IsDanger"] = isDangerStates[pos],
                         ["NoMagic"] = noMagicStates[pos],
-                        ["Lighting"] = lightingLevels[pos],
+                        ["Darkening"] = darkeningLevels[pos],
                         ["Note"] = notesPerCell[pos],
                         ["Image"] = imagesPerCell[pos]?.ToBase64String() // Сериализуем изображение в Base64
                     };
@@ -3313,33 +3314,33 @@ namespace MMMapEditor
             }
         }
 
-        private void LightingRadioButton_CheckedChanged(object sender, EventArgs e)
+        private void DarkeningRadioButton_CheckedChanged(object sender, EventArgs e)
         {
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                Lighting previousLighting = lightingLevels.TryGetValue(pos, out var prev) ? prev : Lighting.Light;
+                Lighting previousDarkening = darkeningLevels.TryGetValue(pos, out var prev) ? prev : Lighting.Light;
 
 
                 RadioButton rb = (RadioButton)sender;
                 if (rb.Checked)
                 {
-                    // Обновляем освещение для выбранной ячейки
+                    // Обновляем затемнённость для выбранной ячейки
                     if (rb == lightRadioButton)
                     {
-                        ApplyLightingEffect(pos, Lighting.Light);
+                        ApplyDarkeningEffect(pos, Lighting.Light);
                     }
                     else if (rb == darkRadioButton)
                     {
-                        ApplyLightingEffect(pos, Lighting.Dark);
+                        ApplyDarkeningEffect(pos, Lighting.Dark);
                     }
-                    else if (rb == darknessRadioButton)
+                    else if (rb == darkeningRadioButton)
                     {
-                        ApplyLightingEffect(pos, Lighting.Darkness);
+                        ApplyDarkeningEffect(pos, Lighting.Darkness);
                     }
 
                     // Проверка на изменение
-                    bool hasChanged = previousLighting != lightingLevels[pos];
+                    bool hasChanged = previousDarkening != darkeningLevels[pos];
 
                     if (hasChanged)
                     {
@@ -3352,10 +3353,10 @@ namespace MMMapEditor
                 }
             }
         }
-        private void ApplyLightingEffect(Point pos, Lighting level)
+        private void ApplyDarkeningEffect(Point pos, Lighting level)
         {
-            // Устанавливаем уровень освещенности для данной позиции
-            lightingLevels[pos] = level;
+            // Устанавливаем уровень затемнённости для данной позиции
+            darkeningLevels[pos] = level;
         }
 
         private void BufferPasteImageButton_Click(object sender, EventArgs e)
@@ -3616,10 +3617,10 @@ namespace MMMapEditor
                 noMagicCheckBox.Checked = noMagicState;
             }
 
-            // Восстановление состояния освещения
-            if (lightingLevels.TryGetValue(pos, out var lightingLevel))
+            // Восстановление состояния затемнённости
+            if (darkeningLevels.TryGetValue(pos, out var darkeningLevel))
             {
-                switch (lightingLevel)
+                switch (darkeningLevel)
                 {
                     case Lighting.Light:
                         lightRadioButton.Checked = true;
@@ -3628,7 +3629,7 @@ namespace MMMapEditor
                         darkRadioButton.Checked = true;
                         break;
                     case Lighting.Darkness:
-                        darknessRadioButton.Checked = true;
+                        darkeningRadioButton.Checked = true;
                         break;
                 }
             }
@@ -3844,7 +3845,7 @@ namespace MMMapEditor
         }
 
         // Метод для нанесения эффекта "Мрак"
-        private void PaintDarknessArea(Graphics g, Rectangle bounds)
+        private void PaintDarkeningArea(Graphics g, Rectangle bounds)
         {
             // Центральная область для закрашивания (размер 26x26 пикселей)
             int innerSquareSize = 40;
@@ -5042,18 +5043,18 @@ namespace MMMapEditor
                 PaintNoMagicArea(g, bounds);
             }
 
-            // Обработка уровней освещённости
-            if (lightingLevels.TryGetValue(pos, out var lightingLevel))
+            // Обработка уровней затемнённости
+            if (darkeningLevels.TryGetValue(pos, out var darkeningLevel))
             {
-                switch (lightingLevel)
+                switch (darkeningLevel)
                 {
                     case Lighting.Light:
-                        break; // Ничего не делаем, нормальное освещение
+                        break; // Ничего не делаем, нормальная затемнённость
                     case Lighting.Dark:
                         PaintDarkArea(g, bounds);
                         break;
                     case Lighting.Darkness:
-                        PaintDarknessArea(g, bounds);
+                        PaintDarkeningArea(g, bounds);
                         break;
                 }
             }
@@ -5540,8 +5541,8 @@ namespace MMMapEditor
                 isDangerStates[position] = false;
                 noMagicStates[position] = false;
 
-                // По умолчанию устанавливаем освещение "Светло"
-                lightingLevels[position] = Lighting.Light;
+                // По умолчанию устанавливаем затемнённость "Светло"
+                darkeningLevels[position] = Lighting.Light;
 
                 //   key.Invalidate();
             }
@@ -6754,7 +6755,7 @@ namespace MMMapEditor
             public string CentralOption;
             public bool IsDanger;
             public bool NoMagic;
-            public Lighting LightingLevel;
+            public Lighting DarkeningLevel;
             public Image CellImage;
             public string Notes;
         };

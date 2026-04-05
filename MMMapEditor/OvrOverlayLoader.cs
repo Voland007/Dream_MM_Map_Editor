@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@ namespace MMMapEditor
 
         public byte MonsterPower { get; set; }
         public byte MonsterLevel { get; set; }
-        public byte LightingLevel { get; set; }
+        public byte DarkeningLevel { get; set; }
         public byte MonsterBatchCount { get; set; }
         public byte RandomEncounterChanceRaw { get; set; } //исходное шестнадцатеричное число из оверлейного файла
         public double RandomEncounterChancePercent { get; set; } //рассчитанный % на основании RandomEncounterChanceRaw
@@ -90,7 +90,7 @@ namespace MMMapEditor
             result.RandomEncounterChancePercent = DecodeRandomEncounterChance(ReadByte(fileData, config.RandomEncounterChance));
             result.MonsterPower = ReadByte(fileData, config.MonsterPower);
             result.MonsterLevel = ReadByte(fileData, config.MonsterLevel);
-            result.LightingLevel = ReadByte(fileData, config.LightingLevel);
+            result.DarkeningLevel = ReadByte(fileData, config.DarkeningLevel);
             result.MonsterBatchCount = ReadByte(fileData, config.MonsterBatchCount);
             result.SurfaceCoords = ReadSurface(fileData, config.SurfaceX, config.SurfaceY);
             result.SectorMap = ReadSectorMap(fileData, config.SectorMapLetter, config.SectorMapDigit);

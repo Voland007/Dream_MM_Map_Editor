@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -329,8 +329,8 @@ namespace MMMapEditor
                 merged.MonsterLevel = currentState.MonsterLevel;
             if (currentState.MonsterBatchCount.HasValue)
                 merged.MonsterBatchCount = currentState.MonsterBatchCount;
-            if (currentState.LightingLevel.HasValue)
-                merged.LightingLevel = currentState.LightingLevel;
+            if (currentState.DarkeningLevel.HasValue)
+                merged.DarkeningLevel = currentState.DarkeningLevel;
             if (currentState.RandomEncounterChance.HasValue)
                 merged.RandomEncounterChance = currentState.RandomEncounterChance;
 
@@ -405,7 +405,7 @@ namespace MMMapEditor
             clone.MonsterPower = source.MonsterPower;
             clone.MonsterLevel = source.MonsterLevel;
             clone.MonsterBatchCount = source.MonsterBatchCount;
-            clone.LightingLevel = source.LightingLevel;
+            clone.DarkeningLevel = source.DarkeningLevel;
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.BattleMonsterCount = source.BattleMonsterCount;
             clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
@@ -457,7 +457,7 @@ namespace MMMapEditor
                 MonsterPower = source.MonsterPower,
                 MonsterLevel = source.MonsterLevel,
                 MonsterBatchCount = source.MonsterBatchCount,
-                LightingLevel = source.LightingLevel,
+                DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 BattleMonsterCount = source.BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
@@ -553,7 +553,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.LightingLevel}|{variant.RandomEncounterChance}|{variant.BattleMonsterCount}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.BattleMonsterCount}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters

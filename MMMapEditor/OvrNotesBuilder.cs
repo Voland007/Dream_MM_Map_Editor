@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -68,7 +68,7 @@ namespace MMMapEditor
             byte defaultMonsterPower = 0;
             byte defaultMonsterLevel = 0;
             byte defaultMonsterBatchCount = 0;
-            byte defaultLightingLevel = 0;
+            byte defaultDarkeningLevel = 0;
             byte defaultRandomEncounterChance = 0;
 
             try
@@ -80,8 +80,8 @@ namespace MMMapEditor
                     defaultMonsterLevel = fileData[config.MonsterLevel];
                 if (config.MonsterBatchCount < fileData.Length)
                     defaultMonsterBatchCount = fileData[config.MonsterBatchCount];
-                if (config.LightingLevel < fileData.Length)
-                    defaultLightingLevel = fileData[config.LightingLevel];
+                if (config.DarkeningLevel < fileData.Length)
+                    defaultDarkeningLevel = fileData[config.DarkeningLevel];
                 if (config.RandomEncounterChance < fileData.Length)
                     defaultRandomEncounterChance = fileData[config.RandomEncounterChance];
             }
@@ -154,7 +154,7 @@ namespace MMMapEditor
                             var batchCountDesc = variantObject.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
                             if (batchCountDesc != null) variantLines.Add(batchCountDesc);
 
-                            var lightingDesc = variantObject.GetLightingLevelDescription(defaultLightingLevel);
+                            var lightingDesc = variantObject.GetDarkeningLevelDescription(defaultDarkeningLevel);
                             if (lightingDesc != null) variantLines.Add(lightingDesc);
 
                             var randomEncounterDesc = variantObject.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
@@ -200,7 +200,7 @@ namespace MMMapEditor
                         var batchCountDesc = obj.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
                         if (batchCountDesc != null) monsterStatLines.Add(batchCountDesc);
 
-                        var lightingDesc = obj.GetLightingLevelDescription(defaultLightingLevel);
+                        var lightingDesc = obj.GetDarkeningLevelDescription(defaultDarkeningLevel);
                         if (lightingDesc != null) monsterStatLines.Add(lightingDesc);
 
                         var randomEncounterDesc = obj.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
