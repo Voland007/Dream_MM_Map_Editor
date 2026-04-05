@@ -1815,6 +1815,9 @@ namespace MMMapEditor
                 // Форматирование для частично определённых битв
                 FormatPartiallyDefinedBattles(notesTextBox, noteText);
 
+                // Форматирование для служебных предупреждений
+                FormatServiceWarnings(notesTextBox, noteText);
+
                 // Форматирование для loot-блоков
                 FormatLootBlocks(notesTextBox, noteText);
             }
@@ -1925,6 +1928,26 @@ namespace MMMapEditor
             }
 
             // Сбрасываем выделение
+            rt.Select(0, 0);
+        }
+
+        private void FormatServiceWarnings(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            var warningMatches = Regex.Matches(
+                noteText,
+                @"⚠Вызывается random encounter ⚠",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in warningMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 80, 80);
+                rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
             rt.Select(0, 0);
         }
 

@@ -462,7 +462,7 @@ namespace MMMapEditor
             // без явного описания битвы. Если битва уже описана как группа монстров,
             // то информация о random count выводится в самой строке битвы.
             if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleInfo)
-                lines.Add("Вызывается random encaunter");
+                lines.Add("⚠Вызывается random encounter ⚠");
 
             return lines;
         }
