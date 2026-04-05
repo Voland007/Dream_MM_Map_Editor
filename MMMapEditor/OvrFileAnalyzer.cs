@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -299,7 +299,7 @@ namespace MMMapEditor
                 _macroAnalyzer.CollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
 
                 // Анализ результатов
-                var (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern) =
+                var (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, callsRandomEncounter, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern) =
     AnalyzeMacroResults(br, comparison, alternativePaths, targetX, targetY);
 
                 bool hasSignificantCode = allTexts.Count > 0 ||
@@ -348,7 +348,7 @@ namespace MMMapEditor
                 int objectsCreated = 0;
                 foreach (var cellPos in validCells)
                 {
-                    var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, battleMonsterCount,
+                    var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, callsRandomEncounter, battleMonsterCount,
                         isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
                     objects.Add(obj);
                     objectsCreated++;
@@ -360,7 +360,7 @@ namespace MMMapEditor
             return objects;
         }
 
-        private (HashSet<string> texts, byte? monsterPower, byte? monsterLevel, byte? darkeningLevel, byte? randomEncounterChance, byte? battleMonsterCount,
+        private (HashSet<string> texts, byte? monsterPower, byte? monsterLevel, byte? darkeningLevel, byte? randomEncounterChance, bool callsRandomEncounter, byte? battleMonsterCount,
             bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte, byte, bool)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles, bool hasPartialBattlePattern)
@@ -372,6 +372,7 @@ namespace MMMapEditor
             byte? monsterLevel = null;
             byte? darkeningLevel = null;
             byte? randomEncounterChance = null;
+            bool callsRandomEncounter = false;
             byte? battleMonsterCount = null;
             bool isBattleMonsterCountIndeterminate = false;
             var battleMonsters = new Dictionary<int, (byte val1, byte val2, bool isIndeterminate)>();
@@ -391,7 +392,7 @@ namespace MMMapEditor
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
                 new HashSet<uint>(), 0, 0, 0, targetX, targetY, macroProcessedBackEdges);
 
-            MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance, ref battleMonsterCount,
+            MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance, ref callsRandomEncounter, ref battleMonsterCount,
                 ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
 
             // Анализ альтернативных путей
@@ -407,11 +408,11 @@ namespace MMMapEditor
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), 0, 0, 0, targetX, targetY);
 
-                MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance, ref battleMonsterCount,
+                MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance, ref callsRandomEncounter, ref battleMonsterCount,
                     ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
             }
 
-            return (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
+            return (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, callsRandomEncounter, battleMonsterCount, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
             }
             finally
             {
@@ -466,6 +467,7 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"    MonsterLevel: {defaultPathResult.MonsterLevel}");
                 AnalysisDebug.WriteLine($"    DarkeningLevel: {defaultPathResult.DarkeningLevel}");
                 AnalysisDebug.WriteLine($"    RandomEncounterChance: {defaultPathResult.RandomEncounterChance}");
+                AnalysisDebug.WriteLine($"    CallsRandomEncounter: {defaultPathResult.CallsRandomEncounter}");
                 AnalysisDebug.WriteLine($"    BattleMonsters: {defaultPathResult.BattleMonsterEntries.Count}");
 
                 // Создание объектов для всех подходящих клеток
@@ -659,6 +661,7 @@ namespace MMMapEditor
                 MonsterBatchCount = source.MonsterBatchCount,
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
+                CallsRandomEncounter = source.CallsRandomEncounter,
                 BattleMonsterCount = source.BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
                 BattleMonsters = source.BattleMonsterEntries
@@ -708,6 +711,7 @@ namespace MMMapEditor
             target.MonsterBatchCount = null;
             target.DarkeningLevel = null;
             target.RandomEncounterChance = null;
+            target.CallsRandomEncounter = false;
             target.BattleMonsterCount = null;
             target.IsBattleMonsterCountIndeterminate = false;
             target.BattleMonsters.Clear();
@@ -723,6 +727,7 @@ namespace MMMapEditor
             target.MonsterBatchCount = variant.MonsterBatchCount;
             target.DarkeningLevel = variant.DarkeningLevel;
             target.RandomEncounterChance = variant.RandomEncounterChance;
+            target.CallsRandomEncounter = variant.CallsRandomEncounter;
             target.BattleMonsterCount = variant.BattleMonsterCount;
             target.IsBattleMonsterCountIndeterminate = variant.IsBattleMonsterCountIndeterminate;
             target.HasAnyTableLoad = variant.HasAnyTableLoad;
@@ -759,7 +764,7 @@ namespace MMMapEditor
         }
 
         private void MergeMacroResults(PathAnalysisResult source, HashSet<string> allTexts,
-            ref byte? monsterPower, ref byte? monsterLevel, ref byte? darkeningLevel, ref byte? randomEncounterChance, ref byte? battleMonsterCount,
+            ref byte? monsterPower, ref byte? monsterLevel, ref byte? darkeningLevel, ref byte? randomEncounterChance, ref bool callsRandomEncounter, ref byte? battleMonsterCount,
             ref bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles,
@@ -784,6 +789,8 @@ namespace MMMapEditor
 
             if (source.RandomEncounterChance.HasValue)
                 randomEncounterChance = source.RandomEncounterChance;
+
+            callsRandomEncounter = callsRandomEncounter || source.CallsRandomEncounter;
 
             if (source.BattleMonsterCount.HasValue)
             {
@@ -952,7 +959,7 @@ namespace MMMapEditor
         }
 
         private OvrObject CreateMacroObject(Point cellPos, HashSet<string> texts,
-            byte? monsterPower, byte? monsterLevel, byte? darkeningLevel, byte? randomEncounterChance, byte? battleMonsterCount, bool isBattleMonsterCountIndeterminate,
+            byte? monsterPower, byte? monsterLevel, byte? darkeningLevel, byte? randomEncounterChance, bool callsRandomEncounter, byte? battleMonsterCount, bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles, bool hasPartialBattlePattern)
         {
@@ -965,6 +972,7 @@ namespace MMMapEditor
                 MonsterLevel = monsterLevel,
                 DarkeningLevel = darkeningLevel,
                 RandomEncounterChance = randomEncounterChance,
+                CallsRandomEncounter = callsRandomEncounter,
                 BattleMonsterCount = battleMonsterCount,
                 IsBattleMonsterCountIndeterminate = isBattleMonsterCountIndeterminate,
                 IsFromTable = false,
@@ -1006,6 +1014,7 @@ namespace MMMapEditor
                 MonsterLevel = result.MonsterLevel,
                 DarkeningLevel = result.DarkeningLevel,
                 RandomEncounterChance = result.RandomEncounterChance,
+                CallsRandomEncounter = result.CallsRandomEncounter,
                 BattleMonsterCount = result.BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = result.IsBattleMonsterCountIndeterminate,
                 IsFromTable = false

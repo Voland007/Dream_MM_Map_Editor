@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -293,14 +293,7 @@ namespace MMMapEditor
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
 
-            // JMP - безусловный переход
-            if (mnemonicUpper == "JMP" || mnemonicUpper == "JMPF" || mnemonicUpper == "JMPL" ||
-                mnemonicUpper == "JMPE" || mnemonicUpper == "JMPI")
-            {
-                return HandleJmp(insn, br, fileLength, debugMode, result, currentAddress);
-            }
-
-            // JMP по опкоду 0xE9
+            // Сначала opcode-специфичные JMP, чтобы не потерять особую обработку E9/EB
             if (insn.Bytes.Length >= 1 && insn.Bytes[0] == 0xE9)
             {
                 return HandleJmpOpcodeE9(insn, br, fileLength, debugMode, result, currentAddress);
@@ -310,6 +303,13 @@ namespace MMMapEditor
             if (insn.Bytes.Length >= 2 && insn.Bytes[0] == 0xEB)
             {
                 return HandleShortJmp(insn, br, fileLength, debugMode, result, currentAddress);
+            }
+
+            // JMP - безусловный переход
+            if (mnemonicUpper == "JMP" || mnemonicUpper == "JMPF" || mnemonicUpper == "JMPL" ||
+                mnemonicUpper == "JMPE" || mnemonicUpper == "JMPI")
+            {
+                return HandleJmp(insn, br, fileLength, debugMode, result, currentAddress);
             }
 
             // CALL
@@ -349,6 +349,18 @@ namespace MMMapEditor
         {
             uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
 
+            if (jumpTarget == 0x517C)
+            {
+                result.CallsRandomEncounter = true;
+                result.HasSignificantCode = true;
+
+                if (debugMode)
+                    AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через JMP к 0x517C");
+
+                result.IsTerminated = true;
+                return new ControlFlowResult { ShouldReturn = true, Result = result };
+            }
+
             if (jumpTarget >= fileLength)
             {
                 if (debugMode)
@@ -379,15 +391,31 @@ namespace MMMapEditor
                 ushort jumpOffset = (ushort)(insn.Bytes[1] | (insn.Bytes[2] << 8));
                 uint jumpTarget = (uint)(insn.Address + 3 + (short)jumpOffset);
 
+                // Специальный случай: JMP на 0x517C означает вызов random encounter.
+                // Эту проверку нужно делать ДО проверки выхода за пределы оверлея,
+                // потому что адрес 0x517C обычно находится вне текущего overlay-файла.
+                if (jumpTarget == 0x517C)
+                {
+                    result.CallsRandomEncounter = true;
+                    result.HasSignificantCode = true;
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через JMP к 0x517C");
+
+                    result.IsTerminated = true;
+                    return new ControlFlowResult { ShouldReturn = true, Result = result };
+                }
+
                 if (jumpTarget >= fileLength)
                 {
                     if (debugMode)
                         AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
                     result.IsTerminated = true;
+                    result.HasSignificantCode = true;
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
 
-                if (jumpTarget < fileLength && jumpTarget != 0)
+                if (jumpTarget != 0)
                 {
                     if (debugMode)
                         AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) к 0x{jumpTarget:X4}");
@@ -411,6 +439,14 @@ namespace MMMapEditor
 
                 if (jumpTarget < fileLength)
                 {
+                    if (jumpTarget == 0x517C)
+                    {
+                        result.CallsRandomEncounter = true;
+                        result.HasSignificantCode = true;
+                        if (debugMode)
+                            AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через SHORT JMP к 0x517C");
+                    }
+
                     if (debugMode)
                         AnalysisDebug.WriteLine($"      SHORT JMP к 0x{jumpTarget:X4}");
                     return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
@@ -630,7 +666,8 @@ namespace MMMapEditor
                                              result.MonsterLevel.HasValue ||
                                              result.BattleMonsterEntries.Count > 0 ||
                                              result.PartialBattles.Count > 0 ||
-                                             result.HasPartialBattlePattern;
+                                             result.HasPartialBattlePattern ||
+                                             result.CallsRandomEncounter;
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
 
@@ -1400,7 +1437,8 @@ namespace MMMapEditor
                                          result.MonsterLevel.HasValue ||
                                          result.BattleMonsterEntries.Count > 0 ||
                                          result.PartialBattles.Count > 0 ||
-                                         result.HasPartialBattlePattern;
+                                         result.HasPartialBattlePattern ||
+                                         result.CallsRandomEncounter;
         }
     }
 }

@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -97,6 +97,7 @@ namespace MMMapEditor
         public byte? MonsterBatchCount { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
+        public bool CallsRandomEncounter { get; set; } = false;
 
         #endregion
 
@@ -106,7 +107,7 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue;
+        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || CallsRandomEncounter;
 
         #endregion
 
@@ -727,7 +728,8 @@ namespace MMMapEditor
             HasMonsterStatChanges ||
             HasBattleInfo ||
             HasPartiallyDefinedBattles ||
-            HasAnyTableLoad;
+            HasAnyTableLoad ||
+            CallsRandomEncounter;
 
         #endregion
 
@@ -778,6 +780,7 @@ namespace MMMapEditor
         public byte? MonsterBatchCount { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
+        public bool CallsRandomEncounter { get; set; } = false;
 
         public byte? BattleMonsterCount { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; }
@@ -803,8 +806,10 @@ namespace MMMapEditor
                 MonsterBatchCount = MonsterBatchCount,
                 DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
+                CallsRandomEncounter = CallsRandomEncounter,
                 BattleMonsterCount = BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,
+                IsFromTable = true,
                 HasAnyTableLoad = HasAnyTableLoad
             };
 
@@ -866,7 +871,8 @@ namespace MMMapEditor
             MonsterLevel.HasValue ||
             MonsterBatchCount.HasValue ||
             DarkeningLevel.HasValue ||
-            RandomEncounterChance.HasValue;
+            RandomEncounterChance.HasValue ||
+            CallsRandomEncounter;
 
         public bool HasBattleInfo => BattleMonsters.Count > 0;
         public bool HasPartiallyDefinedBattles => PartiallyDefinedBattles.Count > 0;
@@ -875,7 +881,8 @@ namespace MMMapEditor
             HasMonsterStatChanges ||
             HasBattleInfo ||
             HasPartiallyDefinedBattles ||
-            HasAnyTableLoad;
+            HasAnyTableLoad ||
+            CallsRandomEncounter;
     }
 
     #region Классы для полностью определённых битв

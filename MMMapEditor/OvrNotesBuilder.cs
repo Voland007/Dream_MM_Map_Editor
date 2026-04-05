@@ -1,3 +1,19 @@
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -241,8 +257,9 @@ namespace MMMapEditor
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance);
             var battleLines = GetBattleLines(obj);
+            var specialNoteLines = GetSpecialNoteLines(obj);
 
-            MergeObjectMetaIntoVariants(variantContents, monsterStatLines, battleLines);
+            MergeObjectMetaIntoVariants(variantContents, monsterStatLines, battleLines, specialNoteLines);
             return variantContents;
         }
 
@@ -295,6 +312,7 @@ namespace MMMapEditor
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance));
             lines.AddRange(GetBattleLines(variantObject));
+            lines.AddRange(GetSpecialNoteLines(variantObject));
 
             return lines;
         }
@@ -302,16 +320,19 @@ namespace MMMapEditor
         private static void MergeObjectMetaIntoVariants(
             Dictionary<int, List<string>> variantContents,
             List<string> monsterStatLines,
-            List<string> battleLines)
+            List<string> battleLines,
+            List<string> specialNoteLines)
         {
             bool hasBattle = battleLines.Count > 0;
             bool hasMonsterStats = monsterStatLines.Count > 0;
+            bool hasSpecialNotes = specialNoteLines.Count > 0;
 
             if (hasBattle)
             {
                 var battleVariantLines = new List<string>();
                 battleVariantLines.AddRange(monsterStatLines);
                 battleVariantLines.AddRange(battleLines);
+                battleVariantLines.AddRange(specialNoteLines);
 
                 if (variantContents.Count == 0)
                 {
@@ -331,15 +352,23 @@ namespace MMMapEditor
                 return;
             }
 
-            if (hasMonsterStats && variantContents.Count > 0)
+            if ((hasMonsterStats || hasSpecialNotes) && variantContents.Count > 0)
             {
                 int firstVariant = variantContents.Keys.Min();
-                variantContents[firstVariant].InsertRange(0, monsterStatLines);
+                if (hasMonsterStats)
+                    variantContents[firstVariant].InsertRange(0, monsterStatLines);
+                if (hasSpecialNotes)
+                    variantContents[firstVariant].AddRange(specialNoteLines);
                 return;
             }
 
-            if (hasMonsterStats)
-                variantContents[0] = new List<string>(monsterStatLines);
+            if (hasMonsterStats || hasSpecialNotes)
+            {
+                var metaLines = new List<string>();
+                metaLines.AddRange(monsterStatLines);
+                metaLines.AddRange(specialNoteLines);
+                variantContents[0] = metaLines;
+            }
         }
 
         private static List<string> DecodeNoteTexts(IEnumerable<string> rawTexts)
@@ -404,6 +433,18 @@ namespace MMMapEditor
             string battleDesc = obj.GetBattleDescription();
             if (!string.IsNullOrEmpty(battleDesc))
                 lines.Add(battleDesc);
+
+            return lines;
+        }
+
+
+        private static List<string> GetSpecialNoteLines(OvrObject obj)
+        {
+            var lines = new List<string>();
+
+            // Новая заметка должна отображаться только для табличных объектов.
+            if (obj.IsFromTable && obj.CallsRandomEncounter)
+                lines.Add("Вызывается random encaunter");
 
             return lines;
         }

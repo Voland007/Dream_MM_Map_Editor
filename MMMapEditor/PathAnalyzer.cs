@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -349,6 +349,7 @@ namespace MMMapEditor
                 merged.DarkeningLevel = currentState.DarkeningLevel;
             if (currentState.RandomEncounterChance.HasValue)
                 merged.RandomEncounterChance = currentState.RandomEncounterChance;
+            merged.CallsRandomEncounter = merged.CallsRandomEncounter || currentState.CallsRandomEncounter;
 
             if (currentState.IsBattleMonsterCountIndeterminate)
             {
@@ -423,6 +424,7 @@ namespace MMMapEditor
             clone.MonsterBatchCount = source.MonsterBatchCount;
             clone.DarkeningLevel = source.DarkeningLevel;
             clone.RandomEncounterChance = source.RandomEncounterChance;
+            clone.CallsRandomEncounter = source.CallsRandomEncounter;
             clone.BattleMonsterCount = source.BattleMonsterCount;
             clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
             clone.HasPartialBattlePattern = source.HasPartialBattlePattern;
@@ -475,6 +477,7 @@ namespace MMMapEditor
                 MonsterBatchCount = source.MonsterBatchCount,
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
+                CallsRandomEncounter = source.CallsRandomEncounter,
                 BattleMonsterCount = source.BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
                 BattleMonsters = CloneBattleMonsters(source),
@@ -569,7 +572,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.BattleMonsterCount}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.BattleMonsterCount}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
