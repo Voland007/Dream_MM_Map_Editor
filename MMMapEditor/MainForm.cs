@@ -1935,17 +1935,30 @@ namespace MMMapEditor
         {
             if (string.IsNullOrEmpty(noteText)) return;
 
-            var warningMatches = Regex.Matches(
+            var serviceWarningMatches = Regex.Matches(
                 noteText,
                 @"⚠Вызывается random encounter ⚠",
                 RegexOptions.IgnoreCase);
 
-            foreach (Match match in warningMatches)
+            foreach (Match match in serviceWarningMatches)
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(255, 80, 80);
                 rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var lootWarningMatches = Regex.Matches(
+                noteText,
+                @"!!! (Контейнер с лутом уничтожен|Предмет уничтожен|GOLD уничтожено|GEMS уничтожены) !!!",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in lootWarningMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 80, 80);
+                rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
             }
 
             rt.Select(0, 0);
