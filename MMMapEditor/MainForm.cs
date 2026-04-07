@@ -1598,14 +1598,21 @@ namespace MMMapEditor
             }
 
             // Строки с монстрами (в формате xN, xM-N или x? (Random count))
-            var bulletMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x(\d+|\d+-\d+|\? \(Random count\)))$", RegexOptions.Multiline);
-            foreach (Match match in bulletMatches)
+            var bulletMatches = Regex.Matches(noteText, @"^(  • [^
+]+? x(\d+|\d+-\d+|\? \(Random count\)))$", RegexOptions.Multiline);
+            for (int bulletIndex = 0; bulletIndex < bulletMatches.Count; bulletIndex++)
             {
+                Match match = bulletMatches[bulletIndex];
+
                 // Определяем тип строки
                 bool isRandom = match.Value.Contains("x? (Random count)");
 
-                // Выбираем цвет для всей строки
-                Color lineColor = isRandom ? Color.FromArgb(255, 71, 151) : Color.FromArgb(240, 31, 111);
+                // Чередуем оттенок для каждой второй строки, сохраняя палитру для random/non-random
+                Color lineColor;
+                if (isRandom)
+                    lineColor = (bulletIndex % 2 == 0) ? Color.FromArgb(255, 71, 151) : Color.FromArgb(255, 96, 171);
+                else
+                    lineColor = (bulletIndex % 2 == 0) ? Color.FromArgb(240, 31, 111) : Color.FromArgb(255, 76, 146);
 
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = lineColor;
@@ -1619,7 +1626,7 @@ namespace MMMapEditor
                     {
                         // Выделяем всю часть с количеством
                         rt.Select(match.Index + xPos, match.Length - xPos);
-                        rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для всей части
+                        rt.SelectionColor = Color.FromArgb(255, 51, 131);
                         rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
 
                         // Находим и форматируем "(Random count)" курсивом
@@ -1628,19 +1635,19 @@ namespace MMMapEditor
                         {
                             rt.Select(match.Index + randomCountPos, "(Random count)".Length);
                             rt.SelectionColor = Color.FromArgb(255, 51, 131);
-                            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);  // Курсив для Random count
+                            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
                         }
                     }
                 }
                 else
                 {
-                    // Форматирование для обычного числа (xN)
-                    var countMatch = Regex.Match(match.Value, @"x(\d+)$");
+                    // Форматирование для обычного числа или диапазона (xN / xM-N)
+                    var countMatch = Regex.Match(match.Value, @"x(\d+|\d+-\d+)$");
                     if (countMatch.Success)
                     {
                         int countIndex = match.Index + match.Value.LastIndexOf('x');
-                        rt.Select(countIndex, countMatch.Length + 1); // +1 для включения 'x'
-                        rt.SelectionColor = Color.FromArgb(255, 51, 131);  // Светло-розовый для числа
+                        rt.Select(countIndex, countMatch.Length);
+                        rt.SelectionColor = Color.FromArgb(255, 51, 131);
                         rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
                     }
                 }
