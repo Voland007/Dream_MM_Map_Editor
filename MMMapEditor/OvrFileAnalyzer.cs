@@ -1,68 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -273,14 +209,19 @@ namespace MMMapEditor
                 if (debugMode)
                 {
                     AnalysisDebug.WriteLine($"\n    ИТОГО для клетки ({ovrObject.X},{ovrObject.Y}):");
-                    AnalysisDebug.WriteLine($"      Всего путей: {ovrObject.PathTextsOrdered.Count}");
-                    foreach (var kvp in ovrObject.PathTextsOrdered.OrderBy(k => k.Key))
+                    AnalysisDebug.WriteLine($"      Всего путей: {ovrObject.PathVariants.Count}");
+                    foreach (var kvp in ovrObject.PathVariants.OrderBy(k => k.Key))
                     {
-                        AnalysisDebug.WriteLine($"      Path {kvp.Key}: {kvp.Value.Count} текстов");
-                        foreach (var text in kvp.Value)
+                        var variant = kvp.Value;
+                        var texts = variant?.Texts ?? new List<string>();
+
+                        AnalysisDebug.WriteLine($"      Path {kvp.Key}: {texts.Count} текстов");
+                        foreach (var text in texts)
                         {
                             AnalysisDebug.WriteLine($"        {text}");
                         }
+
+                        WriteVariantDebugSummary(variant, ovrObject.X, ovrObject.Y, ovrObject.DirectionByte);
                     }
                 }
 
@@ -719,6 +660,62 @@ namespace MMMapEditor
                     })
                     .ToList()
             };
+        }
+
+        private void WriteVariantDebugSummary(PathVariantInfo variant, byte x, byte y, byte directionByte)
+        {
+            if (variant == null)
+            {
+                AnalysisDebug.WriteLine("        <variant is null>");
+                return;
+            }
+
+            if (variant.BattleMonsterCountRange != null)
+            {
+                if (variant.BattleMonsterCountRange.IsExact)
+                    AnalysisDebug.WriteLine($"        BattleMonsterCountRange: {variant.BattleMonsterCountRange.Min}");
+                else
+                    AnalysisDebug.WriteLine($"        BattleMonsterCountRange: {variant.BattleMonsterCountRange.Min}-{variant.BattleMonsterCountRange.Max}");
+            }
+            else if (variant.BattleMonsterCount.HasValue)
+            {
+                AnalysisDebug.WriteLine($"        BattleMonsterCount: {variant.BattleMonsterCount.Value}");
+            }
+            else if (variant.IsBattleMonsterCountIndeterminate)
+            {
+                AnalysisDebug.WriteLine("        BattleMonsterCount: неопределён");
+            }
+
+            if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
+            {
+                AnalysisDebug.WriteLine("        BattleMonsters:");
+                foreach (var battleMonster in variant.BattleMonsters.OrderBy(m => m.Index))
+                {
+                    AnalysisDebug.WriteLine(
+                        $"          BX={battleMonster.Index}: val1=0x{battleMonster.MonsterIndex1:X2}, val2=0x{battleMonster.MonsterIndex2:X2}, indeterminate={battleMonster.IsIndeterminate}");
+                }
+            }
+
+            if (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0)
+            {
+                AnalysisDebug.WriteLine("        PartiallyDefinedBattles:");
+                foreach (var partial in variant.PartiallyDefinedBattles.OrderBy(p => p.BxIndex))
+                {
+                    AnalysisDebug.WriteLine(
+                        $"          BX={partial.BxIndex}: [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}]");
+                }
+            }
+
+            var variantObject = variant.ToOvrObject(x, y, directionByte);
+            string battleDescription = variantObject.GetBattleDescription();
+            if (!string.IsNullOrWhiteSpace(battleDescription))
+            {
+                AnalysisDebug.WriteLine("        BattleDescription:");
+                foreach (var line in battleDescription.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+                {
+                    AnalysisDebug.WriteLine($"          {line}");
+                }
+            }
         }
 
         private void ApplyResolvedVariantInfoToObject(OvrObject target)
