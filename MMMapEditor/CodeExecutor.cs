@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -485,10 +485,35 @@ namespace MMMapEditor
             uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
             bool isInternalCall = callTarget < br.BaseStream.Length && callTarget != 0;
 
+            if (debugMode)
+                AnalysisDebug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
+
+            // SUB_509A находится вне overlay, поэтому её нужно распознавать
+            // ДО проверки isInternalCall. Она возвращает в AL псевдослучайное
+            // значение в диапазоне 1..N, где N уже лежит в AL на входе.
+            if (callTarget == 0x509A)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte n) && n > 0)
+                {
+                    registerTracker.SetRegisterRange("AL", 1, n);
+                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        Распознана SUB_509A: AL получает псевдослучайное значение в диапазоне 1..{n}");
+                }
+                else
+                {
+                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("        SUB_509A вызвана, но верхняя граница N в AL неизвестна");
+                }
+
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            }
+
             if (isInternalCall)
             {
-                if (debugMode)
-                    AnalysisDebug.WriteLine($"      CALL 0x{callTarget:X4} (возврат в 0x{nextAddress:X4})");
 
                 var subroutineTracker = registerTracker.Clone();
                 var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
@@ -518,6 +543,9 @@ namespace MMMapEditor
 
                 if (subroutineResult.MonsterLevel.HasValue && !result.MonsterLevel.HasValue)
                     result.MonsterLevel = subroutineResult.MonsterLevel;
+
+                if (subroutineResult.BattleMonsterCountRange != null && result.BattleMonsterCountRange == null)
+                    result.BattleMonsterCountRange = new ValueRange8(subroutineResult.BattleMonsterCountRange.Min, subroutineResult.BattleMonsterCountRange.Max);
 
                 if (subroutineResult.BattleMonsterCount.HasValue && !result.BattleMonsterCount.HasValue)
                     result.BattleMonsterCount = subroutineResult.BattleMonsterCount;
@@ -948,6 +976,22 @@ namespace MMMapEditor
             return sb.ToString();
         }
 
+        private bool TryParseImmediate8(X86Instruction insn, out byte value)
+        {
+            value = 0;
+            var bytes = insn.Bytes;
+            if (bytes == null || bytes.Length < 2)
+                return false;
+
+            if ((bytes[0] == 0x04 || bytes[0] == 0x14) && bytes.Length >= 2)
+            {
+                value = bytes[1];
+                return true;
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// Отслеживает операции с регистрами
         /// </summary>
@@ -959,8 +1003,33 @@ namespace MMMapEditor
             string mnemonicUpper = insn.Mnemonic?.ToUpperInvariant() ?? string.Empty;
             string operandUpper = insn.Operand?.ToUpperInvariant() ?? string.Empty;
 
-            if ((mnemonicUpper == "ADD" || mnemonicUpper == "ADC") &&
-                (operandUpper.StartsWith("AL,") || operandUpper.StartsWith("AX,")) &&
+            if ((mnemonicUpper == "ADD" || mnemonicUpper == "ADC") && operandUpper.StartsWith("AL,"))
+            {
+                if (registerTracker.TryGetRegisterRange("AL", out var alRange))
+                {
+                    if (TryParseImmediate8(insn, out byte imm))
+                    {
+                        byte newMin = (byte)(alRange.Min + imm);
+                        byte newMax = (byte)(alRange.Max + imm);
+                        registerTracker.SetRegisterRange("AL", newMin, newMax);
+                        registerTracker.MaterializePendingExternalCallResult("AX");
+                        registerTracker.MarkRegisterAsExternallyDerived("AX");
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Сдвигаем диапазон AL: {alRange.Min}-{alRange.Max} -> {newMin}-{newMax}");
+                    }
+                }
+                else if (registerTracker.HasPendingExternalCallResult("AX") || registerTracker.IsRegisterExternallyDerived("AX"))
+                {
+                    registerTracker.MaterializePendingExternalCallResult("AX");
+                    registerTracker.MarkRegisterAsExternallyDerived("AX");
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("        Материализуем зависимость AX/AL от внешнего CALL из-за арифметики ADD/ADC");
+                }
+            }
+            else if ((mnemonicUpper == "ADD" || mnemonicUpper == "ADC") &&
+                operandUpper.StartsWith("AX,") &&
                 (registerTracker.HasPendingExternalCallResult("AX") || registerTracker.IsRegisterExternallyDerived("AX")))
             {
                 registerTracker.MaterializePendingExternalCallResult("AX");
@@ -1013,7 +1082,16 @@ namespace MMMapEditor
             if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2)
             {
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+
+                // Если в AL сейчас не точное значение, а диапазон, нельзя материализовывать
+                // его в память как конкретный байт. Иначе последующий CMP BL,[3C1D] увидит
+                // ложный точный предел и логика random count сломается.
+                if (registerTracker.TryGetRegisterRange("AL", out var alRange) && !alRange.IsExact)
+                {
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        Не сохраняем точное значение AL в эмулируемую память [0x{memAddr:X4}], так как AL имеет диапазон {alRange.Min}-{alRange.Max}");
+                }
+                else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     _emulatedMemory8[memAddr] = alValue;
 

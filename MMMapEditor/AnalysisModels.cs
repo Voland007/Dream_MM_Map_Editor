@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -116,6 +116,27 @@ namespace MMMapEditor
         Write,
         Compare,
         Unknown
+    }
+
+    public class ValueRange8
+    {
+        public byte Min { get; set; }
+        public byte Max { get; set; }
+
+        public ValueRange8() { }
+
+        public ValueRange8(byte min, byte max)
+        {
+            Min = min;
+            Max = max;
+        }
+
+        public bool IsExact => Min == Max;
+
+        public override string ToString()
+        {
+            return IsExact ? Min.ToString() : $"{Min}-{Max}";
+        }
     }
 
     public class JumpCondition
@@ -255,6 +276,7 @@ namespace MMMapEditor
         public byte? MonsterIndex1 { get; set; }
         public byte? MonsterIndex2 { get; set; }
         public byte? BattleMonsterCount { get; set; }
+        public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> BattleMonsterEntries { get; set; }
             = new Dictionary<int, (byte, byte, bool)>();

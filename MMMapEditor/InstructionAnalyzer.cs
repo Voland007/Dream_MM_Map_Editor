@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -660,15 +660,16 @@ namespace MMMapEditor
 
                 byte? knownLoopLimit = tryReadMemory8?.Invoke(0x3C1D);
                 bool blKnown = registerTracker.TryGetByteRegisterValue("BL", out byte blValue);
+                bool hasExactKnownLoopLimit = knownLoopLimit.HasValue && !result.IsBattleMonsterCountIndeterminate;
+                bool hasKnownRangeLoopLimit = result.BattleMonsterCountRange != null && !result.IsBattleMonsterCountIndeterminate;
 
-                // Граница цикла считается действительно известной только если [3C1D] известно
-                // и само количество монстров в битве НЕ помечено как неопределённое.
-                // Иначе число в памяти может быть лишь материализованным следствием внешнего CALL,
-                // и random count должен сохраняться.
-                if (knownLoopLimit.HasValue && blKnown && !result.IsBattleMonsterCountIndeterminate)
+                if ((hasExactKnownLoopLimit || hasKnownRangeLoopLimit) && blKnown)
                 {
                     result.IsIndeterminateLoop = false;
-                    AnalysisDebug.WriteLine($"    ОБНАРУЖЕН ЦИКЛ С ИЗВЕСТНОЙ ГРАНИЦЕЙ по адресу 0x{address:X4}, BL=0x{blValue:X2}, [3C1D]=0x{knownLoopLimit.Value:X2} -> random count не выставляется");
+                    string limitText = hasExactKnownLoopLimit
+                        ? $"0x{knownLoopLimit.Value:X2}"
+                        : $"{result.BattleMonsterCountRange.Min}-{result.BattleMonsterCountRange.Max}";
+                    AnalysisDebug.WriteLine($"    ОБНАРУЖЕН ЦИКЛ С ИЗВЕСТНОЙ ГРАНИЦЕЙ по адресу 0x{address:X4}, BL=0x{blValue:X2}, [3C1D]={limitText} -> random count не выставляется");
                     return;
                 }
 
@@ -718,21 +719,33 @@ namespace MMMapEditor
                 instructionBytes[0] == 0xA2 &&
                 instructionBytes[1] == 0x1D && instructionBytes[2] == 0x3C)
             {
-                if (registerTracker.IsRegisterExternallyDerived("AX"))
+                if (registerTracker.TryGetRegisterRange("AL", out var countRange))
+                {
+                    result.BattleMonsterCountRange = new ValueRange8(countRange.Min, countRange.Max);
+                    result.BattleMonsterCount = countRange.IsExact ? countRange.Min : (byte?)null;
+                    result.IsBattleMonsterCountIndeterminate = false;
+                    AnalysisDebug.WriteLine(countRange.IsExact
+                        ? $"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ: {countRange.Min}"
+                        : $"    УСТАНОВЛЕН ДИАПАЗОН КОЛИЧЕСТВА МОНСТРОВ: {countRange.Min}-{countRange.Max}");
+                }
+                else if (registerTracker.IsRegisterExternallyDerived("AX"))
                 {
                     result.BattleMonsterCount = null;
+                    result.BattleMonsterCountRange = null;
                     result.IsBattleMonsterCountIndeterminate = true;
                     AnalysisDebug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL зависит от арифметики с результатом внешнего CALL)");
                 }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     result.BattleMonsterCount = alValue;
+                    result.BattleMonsterCountRange = new ValueRange8(alValue, alValue);
                     result.IsBattleMonsterCountIndeterminate = false;
                     AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ: {alValue}");
                 }
                 else
                 {
                     result.BattleMonsterCount = null;
+                    result.BattleMonsterCountRange = null;
                     result.IsBattleMonsterCountIndeterminate = true;
                     AnalysisDebug.WriteLine("    КОЛИЧЕСТВО МОНСТРОВ НЕОПРЕДЕЛЕНО (AL неизвестен)");
                 }

@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -370,11 +370,19 @@ namespace MMMapEditor
             if (currentState.IsBattleMonsterCountIndeterminate)
             {
                 merged.BattleMonsterCount = null;
+                merged.BattleMonsterCountRange = null;
                 merged.IsBattleMonsterCountIndeterminate = true;
+            }
+            else if (currentState.BattleMonsterCountRange != null)
+            {
+                merged.BattleMonsterCountRange = new ValueRange8(currentState.BattleMonsterCountRange.Min, currentState.BattleMonsterCountRange.Max);
+                merged.BattleMonsterCount = currentState.BattleMonsterCountRange.IsExact ? currentState.BattleMonsterCountRange.Min : (byte?)null;
+                merged.IsBattleMonsterCountIndeterminate = false;
             }
             else if (currentState.BattleMonsterCount.HasValue)
             {
                 merged.BattleMonsterCount = currentState.BattleMonsterCount;
+                merged.BattleMonsterCountRange = new ValueRange8(currentState.BattleMonsterCount.Value, currentState.BattleMonsterCount.Value);
                 merged.IsBattleMonsterCountIndeterminate = false;
             }
 
@@ -442,6 +450,7 @@ namespace MMMapEditor
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.CallsRandomEncounter = source.CallsRandomEncounter;
             clone.BattleMonsterCount = source.BattleMonsterCount;
+            clone.BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max);
             clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
             clone.HasPartialBattlePattern = source.HasPartialBattlePattern;
 
@@ -495,6 +504,7 @@ namespace MMMapEditor
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 BattleMonsterCount = source.BattleMonsterCount,
+                BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
                 BattleMonsters = CloneBattleMonsters(source),
                 PartiallyDefinedBattles = ClonePartialBattles(source),
@@ -564,12 +574,33 @@ namespace MMMapEditor
 
             foreach (var result in leafResults)
             {
-                string key = BuildVariantIdentityKey(result);
-                if (!uniqueVariants.ContainsKey(key))
-                    uniqueVariants[key] = result;
+                string exactKey = BuildVariantIdentityKey(result);
+                if (!uniqueVariants.ContainsKey(exactKey))
+                {
+                    uniqueVariants[exactKey] = result;
+                    continue;
+                }
+
+                var existingExact = uniqueVariants[exactKey];
+                if (GetVariantPrecisionScore(result) > GetVariantPrecisionScore(existingExact))
+                    uniqueVariants[exactKey] = result;
             }
 
-            var orderedUniqueVariants = uniqueVariants.Values
+            // Дополнительная дедупликация: один и тот же сценарий боя может порождать
+            // несколько листовых путей с разной глубиной разворота цикла.
+            // Для таких случаев оставляем наиболее информативный вариант.
+            var semanticallyUnique = new Dictionary<string, PathVariantInfo>();
+            foreach (var variant in uniqueVariants.Values.OrderBy(v => v.PathId))
+            {
+                string semanticKey = BuildSemanticVariantKey(variant);
+                if (!semanticallyUnique.TryGetValue(semanticKey, out var existing) ||
+                    GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
+                {
+                    semanticallyUnique[semanticKey] = variant;
+                }
+            }
+
+            var orderedUniqueVariants = semanticallyUnique.Values
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -582,13 +613,68 @@ namespace MMMapEditor
             return finalVariants;
         }
 
+
+        private string BuildSemanticVariantKey(PathVariantInfo variant)
+        {
+            string textKey = variant.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.HasAnyTableLoad}";
+
+            string battleSkeleton = "<NO_BATTLE>";
+            if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
+            {
+                battleSkeleton = string.Join(";", variant.BattleMonsters
+                    .OrderBy(m => m.Index)
+                    .GroupBy(m => $"{m.MonsterIndex1:X2}:{m.MonsterIndex2:X2}")
+                    .Select(g => g.Key));
+            }
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(p => p.BxIndex)
+                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                : "<NO_PARTIAL>";
+
+            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}";
+        }
+
+        private int GetVariantPrecisionScore(PathVariantInfo variant)
+        {
+            int score = 0;
+
+            if (variant.BattleMonsterCountRange != null)
+            {
+                score += variant.BattleMonsterCountRange.IsExact ? 20 : 50;
+            }
+            else if (variant.BattleMonsterCount.HasValue)
+            {
+                score += 20;
+            }
+
+            if (!variant.IsBattleMonsterCountIndeterminate)
+                score += 10;
+
+            if (variant.BattleMonsters != null)
+            {
+                score += variant.BattleMonsters.Count(m => !m.IsIndeterminate) * 4;
+                score -= variant.BattleMonsters.Count(m => m.IsIndeterminate) * 10;
+                score -= variant.BattleMonsters.Count;
+            }
+
+            if (variant.PartiallyDefinedBattles != null)
+                score -= variant.PartiallyDefinedBattles.Count * 5;
+
+            return score;
+        }
         private string BuildVariantIdentityKey(PathVariantInfo variant)
         {
             string textKey = variant.Texts != null && variant.Texts.Count > 0
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.BattleMonsterCount}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters

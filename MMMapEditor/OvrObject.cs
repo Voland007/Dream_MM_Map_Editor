@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -121,6 +121,7 @@ namespace MMMapEditor
 
         public List<BattleMonster> BattleMonsters { get; set; } = new List<BattleMonster>();
         public byte? BattleMonsterCount { get; set; }
+        public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
         public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || CallsRandomEncounter;
@@ -479,7 +480,21 @@ namespace MMMapEditor
                     BattleMonsterCount.HasValue &&
                     !IsBattleMonsterCountIndeterminate;
 
+                bool canUseGlobalBattleCountRange =
+                    grouped.Count == 1 &&
+                    BattleMonsterCountRange != null &&
+                    !BattleMonsterCountRange.IsExact &&
+                    !IsBattleMonsterCountIndeterminate;
+
                 var result = "Битва с группой монстров:";
+                int totalFixedAcrossGroups = grouped.Sum(x => x.FixedCount > 0 ? x.FixedCount : x.Count);
+                bool canUseTailRangeHeuristic =
+                    BattleMonsterCountRange != null &&
+                    !IsBattleMonsterCountIndeterminate &&
+                    grouped.Count > 1 &&
+                    !grouped.Any(x => x.HasRandomPart) &&
+                    BattleMonsterCountRange.Max > totalFixedAcrossGroups;
+
                 foreach (var g in grouped)
                 {
                     string cleanName = CleanMonsterNameForDisplay(g.MonsterName);
@@ -489,13 +504,26 @@ namespace MMMapEditor
                     {
                         countDisplay = BattleMonsterCount.Value.ToString();
                     }
+                    else if (canUseGlobalBattleCountRange)
+                    {
+                        countDisplay = $"{BattleMonsterCountRange.Min}-{BattleMonsterCountRange.Max}";
+                    }
                     else if (g.HasRandomPart)
                     {
                         bool shouldCollapseToPureRandom =
                             IsBattleMonsterCountIndeterminate ||
                             grouped.Any(x => x.IsIndeterminate);
 
-                        if (shouldCollapseToPureRandom)
+                        if (BattleMonsterCountRange != null && !IsBattleMonsterCountIndeterminate)
+                        {
+                            int otherFixed = grouped.Where(x => x != g).Sum(x => x.FixedCount > 0 ? x.FixedCount : x.Count);
+                            int min = BattleMonsterCountRange.Min - otherFixed;
+                            int max = BattleMonsterCountRange.Max - otherFixed;
+                            if (min < g.FixedCount) min = g.FixedCount;
+                            if (max < min) max = min;
+                            countDisplay = min == max ? min.ToString() : $"{min}-{max}";
+                        }
+                        else if (shouldCollapseToPureRandom)
                         {
                             countDisplay = "? (Random count)";
                         }
@@ -505,6 +533,16 @@ namespace MMMapEditor
                                 ? $"{g.FixedCount}+? (Random count)"
                                 : "? (Random count)";
                         }
+                    }
+                    else if (canUseTailRangeHeuristic && g == grouped.Last())
+                    {
+                        int otherFixed = grouped.Where(x => x != g).Sum(x => x.FixedCount > 0 ? x.FixedCount : x.Count);
+                        int min = BattleMonsterCountRange.Min - otherFixed;
+                        int max = BattleMonsterCountRange.Max - otherFixed;
+                        int baseCount = g.FixedCount > 0 ? g.FixedCount : g.Count;
+                        if (min < baseCount) min = baseCount;
+                        if (max < min) max = min;
+                        countDisplay = min == max ? min.ToString() : $"{min}-{max}";
                     }
                     else
                     {
@@ -799,6 +837,7 @@ namespace MMMapEditor
         public bool CallsRandomEncounter { get; set; } = false;
 
         public byte? BattleMonsterCount { get; set; }
+        public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; }
 
         public List<BattleMonster> BattleMonsters { get; set; } = new List<BattleMonster>();
@@ -824,6 +863,7 @@ namespace MMMapEditor
                 RandomEncounterChance = RandomEncounterChance,
                 CallsRandomEncounter = CallsRandomEncounter,
                 BattleMonsterCount = BattleMonsterCount,
+                BattleMonsterCountRange = BattleMonsterCountRange == null ? null : new ValueRange8(BattleMonsterCountRange.Min, BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,
                 IsFromTable = true,
                 HasAnyTableLoad = HasAnyTableLoad

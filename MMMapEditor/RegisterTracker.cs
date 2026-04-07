@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@ namespace MMMapEditor
             new Dictionary<string, (ushort, bool, ushort, string)>();
         private HashSet<string> externallyDerivedRegisters = new HashSet<string>();
         private HashSet<string> pendingExternalCallRegisters = new HashSet<string>();
+        private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -64,11 +65,56 @@ namespace MMMapEditor
             LastFlagsInstructionAddress = null;
         }
 
+
+        public void SetRegisterRange(string reg, byte min, byte max)
+        {
+            string regUpper = reg.ToUpperInvariant();
+            registerRanges[regUpper] = new ValueRange8(min, max);
+
+            if (regUpper == "AX" || regUpper == "AL" || regUpper == "AH")
+            {
+                registerRanges["AX"] = new ValueRange8(min, max);
+                registerRanges["AL"] = new ValueRange8(min, max);
+            }
+        }
+
+        public bool TryGetRegisterRange(string reg, out ValueRange8 range)
+        {
+            string regUpper = reg.ToUpperInvariant();
+            if (registerRanges.TryGetValue(regUpper, out range))
+                return true;
+
+            if ((regUpper == "AL" || regUpper == "AH") && registerRanges.TryGetValue("AX", out range))
+                return true;
+
+            range = null;
+            return false;
+        }
+
+        public void ClearRegisterRange(string reg)
+        {
+            string regUpper = reg.ToUpperInvariant();
+            registerRanges.Remove(regUpper);
+
+            if (regUpper == "AX")
+            {
+                registerRanges.Remove("AL");
+                registerRanges.Remove("AH");
+            }
+            else if (regUpper == "AL" || regUpper == "AH")
+            {
+                registerRanges.Remove("AX");
+                registerRanges.Remove("AL");
+                registerRanges.Remove("AH");
+            }
+        }
+
         public void SetRegisterValue(string reg, ushort value, uint address, string instruction)
         {
             string regUpper = reg.ToUpper();
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
+            ClearRegisterRange(regUpper);
             registers[regUpper] = value;
             registerSources[regUpper] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
 
@@ -513,6 +559,7 @@ namespace MMMapEditor
 
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
+            ClearRegisterRange(regUpper);
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
@@ -562,6 +609,7 @@ namespace MMMapEditor
             registerSources2.Clear();
             externallyDerivedRegisters.Clear();
             pendingExternalCallRegisters.Clear();
+            registerRanges.Clear();
             ZeroFlag = false;
             CarryFlag = false;
             SignFlag = false;
@@ -619,6 +667,7 @@ namespace MMMapEditor
                     {
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
+                        ClearRegisterRange(fullRegUpper);
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
@@ -640,6 +689,7 @@ namespace MMMapEditor
                     {
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
+                        ClearRegisterRange(fullRegUpper);
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
@@ -661,6 +711,7 @@ namespace MMMapEditor
                     {
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
+                        ClearRegisterRange(fullRegUpper);
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
@@ -682,6 +733,7 @@ namespace MMMapEditor
                     {
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
+                        ClearRegisterRange(fullRegUpper);
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
@@ -711,6 +763,10 @@ namespace MMMapEditor
             foreach (var reg in pendingExternalCallRegisters)
             {
                 clone.pendingExternalCallRegisters.Add(reg);
+            }
+            foreach (var kvp in registerRanges)
+            {
+                clone.registerRanges[kvp.Key] = new ValueRange8(kvp.Value.Min, kvp.Value.Max);
             }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;

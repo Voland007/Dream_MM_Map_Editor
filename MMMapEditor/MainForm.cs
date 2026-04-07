@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1597,8 +1597,8 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
             }
 
-            // Строки с монстрами (всегда в формате "  • Имя монстра xN" или "  • Имя монстра x? (Random count)")
-            var bulletMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x(\d+|\? \(Random count\)))$", RegexOptions.Multiline);
+            // Строки с монстрами (в формате xN, xM-N или x? (Random count))
+            var bulletMatches = Regex.Matches(noteText, @"^(  • [^\n]+? x(\d+|\d+-\d+|\? \(Random count\)))$", RegexOptions.Multiline);
             foreach (Match match in bulletMatches)
             {
                 // Определяем тип строки
