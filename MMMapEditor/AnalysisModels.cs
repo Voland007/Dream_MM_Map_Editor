@@ -161,6 +161,12 @@ namespace MMMapEditor
         public uint Target { get; set; }
     }
 
+    public enum ValueDistributionKind
+    {
+        Unknown,
+        UniformDiscreteRange
+    }
+
     public class AlternativePath
     {
         public int ObjectIndex { get; set; }
@@ -171,6 +177,10 @@ namespace MMMapEditor
         public int PathNumber { get; set; }
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
+        public byte? SourceRangeMin { get; set; }
+        public byte? SourceRangeMax { get; set; }
+        public ValueDistributionKind DistributionKind { get; set; } = ValueDistributionKind.Unknown;
+        public bool? MatchesCompareValue { get; set; }
         public RegisterTracker RegisterState { get; set; }
     }
 

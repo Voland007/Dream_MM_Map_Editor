@@ -1,3 +1,19 @@
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -28,7 +44,9 @@ namespace MMMapEditor
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false,
             HashSet<uint> reachableAddresses = null,
-            PathAnalysisResult inheritedState = null)
+            PathAnalysisResult inheritedState = null,
+            int? inheritedProbabilityNumerator = null,
+            int? inheritedProbabilityDenominator = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -73,8 +91,13 @@ namespace MMMapEditor
                 // Путь считается листовым, только если у него нет вложенных путей
                 bool isLeaf = pathResult.AlternativePaths.Count == 0;
 
+                var (localNumerator, localDenominator) = EstimatePathProbability(path);
+                int? effectiveProbabilityNumerator = MultiplyNullable(inheritedProbabilityNumerator, localNumerator);
+                int? effectiveProbabilityDenominator = MultiplyNullable(inheritedProbabilityDenominator, localDenominator);
+
                 // Добавляем путь в результаты
-                allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult));
+                allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult,
+                    effectiveProbabilityNumerator, effectiveProbabilityDenominator));
 
                 if (debugMode && pathTexts.Count > 0)
                 {
@@ -101,7 +124,7 @@ namespace MMMapEditor
                         firstLocalTextAddress, br, targetX, targetY,
                         allResults, ovrObject, processedBackEdges,
                         invalidateReturnRegistersAfterExternalCall, reachableAddresses,
-                        effectivePathResult);
+                        effectivePathResult, effectiveProbabilityNumerator, effectiveProbabilityDenominator);
                 }
             }
         }
@@ -359,17 +382,32 @@ namespace MMMapEditor
             return clone;
         }
 
-        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source)
+        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source,
+            int? probabilityNumerator = null, int? probabilityDenominator = null)
         {
+            var texts = pathTexts
+                .OrderBy(t => t.Order)
+                .Select(t => t.Text)
+                .Where(t => !string.IsNullOrEmpty(t))
+                .ToList();
+
+            bool isNoOp = isLeaf &&
+                          texts.Count == 0 &&
+                          !source.MonsterPower.HasValue &&
+                          !source.MonsterLevel.HasValue &&
+                          !source.MonsterBatchCount.HasValue &&
+                          !source.DarkeningLevel.HasValue &&
+                          !source.RandomEncounterChance.HasValue &&
+                          !source.CallsRandomEncounter &&
+                          source.BattleMonsterEntries.Count == 0 &&
+                          source.PartialBattles.Count == 0 &&
+                          !source.HasPartialBattlePattern;
+
             return new PathVariantInfo
             {
                 PathId = pathId,
                 IsLeaf = isLeaf,
-                Texts = pathTexts
-                    .OrderBy(t => t.Order)
-                    .Select(t => t.Text)
-                    .Where(t => !string.IsNullOrEmpty(t))
-                    .ToList(),
+                Texts = texts,
                 MonsterPower = source.MonsterPower,
                 MonsterLevel = source.MonsterLevel,
                 MonsterBatchCount = source.MonsterBatchCount,
@@ -382,8 +420,58 @@ namespace MMMapEditor
                 BattleMonsters = CloneBattleMonsters(source),
                 PartiallyDefinedBattles = ClonePartialBattles(source),
                 HasAnyTableLoad = source.HasPartialBattlePattern,
-                LoadedValues = CloneLoadedValues(source)
+                LoadedValues = CloneLoadedValues(source),
+                IsNoOp = isNoOp,
+                ProbabilityNumerator = probabilityNumerator,
+                ProbabilityDenominator = probabilityDenominator
             };
+        }
+
+        private static int? MultiplyNullable(int? left, int? right)
+        {
+            if (!left.HasValue && !right.HasValue)
+                return null;
+            if (!left.HasValue)
+                return right;
+            if (!right.HasValue)
+                return left;
+            return left.Value * right.Value;
+        }
+
+        private static (int? numerator, int? denominator) EstimatePathProbability(AlternativePath path)
+        {
+            if (path == null || !path.CompareValue.HasValue || !path.SourceRangeMin.HasValue || !path.SourceRangeMax.HasValue)
+                return (null, null);
+
+            int min = path.SourceRangeMin.Value;
+            int max = path.SourceRangeMax.Value;
+            int size = max - min + 1;
+            if (size <= 0)
+                return (null, null);
+
+            int compareValue = path.CompareValue.Value;
+            int numerator;
+
+            if (path.MatchesCompareValue == true)
+            {
+                numerator = compareValue >= min && compareValue <= max ? 1 : 0;
+            }
+            else if (path.MatchesCompareValue == false)
+            {
+                numerator = size - ((compareValue >= min && compareValue <= max) ? 1 : 0);
+            }
+            else
+            {
+                return (null, null);
+            }
+
+            if (numerator <= 0)
+                return (0, size);
+
+            if (path.DistributionKind == ValueDistributionKind.UniformDiscreteRange)
+                return (numerator, size);
+
+            return (null, null);
         }
 
         private List<BattleMonster> CloneBattleMonsters(PathAnalysisResult source)
@@ -439,7 +527,7 @@ namespace MMMapEditor
             var finalVariants = new Dictionary<int, PathVariantInfo>();
 
             var leafResults = allResults
-                .Where(r => r.IsLeaf && r.HasAnyInfo)
+                .Where(r => r.IsLeaf && (r.HasAnyInfo || r.IsNoOp))
                 .OrderBy(r => r.PathId)
                 .ToList();
 

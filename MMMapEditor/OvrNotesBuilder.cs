@@ -1,3 +1,19 @@
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -287,6 +303,13 @@ namespace MMMapEditor
         {
             var lines = new List<string>();
 
+            if (variantObject.PathVariants != null && variantObject.PathVariants.TryGetValue(0, out var metaVariant))
+            {
+                string probabilityLine = BuildProbabilityLine(metaVariant);
+                if (!string.IsNullOrEmpty(probabilityLine))
+                    lines.Add(probabilityLine);
+            }
+
             lines.AddRange(DecodeNoteTexts(rawTexts));
             lines.AddRange(GetMonsterStatLines(
                 variantObject,
@@ -298,7 +321,25 @@ namespace MMMapEditor
             lines.AddRange(GetBattleLines(variantObject));
             lines.AddRange(GetSpecialNoteLines(variantObject));
 
+            if (lines.Count == 0 && variantObject.PathVariants != null && variantObject.PathVariants.TryGetValue(0, out var noOpVariant) && noOpVariant.IsNoOp)
+                lines.Add("Ничего не происходит");
+
             return lines;
+        }
+
+        private static string BuildProbabilityLine(PathVariantInfo variant)
+        {
+            if (variant == null || !variant.ProbabilityNumerator.HasValue || !variant.ProbabilityDenominator.HasValue || variant.ProbabilityDenominator.Value <= 0)
+                return null;
+
+            int numerator = variant.ProbabilityNumerator.Value;
+            int denominator = variant.ProbabilityDenominator.Value;
+            double percent = numerator * 100.0 / denominator;
+            string percentText = percent % 1 == 0
+                ? ((int)percent).ToString()
+                : percent.ToString("0.##");
+
+            return $"Вероятность: {percentText}% ({numerator}/{denominator})";
         }
 
         private static void MergeObjectMetaIntoVariants(

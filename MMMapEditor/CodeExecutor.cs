@@ -1,3 +1,19 @@
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -98,6 +114,23 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
 
                     byte[] bytes = insn.Bytes;
+
+                    if (bytes.Length >= 3 && bytes[0] == 0x80)
+                    {
+                        byte modRm = bytes[1];
+                        byte operation = (byte)((modRm >> 3) & 0x07);
+                        byte mode = (byte)((modRm >> 6) & 0x03);
+                        byte regIndex = (byte)(modRm & 0x07);
+                        if (mode == 0x03 && operation == 0x07)
+                        {
+                            string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                            if (regIndex < regNames8.Length)
+                            {
+                                result.LastCompareReg = regNames8[regIndex];
+                                result.LastCompareImm = bytes[2];
+                            }
+                        }
+                    }
 
                     // Отслеживание MOV AL, imm8
                     if (bytes.Length >= 2 && bytes[0] == 0xB0)
@@ -447,7 +480,7 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte n) && n > 0)
                 {
-                    registerTracker.SetRegisterRange("AL", 1, n);
+                    registerTracker.SetRegisterRange("AL", 1, n, ValueDistributionKind.UniformDiscreteRange);
                     registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
 
                     if (debugMode)
@@ -614,6 +647,19 @@ namespace MMMapEditor
                 }
 
                 // Добавляем целевой адрес перехода как альтернативный путь
+                string compareRegister = result.LastCompareReg;
+                byte? compareValue = result.LastCompareImm;
+                byte? sourceRangeMin = null;
+                byte? sourceRangeMax = null;
+                var distributionKind = ValueDistributionKind.Unknown;
+
+                if (!string.IsNullOrEmpty(compareRegister) && registerTracker.TryGetRegisterRange(compareRegister, out var compareRange))
+                {
+                    sourceRangeMin = compareRange.Min;
+                    sourceRangeMax = compareRange.Max;
+                    distributionKind = registerTracker.GetRegisterRangeDistribution(compareRegister);
+                }
+
                 var altPath = new AlternativePath
                 {
                     Address = (uint)insn.Address,
@@ -621,6 +667,12 @@ namespace MMMapEditor
                     Condition = $"{insn.Mnemonic} {insn.Operand}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
+                    CompareRegister = compareRegister,
+                    CompareValue = compareValue,
+                    SourceRangeMin = sourceRangeMin,
+                    SourceRangeMax = sourceRangeMax,
+                    DistributionKind = distributionKind,
+                    MatchesCompareValue = true,
                     RegisterState = registerTracker.Clone()
                 };
 
@@ -640,6 +692,12 @@ namespace MMMapEditor
                     Condition = $"LINEAR after {insn.Mnemonic}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
+                    CompareRegister = compareRegister,
+                    CompareValue = compareValue,
+                    SourceRangeMin = sourceRangeMin,
+                    SourceRangeMax = sourceRangeMax,
+                    DistributionKind = distributionKind,
+                    MatchesCompareValue = false,
                     RegisterState = registerTracker.Clone()
                 };
 

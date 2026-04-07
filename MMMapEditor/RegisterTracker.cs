@@ -46,6 +46,7 @@ namespace MMMapEditor
         private HashSet<string> externallyDerivedRegisters = new HashSet<string>();
         private HashSet<string> pendingExternalCallRegisters = new HashSet<string>();
         private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
+        private Dictionary<string, ValueDistributionKind> registerRangeDistributions = new Dictionary<string, ValueDistributionKind>();
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -82,15 +83,18 @@ namespace MMMapEditor
         }
 
 
-        public void SetRegisterRange(string reg, byte min, byte max)
+        public void SetRegisterRange(string reg, byte min, byte max, ValueDistributionKind distributionKind = ValueDistributionKind.Unknown)
         {
             string regUpper = reg.ToUpperInvariant();
             registerRanges[regUpper] = new ValueRange8(min, max);
+            registerRangeDistributions[regUpper] = distributionKind;
 
             if (regUpper == "AX" || regUpper == "AL" || regUpper == "AH")
             {
                 registerRanges["AX"] = new ValueRange8(min, max);
                 registerRanges["AL"] = new ValueRange8(min, max);
+                registerRangeDistributions["AX"] = distributionKind;
+                registerRangeDistributions["AL"] = distributionKind;
             }
         }
 
@@ -107,21 +111,39 @@ namespace MMMapEditor
             return false;
         }
 
+        public ValueDistributionKind GetRegisterRangeDistribution(string reg)
+        {
+            string regUpper = reg.ToUpperInvariant();
+            if (registerRangeDistributions.TryGetValue(regUpper, out var distribution))
+                return distribution;
+
+            if ((regUpper == "AL" || regUpper == "AH") && registerRangeDistributions.TryGetValue("AX", out distribution))
+                return distribution;
+
+            return ValueDistributionKind.Unknown;
+        }
+
         public void ClearRegisterRange(string reg)
         {
             string regUpper = reg.ToUpperInvariant();
             registerRanges.Remove(regUpper);
+            registerRangeDistributions.Remove(regUpper);
 
             if (regUpper == "AX")
             {
                 registerRanges.Remove("AL");
                 registerRanges.Remove("AH");
+                registerRangeDistributions.Remove("AL");
+                registerRangeDistributions.Remove("AH");
             }
             else if (regUpper == "AL" || regUpper == "AH")
             {
                 registerRanges.Remove("AX");
                 registerRanges.Remove("AL");
                 registerRanges.Remove("AH");
+                registerRangeDistributions.Remove("AX");
+                registerRangeDistributions.Remove("AL");
+                registerRangeDistributions.Remove("AH");
             }
         }
 
@@ -783,6 +805,10 @@ namespace MMMapEditor
             foreach (var kvp in registerRanges)
             {
                 clone.registerRanges[kvp.Key] = new ValueRange8(kvp.Value.Min, kvp.Value.Max);
+            }
+            foreach (var kvp in registerRangeDistributions)
+            {
+                clone.registerRangeDistributions[kvp.Key] = kvp.Value;
             }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;
