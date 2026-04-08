@@ -1,3 +1,19 @@
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -155,27 +171,21 @@ namespace MMMapEditor
                 });
             }
 
-            // 3. Определяем, нужно ли наследовать локальные тексты
-            bool shouldInheritLocal = path.Condition.StartsWith("LINEAR") ||
-                                      (firstLocalTextAddress != uint.MaxValue &&
-                                       path.Address > firstLocalTextAddress);
-
-            // 4. Если нужно, наследуем локальные тексты от родителя
-            if (shouldInheritLocal)
+            // 3. Наследуем локальные тексты от родителя для всех дочерних веток.
+            // Это позволяет сохранять вопрос/сообщение, найденное на родительской ветке,
+            // в ее листовых подветках (например: текст вопроса -> ответ -> телепорт).
+            foreach (var text in inheritedLocalTexts)
             {
-                foreach (var text in inheritedLocalTexts)
+                pathTexts.Add(new TextEntry
                 {
-                    pathTexts.Add(new TextEntry
-                    {
-                        Text = text.Text,
-                        Order = nextOrder++,
-                        IsContextual = false,
-                        Address = text.Address
-                    });
-                }
+                    Text = text.Text,
+                    Order = nextOrder++,
+                    IsContextual = false,
+                    Address = text.Address
+                });
             }
 
-            // 5. В самом конце добавляем новые локальные тексты из этого пути в исходном порядке исполнения
+            // 4. В самом конце добавляем новые локальные тексты из этого пути в исходном порядке исполнения
             foreach (var text in pathResult.OrderedTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
             {
                 pathTexts.Add(new TextEntry
@@ -209,16 +219,12 @@ namespace MMMapEditor
 
             var newInheritedLocalTexts = new List<TextEntry>();
 
-            bool shouldInheritLocal = path.Condition.StartsWith("LINEAR") ||
-                                      (firstLocalTextAddress != uint.MaxValue &&
-                                       path.Address > firstLocalTextAddress);
-
-            if (shouldInheritLocal)
+            // Локальные тексты всегда передаются дочерним веткам.
+            // Фильтрация по адресу первого локального текста приводила к тому,
+            // что leaf-ветки теряли текст родительского вопроса/сообщения.
+            foreach (var text in inheritedLocalTexts)
             {
-                foreach (var text in inheritedLocalTexts)
-                {
-                    newInheritedLocalTexts.Add(text);
-                }
+                newInheritedLocalTexts.Add(text.Clone());
             }
 
             foreach (var text in pathResult.OrderedTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
