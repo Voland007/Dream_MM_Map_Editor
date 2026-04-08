@@ -1,51 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -80,7 +32,8 @@ namespace MMMapEditor
             RegisterTracker registerTracker, HashSet<uint> globallyAnalyzedAddresses,
             int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges = null,
-            bool invalidateReturnRegistersAfterExternalCall = false)
+            bool invalidateReturnRegistersAfterExternalCall = false,
+            List<uint> pendingReturnAddresses = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
@@ -94,6 +47,11 @@ namespace MMMapEditor
 
             var savedEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
             _emulatedMemory8.Clear();
+
+            var pendingReturns = pendingReturnAddresses != null
+                ? new Stack<uint>(Enumerable.Reverse(pendingReturnAddresses))
+                : new Stack<uint>();
+            int currentCallDepth = callDepth;
 
             try
             {
@@ -175,7 +133,7 @@ namespace MMMapEditor
                     // Поиск прямых текстов
                     var newTexts = new HashSet<string>();
                     _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts);
-                    ProcessFoundTexts(newTexts, foundTextsInThisPath, result, callDepth, insn, debugMode);
+                    ProcessFoundTexts(newTexts, foundTextsInThisPath, result, currentCallDepth, insn, debugMode);
 
                     // Поиск изменений статистики монстров и информации о битвах
                     _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
@@ -188,15 +146,20 @@ namespace MMMapEditor
                         AnalyzePartialBattleRanges(br, result);
                     }
 
+                    // Эмуляция стека (PUSH/POP), чтобы корректно отслеживать адреса возврата,
+                    // в том числе разрушение return address через POP внутри подпрограмм.
+                    TrackStackOperations(insn, registerTracker, pendingReturns, debugMode);
+
                     // Обработка инструкций перехода и возврата
                     var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
-                        globallyAnalyzedAddresses, depth, callDepth, pathId, targetX, targetY,
+                        globallyAnalyzedAddresses, depth, currentCallDepth, pathId, targetX, targetY,
                         processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode,
-                        invalidateReturnRegistersAfterExternalCall);
+                        invalidateReturnRegistersAfterExternalCall, pendingReturns);
 
                     if (handlingResult.ShouldReturn)
                         return handlingResult.Result;
 
+                    currentCallDepth = handlingResult.NextCallDepth;
                     currentAddress = handlingResult.NextAddress;
                 }
             }
@@ -307,37 +270,54 @@ namespace MMMapEditor
             int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint currentAddress, uint nextAddress, long fileLength, bool debugMode,
-            bool invalidateReturnRegistersAfterExternalCall)
+            bool invalidateReturnRegistersAfterExternalCall,
+            Stack<uint> pendingReturns)
         {
             string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
 
             // RET - конец пути
             if (IsReturnInstruction(mnemonicUpper))
             {
+                if (pendingReturns != null && pendingReturns.Count > 0)
+                {
+                    uint returnAddress = pendingReturns.Pop();
+                    int nextCallDepth = Math.Max(0, callDepth - 1);
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"      RET на 0x{insn.Address:X4} - возвращаемся к 0x{returnAddress:X4}");
+
+                    return new ControlFlowResult
+                    {
+                        ShouldReturn = false,
+                        NextAddress = returnAddress,
+                        NextCallDepth = nextCallDepth
+                    };
+                }
+
                 if (debugMode)
                     AnalysisDebug.WriteLine($"      RET на 0x{insn.Address:X4} - конец пути");
                 result.IsTerminated = true;
                 result.HasSignificantCode = true;
-                return new ControlFlowResult { ShouldReturn = true, Result = result };
+                return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
             }
 
             // Сначала opcode-специфичные JMP, чтобы не потерять особую обработку E9/EB
             if (insn.Bytes.Length >= 1 && insn.Bytes[0] == 0xE9)
             {
-                return HandleJmpOpcodeE9(insn, br, fileLength, debugMode, result, currentAddress);
+                return HandleJmpOpcodeE9(insn, br, fileLength, debugMode, result, currentAddress, callDepth);
             }
 
             // Короткий JMP
             if (insn.Bytes.Length >= 2 && insn.Bytes[0] == 0xEB)
             {
-                return HandleShortJmp(insn, br, fileLength, debugMode, result, currentAddress);
+                return HandleShortJmp(insn, br, fileLength, debugMode, result, currentAddress, callDepth);
             }
 
             // JMP - безусловный переход
             if (mnemonicUpper == "JMP" || mnemonicUpper == "JMPF" || mnemonicUpper == "JMPL" ||
                 mnemonicUpper == "JMPE" || mnemonicUpper == "JMPI")
             {
-                return HandleJmp(insn, br, fileLength, debugMode, result, currentAddress);
+                return HandleJmp(insn, br, fileLength, debugMode, result, currentAddress, callDepth);
             }
 
             // CALL
@@ -345,18 +325,18 @@ namespace MMMapEditor
             {
                 return HandleCall(insn, br, registerTracker, globallyAnalyzedAddresses, depth, callDepth,
                     pathId, targetX, targetY, processedBackEdges, result, nextAddress, debugMode,
-                    invalidateReturnRegistersAfterExternalCall);
+                    invalidateReturnRegistersAfterExternalCall, pendingReturns);
             }
 
             // УСЛОВНЫЕ ПЕРЕХОДЫ
             if (IsConditionalJump(insn, out uint condJumpTarget))
             {
                 return HandleConditionalJump(insn, condJumpTarget, nextAddress, fileLength,
-                    debugMode, processedBackEdges, result, currentAddress, registerTracker);
+                    debugMode, processedBackEdges, result, currentAddress, registerTracker, callDepth, pendingReturns);
             }
 
             // Обычная инструкция - продолжаем линейно
-            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress, NextCallDepth = callDepth };
         }
 
         /// <summary>
@@ -367,13 +347,14 @@ namespace MMMapEditor
             public bool ShouldReturn { get; set; }
             public PathAnalysisResult Result { get; set; }
             public uint NextAddress { get; set; }
+            public int NextCallDepth { get; set; }
         }
 
         /// <summary>
         /// Обрабатывает инструкцию JMP
         /// </summary>
         private ControlFlowResult HandleJmp(X86Instruction insn, BinaryReader br, long fileLength,
-            bool debugMode, PathAnalysisResult result, uint currentAddress)
+            bool debugMode, PathAnalysisResult result, uint currentAddress, int callDepth)
         {
             uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
 
@@ -386,7 +367,7 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через JMP к 0x517C");
 
                 result.IsTerminated = true;
-                return new ControlFlowResult { ShouldReturn = true, Result = result };
+                return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
             }
 
             if (jumpTarget >= fileLength)
@@ -395,24 +376,24 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
                 result.IsTerminated = true;
                 result.HasSignificantCode = true;
-                return new ControlFlowResult { ShouldReturn = true, Result = result };
+                return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
             }
 
             if (jumpTarget != 0 && jumpTarget < fileLength)
             {
                 if (debugMode)
                     AnalysisDebug.WriteLine($"      JMP к 0x{jumpTarget:X4}");
-                return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget, NextCallDepth = callDepth };
             }
 
-            return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length };
+            return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length, NextCallDepth = callDepth };
         }
 
         /// <summary>
         /// Обрабатывает JMP по опкоду 0xE9
         /// </summary>
         private ControlFlowResult HandleJmpOpcodeE9(X86Instruction insn, BinaryReader br, long fileLength,
-            bool debugMode, PathAnalysisResult result, uint currentAddress)
+            bool debugMode, PathAnalysisResult result, uint currentAddress, int callDepth)
         {
             if (insn.Bytes.Length >= 3)
             {
@@ -431,7 +412,7 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через JMP к 0x517C");
 
                     result.IsTerminated = true;
-                    return new ControlFlowResult { ShouldReturn = true, Result = result };
+                    return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
                 }
 
                 if (jumpTarget >= fileLength)
@@ -440,25 +421,25 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
                     result.IsTerminated = true;
                     result.HasSignificantCode = true;
-                    return new ControlFlowResult { ShouldReturn = true, Result = result };
+                    return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
                 }
 
                 if (jumpTarget != 0)
                 {
                     if (debugMode)
                         AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) к 0x{jumpTarget:X4}");
-                    return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
+                    return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget, NextCallDepth = callDepth };
                 }
             }
 
-            return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length };
+            return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length, NextCallDepth = callDepth };
         }
 
         /// <summary>
         /// Обрабатывает короткий JMP
         /// </summary>
         private ControlFlowResult HandleShortJmp(X86Instruction insn, BinaryReader br, long fileLength,
-            bool debugMode, PathAnalysisResult result, uint currentAddress)
+            bool debugMode, PathAnalysisResult result, uint currentAddress, int callDepth)
         {
             if (insn.Bytes.Length >= 2)
             {
@@ -477,11 +458,43 @@ namespace MMMapEditor
 
                     if (debugMode)
                         AnalysisDebug.WriteLine($"      SHORT JMP к 0x{jumpTarget:X4}");
-                    return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
+                    return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget, NextCallDepth = callDepth };
                 }
             }
 
-            return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length };
+            return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length, NextCallDepth = callDepth };
+        }
+
+        private static List<uint> ClonePendingReturnAddresses(Stack<uint> pendingReturns)
+        {
+            return pendingReturns == null
+                ? new List<uint>()
+                : pendingReturns.ToList();
+        }
+
+        private static AlternativePath CloneAlternativePath(AlternativePath source)
+        {
+            if (source == null)
+                return null;
+
+            return new AlternativePath
+            {
+                ObjectIndex = source.ObjectIndex,
+                Address = source.Address,
+                Condition = source.Condition,
+                TargetAddress = source.TargetAddress,
+                Analyzed = source.Analyzed,
+                PathNumber = source.PathNumber,
+                CompareValue = source.CompareValue,
+                CompareRegister = source.CompareRegister,
+                RegisterState = source.RegisterState?.Clone(),
+                CallDepth = source.CallDepth,
+                PendingReturnAddresses = source.PendingReturnAddresses != null
+                    ? new List<uint>(source.PendingReturnAddresses)
+                    : new List<uint>(),
+                ProbabilityNumerator = source.ProbabilityNumerator,
+                ProbabilityDenominator = source.ProbabilityDenominator
+            };
         }
 
         /// <summary>
@@ -492,7 +505,8 @@ namespace MMMapEditor
             int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint nextAddress, bool debugMode,
-            bool invalidateReturnRegistersAfterExternalCall)
+            bool invalidateReturnRegistersAfterExternalCall,
+            Stack<uint> pendingReturns)
         {
             uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
             bool isInternalCall = callTarget < br.BaseStream.Length && callTarget != 0;
@@ -521,16 +535,19 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine("        SUB_509A вызвана, но верхняя граница N в AL неизвестна");
                 }
 
-                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress, NextCallDepth = callDepth };
             }
 
+            PathAnalysisResult subroutineResult = null;
             if (isInternalCall)
             {
+                var nestedPendingReturns = ClonePendingReturnAddresses(pendingReturns);
+                nestedPendingReturns.Insert(0, nextAddress);
 
                 var subroutineTracker = registerTracker.Clone();
-                var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
+                subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
                     globallyAnalyzedAddresses, depth + 1, callDepth + 1, pathId, targetX, targetY,
-                    processedBackEdges, invalidateReturnRegistersAfterExternalCall);
+                    processedBackEdges, invalidateReturnRegistersAfterExternalCall, nestedPendingReturns);
 
                 // Добавляем результаты из подпрограммы
                 foreach (var visitedAddress in subroutineResult.VisitedAddresses)
@@ -604,6 +621,22 @@ namespace MMMapEditor
                         result.PartialBattleInfo.Add(info);
 
                 result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
+
+                foreach (var alternativePath in subroutineResult.AlternativePaths)
+                {
+                    var propagatedPath = CloneAlternativePath(alternativePath);
+                    if (propagatedPath == null)
+                        continue;
+
+                    if (!result.AlternativePaths.Any(p =>
+                        p.Address == propagatedPath.Address &&
+                        p.TargetAddress == propagatedPath.TargetAddress &&
+                        string.Equals(p.Condition, propagatedPath.Condition, StringComparison.Ordinal)))
+                    {
+                        propagatedPath.PathNumber = result.AlternativePaths.Count + 1;
+                        result.AlternativePaths.Add(propagatedPath);
+                    }
+                }
             }
             else if (invalidateReturnRegistersAfterExternalCall)
             {
@@ -616,7 +649,14 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine("        Помечаем AX/AL как кандидата на зависимость от внешнего CALL для табличного объекта");
             }
 
-            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            if (isInternalCall)
+            {
+                result.IsTerminated = subroutineResult.IsTerminated;
+                result.HasSignificantCode = result.HasSignificantCode || subroutineResult.HasSignificantCode;
+                return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
+            }
+
+            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress, NextCallDepth = callDepth };
         }
 
         /// <summary>
@@ -625,7 +665,7 @@ namespace MMMapEditor
         private ControlFlowResult HandleConditionalJump(X86Instruction insn, uint condJumpTarget,
     uint nextAddress, long fileLength, bool debugMode,
     HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress,
-    RegisterTracker registerTracker)
+    RegisterTracker registerTracker, int callDepth, Stack<uint> pendingReturns)
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
@@ -642,7 +682,7 @@ namespace MMMapEditor
                         {
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
-                            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress, NextCallDepth = callDepth };
                         }
 
                         if (debugMode)
@@ -655,7 +695,7 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      Условный переход {insn.Mnemonic} разрешён по известным флагам -> {branchText}");
                     }
 
-                    return new ControlFlowResult { ShouldReturn = false, NextAddress = resolvedTarget };
+                    return new ControlFlowResult { ShouldReturn = false, NextAddress = resolvedTarget, NextCallDepth = callDepth };
                 }
 
                 if (condJumpTarget < currentAddress)
@@ -666,7 +706,7 @@ namespace MMMapEditor
                     {
                         if (debugMode)
                             AnalysisDebug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
-                        return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                        return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress, NextCallDepth = callDepth };
                     }
 
                     if (debugMode)
@@ -687,6 +727,8 @@ namespace MMMapEditor
                     RegisterState = registerTracker.Clone(),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
+                    CallDepth = callDepth,
+                    PendingReturnAddresses = ClonePendingReturnAddresses(pendingReturns),
                     ProbabilityNumerator = takenProbability.numerator,
                     ProbabilityDenominator = takenProbability.denominator
                 };
@@ -710,6 +752,8 @@ namespace MMMapEditor
                     RegisterState = registerTracker.Clone(),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
+                    CallDepth = callDepth,
+                    PendingReturnAddresses = ClonePendingReturnAddresses(pendingReturns),
                     ProbabilityNumerator = notTakenProbability.numerator,
                     ProbabilityDenominator = notTakenProbability.denominator
                 };
@@ -735,10 +779,10 @@ namespace MMMapEditor
                                              result.PartialBattles.Count > 0 ||
                                              result.HasPartialBattlePattern ||
                                              result.CallsRandomEncounter;
-                return new ControlFlowResult { ShouldReturn = true, Result = result };
+                return new ControlFlowResult { ShouldReturn = true, Result = result, NextCallDepth = callDepth };
             }
 
-            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress, NextCallDepth = callDepth };
         }
 
 
@@ -1072,6 +1116,100 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private void TrackStackOperations(X86Instruction insn, RegisterTracker registerTracker,
+            Stack<uint> pendingReturns, bool debugMode)
+        {
+            byte[] instructionBytes = insn.Bytes;
+            if (instructionBytes == null || instructionBytes.Length == 0)
+                return;
+
+            byte opcode = instructionBytes[0];
+
+            // PUSH reg16
+            if (opcode >= 0x50 && opcode <= 0x57)
+            {
+                ushort pushedValue = 0;
+                bool hasValue = TryGetRegisterValueForPush((byte)(opcode - 0x50), registerTracker, out pushedValue);
+                pendingReturns?.Push(hasValue ? (uint)pushedValue : uint.MaxValue);
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        PUSH {(hasValue ? $"0x{pushedValue:X4}" : "<unknown>")} в эмулируемый стек");
+                return;
+            }
+
+            // PUSH imm16
+            if (opcode == 0x68 && instructionBytes.Length >= 3)
+            {
+                ushort value = BitConverter.ToUInt16(instructionBytes, 1);
+                pendingReturns?.Push(value);
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        PUSH 0x{value:X4} в эмулируемый стек");
+                return;
+            }
+
+            // PUSH imm8 (sign-extended)
+            if (opcode == 0x6A && instructionBytes.Length >= 2)
+            {
+                ushort value = unchecked((ushort)(short)(sbyte)instructionBytes[1]);
+                pendingReturns?.Push(value);
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        PUSH 0x{value:X4} в эмулируемый стек");
+                return;
+            }
+
+            // PUSH segment / PUSHF / PUSHA -> значение неизвестно, но стек сдвигается
+            if (opcode == 0x06 || opcode == 0x0E || opcode == 0x16 || opcode == 0x1E || opcode == 0x9C)
+            {
+                pendingReturns?.Push(uint.MaxValue);
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        PUSH <unknown> в эмулируемый стек");
+                return;
+            }
+
+            if (opcode == 0x60)
+            {
+                for (int i = 0; i < 8; i++)
+                    pendingReturns?.Push(uint.MaxValue);
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        PUSHA: добавили 8 неизвестных слов в эмулируемый стек");
+                return;
+            }
+
+            // POP reg16
+            if (opcode >= 0x58 && opcode <= 0x5F)
+            {
+                string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+                string regName = regNames[opcode - 0x58];
+
+                uint popped = pendingReturns != null && pendingReturns.Count > 0
+                    ? pendingReturns.Pop()
+                    : uint.MaxValue;
+
+                if (popped != uint.MaxValue)
+                {
+                    registerTracker.SetRegisterValue(regName, (ushort)popped, (uint)insn.Address,
+                        $"POP {regName} (stack value 0x{popped:X4})");
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        POP {regName}: сняли 0x{popped:X4} с эмулируемого стека");
+                }
+                else
+                {
+                    registerTracker.InvalidateRegister(regName);
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        POP {regName}: значение в эмулируемом стеке неизвестно");
+                }
+            }
+        }
+
+        private bool TryGetRegisterValueForPush(byte regIndex, RegisterTracker registerTracker, out ushort value)
+        {
+            value = 0;
+            string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            if (regIndex >= regNames.Length)
+                return false;
+
+            return registerTracker.TryGetRegisterValue(regNames[regIndex], out value);
         }
 
         /// <summary>

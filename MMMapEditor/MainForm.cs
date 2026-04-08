@@ -1,51 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -2029,6 +1981,19 @@ namespace MMMapEditor
                 rt.SelectionColor = Color.FromArgb(255, 80, 80);
                 rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var teleportMatches = Regex.Matches(
+                noteText,
+                @"Телепорт на клетку \(X=\??\d+, Y=\??\d+\)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in teleportMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(120, 210, 255);
+                rt.SelectionBackColor = Color.FromArgb(0, 35, 70);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
             }
 
             var lootWarningMatches = Regex.Matches(
