@@ -539,15 +539,18 @@ namespace MMMapEditor
         {
             var lines = new List<string>();
 
-            // Заметка про random encounter нужна только для табличных объектов
-            // без явного описания битвы. Если битва уже описана как группа монстров,
-            // то информация о random count выводится в самой строке битвы.
-            if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleInfo)
-                lines.Add("⚠Вызывается random encounter ⚠");
-
             string teleportDescription = obj.GetTeleportDescription();
             if (!string.IsNullOrEmpty(teleportDescription))
                 lines.Add(teleportDescription);
+
+            // Заметка про random encounter нужна только для табличных объектов
+            // без явного описания битвы. Если битва уже описана как группа монстров,
+            // то информация о random count выводится в самой строке битвы.
+            // Если одновременно есть телепорт, выводим его раньше: это ближе к
+            // реальному порядку исполнения патча, где сначала меняются координаты,
+            // а затем вызывается random encounter / событие.
+            if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleInfo)
+                lines.Add("⚠Вызывается random encounter ⚠");
 
             return lines;
         }
