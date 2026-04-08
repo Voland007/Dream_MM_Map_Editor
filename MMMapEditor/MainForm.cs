@@ -14,6 +14,22 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -1789,6 +1805,8 @@ namespace MMMapEditor
                 // Очищаем выделение
                 notesTextBox.DeselectAll();
                 notesTextBox.Text = noteText;
+                notesTextBox.BackColor = Color.Black;
+                notesTextBox.ForeColor = Color.White;
 
                 // Курсив и морская волна для фразы "Эта ячейка содержит различные варианты текста"
                 int introIndex = noteText.IndexOf("Эта ячейка содержит различные варианты текста");
@@ -1802,6 +1820,27 @@ namespace MMMapEditor
                 foreach (Match match in matches)
                 {
                     ApplyVariantHeaderStyle(notesTextBox, match.Index, match.Length, match.Value);
+                }
+
+                // Форматирование заметки "Ничего не происходит" и пояснения в скобках
+                MatchCollection nothingHappensMatches = Regex.Matches(
+                    noteText,
+                    @"Ничего не происходит(?:\s*\((не выполнены условия для наступления ни одного варианта)\))?"
+                );
+                foreach (Match match in nothingHappensMatches)
+                {
+                    notesTextBox.Select(match.Index, match.Length);
+                    notesTextBox.SelectionColor = Color.Black;
+                    notesTextBox.SelectionBackColor = Color.White;
+                    notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+
+                    if (match.Groups[1].Success)
+                    {
+                        notesTextBox.Select(match.Groups[1].Index - 1, match.Groups[1].Length + 2);
+                        notesTextBox.SelectionColor = Color.Black;
+                        notesTextBox.SelectionBackColor = Color.White;
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Italic);
+                    }
                 }
 
                 // Проверяем, является ли данная клетка самой опасной
