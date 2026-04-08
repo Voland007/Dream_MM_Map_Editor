@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -331,6 +331,9 @@ namespace MMMapEditor
         public bool IsTerminated { get; set; } = false;
         public bool HasSignificantCode { get; set; } = false;
         public bool CallsRandomEncounter { get; set; } = false;
+        public byte? TeleportTargetX { get; set; }
+        public byte? TeleportTargetY { get; set; }
+        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue;
         public List<AlternativePath> AlternativePaths { get; set; } = new List<AlternativePath>();
         public HashSet<uint> VisitedAddresses { get; set; } = new HashSet<uint>();
 

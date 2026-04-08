@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -288,6 +288,10 @@ namespace MMMapEditor
             if (currentState.RandomEncounterChance.HasValue)
                 merged.RandomEncounterChance = currentState.RandomEncounterChance;
             merged.CallsRandomEncounter = merged.CallsRandomEncounter || currentState.CallsRandomEncounter;
+            if (currentState.TeleportTargetX.HasValue)
+                merged.TeleportTargetX = currentState.TeleportTargetX;
+            if (currentState.TeleportTargetY.HasValue)
+                merged.TeleportTargetY = currentState.TeleportTargetY;
 
             if (currentState.IsBattleMonsterCountIndeterminate)
             {
@@ -371,6 +375,8 @@ namespace MMMapEditor
             clone.DarkeningLevel = source.DarkeningLevel;
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.CallsRandomEncounter = source.CallsRandomEncounter;
+            clone.TeleportTargetX = source.TeleportTargetX;
+            clone.TeleportTargetY = source.TeleportTargetY;
             clone.BattleMonsterCount = source.BattleMonsterCount;
             clone.BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max);
             clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
@@ -425,6 +431,8 @@ namespace MMMapEditor
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
+                TeleportTargetX = source.TeleportTargetX,
+                TeleportTargetY = source.TeleportTargetY,
                 BattleMonsterCount = source.BattleMonsterCount,
                 BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
@@ -621,7 +629,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.HasAnyTableLoad}";
 
             string battleSkeleton = "<NO_BATTLE>";
             if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
@@ -711,7 +719,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters

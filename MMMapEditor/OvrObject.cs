@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -66,6 +66,9 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
+        public byte? TeleportTargetX { get; set; }
+        public byte? TeleportTargetY { get; set; }
+        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue;
 
         #endregion
 
@@ -394,6 +397,17 @@ namespace MMMapEditor
             if (newPercent < defaultPercent)
                 return $"Шанс случайной встречи уменьшается с {defaultPercentText} (0x{defaultChance:X2}) до {newPercentText} (0x{newChance:X2})";
             return $"Шанс случайной встречи остаётся прежним: {newPercentText} (0x{newChance:X2})";
+        }
+
+
+        public string GetTeleportDescription()
+        {
+            if (!HasTeleportTarget)
+                return null;
+
+            string xPart = TeleportTargetX.HasValue ? $"X={TeleportTargetX.Value}" : "X=?";
+            string yPart = TeleportTargetY.HasValue ? $"Y={TeleportTargetY.Value}" : "Y=?";
+            return $"Телепорт перед сражением / событием на клетку ({xPart}, {yPart})";
         }
 
         private static double DecodeRandomEncounterChance(byte value)
@@ -787,6 +801,9 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
+        public byte? TeleportTargetX { get; set; }
+        public byte? TeleportTargetY { get; set; }
+        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue;
 
         public byte? BattleMonsterCount { get; set; }
         public ValueRange8 BattleMonsterCountRange { get; set; }
@@ -819,6 +836,8 @@ namespace MMMapEditor
                 DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
                 CallsRandomEncounter = CallsRandomEncounter,
+                TeleportTargetX = TeleportTargetX,
+                TeleportTargetY = TeleportTargetY,
                 BattleMonsterCount = BattleMonsterCount,
                 BattleMonsterCountRange = BattleMonsterCountRange == null ? null : new ValueRange8(BattleMonsterCountRange.Min, BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,

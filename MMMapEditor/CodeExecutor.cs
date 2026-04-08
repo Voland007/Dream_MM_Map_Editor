@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -76,8 +76,13 @@ namespace MMMapEditor
                 return new PathAnalysisResult { IsTerminated = false };
             }
 
-            var result = new PathAnalysisResult();
-            long fileLength = br.BaseStream.Length;
+            var savedEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
+            _emulatedMemory8.Clear();
+
+            try
+            {
+                var result = new PathAnalysisResult();
+                long fileLength = br.BaseStream.Length;
             uint currentAddress = startAddress;
             int instructionCount = 0;
             var visitedInThisPath = new HashSet<uint>();
@@ -159,7 +164,7 @@ namespace MMMapEditor
                     // Поиск изменений статистики монстров и информации о битвах
                     _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                     _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY, TryGetEmulatedMemory8Value);
-                    TrackRegisterOperations(insn, br, registerTracker, depth, debugMode);
+                    TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY);
 
                     // Анализ частичных битв
                     if (result.PartialBattleInfo.Count > 0)
@@ -188,6 +193,13 @@ namespace MMMapEditor
 
             FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
             return result;
+            }
+            finally
+            {
+                _emulatedMemory8.Clear();
+                foreach (var kv in savedEmulatedMemory8)
+                    _emulatedMemory8[kv.Key] = kv.Value;
+            }
         }
 
         private byte? TryGetEmulatedMemory8Value(ushort address)
@@ -1050,7 +1062,8 @@ namespace MMMapEditor
         /// Отслеживает операции с регистрами
         /// </summary>
         private void TrackRegisterOperations(X86Instruction insn, BinaryReader br,
-            RegisterTracker registerTracker, int depth, bool debugMode)
+            RegisterTracker registerTracker, int depth, bool debugMode,
+            PathAnalysisResult result, byte targetX, byte targetY)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
@@ -1147,10 +1160,7 @@ namespace MMMapEditor
                 }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    _emulatedMemory8[memAddr] = alValue;
-
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"        Сохранили AL=0x{alValue:X2} в эмулируемую память [0x{memAddr:X4}]");
+                    ApplyTrackedByteWrite(memAddr, alValue, result, targetX, targetY, insn, debugMode, "MOV [moffs8], AL");
                 }
             }
             else if (instructionBytes.Length >= 5 &&
@@ -1159,10 +1169,34 @@ namespace MMMapEditor
             {
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
                 byte immValue = instructionBytes[4];
-                _emulatedMemory8[memAddr] = immValue;
-
-                if (debugMode)
-                    AnalysisDebug.WriteLine($"        Сохранили imm8=0x{immValue:X2} в эмулируемую память [0x{memAddr:X4}]");
+                ApplyTrackedByteWrite(memAddr, immValue, result, targetX, targetY, insn, debugMode, "MOV byte ptr [disp16], imm8");
+            }
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x88 &&
+                     instructionBytes[1] == 0x06)
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                if (TryGetReg8ValueFromModRmRegField(instructionBytes[1], registerTracker, out byte regValue, out string regName))
+                {
+                    ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr [disp16], {regName}");
+                }
+            }
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0xFE &&
+                     (instructionBytes[1] == 0x06 || instructionBytes[1] == 0x0E))
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                int delta = instructionBytes[1] == 0x06 ? 1 : -1;
+                if (TryResolveTrackedByteValue(memAddr, result, targetX, targetY, out byte currentValue))
+                {
+                    byte newValue = unchecked((byte)(currentValue + delta));
+                    string operation = delta > 0 ? "INC" : "DEC";
+                    ApplyTrackedByteWrite(memAddr, newValue, result, targetX, targetY, insn, debugMode, $"{operation} byte ptr [disp16]");
+                }
+                else if (debugMode)
+                {
+                    AnalysisDebug.WriteLine($"        Не удалось определить текущее значение для {(delta > 0 ? "INC" : "DEC")} [0x{memAddr:X4}]");
+                }
             }
 
             // Загрузка непосредственных значений в регистры
@@ -1585,6 +1619,73 @@ namespace MMMapEditor
             }
         }
 
+
+        private bool TryGetReg8ValueFromModRmRegField(byte modRm, RegisterTracker registerTracker, out byte value, out string regName)
+        {
+            value = 0;
+            regName = null;
+
+            string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+            byte regField = (byte)((modRm >> 3) & 0x07);
+            if (regField >= regNames.Length)
+                return false;
+
+            regName = regNames[regField];
+            return registerTracker.TryGetByteRegisterValue(regName, out value);
+        }
+
+        private bool TryResolveTrackedByteValue(ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out byte value)
+        {
+            if (_emulatedMemory8.TryGetValue(memAddr, out value))
+                return true;
+
+            if (memAddr == 0x3C38)
+            {
+                value = result?.TeleportTargetX ?? targetX;
+                return true;
+            }
+
+            if (memAddr == 0x3C39)
+            {
+                value = result?.TeleportTargetY ?? targetY;
+                return true;
+            }
+
+            value = 0;
+            return false;
+        }
+
+        private void ApplyTrackedByteWrite(ushort memAddr, byte value, PathAnalysisResult result,
+            byte targetX, byte targetY, X86Instruction insn, bool debugMode, string sourceDescription)
+        {
+            _emulatedMemory8[memAddr] = value;
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        {sourceDescription}: записали 0x{value:X2} в эмулируемую память [0x{memAddr:X4}]");
+
+            if (result == null)
+                return;
+
+            if (memAddr == 0x3C38)
+            {
+                result.TeleportTargetX = value;
+                if (!result.TeleportTargetY.HasValue)
+                    result.TeleportTargetY = targetY;
+                result.HasSignificantCode = true;
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Обнаружен телепорт по X: новая координата X = {value}, Y = {result.TeleportTargetY} (инструкция 0x{insn.Address:X4})");
+            }
+            else if (memAddr == 0x3C39)
+            {
+                result.TeleportTargetY = value;
+                if (!result.TeleportTargetX.HasValue)
+                    result.TeleportTargetX = targetX;
+                result.HasSignificantCode = true;
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Обнаружен телепорт по Y: новая координата X = {result.TeleportTargetX}, Y = {value} (инструкция 0x{insn.Address:X4})");
+            }
+        }
+
         /// <summary>
         /// Завершает анализ и устанавливает флаг наличия значимого кода
         /// </summary>
@@ -1611,7 +1712,8 @@ namespace MMMapEditor
                                          result.BattleMonsterEntries.Count > 0 ||
                                          result.PartialBattles.Count > 0 ||
                                          result.HasPartialBattlePattern ||
-                                         result.CallsRandomEncounter;
+                                         result.CallsRandomEncounter ||
+                                         result.HasTeleportTarget;
         }
     }
 }
