@@ -210,10 +210,10 @@ namespace MMMapEditor
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
         public RegisterTracker RegisterState { get; set; }
-        public int CallDepth { get; set; } = 0;
-        public List<uint> PendingReturnAddresses { get; set; } = new List<uint>();
         public int ProbabilityNumerator { get; set; } = 1;
         public int ProbabilityDenominator { get; set; } = 1;
+        public int CallDepth { get; set; } = 0;
+        public List<uint> PendingReturnAddresses { get; set; } = new List<uint>();
     }
 
     public class MemoryAccess
@@ -312,6 +312,17 @@ namespace MMMapEditor
         public int Order { get; set; }
         public bool IsContextual { get; set; }
         public uint Address { get; set; }
+
+        public TextEntry Clone()
+        {
+            return new TextEntry
+            {
+                Text = Text,
+                Order = Order,
+                IsContextual = IsContextual,
+                Address = Address
+            };
+        }
     }
 
     public class PathResult
@@ -324,7 +335,8 @@ namespace MMMapEditor
     public class PathAnalysisResult
     {
         public HashSet<string> FoundTexts { get; set; } = new HashSet<string>();
-        public HashSet<string> ContextTexts { get; set; } = new HashSet<string>(); // тексты из вызывающего кода
+        public HashSet<string> ContextTexts { get; set; } = new HashSet<string>(); // legacy-коллекции для дедупликации и совместимости
+        public List<TextEntry> OrderedTexts { get; set; } = new List<TextEntry>();
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
@@ -354,6 +366,8 @@ namespace MMMapEditor
         public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue;
         public List<AlternativePath> AlternativePaths { get; set; } = new List<AlternativePath>();
         public HashSet<uint> VisitedAddresses { get; set; } = new HashSet<uint>();
+        public List<uint> ExitPendingReturnAddresses { get; set; } = new List<uint>();
+        public int ExitCallDepth { get; set; } = 0;
 
         // Адрес первой инструкции, которая загрузила локальный текст
         public uint FirstLocalTextAddress { get; set; } = uint.MaxValue;

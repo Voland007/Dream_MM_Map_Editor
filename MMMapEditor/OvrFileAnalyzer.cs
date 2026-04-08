@@ -577,26 +577,15 @@ namespace MMMapEditor
             var context = new List<TextEntry>();
             int order = 0;
 
-            foreach (var text in result.ContextTexts)
+            foreach (var text in result.OrderedTexts.OrderBy(t => t.Order))
             {
-                context.Add(new TextEntry
-                {
-                    Text = text,
-                    Order = order++,
-                    IsContextual = true,
-                    Address = result.FirstLocalTextAddress
-                });
-            }
+                var clone = text.Clone();
+                clone.Order = order++;
 
-            foreach (var text in result.FoundTexts)
-            {
-                local.Add(new TextEntry
-                {
-                    Text = text,
-                    Order = order++,
-                    IsContextual = false,
-                    Address = result.FirstLocalTextAddress
-                });
+                if (clone.IsContextual)
+                    context.Add(clone);
+                else
+                    local.Add(clone);
             }
 
             return (local, context);

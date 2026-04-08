@@ -58,13 +58,10 @@ namespace MMMapEditor
 
                 // Продолжаем путь с тем состоянием регистров, которое было в точке ветвления
                 var pathRegisterTracker = path.RegisterState?.Clone() ?? new RegisterTracker();
-                var pendingReturnAddresses = path.PendingReturnAddresses != null
-                    ? new List<uint>(path.PendingReturnAddresses)
-                    : new List<uint>();
-
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), depth + 1, path.CallDepth, currentPathId, targetX, targetY,
-                    processedBackEdges, invalidateReturnRegistersAfterExternalCall, pendingReturnAddresses);
+                    processedBackEdges, invalidateReturnRegistersAfterExternalCall,
+                    path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -146,15 +143,15 @@ namespace MMMapEditor
                 });
             }
 
-            // 2. Потом добавляем новые контекстные тексты из этого пути
-            foreach (var text in pathResult.ContextTexts)
+            // 2. Потом добавляем новые контекстные тексты из этого пути в исходном порядке исполнения
+            foreach (var text in pathResult.OrderedTexts.Where(t => t.IsContextual).OrderBy(t => t.Order))
             {
                 pathTexts.Add(new TextEntry
                 {
-                    Text = text,
+                    Text = text.Text,
                     Order = nextOrder++,
                     IsContextual = true,
-                    Address = pathResult.FirstLocalTextAddress
+                    Address = text.Address
                 });
             }
 
@@ -178,15 +175,15 @@ namespace MMMapEditor
                 }
             }
 
-            // 5. В самом конце добавляем новые локальные тексты из этого пути
-            foreach (var text in pathResult.FoundTexts)
+            // 5. В самом конце добавляем новые локальные тексты из этого пути в исходном порядке исполнения
+            foreach (var text in pathResult.OrderedTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
             {
                 pathTexts.Add(new TextEntry
                 {
-                    Text = text,
+                    Text = text.Text,
                     Order = nextOrder++,
                     IsContextual = false,
-                    Address = pathResult.FirstLocalTextAddress
+                    Address = text.Address
                 });
             }
 
@@ -198,15 +195,15 @@ namespace MMMapEditor
             List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
             uint firstLocalTextAddress)
         {
-            var newInheritedContextTexts = new List<TextEntry>(inheritedContextTexts);
-            foreach (var text in pathResult.ContextTexts)
+            var newInheritedContextTexts = new List<TextEntry>(inheritedContextTexts.Select(t => t.Clone()));
+            foreach (var text in pathResult.OrderedTexts.Where(t => t.IsContextual).OrderBy(t => t.Order))
             {
                 newInheritedContextTexts.Add(new TextEntry
                 {
-                    Text = text,
+                    Text = text.Text,
                     Order = 0,
                     IsContextual = true,
-                    Address = pathResult.FirstLocalTextAddress
+                    Address = text.Address
                 });
             }
 
@@ -224,14 +221,14 @@ namespace MMMapEditor
                 }
             }
 
-            foreach (var text in pathResult.FoundTexts)
+            foreach (var text in pathResult.OrderedTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
             {
                 newInheritedLocalTexts.Add(new TextEntry
                 {
-                    Text = text,
+                    Text = text.Text,
                     Order = 0,
                     IsContextual = false,
-                    Address = pathResult.FirstLocalTextAddress
+                    Address = text.Address
                 });
             }
 
@@ -380,6 +377,38 @@ namespace MMMapEditor
                     IsFromTable = info.IsFromTable,
                     SourceTableAddr = info.SourceTableAddr,
                     SourceTable = info.SourceTable
+                });
+            }
+
+            clone.FoundTexts = new HashSet<string>(source.FoundTexts);
+            clone.ContextTexts = new HashSet<string>(source.ContextTexts);
+            clone.OrderedTexts = source.OrderedTexts.Select(t => t.Clone()).ToList();
+            clone.VisitedAddresses = new HashSet<uint>(source.VisitedAddresses);
+            clone.FirstLocalTextAddress = source.FirstLocalTextAddress;
+            clone.ExitPendingReturnAddresses = source.ExitPendingReturnAddresses == null
+                ? new List<uint>()
+                : new List<uint>(source.ExitPendingReturnAddresses);
+            clone.ExitCallDepth = source.ExitCallDepth;
+
+            foreach (var alt in source.AlternativePaths)
+            {
+                clone.AlternativePaths.Add(new AlternativePath
+                {
+                    ObjectIndex = alt.ObjectIndex,
+                    Address = alt.Address,
+                    Condition = alt.Condition,
+                    TargetAddress = alt.TargetAddress,
+                    Analyzed = alt.Analyzed,
+                    PathNumber = alt.PathNumber,
+                    CompareValue = alt.CompareValue,
+                    CompareRegister = alt.CompareRegister,
+                    RegisterState = alt.RegisterState?.Clone(),
+                    ProbabilityNumerator = alt.ProbabilityNumerator,
+                    ProbabilityDenominator = alt.ProbabilityDenominator,
+                    CallDepth = alt.CallDepth,
+                    PendingReturnAddresses = alt.PendingReturnAddresses == null
+                        ? new List<uint>()
+                        : new List<uint>(alt.PendingReturnAddresses)
                 });
             }
 
