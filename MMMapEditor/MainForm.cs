@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1511,6 +1511,27 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(0xB539FF);
         }
 
+        private void ApplyVariantHeaderStyle(RichTextBox rt, int startIndex, int length, string headerText)
+        {
+            rt.Select(startIndex, length);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            rt.SelectionColor = Color.FromArgb(0xB539FF);
+            rt.SelectionBackColor = rt.BackColor;
+
+            int openParenIndex = headerText.IndexOf('(');
+            int closeParenIndex = headerText.LastIndexOf(')');
+            if (openParenIndex < 0 || closeParenIndex <= openParenIndex)
+                return;
+
+            int probabilityStart = startIndex + openParenIndex;
+            int probabilityLength = closeParenIndex - openParenIndex + 1;
+
+            rt.Select(probabilityStart, probabilityLength);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            rt.SelectionColor = Color.FromArgb(210, 190, 255);
+            rt.SelectionBackColor = Color.FromArgb(45, 28, 60);
+        }
+
         // Теперь форматируем силу, уровень, затемнённость и шанс случайной встречи
         private void FormatMapLevelMetaParameters(RichTextBox rt, string noteText)
         {
@@ -1776,11 +1797,11 @@ namespace MMMapEditor
                     ApplyItalicSeaWaveStyle(notesTextBox, introIndex, "Эта ячейка содержит различные варианты текста".Length);
                 }
 
-                // Жирный и красный для "Вариант#"
-                MatchCollection matches = Regex.Matches(noteText, @"Вариант\d+:");
+                // Форматирование заголовков вариантов и вероятности в скобках
+                MatchCollection matches = Regex.Matches(noteText, @"Вариант\d+(?:\s*\([^\r\n]*\))?:");
                 foreach (Match match in matches)
                 {
-                    ApplyBoldRedStyle(notesTextBox, match.Index, match.Length);
+                    ApplyVariantHeaderStyle(notesTextBox, match.Index, match.Length, match.Value);
                 }
 
                 // Проверяем, является ли данная клетка самой опасной
