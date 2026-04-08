@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -182,10 +182,11 @@ namespace MMMapEditor
 
                 // Сбор результатов основного пути
                 var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
+                var mainDisplayTexts = BuildDisplayTexts(mainPathResult.OrderedTexts, mainContextTexts, mainLocalTexts);
 
                 // Обработка альтернативных путей
                 var allResults = new List<PathVariantInfo>();
-                allResults.Add(CreatePathVariant(1, mainLocalTexts, mainContextTexts, mainPathResult.AlternativePaths.Count == 0, mainPathResult));
+                allResults.Add(CreatePathVariant(1, mainDisplayTexts, mainPathResult.AlternativePaths.Count == 0, mainPathResult));
 
                 if (mainPathResult.AlternativePaths.Count > 0)
                 {
@@ -199,8 +200,8 @@ namespace MMMapEditor
                     }
 
                     _pathAnalyzer.ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
-                        mainContextTexts, mainLocalTexts,
-                        mainPathResult.FirstLocalTextAddress, br,
+                        mainDisplayTexts,
+                        br,
                         ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges,
                         invalidateReturnRegistersAfterExternalCall: true,
                         reachableAddresses: tableReachableAddresses,
@@ -607,12 +608,42 @@ namespace MMMapEditor
             return (local, context);
         }
 
-        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> localTexts,
-            List<TextEntry> contextTexts, bool isLeaf, PathAnalysisResult source)
+        private List<TextEntry> BuildDisplayTexts(IEnumerable<TextEntry> orderedTexts, IEnumerable<TextEntry> contextTexts, IEnumerable<TextEntry> localTexts)
         {
-            var combinedTexts = new List<string>();
-            combinedTexts.AddRange(contextTexts.OrderBy(t => t.Order).Select(t => t.Text));
-            combinedTexts.AddRange(localTexts.OrderBy(t => t.Order).Select(t => t.Text));
+            var result = new List<TextEntry>();
+            var sourceTexts = orderedTexts?.Where(t => t != null).OrderBy(t => t.Order).ToList();
+            if (sourceTexts == null || sourceTexts.Count == 0)
+            {
+                sourceTexts = new List<TextEntry>();
+                sourceTexts.AddRange((contextTexts ?? Enumerable.Empty<TextEntry>()).Where(t => t != null).OrderBy(t => t.Order));
+                sourceTexts.AddRange((localTexts ?? Enumerable.Empty<TextEntry>()).Where(t => t != null).OrderBy(t => t.Order));
+            }
+
+            int nextOrder = 0;
+            foreach (var text in sourceTexts.Where(t => t.IsContextual).OrderBy(t => t.Order))
+            {
+                var clone = text.Clone();
+                clone.Order = nextOrder++;
+                result.Add(clone);
+            }
+
+            foreach (var text in sourceTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
+            {
+                var clone = text.Clone();
+                clone.Order = nextOrder++;
+                result.Add(clone);
+            }
+
+            return result;
+        }
+
+        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source)
+        {
+            var combinedTexts = (pathTexts ?? new List<TextEntry>())
+                .Where(t => t != null && !string.IsNullOrEmpty(t.Text))
+                .OrderBy(t => t.Order)
+                .Select(t => t.Text)
+                .ToList();
 
             return new PathVariantInfo
             {

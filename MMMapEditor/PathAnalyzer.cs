@@ -14,6 +14,22 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -38,8 +54,8 @@ namespace MMMapEditor
         }
 
         public void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
-            List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
-            uint firstLocalTextAddress, BinaryReader br,
+            List<TextEntry> inheritedDisplayTexts,
+            BinaryReader br,
             byte targetX, byte targetY, List<PathVariantInfo> allResults, OvrObject ovrObject,
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false,
@@ -87,8 +103,7 @@ namespace MMMapEditor
                         reachableAddresses.Add(visitedAddress);
                 }
 
-                var pathTexts = BuildPathTexts(path, pathResult, inheritedContextTexts,
-                    inheritedLocalTexts, firstLocalTextAddress);
+                var pathTexts = BuildPathTexts(pathResult, inheritedDisplayTexts);
 
                 // Путь считается листовым, только если у него нет вложенных путей
                 bool isLeaf = pathResult.AlternativePaths.Count == 0;
@@ -117,8 +132,7 @@ namespace MMMapEditor
                 }
 
                 // Формируем набор текстов для наследования вложенными путями
-                var (newInheritedContextTexts, newInheritedLocalTexts) = BuildInheritedTexts(
-                    path, pathResult, inheritedContextTexts, inheritedLocalTexts, firstLocalTextAddress);
+                var newInheritedDisplayTexts = BuildInheritedTexts(inheritedDisplayTexts, pathResult);
 
                 // Рекурсивно обрабатываем вложенные пути
                 if (pathResult.AlternativePaths.Count > 0)
@@ -128,8 +142,8 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      Найдено {pathResult.AlternativePaths.Count} вложенных путей");
                     }
                     ProcessPaths(pathResult.AlternativePaths, currentPathId, depth + 1,
-                        newInheritedContextTexts, newInheritedLocalTexts,
-                        firstLocalTextAddress, br, targetX, targetY,
+                        newInheritedDisplayTexts,
+                        br, targetX, targetY,
                         allResults, ovrObject, processedBackEdges,
                         invalidateReturnRegistersAfterExternalCall, reachableAddresses,
                         effectivePathResult,
@@ -140,59 +154,30 @@ namespace MMMapEditor
             }
         }
 
-        private List<TextEntry> BuildPathTexts(AlternativePath path, PathAnalysisResult pathResult,
-            List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
-            uint firstLocalTextAddress)
+        private List<TextEntry> BuildPathTexts(PathAnalysisResult pathResult,
+            List<TextEntry> inheritedDisplayTexts)
         {
             var pathTexts = new List<TextEntry>();
             int nextOrder = 0;
 
-            // 1. Сначала наследуем контекстные тексты от родителя
-            foreach (var text in inheritedContextTexts)
+            foreach (var text in inheritedDisplayTexts ?? Enumerable.Empty<TextEntry>())
             {
                 pathTexts.Add(new TextEntry
                 {
                     Text = text.Text,
                     Order = nextOrder++,
-                    IsContextual = true,
+                    IsContextual = text.IsContextual,
                     Address = text.Address
                 });
             }
 
-            // 2. Потом добавляем новые контекстные тексты из этого пути в исходном порядке исполнения
-            foreach (var text in pathResult.OrderedTexts.Where(t => t.IsContextual).OrderBy(t => t.Order))
+            foreach (var text in ConvertSegmentTextsToDisplayOrder(pathResult?.OrderedTexts))
             {
                 pathTexts.Add(new TextEntry
                 {
                     Text = text.Text,
                     Order = nextOrder++,
-                    IsContextual = true,
-                    Address = text.Address
-                });
-            }
-
-            // 3. Наследуем локальные тексты от родителя для всех дочерних веток.
-            // Это позволяет сохранять вопрос/сообщение, найденное на родительской ветке,
-            // в ее листовых подветках (например: текст вопроса -> ответ -> телепорт).
-            foreach (var text in inheritedLocalTexts)
-            {
-                pathTexts.Add(new TextEntry
-                {
-                    Text = text.Text,
-                    Order = nextOrder++,
-                    IsContextual = false,
-                    Address = text.Address
-                });
-            }
-
-            // 4. В самом конце добавляем новые локальные тексты из этого пути в исходном порядке исполнения
-            foreach (var text in pathResult.OrderedTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
-            {
-                pathTexts.Add(new TextEntry
-                {
-                    Text = text.Text,
-                    Order = nextOrder++,
-                    IsContextual = false,
+                    IsContextual = text.IsContextual,
                     Address = text.Address
                 });
             }
@@ -200,45 +185,44 @@ namespace MMMapEditor
             return pathTexts;
         }
 
-        private (List<TextEntry> context, List<TextEntry> local) BuildInheritedTexts(
-            AlternativePath path, PathAnalysisResult pathResult,
-            List<TextEntry> inheritedContextTexts, List<TextEntry> inheritedLocalTexts,
-            uint firstLocalTextAddress)
+        private List<TextEntry> BuildInheritedTexts(
+            List<TextEntry> inheritedDisplayTexts,
+            PathAnalysisResult pathResult)
         {
-            var newInheritedContextTexts = new List<TextEntry>(inheritedContextTexts.Select(t => t.Clone()));
-            foreach (var text in pathResult.OrderedTexts.Where(t => t.IsContextual).OrderBy(t => t.Order))
+            var result = new List<TextEntry>();
+
+            foreach (var text in inheritedDisplayTexts ?? Enumerable.Empty<TextEntry>())
+                result.Add(text.Clone());
+
+            foreach (var text in ConvertSegmentTextsToDisplayOrder(pathResult?.OrderedTexts))
+                result.Add(text.Clone());
+
+            return result;
+        }
+
+        private List<TextEntry> ConvertSegmentTextsToDisplayOrder(IEnumerable<TextEntry> segmentTexts)
+        {
+            var result = new List<TextEntry>();
+            if (segmentTexts == null)
+                return result;
+
+            int nextOrder = 0;
+
+            foreach (var text in segmentTexts.Where(t => t != null && t.IsContextual).OrderBy(t => t.Order))
             {
-                newInheritedContextTexts.Add(new TextEntry
-                {
-                    Text = text.Text,
-                    Order = 0,
-                    IsContextual = true,
-                    Address = text.Address
-                });
+                var clone = text.Clone();
+                clone.Order = nextOrder++;
+                result.Add(clone);
             }
 
-            var newInheritedLocalTexts = new List<TextEntry>();
-
-            // Локальные тексты всегда передаются дочерним веткам.
-            // Фильтрация по адресу первого локального текста приводила к тому,
-            // что leaf-ветки теряли текст родительского вопроса/сообщения.
-            foreach (var text in inheritedLocalTexts)
+            foreach (var text in segmentTexts.Where(t => t != null && !t.IsContextual).OrderBy(t => t.Order))
             {
-                newInheritedLocalTexts.Add(text.Clone());
+                var clone = text.Clone();
+                clone.Order = nextOrder++;
+                result.Add(clone);
             }
 
-            foreach (var text in pathResult.OrderedTexts.Where(t => !t.IsContextual).OrderBy(t => t.Order))
-            {
-                newInheritedLocalTexts.Add(new TextEntry
-                {
-                    Text = text.Text,
-                    Order = 0,
-                    IsContextual = false,
-                    Address = text.Address
-                });
-            }
-
-            return (newInheritedContextTexts, newInheritedLocalTexts);
+            return result;
         }
 
 
