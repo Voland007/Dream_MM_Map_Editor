@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -221,13 +221,13 @@ namespace MMMapEditor
             foreach (var kvp in obj.PathVariants.OrderBy(p => p.Key))
             {
                 var variant = kvp.Value;
-                if (variant == null || !variant.HasAnyInfo)
+                if (variant == null)
                     continue;
 
                 int variantNumber = kvp.Key;
                 OvrObject variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
 
-                variantContents[variantNumber] = BuildVariantLines(
+                var lines = BuildVariantLines(
                     variantObject,
                     variant.Texts,
                     defaultMonsterPower,
@@ -235,6 +235,11 @@ namespace MMMapEditor
                     defaultMonsterBatchCount,
                     defaultDarkeningLevel,
                     defaultRandomEncounterChance);
+
+                if (lines.Count == 0)
+                    lines.Add("Ничего не происходит");
+
+                variantContents[variantNumber] = lines;
             }
 
             return variantContents;
@@ -303,9 +308,9 @@ namespace MMMapEditor
         {
             var lines = new List<string>();
 
-            if (variantObject.PathVariants != null && variantObject.PathVariants.TryGetValue(0, out var metaVariant))
+            if (variantObject.PathVariants != null && variantObject.PathVariants.TryGetValue(0, out var variantInfo))
             {
-                string probabilityLine = BuildProbabilityLine(metaVariant);
+                string probabilityLine = BuildProbabilityLine(variantInfo);
                 if (!string.IsNullOrEmpty(probabilityLine))
                     lines.Add(probabilityLine);
             }
@@ -321,7 +326,7 @@ namespace MMMapEditor
             lines.AddRange(GetBattleLines(variantObject));
             lines.AddRange(GetSpecialNoteLines(variantObject));
 
-            if (lines.Count == 0 && variantObject.PathVariants != null && variantObject.PathVariants.TryGetValue(0, out var noOpVariant) && noOpVariant.IsNoOp)
+            if (lines.Count == 0 || (lines.Count == 1 && lines[0].StartsWith("Вероятность:")))
                 lines.Add("Ничего не происходит");
 
             return lines;
@@ -329,17 +334,10 @@ namespace MMMapEditor
 
         private static string BuildProbabilityLine(PathVariantInfo variant)
         {
-            if (variant == null || !variant.ProbabilityNumerator.HasValue || !variant.ProbabilityDenominator.HasValue || variant.ProbabilityDenominator.Value <= 0)
+            if (variant == null)
                 return null;
 
-            int numerator = variant.ProbabilityNumerator.Value;
-            int denominator = variant.ProbabilityDenominator.Value;
-            double percent = numerator * 100.0 / denominator;
-            string percentText = percent % 1 == 0
-                ? ((int)percent).ToString()
-                : percent.ToString("0.##");
-
-            return $"Вероятность: {percentText}% ({numerator}/{denominator})";
+            return variant.GetProbabilityDescription();
         }
 
         private static void MergeObjectMetaIntoVariants(

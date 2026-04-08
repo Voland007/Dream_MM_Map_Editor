@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -684,6 +684,13 @@ namespace MMMapEditor
             {
                 AnalysisDebug.WriteLine("        <variant is null>");
                 return;
+            }
+
+            if (variant.HasProbabilityInfo)
+            {
+                double percent = 100.0 * variant.ProbabilityNumerator / Math.Max(1, variant.ProbabilityDenominator);
+                string percentText = percent % 1.0 == 0.0 ? percent.ToString("0") : percent.ToString("0.##");
+                AnalysisDebug.WriteLine($"        Probability: {percentText}% ({variant.ProbabilityNumerator}/{variant.ProbabilityDenominator})");
             }
 
             if (variant.BattleMonsterCountRange != null)

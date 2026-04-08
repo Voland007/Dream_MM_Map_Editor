@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -114,23 +114,6 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
 
                     byte[] bytes = insn.Bytes;
-
-                    if (bytes.Length >= 3 && bytes[0] == 0x80)
-                    {
-                        byte modRm = bytes[1];
-                        byte operation = (byte)((modRm >> 3) & 0x07);
-                        byte mode = (byte)((modRm >> 6) & 0x03);
-                        byte regIndex = (byte)(modRm & 0x07);
-                        if (mode == 0x03 && operation == 0x07)
-                        {
-                            string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-                            if (regIndex < regNames8.Length)
-                            {
-                                result.LastCompareReg = regNames8[regIndex];
-                                result.LastCompareImm = bytes[2];
-                            }
-                        }
-                    }
 
                     // Отслеживание MOV AL, imm8
                     if (bytes.Length >= 2 && bytes[0] == 0xB0)
@@ -480,7 +463,7 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte n) && n > 0)
                 {
-                    registerTracker.SetRegisterRange("AL", 1, n, ValueDistributionKind.UniformDiscreteRange);
+                    registerTracker.SetRegisterRange("AL", 1, n, RegisterValueDistribution.UniformDiscreteRange);
                     registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
 
                     if (debugMode)
@@ -646,20 +629,10 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, разрешаем одну развилку");
                 }
 
+                var takenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: true);
+                var notTakenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: false);
+
                 // Добавляем целевой адрес перехода как альтернативный путь
-                string compareRegister = result.LastCompareReg;
-                byte? compareValue = result.LastCompareImm;
-                byte? sourceRangeMin = null;
-                byte? sourceRangeMax = null;
-                var distributionKind = ValueDistributionKind.Unknown;
-
-                if (!string.IsNullOrEmpty(compareRegister) && registerTracker.TryGetRegisterRange(compareRegister, out var compareRange))
-                {
-                    sourceRangeMin = compareRange.Min;
-                    sourceRangeMax = compareRange.Max;
-                    distributionKind = registerTracker.GetRegisterRangeDistribution(compareRegister);
-                }
-
                 var altPath = new AlternativePath
                 {
                     Address = (uint)insn.Address,
@@ -667,13 +640,11 @@ namespace MMMapEditor
                     Condition = $"{insn.Mnemonic} {insn.Operand}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    CompareRegister = compareRegister,
-                    CompareValue = compareValue,
-                    SourceRangeMin = sourceRangeMin,
-                    SourceRangeMax = sourceRangeMax,
-                    DistributionKind = distributionKind,
-                    MatchesCompareValue = true,
-                    RegisterState = registerTracker.Clone()
+                    RegisterState = registerTracker.Clone(),
+                    CompareRegister = registerTracker.LastFlagsRegister,
+                    CompareValue = registerTracker.LastCompareImmediate,
+                    ProbabilityNumerator = takenProbability.numerator,
+                    ProbabilityDenominator = takenProbability.denominator
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
@@ -692,13 +663,11 @@ namespace MMMapEditor
                     Condition = $"LINEAR after {insn.Mnemonic}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    CompareRegister = compareRegister,
-                    CompareValue = compareValue,
-                    SourceRangeMin = sourceRangeMin,
-                    SourceRangeMax = sourceRangeMax,
-                    DistributionKind = distributionKind,
-                    MatchesCompareValue = false,
-                    RegisterState = registerTracker.Clone()
+                    RegisterState = registerTracker.Clone(),
+                    CompareRegister = registerTracker.LastFlagsRegister,
+                    CompareValue = registerTracker.LastCompareImmediate,
+                    ProbabilityNumerator = notTakenProbability.numerator,
+                    ProbabilityDenominator = notTakenProbability.denominator
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
@@ -726,6 +695,65 @@ namespace MMMapEditor
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+        }
+
+
+
+        private (int numerator, int denominator) EstimateBranchProbability(string mnemonic, RegisterTracker registerTracker, bool branchTaken)
+        {
+            if (registerTracker == null)
+                return (1, 1);
+
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
+                return (1, 1);
+
+            string compareRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(compareRegister))
+                return (1, 1);
+
+            if (!registerTracker.TryGetRegisterRange(compareRegister, out var range) || range == null)
+                return (1, 1);
+
+            if (!registerTracker.TryGetRegisterDistribution(compareRegister, out var distribution) ||
+                distribution != RegisterValueDistribution.UniformDiscreteRange)
+                return (1, 1);
+
+            if (!registerTracker.LastCompareImmediate.HasValue)
+                return (1, 1);
+
+            byte imm = registerTracker.LastCompareImmediate.Value;
+            int total = range.Max - range.Min + 1;
+            if (total <= 0)
+                return (1, 1);
+
+            int favorable = CountFavorableValues((mnemonic ?? string.Empty).ToUpperInvariant(), range, imm, branchTaken);
+            if (favorable < 0 || favorable > total)
+                return (1, 1);
+
+            return (favorable, total);
+        }
+
+        private int CountFavorableValues(string mnemonic, ValueRange8 range, byte imm, bool branchTaken)
+        {
+            int count = 0;
+            for (int value = range.Min; value <= range.Max; value++)
+            {
+                bool taken = mnemonic switch
+                {
+                    "JE" or "JZ" => value == imm,
+                    "JNE" or "JNZ" => value != imm,
+                    "JB" or "JC" or "JNAE" => value < imm,
+                    "JBE" or "JNA" => value <= imm,
+                    "JA" or "JNBE" => value > imm,
+                    "JAE" or "JNB" or "JNC" => value >= imm,
+                    _ => false
+                };
+
+                if (taken == branchTaken)
+                    count++;
+            }
+
+            return count;
         }
 
         private bool? EvaluateConditionalJump(string mnemonic, RegisterTracker registerTracker)
@@ -1274,6 +1302,25 @@ namespace MMMapEditor
                 }
             }
 
+            // CMP AL, imm8 (opcode 3C ib)
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x3C)
+            {
+                byte immediateValue = instructionBytes[1];
+
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    byte cmpResult = (byte)(alValue - immediateValue);
+                    SetArithmeticFlagsForSub8(registerTracker, alValue, immediateValue, cmpResult,
+                        "AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                }
+                else if (registerTracker.TryGetRegisterRange("AL", out var _))
+                {
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                }
+
+                registerTracker.LastCompareImmediate = immediateValue;
+            }
+
             if (instructionBytes.Length >= 3 && instructionBytes[0] == 0x80)
             {
                 byte modRm = instructionBytes[1];
@@ -1289,6 +1336,12 @@ namespace MMMapEditor
                     {
                         byte cmpResult = (byte)(regValue - immediateValue);
                         SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult, regNames8[regIndex], RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        registerTracker.LastCompareImmediate = immediateValue;
+                    }
+                    else if (regIndex < regNames8.Length && registerTracker.TryGetRegisterRange(regNames8[regIndex], out var _))
+                    {
+                        registerTracker.SetFlagsMetadata(regNames8[regIndex], RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        registerTracker.LastCompareImmediate = immediateValue;
                     }
                 }
             }

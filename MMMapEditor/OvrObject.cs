@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -781,9 +781,11 @@ namespace MMMapEditor
 
         public bool HasAnyTableLoad { get; set; }
         public List<OvrObject.LoadedValueInfo> LoadedValues { get; set; } = new List<OvrObject.LoadedValueInfo>();
-        public bool IsNoOp { get; set; }
-        public int? ProbabilityNumerator { get; set; }
-        public int? ProbabilityDenominator { get; set; }
+
+        public int ProbabilityNumerator { get; set; } = 1;
+        public int ProbabilityDenominator { get; set; } = 1;
+
+        public bool HasProbabilityInfo => ProbabilityDenominator > 1;
 
         public OvrObject ToOvrObject(byte x, byte y, byte directionByte)
         {
@@ -807,6 +809,8 @@ namespace MMMapEditor
                 IsFromTable = true,
                 HasAnyTableLoad = HasAnyTableLoad
             };
+
+            // Вероятность варианта хранится в PathVariantInfo и используется построителем заметок.
 
             if (Texts != null && Texts.Count > 0)
             {
@@ -878,7 +882,20 @@ namespace MMMapEditor
             HasPartiallyDefinedBattles ||
             HasAnyTableLoad ||
             CallsRandomEncounter ||
-            IsNoOp;
+            HasProbabilityInfo;
+
+        public string GetProbabilityDescription()
+        {
+            if (!HasProbabilityInfo || ProbabilityDenominator <= 0)
+                return null;
+
+            double percent = 100.0 * ProbabilityNumerator / ProbabilityDenominator;
+            string percentText = percent % 1.0 == 0.0
+                ? percent.ToString("0")
+                : percent.ToString("0.##");
+
+            return $"Вероятность: {percentText}% ({ProbabilityNumerator}/{ProbabilityDenominator})";
+        }
     }
 
     #region Классы для полностью определённых битв
