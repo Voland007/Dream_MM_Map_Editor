@@ -769,14 +769,26 @@ namespace MMMapEditor
 
                         if (!processedBackEdges.Add(backEdge))
                         {
+                            ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
+                                (uint)insn.Address, debugMode);
+
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
-                            return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                            return new ControlFlowResult
+                            {
+                                ShouldReturn = false,
+                                NextAddress = nextAddress,
+                                UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                                UpdatedCallDepth = callDepth
+                            };
                         }
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"      Первый обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, переход определён по флагам");
                     }
+
+                    ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken.Value,
+                        (uint)insn.Address, debugMode);
 
                     if (debugMode)
                     {
@@ -784,7 +796,13 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      Условный переход {insn.Mnemonic} разрешён по известным флагам -> {branchText}");
                     }
 
-                    return new ControlFlowResult { ShouldReturn = false, NextAddress = resolvedTarget };
+                    return new ControlFlowResult
+                    {
+                        ShouldReturn = false,
+                        NextAddress = resolvedTarget,
+                        UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                        UpdatedCallDepth = callDepth
+                    };
                 }
 
                 if (condJumpTarget < currentAddress)
@@ -793,9 +811,18 @@ namespace MMMapEditor
 
                     if (!processedBackEdges.Add(backEdge))
                     {
+                        ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
+                            (uint)insn.Address, debugMode);
+
                         if (debugMode)
                             AnalysisDebug.WriteLine($"      Повторный обратный переход: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем линейно");
-                        return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+                        return new ControlFlowResult
+                        {
+                            ShouldReturn = false,
+                            NextAddress = nextAddress,
+                            UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                            UpdatedCallDepth = callDepth
+                        };
                     }
 
                     if (debugMode)
@@ -878,23 +905,29 @@ namespace MMMapEditor
 
 
 
-        private RegisterTracker CloneRegisterStateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        private bool TryCalculateBranchConstraint(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
+            out string reg, out int min, out int max)
         {
-            var clone = registerTracker?.Clone() ?? new RegisterTracker();
+            reg = null;
+            min = 0;
+            max = 0;
 
-            if (clone.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
-                return clone;
+            if (registerTracker == null)
+                return false;
 
-            string reg = clone.LastFlagsRegister?.ToUpperInvariant();
-            if (string.IsNullOrWhiteSpace(reg) || !clone.LastCompareImmediate.HasValue)
-                return clone;
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
+                return false;
 
-            if (!clone.TryGetRegisterRange(reg, out var range) || range == null)
-                return clone;
+            reg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(reg) || !registerTracker.LastCompareImmediate.HasValue)
+                return false;
 
-            int min = range.Min;
-            int max = range.Max;
-            int imm = clone.LastCompareImmediate.Value;
+            if (!registerTracker.TryGetRegisterRange(reg, out var range) || range == null)
+                return false;
+
+            min = range.Min;
+            max = range.Max;
+            int imm = registerTracker.LastCompareImmediate.Value;
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
 
             if (branchTaken)
@@ -902,19 +935,41 @@ namespace MMMapEditor
                 switch (jump)
                 {
                     case "JE":
-                    case "JZ": min = max = imm; break;
+                    case "JZ":
+                        min = max = imm;
+                        break;
+
                     case "JNE":
-                    case "JNZ": if (min == imm) min = imm + 1; else if (max == imm) max = imm - 1; break;
+                    case "JNZ":
+                        if (min == imm) min = imm + 1;
+                        else if (max == imm) max = imm - 1;
+                        else return false;
+                        break;
+
                     case "JB":
                     case "JC":
-                    case "JNAE": max = Math.Min(max, imm - 1); break;
+                    case "JNAE":
+                        max = Math.Min(max, imm - 1);
+                        break;
+
                     case "JBE":
-                    case "JNA": max = Math.Min(max, imm); break;
+                    case "JNA":
+                        max = Math.Min(max, imm);
+                        break;
+
                     case "JA":
-                    case "JNBE": min = Math.Max(min, imm + 1); break;
+                    case "JNBE":
+                        min = Math.Max(min, imm + 1);
+                        break;
+
                     case "JAE":
                     case "JNB":
-                    case "JNC": min = Math.Max(min, imm); break;
+                    case "JNC":
+                        min = Math.Max(min, imm);
+                        break;
+
+                    default:
+                        return false;
                 }
             }
             else
@@ -922,25 +977,70 @@ namespace MMMapEditor
                 switch (jump)
                 {
                     case "JE":
-                    case "JZ": if (min == imm) min = imm + 1; else if (max == imm) max = imm - 1; break;
+                    case "JZ":
+                        if (min == imm) min = imm + 1;
+                        else if (max == imm) max = imm - 1;
+                        else return false;
+                        break;
+
                     case "JNE":
-                    case "JNZ": min = max = imm; break;
+                    case "JNZ":
+                        min = max = imm;
+                        break;
+
                     case "JB":
                     case "JC":
-                    case "JNAE": min = Math.Max(min, imm); break;
+                    case "JNAE":
+                        min = Math.Max(min, imm);
+                        break;
+
                     case "JBE":
-                    case "JNA": min = Math.Max(min, imm + 1); break;
+                    case "JNA":
+                        min = Math.Max(min, imm + 1);
+                        break;
+
                     case "JA":
-                    case "JNBE": max = Math.Min(max, imm); break;
+                    case "JNBE":
+                        max = Math.Min(max, imm);
+                        break;
+
                     case "JAE":
                     case "JNB":
-                    case "JNC": max = Math.Min(max, imm - 1); break;
+                    case "JNC":
+                        max = Math.Min(max, imm - 1);
+                        break;
+
+                    default:
+                        return false;
                 }
             }
 
             if (min < 0) min = 0;
             if (max > 0xFF) max = 0xFF;
-            if (min > max)
+            return min <= max;
+        }
+
+        private void ApplyBranchConstraintInPlace(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
+            uint instructionAddress, bool debugMode)
+        {
+            if (!TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out string reg, out int min, out int max))
+                return;
+
+            registerTracker.SetRegisterRange(reg, (byte)min, (byte)max, RegisterValueDistribution.UniformDiscreteRange);
+
+            if (debugMode)
+            {
+                string branchText = branchTaken ? "taken" : "linear";
+                AnalysisDebug.WriteLine(
+                    $"      Уточнили диапазон {reg} для ветки {branchText} после {mnemonic}: {min:X2}..{max:X2} (инстр. 0x{instructionAddress:X4})");
+            }
+        }
+
+        private RegisterTracker CloneRegisterStateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        {
+            var clone = registerTracker?.Clone() ?? new RegisterTracker();
+
+            if (!TryCalculateBranchConstraint(clone, mnemonic, branchTaken, out string reg, out int min, out int max))
                 return clone;
 
             clone.SetRegisterRange(reg, (byte)min, (byte)max, RegisterValueDistribution.UniformDiscreteRange);
