@@ -14,6 +14,22 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -49,7 +65,8 @@ namespace MMMapEditor
             int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false,
-            List<uint> pendingReturnAddresses = null)
+            List<uint> pendingReturnAddresses = null,
+            Dictionary<ushort, byte> initialEmulatedMemory8 = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
@@ -63,6 +80,11 @@ namespace MMMapEditor
 
             var savedEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
             _emulatedMemory8.Clear();
+            if (initialEmulatedMemory8 != null)
+            {
+                foreach (var kv in initialEmulatedMemory8)
+                    _emulatedMemory8[kv.Key] = kv.Value;
+            }
 
             try
             {
@@ -169,7 +191,11 @@ namespace MMMapEditor
                     // Поиск изменений статистики монстров и информации о битвах
                     _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                     _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY, TryGetEmulatedMemory8Value);
-                    TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY);
+                    if (TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY,
+                        currentCallDepth, currentPendingReturnAddresses))
+                    {
+                        return result;
+                    }
 
                     // Анализ частичных битв
                     if (result.PartialBattleInfo.Count > 0)
@@ -576,6 +602,18 @@ namespace MMMapEditor
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
             }
 
+            if (callTarget == 0x5101)
+            {
+                registerTracker.InvalidateRegister("AX");
+                registerTracker.SetRegisterRange("AL", 0x1B, 0x35, RegisterValueDistribution.Unknown);
+                registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        Распознана SUB_5101: AL получает код клавиши в диапазоне ESC..'5'");
+
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            }
+
             if (isInternalCall)
             {
                 var subroutineTracker = registerTracker.Clone();
@@ -586,7 +624,8 @@ namespace MMMapEditor
 
                 var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
                     globallyAnalyzedAddresses, depth + 1, callDepth + 1, pathId, targetX, targetY,
-                    processedBackEdges, invalidateReturnRegistersAfterExternalCall, subroutinePendingReturnAddresses);
+                    processedBackEdges, invalidateReturnRegistersAfterExternalCall, subroutinePendingReturnAddresses,
+                    new Dictionary<ushort, byte>(_emulatedMemory8));
 
                 // Добавляем результаты из подпрограммы
                 foreach (var visitedAddress in subroutineResult.VisitedAddresses)
@@ -672,7 +711,10 @@ namespace MMMapEditor
                             CallDepth = altPath.CallDepth,
                             PendingReturnAddresses = altPath.PendingReturnAddresses == null
                                 ? new List<uint>()
-                                : new List<uint>(altPath.PendingReturnAddresses)
+                                : new List<uint>(altPath.PendingReturnAddresses),
+                            EmulatedMemory8 = altPath.EmulatedMemory8 == null
+                                ? new Dictionary<ushort, byte>()
+                                : new Dictionary<ushort, byte>(altPath.EmulatedMemory8)
                         });
                     }
                 }
@@ -771,13 +813,14 @@ namespace MMMapEditor
                     Condition = $"{insn.Mnemonic} {insn.Operand}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = registerTracker.Clone(),
+                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
                     ProbabilityNumerator = takenProbability.numerator,
                     ProbabilityDenominator = takenProbability.denominator,
                     CallDepth = callDepth,
-                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses)
+                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8)
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
@@ -796,13 +839,14 @@ namespace MMMapEditor
                     Condition = $"LINEAR after {insn.Mnemonic}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = registerTracker.Clone(),
+                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
                     ProbabilityNumerator = notTakenProbability.numerator,
                     ProbabilityDenominator = notTakenProbability.denominator,
                     CallDepth = callDepth,
-                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses)
+                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8)
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
@@ -833,6 +877,75 @@ namespace MMMapEditor
         }
 
 
+
+        private RegisterTracker CloneRegisterStateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        {
+            var clone = registerTracker?.Clone() ?? new RegisterTracker();
+
+            if (clone.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
+                return clone;
+
+            string reg = clone.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(reg) || !clone.LastCompareImmediate.HasValue)
+                return clone;
+
+            if (!clone.TryGetRegisterRange(reg, out var range) || range == null)
+                return clone;
+
+            int min = range.Min;
+            int max = range.Max;
+            int imm = clone.LastCompareImmediate.Value;
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+
+            if (branchTaken)
+            {
+                switch (jump)
+                {
+                    case "JE":
+                    case "JZ": min = max = imm; break;
+                    case "JNE":
+                    case "JNZ": if (min == imm) min = imm + 1; else if (max == imm) max = imm - 1; break;
+                    case "JB":
+                    case "JC":
+                    case "JNAE": max = Math.Min(max, imm - 1); break;
+                    case "JBE":
+                    case "JNA": max = Math.Min(max, imm); break;
+                    case "JA":
+                    case "JNBE": min = Math.Max(min, imm + 1); break;
+                    case "JAE":
+                    case "JNB":
+                    case "JNC": min = Math.Max(min, imm); break;
+                }
+            }
+            else
+            {
+                switch (jump)
+                {
+                    case "JE":
+                    case "JZ": if (min == imm) min = imm + 1; else if (max == imm) max = imm - 1; break;
+                    case "JNE":
+                    case "JNZ": min = max = imm; break;
+                    case "JB":
+                    case "JC":
+                    case "JNAE": min = Math.Max(min, imm); break;
+                    case "JBE":
+                    case "JNA": min = Math.Max(min, imm + 1); break;
+                    case "JA":
+                    case "JNBE": max = Math.Min(max, imm); break;
+                    case "JAE":
+                    case "JNB":
+                    case "JNC": max = Math.Min(max, imm - 1); break;
+                }
+            }
+
+            if (min < 0) min = 0;
+            if (max > 0xFF) max = 0xFF;
+            if (min > max)
+                return clone;
+
+            clone.SetRegisterRange(reg, (byte)min, (byte)max, RegisterValueDistribution.UniformDiscreteRange);
+            return clone;
+        }
 
         private (int numerator, int denominator) EstimateBranchProbability(string mnemonic, RegisterTracker registerTracker, bool branchTaken)
         {
@@ -1168,14 +1281,16 @@ namespace MMMapEditor
         /// <summary>
         /// Отслеживает операции с регистрами
         /// </summary>
-        private void TrackRegisterOperations(X86Instruction insn, BinaryReader br,
+        private bool TrackRegisterOperations(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, int depth, bool debugMode,
-            PathAnalysisResult result, byte targetX, byte targetY)
+            PathAnalysisResult result, byte targetX, byte targetY,
+            int callDepth, List<uint> pendingReturnAddresses)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
             string mnemonicUpper = insn.Mnemonic?.ToUpperInvariant() ?? string.Empty;
             string operandUpper = insn.Operand?.ToUpperInvariant() ?? string.Empty;
+            uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
             if ((mnemonicUpper == "ADD" || mnemonicUpper == "ADC") && operandUpper.StartsWith("AL,"))
             {
@@ -1260,7 +1375,42 @@ namespace MMMapEditor
                 // Если в AL сейчас не точное значение, а диапазон, нельзя материализовывать
                 // его в память как конкретный байт. Иначе последующий CMP BL,[3C1D] увидит
                 // ложный точный предел и логика random count сломается.
-                if (registerTracker.TryGetRegisterRange("AL", out var alRange) && !alRange.IsExact)
+                if (memAddr == 0xCC3E && registerTracker.TryGetRegisterRange("AL", out var splitRange) && splitRange != null && !splitRange.IsExact &&
+                    splitRange.Min <= splitRange.Max && (splitRange.Max - splitRange.Min) <= 8)
+                {
+                    for (int candidate = splitRange.Min; candidate <= splitRange.Max; candidate++)
+                    {
+                        var splitTracker = registerTracker.Clone();
+                        splitTracker.TrackPartialRegisterOperation("AX", "AL", (byte)candidate, address, $"MOV AL, 0x{candidate:X2} (split)");
+                        var splitMemory = new Dictionary<ushort, byte>(_emulatedMemory8);
+                        splitMemory[memAddr] = (byte)candidate;
+
+                        result.AlternativePaths.Add(new AlternativePath
+                        {
+                            Address = address,
+                            TargetAddress = nextAddress,
+                            Condition = $"SPLIT [0x{memAddr:X4}] = 0x{candidate:X2}",
+                            Analyzed = false,
+                            PathNumber = result.AlternativePaths.Count + 1,
+                            RegisterState = splitTracker,
+                            CompareRegister = registerTracker.LastFlagsRegister,
+                            CompareValue = registerTracker.LastCompareImmediate,
+                            ProbabilityNumerator = 1,
+                            ProbabilityDenominator = 1,
+                            CallDepth = callDepth,
+                            PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                            EmulatedMemory8 = splitMemory
+                        });
+                    }
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        Развилка по диапазону AL для записи в [0x{memAddr:X4}]: {splitRange.Min:X2}..{splitRange.Max:X2}");
+
+                    result.IsTerminated = true;
+                    result.HasSignificantCode = true;
+                    return true;
+                }
+                else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && !alRange.IsExact)
                 {
                     if (debugMode)
                         AnalysisDebug.WriteLine($"        Не сохраняем точное значение AL в эмулируемую память [0x{memAddr:X4}], так как AL имеет диапазон {alRange.Min}-{alRange.Max}");
@@ -1294,7 +1444,7 @@ namespace MMMapEditor
             {
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
                 int delta = instructionBytes[1] == 0x06 ? 1 : -1;
-                if (TryResolveTrackedByteValue(memAddr, result, targetX, targetY, out byte currentValue))
+                if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentValue))
                 {
                     byte newValue = unchecked((byte)(currentValue + delta));
                     string operation = delta > 0 ? "INC" : "DEC";
@@ -1350,9 +1500,7 @@ namespace MMMapEditor
             else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA0)
             {
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
-                byte value;
-
-                if (_emulatedMemory8.TryGetValue(memAddr, out value))
+                if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
                 {
                     registerTracker.TrackPartialRegisterOperation(
                         "AX",
@@ -1363,34 +1511,81 @@ namespace MMMapEditor
                     );
 
                     if (debugMode)
-                        AnalysisDebug.WriteLine($"        Загрузили AL из эмулируемой памяти [0x{memAddr:X4}] = 0x{value:X2}");
+                        AnalysisDebug.WriteLine($"        Загрузили AL из {( _emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} [0x{memAddr:X4}] = 0x{value:X2}");
                 }
-                else
+                else if (debugMode)
                 {
-                    long fileOffset = memAddr - _config.TextBaseAddr;
+                    AnalysisDebug.WriteLine($"        Не удалось загрузить AL из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                }
+            }
+            // MOV reg8, [BP + disp16] / [BP + SI + disp16] / [BP + DI + disp16]
+            else if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x8A)
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
 
-                    if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                if ((mod == 0x02 || (mod == 0x00 && rm == 0x06)) && instructionBytes.Length >= 4)
+                {
+                    short disp = (short)BitConverter.ToUInt16(instructionBytes, 2);
+                    ushort? baseAddr = null;
+
+                    switch (rm)
                     {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        value = br.ReadByte();
-                        br.BaseStream.Position = originalPos;
-
-                        registerTracker.TrackPartialRegisterOperation(
-                            "AX",
-                            "AL",
-                            value,
-                            address,
-                            $"MOV AL, [0x{memAddr:X4}]"
-                        );
-
-                        if (debugMode)
-                            AnalysisDebug.WriteLine($"        Загрузили AL из файла [0x{memAddr:X4}] = 0x{value:X2}");
+                        case 0x02: // [BP + SI]
+                            if (registerTracker.TryGetRegisterValue("BP", out ushort bp2) && registerTracker.TryGetRegisterValue("SI", out ushort si))
+                                baseAddr = (ushort)(bp2 + si);
+                            break;
+                        case 0x03: // [BP + DI]
+                            if (registerTracker.TryGetRegisterValue("BP", out ushort bp3) && registerTracker.TryGetRegisterValue("DI", out ushort di))
+                                baseAddr = (ushort)(bp3 + di);
+                            break;
+                        case 0x06: // [BP] for mod=01/10, [disp16] for mod=00
+                            if (mod == 0x00)
+                                baseAddr = 0;
+                            else if (registerTracker.TryGetRegisterValue("BP", out ushort bp6))
+                                baseAddr = bp6;
+                            break;
                     }
-                    else
+
+                    if (baseAddr.HasValue)
                     {
-                        if (debugMode)
-                            AnalysisDebug.WriteLine($"        Не удалось загрузить AL из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                        ushort memAddr = (ushort)(baseAddr.Value + disp);
+                        if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
+                        {
+                            string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                            if (reg < regNames8.Length)
+                            {
+                                string regName = regNames8[reg];
+                                string fullReg = regName switch
+                                {
+                                    "AL" or "AH" => "AX",
+                                    "CL" or "CH" => "CX",
+                                    "DL" or "DH" => "DX",
+                                    "BL" or "BH" => "BX",
+                                    _ => ""
+                                };
+
+                                if (!string.IsNullOrEmpty(fullReg))
+                                {
+                                    registerTracker.TrackPartialRegisterOperation(
+                                        fullReg,
+                                        regName,
+                                        value,
+                                        address,
+                                        $"MOV {regName}, byte ptr [0x{memAddr:X4}]"
+                                    );
+
+                                    if (debugMode)
+                                        AnalysisDebug.WriteLine($"        Загрузили {regName} из {( _emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} [0x{memAddr:X4}] = 0x{value:X2}");
+                                }
+                            }
+                        }
+                        else if (debugMode)
+                        {
+                            AnalysisDebug.WriteLine($"        Не удалось загрузить reg8 из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                        }
                     }
                 }
             }
@@ -1459,6 +1654,40 @@ namespace MMMapEditor
                 }
             }
 
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x1C)
+            {
+                byte immediateValue = instructionBytes[1];
+                int borrow = registerTracker.FlagsKnown && registerTracker.CarryFlag ? 1 : 0;
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    byte newValue = (byte)(alValue - immediateValue - borrow);
+                    registerTracker.TrackPartialRegisterOperation("AX", "AL", newValue, address, $"SBB AL, 0x{immediateValue:X2}");
+                    SetArithmeticFlagsForSub8(registerTracker, alValue, (byte)(immediateValue + borrow), newValue);
+                }
+                else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && alRange != null)
+                {
+                    int newMin = Math.Max(0, alRange.Min - immediateValue - borrow);
+                    int newMax = Math.Max(0, alRange.Max - immediateValue - borrow);
+                    registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax, RegisterValueDistribution.UniformDiscreteRange);
+                }
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x8B && instructionBytes[1] == 0xE8)
+            {
+                if (registerTracker.TryGetRegisterValue("AX", out ushort axValue))
+                    registerTracker.SetRegisterValue("BP", axValue, address, "MOV BP, AX");
+                else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && alRange != null)
+                    registerTracker.SetRegisterRange("BP", alRange.Min, alRange.Max, RegisterValueDistribution.UniformDiscreteRange);
+            }
+
+            if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x81 && instructionBytes[1] == 0xE5 && instructionBytes[2] == 0xFF && instructionBytes[3] == 0x00)
+            {
+                if (registerTracker.TryGetRegisterValue("BP", out ushort bpValue))
+                    registerTracker.SetRegisterValue("BP", (ushort)(bpValue & 0x00FF), address, "AND BP, 0x00FF");
+                else if (registerTracker.TryGetRegisterRange("BP", out var bpRange) && bpRange != null)
+                    registerTracker.SetRegisterRange("BP", (byte)(bpRange.Min & 0xFF), (byte)(bpRange.Max & 0xFF), RegisterValueDistribution.UniformDiscreteRange);
+            }
+
             // CMP AL, imm8 (opcode 3C ib)
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x3C)
             {
@@ -1524,6 +1753,8 @@ namespace MMMapEditor
                         $"INC BX: {bxValue} -> {newValue}");
                 }
             }
+
+            return false;
         }
 
         private bool IsPopReg16(X86Instruction insn)
@@ -1756,7 +1987,7 @@ namespace MMMapEditor
             return registerTracker.TryGetByteRegisterValue(regName, out value);
         }
 
-        private bool TryResolveTrackedByteValue(ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out byte value)
+        private bool TryResolveTrackedByteValue(BinaryReader br, ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out byte value)
         {
             if (_emulatedMemory8.TryGetValue(memAddr, out value))
                 return true;
@@ -1773,8 +2004,47 @@ namespace MMMapEditor
                 return true;
             }
 
+            return TryReadByteFromOverlayMemory(br, memAddr, out value);
+        }
+
+        private bool TryReadByteFromOverlayMemory(BinaryReader br, ushort memAddr, out byte value)
+        {
             value = 0;
-            return false;
+
+            if (br == null)
+                return false;
+
+            long? fileOffset = null;
+
+            long textBaseOffset = memAddr - _config.TextBaseAddr;
+            if (textBaseOffset >= 0 && textBaseOffset < br.BaseStream.Length)
+                fileOffset = textBaseOffset;
+            else if (memAddr >= 0xC972)
+            {
+                long overlayMappedOffset = (long)_config.StartAddress + (memAddr - 0xC972);
+                if (overlayMappedOffset >= 0 && overlayMappedOffset < br.BaseStream.Length)
+                    fileOffset = overlayMappedOffset;
+            }
+
+            if (!fileOffset.HasValue)
+                return false;
+
+            long originalPos = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = fileOffset.Value;
+                value = br.ReadByte();
+                return true;
+            }
+            catch
+            {
+                value = 0;
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPos;
+            }
         }
 
         private void ApplyTrackedByteWrite(ushort memAddr, byte value, PathAnalysisResult result,

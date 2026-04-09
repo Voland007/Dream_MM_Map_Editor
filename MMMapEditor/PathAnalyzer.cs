@@ -14,6 +14,22 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -54,14 +70,8 @@ namespace MMMapEditor
 
             var sortedPaths = paths.OrderBy(p => p.Address).ToList();
             int localCounter = 1;
-            var processedTargets = new HashSet<uint>();
-
             foreach (var path in sortedPaths)
             {
-                if (processedTargets.Contains(path.TargetAddress))
-                    continue;
-
-                processedTargets.Add(path.TargetAddress);
                 int currentPathId = basePathId * 10 + localCounter;
                 localCounter++;
 
@@ -77,7 +87,8 @@ namespace MMMapEditor
                 var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
                     new HashSet<uint>(), depth + 1, path.CallDepth, currentPathId, targetX, targetY,
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall,
-                    path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses));
+                    path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses),
+                    path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -386,7 +397,10 @@ namespace MMMapEditor
                     CallDepth = alt.CallDepth,
                     PendingReturnAddresses = alt.PendingReturnAddresses == null
                         ? new List<uint>()
-                        : new List<uint>(alt.PendingReturnAddresses)
+                        : new List<uint>(alt.PendingReturnAddresses),
+                    EmulatedMemory8 = alt.EmulatedMemory8 == null
+                        ? new Dictionary<ushort, byte>()
+                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8)
                 });
             }
 
