@@ -14,22 +14,6 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -319,6 +303,8 @@ namespace MMMapEditor
             }
 
             merged.HasPartialBattlePattern = merged.HasPartialBattlePattern || currentState.HasPartialBattlePattern;
+            merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
+            merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             return merged;
         }
 
@@ -379,6 +365,8 @@ namespace MMMapEditor
                 ? new List<uint>()
                 : new List<uint>(source.ExitPendingReturnAddresses);
             clone.ExitCallDepth = source.ExitCallDepth;
+            clone.TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge;
+            clone.TerminatedByTerminalRet = source.TerminatedByTerminalRet;
 
             foreach (var alt in source.AlternativePaths)
             {
@@ -432,7 +420,9 @@ namespace MMMapEditor
                 HasAnyTableLoad = source.HasPartialBattlePattern,
                 LoadedValues = CloneLoadedValues(source),
                 ProbabilityNumerator = probabilityNumerator,
-                ProbabilityDenominator = probabilityDenominator
+                ProbabilityDenominator = probabilityDenominator,
+                TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
+                TerminatedByTerminalRet = source.TerminatedByTerminalRet
             };
         }
 
@@ -484,12 +474,121 @@ namespace MMMapEditor
                 .ToList();
         }
 
+        private bool HasAnyOutcome(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.MonsterPower.HasValue || variant.MonsterLevel.HasValue ||
+                variant.MonsterBatchCount.HasValue || variant.DarkeningLevel.HasValue ||
+                variant.RandomEncounterChance.HasValue)
+                return true;
+
+            if (variant.CallsRandomEncounter)
+                return true;
+
+            if (variant.TeleportTargetX.HasValue || variant.TeleportTargetY.HasValue)
+                return true;
+
+            if (variant.BattleMonsterCount.HasValue || variant.BattleMonsterCountRange != null || variant.IsBattleMonsterCountIndeterminate)
+                return true;
+
+            if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
+                return true;
+
+            if (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0)
+                return true;
+
+            if (variant.HasAnyTableLoad)
+                return true;
+
+            if (variant.LoadedValues != null && variant.LoadedValues.Count > 0)
+                return true;
+
+            return false;
+        }
+
+        private bool IsPromptOnlyLeaf(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (HasAnyOutcome(variant))
+                return false;
+
+            return variant.Texts != null && variant.Texts.Count > 0;
+        }
+
+        private bool IsMeaningfulLeaf(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.TerminatedByRepeatedBackEdge)
+                return false;
+
+            if (variant.TerminatedByTerminalRet)
+                return true;
+
+            if (HasAnyOutcome(variant))
+                return true;
+
+            if (IsPureEmptyLeafVariant(variant))
+                return true;
+
+            // Верхнеуровневые leaf-ветки с собственным текстовым результатом
+            // считаем осмысленными, даже если они не материализовали отдельный
+            // outcome в модели. Это позволяет сохранить случаи вроде "TRAP DOOR!",
+            // но не возвращать глубокие промежуточные ветки из меню выбора.
+            if (variant.Texts != null && variant.Texts.Count > 0 && GetPathDepth(variant.PathId) <= 1)
+                return true;
+
+            // Несколько текстов в leaf-ветке почти всегда означают уже собранную
+            // конечную заметку, а не промежуточный prompt.
+            if (variant.Texts != null && variant.Texts.Count > 1)
+                return true;
+
+            return false;
+        }
+
+
+
+        private int GetPathDepth(int pathId)
+        {
+            if (pathId <= 0)
+                return 0;
+
+            int depth = -1;
+            while (pathId > 0)
+            {
+                depth++;
+                pathId /= 10;
+            }
+
+            return depth;
+        }
+
+        private bool IsPureEmptyLeafVariant(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.Texts != null && variant.Texts.Count > 0)
+                return false;
+
+            if (HasAnyOutcome(variant))
+                return false;
+
+            return true;
+        }
+
         public Dictionary<int, PathVariantInfo> BuildFinalPathVariants(List<PathVariantInfo> allResults)
         {
             var finalVariants = new Dictionary<int, PathVariantInfo>();
 
             var leafResults = allResults
                 .Where(r => r.IsLeaf)
+                .Where(IsMeaningfulLeaf)
                 .OrderBy(r => r.PathId)
                 .ToList();
 

@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -801,6 +801,9 @@ namespace MMMapEditor
 
         public int ProbabilityNumerator { get; set; } = 1;
         public int ProbabilityDenominator { get; set; } = 1;
+        public bool TerminatedByRepeatedBackEdge { get; set; } = false;
+        public bool TerminatedByTerminalRet { get; set; } = false;
+        public bool HasBranchSpecificContribution { get; set; } = false;
 
         public bool HasProbabilityInfo => ProbabilityDenominator > 1;
 
