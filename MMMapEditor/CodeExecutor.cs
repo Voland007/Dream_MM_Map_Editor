@@ -1,20 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1312,12 +1296,8 @@ namespace MMMapEditor
         {
             try
             {
-                long fileOffset = textAddress - _config.TextBaseAddr;
-
-                if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
-                {
-                    return $"Cannot locate text (offset: 0x{fileOffset:X})";
-                }
+                if (!TryMapOverlayAddressToFileOffset(br, textAddress, out long fileOffset))
+                    return $"Cannot locate text at 0x{textAddress:X4}";
 
                 long originalPos = br.BaseStream.Position;
                 br.BaseStream.Position = fileOffset;
@@ -1341,6 +1321,33 @@ namespace MMMapEditor
             {
                 return $"Error reading text: {ex.Message}";
             }
+        }
+
+        private bool TryMapOverlayAddressToFileOffset(BinaryReader br, ushort memAddr, out long fileOffset)
+        {
+            fileOffset = -1;
+
+            if (br == null)
+                return false;
+
+            long textBaseOffset = memAddr - _config.TextBaseAddr;
+            if (textBaseOffset >= 0 && textBaseOffset < br.BaseStream.Length)
+            {
+                fileOffset = textBaseOffset;
+                return true;
+            }
+
+            if (memAddr >= 0xC972)
+            {
+                long overlayMappedOffset = (long)_config.StartAddress + (memAddr - 0xC972);
+                if (overlayMappedOffset >= 0 && overlayMappedOffset < br.BaseStream.Length)
+                {
+                    fileOffset = overlayMappedOffset;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -2104,10 +2111,10 @@ namespace MMMapEditor
                 return true;
             }
 
-            return TryReadByteFromOverlayMemory(br, memAddr, out value);
+            return TryReadOverlayByte(br, memAddr, out value);
         }
 
-        private bool TryReadByteFromOverlayMemory(BinaryReader br, ushort memAddr, out byte value)
+        private bool TryReadOverlayByte(BinaryReader br, ushort memAddr, out byte value)
         {
             value = 0;
 

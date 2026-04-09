@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -811,34 +811,27 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
-                ushort sourceAddr = (ushort)(0xCDBD + bxValue);
-                long fileOffset = sourceAddr - _config.TextBaseAddr;
-
-                byte actualValue = 0;
-                bool readSuccess = false;
+                ushort effectiveBx = bxValue;
                 string debugInfo = "";
 
-                ushort effectiveBx = bxValue;
                 if (effectiveBx == 0 && targetX != 0)
                 {
                     effectiveBx = targetX;
-                    sourceAddr = (ushort)(0xCDBD + effectiveBx);
-                    fileOffset = sourceAddr - _config.TextBaseAddr;
                     debugInfo = $" (using targetX={targetX})";
-                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
                 }
+
+                ushort sourceAddr = (ushort)(0xCDBD + effectiveBx);
+                byte actualValue = 0;
+                bool readSuccess = false;
+
+                if (bxValue == 0 && targetX != 0)
+                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
 
                 try
                 {
-                    if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
-                    {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        actualValue = br.ReadByte();
-                        br.BaseStream.Position = originalPos;
-                        readSuccess = true;
+                    readSuccess = TryReadOverlayByte(br, sourceAddr, out actualValue);
+                    if (readSuccess)
                         AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}]: 0x{actualValue:X2}{debugInfo}");
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -860,6 +853,7 @@ namespace MMMapEditor
             }
         }
 
+
         /// <summary>
         /// Загрузка из таблицы CDB5+ (MOV BP, [BX+CDB5]) - слово с двумя индексами монстров
         /// </summary>
@@ -868,34 +862,27 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
-                ushort sourceAddr = (ushort)(0xCDB5 + bxValue);
-                long fileOffset = sourceAddr - _config.TextBaseAddr;
-
-                ushort actualValue = 0;
-                bool readSuccess = false;
+                ushort effectiveBx = bxValue;
                 string debugInfo = "";
 
-                ushort effectiveBx = bxValue;
                 if (effectiveBx == 0 && targetX != 0)
                 {
                     effectiveBx = targetX;
-                    sourceAddr = (ushort)(0xCDB5 + effectiveBx);
-                    fileOffset = sourceAddr - _config.TextBaseAddr;
                     debugInfo = $" (using targetX={targetX})";
-                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {(ushort)(0xCDB5 + effectiveBx):X4}");
                 }
+
+                ushort sourceAddr = (ushort)(0xCDB5 + effectiveBx);
+                ushort actualValue = 0;
+                bool readSuccess = false;
 
                 try
                 {
-                    if (fileOffset >= 0 && fileOffset + 1 < br.BaseStream.Length)
+                    readSuccess = TryReadOverlayWord(br, sourceAddr, out actualValue);
+                    if (readSuccess)
                     {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        byte lowByte = br.ReadByte();
-                        byte highByte = br.ReadByte();
-                        actualValue = (ushort)((highByte << 8) | lowByte);
-                        br.BaseStream.Position = originalPos;
-                        readSuccess = true;
+                        byte lowByte = (byte)(actualValue & 0xFF);
+                        byte highByte = (byte)(actualValue >> 8);
                         AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}]: 0x{actualValue:X4}{debugInfo} (low=0x{lowByte:X2}, high=0x{highByte:X2})");
                     }
                 }
@@ -904,7 +891,6 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
                 }
 
-                // Сохраняем полное слово только в BP. НЕ трогаем AL.
                 tracker.SetRegisterValueWithSource(
                     "BP",
                     readSuccess ? actualValue : (ushort)0,
@@ -912,16 +898,14 @@ namespace MMMapEditor
                     (ushort)effectiveBx,
                     true,
                     address,
-                    $"MOV BP, [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4}, val={actualValue:X4})",
+                    $"MOV BP, [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
                     "CDB5"
                 );
-
-                // УДАЛЕНО: автоматическая установка AL и AH.
-                // Информация о high и low байтах будет доступна через BP и последующее копирование в CX.
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+: BP = [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
             }
         }
+
 
         /// <summary>
         /// Загрузка младшего байта из CDB5+ (MOV AL, [BX+CDB5]) - второй индекс монстра
@@ -931,37 +915,31 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
-                ushort sourceAddr = (ushort)(0xCDB5 + bxValue);
-                long fileOffset = sourceAddr - _config.TextBaseAddr;
-
-                byte actualValue = 0;
-                bool readSuccess = false;
+                ushort effectiveBx = bxValue;
                 string debugInfo = "";
 
-                ushort effectiveBx = bxValue;
                 if (effectiveBx == 0 && targetX != 0)
                 {
                     effectiveBx = targetX;
-                    sourceAddr = (ushort)(0xCDB5 + effectiveBx);
-                    fileOffset = sourceAddr - _config.TextBaseAddr;
                     debugInfo = $" (using targetX={targetX})";
-                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {sourceAddr:X4}");
+                    AnalysisDebug.WriteLine($"    BX=0, используем targetX={targetX} для вычисления адреса {(ushort)(0xCDB5 + effectiveBx):X4}");
                 }
+
+                ushort sourceAddr = (ushort)(0xCDB5 + effectiveBx);
+                byte actualValue = 0;
+                bool readSuccess = false;
 
                 try
                 {
-                    if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                    if (TryMapOverlayAddressToFileOffset(br, sourceAddr, out long fileOffset))
                     {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        actualValue = br.ReadByte();
-                        br.BaseStream.Position = originalPos;
-                        readSuccess = true;
-                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}{debugInfo}");
+                        readSuccess = TryReadOverlayByte(br, sourceAddr, out actualValue);
+                        if (readSuccess)
+                            AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}{debugInfo}");
                     }
                     else
                     {
-                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: адрес не сопоставлен с файлом");
                     }
                 }
                 catch (Exception ex)
@@ -984,6 +962,7 @@ namespace MMMapEditor
             }
         }
 
+
         /// <summary>
         /// Загрузка из таблицы CDA9+ (MOV AL, [BX+CDA9]) - сила/уровень монстра
         /// </summary>
@@ -993,25 +972,20 @@ namespace MMMapEditor
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
                 ushort sourceAddr = (ushort)(0xCDA9 + bxValue);
-                long fileOffset = sourceAddr - _config.TextBaseAddr;
-
                 byte actualValue = 0;
                 bool readSuccess = false;
 
                 try
                 {
-                    if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                    if (TryMapOverlayAddressToFileOffset(br, sourceAddr, out long fileOffset))
                     {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        actualValue = br.ReadByte();
-                        br.BaseStream.Position = originalPos;
-                        readSuccess = true;
-                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}");
+                        readSuccess = TryReadOverlayByte(br, sourceAddr, out actualValue);
+                        if (readSuccess)
+                            AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}");
                     }
                     else
                     {
-                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: адрес не сопоставлен с файлом");
                     }
                 }
                 catch (Exception ex)
@@ -1043,27 +1017,20 @@ namespace MMMapEditor
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
                 ushort sourceAddr = (ushort)(0xCDB1 + bxValue);
-                long fileOffset = sourceAddr - _config.TextBaseAddr;
-
                 ushort actualValue = 0;
                 bool readSuccess = false;
 
                 try
                 {
-                    if (fileOffset >= 0 && fileOffset + 1 < br.BaseStream.Length)
+                    if (TryMapOverlayAddressToFileOffset(br, sourceAddr, out long fileOffset))
                     {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        byte lowByte = br.ReadByte();
-                        byte highByte = br.ReadByte();
-                        actualValue = (ushort)((highByte << 8) | lowByte);
-                        br.BaseStream.Position = originalPos;
-                        readSuccess = true;
-                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}");
+                        readSuccess = TryReadOverlayWord(br, sourceAddr, out actualValue);
+                        if (readSuccess)
+                            AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}");
                     }
                     else
                     {
-                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: адрес не сопоставлен с файлом");
                     }
                 }
                 catch (Exception ex)
@@ -1098,25 +1065,20 @@ namespace MMMapEditor
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
                 ushort sourceAddr = (ushort)(0xCDB1 + bxValue);
-                long fileOffset = sourceAddr - _config.TextBaseAddr;
-
                 byte actualValue = 0;
                 bool readSuccess = false;
 
                 try
                 {
-                    if (fileOffset >= 0 && fileOffset < br.BaseStream.Length)
+                    if (TryMapOverlayAddressToFileOffset(br, sourceAddr, out long fileOffset))
                     {
-                        long originalPos = br.BaseStream.Position;
-                        br.BaseStream.Position = fileOffset;
-                        actualValue = br.ReadByte();
-                        br.BaseStream.Position = originalPos;
-                        readSuccess = true;
-                        AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2} (младший байт)");
+                        readSuccess = TryReadOverlayByte(br, sourceAddr, out actualValue);
+                        if (readSuccess)
+                            AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2} (младший байт)");
                     }
                     else
                     {
-                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: offset 0x{fileOffset:X} вне файла");
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: адрес не сопоставлен с файлом");
                     }
                 }
                 catch (Exception ex)
@@ -2031,16 +1993,84 @@ namespace MMMapEditor
             }
         }
 
+        private bool TryMapOverlayAddressToFileOffset(BinaryReader br, ushort memAddr, out long fileOffset)
+        {
+            fileOffset = -1;
+
+            if (br == null)
+                return false;
+
+            long textBaseOffset = memAddr - _config.TextBaseAddr;
+            if (textBaseOffset >= 0 && textBaseOffset < br.BaseStream.Length)
+            {
+                fileOffset = textBaseOffset;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryReadOverlayByte(BinaryReader br, ushort memAddr, out byte value)
+        {
+            value = 0;
+
+            if (!TryMapOverlayAddressToFileOffset(br, memAddr, out long fileOffset))
+                return false;
+
+            long originalPos = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = fileOffset;
+                value = br.ReadByte();
+                return true;
+            }
+            catch
+            {
+                value = 0;
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPos;
+            }
+        }
+
+        private bool TryReadOverlayWord(BinaryReader br, ushort memAddr, out ushort value)
+        {
+            value = 0;
+
+            if (!TryMapOverlayAddressToFileOffset(br, memAddr, out long fileOffset))
+                return false;
+
+            if (fileOffset + 1 >= br.BaseStream.Length)
+                return false;
+
+            long originalPos = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = fileOffset;
+                byte lowByte = br.ReadByte();
+                byte highByte = br.ReadByte();
+                value = (ushort)((highByte << 8) | lowByte);
+                return true;
+            }
+            catch
+            {
+                value = 0;
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPos;
+            }
+        }
+
         private string ExtractText(BinaryReader br, ushort textAddress)
         {
             try
             {
-                long fileOffset = textAddress - _config.TextBaseAddr;
-
-                if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
-                {
-                    return $"Cannot locate text (offset: 0x{fileOffset:X})";
-                }
+                if (!TryMapOverlayAddressToFileOffset(br, textAddress, out long fileOffset))
+                    return $"Cannot locate text at 0x{textAddress:X4}";
 
                 long originalPos = br.BaseStream.Position;
                 br.BaseStream.Position = fileOffset;
