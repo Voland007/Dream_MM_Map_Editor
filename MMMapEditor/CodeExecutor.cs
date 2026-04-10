@@ -1,4 +1,4 @@
-﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
+// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,7 +14,23 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿using System;
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -74,146 +90,146 @@ namespace MMMapEditor
             {
                 var result = new PathAnalysisResult();
                 long fileLength = br.BaseStream.Length;
-            uint currentAddress = startAddress;
-            var currentPendingReturnAddresses = pendingReturnAddresses != null ? new List<uint>(pendingReturnAddresses) : new List<uint>();
-            int currentCallDepth = callDepth;
-            int instructionCount = 0;
-            var visitedInThisPath = new HashSet<uint>();
+                uint currentAddress = startAddress;
+                var currentPendingReturnAddresses = pendingReturnAddresses != null ? new List<uint>(pendingReturnAddresses) : new List<uint>();
+                int currentCallDepth = callDepth;
+                int instructionCount = 0;
+                var visitedInThisPath = new HashSet<uint>();
 
-            // Для отслеживания косвенных текстов
-            byte? lastAlValue = null;
-            ushort? lastBpValue = null;
-            uint lastTextAddress = 0;
-            var foundTextsInThisPath = new HashSet<string>();
-            int textOrderCounter = 0;
+                // Для отслеживания косвенных текстов
+                byte? lastAlValue = null;
+                ushort? lastBpValue = null;
+                uint lastTextAddress = 0;
+                var foundTextsInThisPath = new HashSet<string>();
+                int textOrderCounter = 0;
 
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
+                using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
                 {
-                    if (visitedInThisPath.Contains(currentAddress))
-                    {
-                        if (debugMode)
-                            AnalysisDebug.WriteLine($"      Обнаружен цикл по адресу 0x{currentAddress:X4}");
+                    capstone.DisassembleSyntax = DisassembleSyntax.Intel;
 
-                        if (IsTableLoadLoop(br, currentAddress, registerTracker))
+                    while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
+                    {
+                        if (visitedInThisPath.Contains(currentAddress))
                         {
                             if (debugMode)
-                                AnalysisDebug.WriteLine($"      Обнаружен цикл загрузки из таблиц");
-                            result.HasPartialBattlePattern = true;
-                            result.IsInLoop = true;
-                            result.LoopStartAddress = currentAddress;
+                                AnalysisDebug.WriteLine($"      Обнаружен цикл по адресу 0x{currentAddress:X4}");
+
+                            if (IsTableLoadLoop(br, currentAddress, registerTracker))
+                            {
+                                if (debugMode)
+                                    AnalysisDebug.WriteLine($"      Обнаружен цикл загрузки из таблиц");
+                                result.HasPartialBattlePattern = true;
+                                result.IsInLoop = true;
+                                result.LoopStartAddress = currentAddress;
+                            }
+
+                            result.IsTerminated = true;
+                            return result;
                         }
+                        visitedInThisPath.Add(currentAddress);
+                        result.VisitedAddresses.Add(currentAddress);
 
-                        result.IsTerminated = true;
-                        return result;
-                    }
-                    visitedInThisPath.Add(currentAddress);
-                    result.VisitedAddresses.Add(currentAddress);
-
-                    if (!TryDisassembleNext(br, currentAddress, out X86Instruction insn))
-                    {
-                        if (debugMode)
-                            AnalysisDebug.WriteLine($"      Не удалось дизассемблировать по адресу 0x{currentAddress:X4}, пропускаем байт");
-                        currentAddress++;
-                        continue;
-                    }
-
-                    instructionCount++;
-                    string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
-
-                    if (IsPopReg16(insn))
-                    {
-                        if (currentPendingReturnAddresses.Count > 0)
+                        if (!TryDisassembleNext(br, currentAddress, out X86Instruction insn))
                         {
-                            uint poppedReturn = currentPendingReturnAddresses[currentPendingReturnAddresses.Count - 1];
-                            currentPendingReturnAddresses.RemoveAt(currentPendingReturnAddresses.Count - 1);
-
                             if (debugMode)
-                                AnalysisDebug.WriteLine($"        POP {GetPopRegisterName(insn)}: сняли адрес возврата 0x{poppedReturn:X4} из эмулируемого стека");
+                                AnalysisDebug.WriteLine($"      Не удалось дизассемблировать по адресу 0x{currentAddress:X4}, пропускаем байт");
+                            currentAddress++;
+                            continue;
                         }
-                        else if (debugMode)
+
+                        instructionCount++;
+                        string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
+
+                        if (IsPopReg16(insn))
                         {
-                            AnalysisDebug.WriteLine($"        POP {GetPopRegisterName(insn)}: значение в эмулируемом стеке неизвестно");
+                            if (currentPendingReturnAddresses.Count > 0)
+                            {
+                                uint poppedReturn = currentPendingReturnAddresses[currentPendingReturnAddresses.Count - 1];
+                                currentPendingReturnAddresses.RemoveAt(currentPendingReturnAddresses.Count - 1);
+
+                                if (debugMode)
+                                    AnalysisDebug.WriteLine($"        POP {GetPopRegisterName(insn)}: сняли адрес возврата 0x{poppedReturn:X4} из эмулируемого стека");
+                            }
+                            else if (debugMode)
+                            {
+                                AnalysisDebug.WriteLine($"        POP {GetPopRegisterName(insn)}: значение в эмулируемом стеке неизвестно");
+                            }
                         }
-                    }
 
-                    uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
+                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
 
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
-
-                    byte[] bytes = insn.Bytes;
-
-                    // Отслеживание MOV AL, imm8
-                    if (bytes.Length >= 2 && bytes[0] == 0xB0)
-                    {
-                        lastAlValue = bytes[1];
                         if (debugMode)
-                            AnalysisDebug.WriteLine($"        Запомнили AL = 0x{lastAlValue:X2}");
+                            AnalysisDebug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
+
+                        byte[] bytes = insn.Bytes;
+
+                        // Отслеживание MOV AL, imm8
+                        if (bytes.Length >= 2 && bytes[0] == 0xB0)
+                        {
+                            lastAlValue = bytes[1];
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Запомнили AL = 0x{lastAlValue:X2}");
+                        }
+
+                        // Отслеживание MOV BP, imm16
+                        if (bytes.Length >= 3 && bytes[0] == 0xBD)
+                        {
+                            lastBpValue = BitConverter.ToUInt16(bytes, 1);
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Запомнили BP = 0x{lastBpValue:X4}");
+                        }
+
+                        // Поиск косвенных текстов (MOV AL, imm8 + MOV BP, imm16)
+                        ProcessIndirectTexts(lastAlValue, lastBpValue, br, ref lastTextAddress,
+                            foundTextsInThisPath, result, insn, debugMode, ref textOrderCounter);
+
+                        // Поиск прямых текстов
+                        var newTexts = new HashSet<string>();
+                        _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts);
+                        ProcessFoundTexts(newTexts, foundTextsInThisPath, result, currentCallDepth, insn, debugMode, ref textOrderCounter);
+
+                        // Поиск изменений статистики монстров и информации о битвах
+                        _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
+                        _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY, TryGetEmulatedMemory8Value);
+                        if (TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY,
+                            currentCallDepth, currentPendingReturnAddresses))
+                        {
+                            return result;
+                        }
+
+                        // Анализ частичных битв
+                        if (result.PartialBattleInfo.Count > 0)
+                        {
+                            AnalyzePartialBattleRanges(br, result);
+                        }
+
+                        // Обработка инструкций перехода и возврата
+                        var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
+                            globallyAnalyzedAddresses, depth, currentCallDepth, pathId, targetX, targetY,
+                            processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode,
+                            invalidateReturnRegistersAfterExternalCall, currentPendingReturnAddresses);
+
+                        if (handlingResult.ShouldReturn)
+                            return handlingResult.Result;
+
+                        currentAddress = handlingResult.NextAddress;
+                        if (handlingResult.UpdatedPendingReturnAddresses != null)
+                            currentPendingReturnAddresses = handlingResult.UpdatedPendingReturnAddresses;
+                        if (handlingResult.UpdatedCallDepth >= 0)
+                            currentCallDepth = handlingResult.UpdatedCallDepth;
                     }
-
-                    // Отслеживание MOV BP, imm16
-                    if (bytes.Length >= 3 && bytes[0] == 0xBD)
-                    {
-                        lastBpValue = BitConverter.ToUInt16(bytes, 1);
-                        if (debugMode)
-                            AnalysisDebug.WriteLine($"        Запомнили BP = 0x{lastBpValue:X4}");
-                    }
-
-                    // Поиск косвенных текстов (MOV AL, imm8 + MOV BP, imm16)
-                    ProcessIndirectTexts(lastAlValue, lastBpValue, br, ref lastTextAddress,
-                        foundTextsInThisPath, result, insn, debugMode, ref textOrderCounter);
-
-                    // Поиск прямых текстов
-                    var newTexts = new HashSet<string>();
-                    _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts);
-                    ProcessFoundTexts(newTexts, foundTextsInThisPath, result, currentCallDepth, insn, debugMode, ref textOrderCounter);
-
-                    // Поиск изменений статистики монстров и информации о битвах
-                    _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
-                    _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY, TryGetEmulatedMemory8Value);
-                    if (TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY,
-                        currentCallDepth, currentPendingReturnAddresses))
-                    {
-                        return result;
-                    }
-
-                    // Анализ частичных битв
-                    if (result.PartialBattleInfo.Count > 0)
-                    {
-                        AnalyzePartialBattleRanges(br, result);
-                    }
-
-                    // Обработка инструкций перехода и возврата
-                    var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
-                        globallyAnalyzedAddresses, depth, currentCallDepth, pathId, targetX, targetY,
-                        processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode,
-                        invalidateReturnRegistersAfterExternalCall, currentPendingReturnAddresses);
-
-                    if (handlingResult.ShouldReturn)
-                        return handlingResult.Result;
-
-                    currentAddress = handlingResult.NextAddress;
-                    if (handlingResult.UpdatedPendingReturnAddresses != null)
-                        currentPendingReturnAddresses = handlingResult.UpdatedPendingReturnAddresses;
-                    if (handlingResult.UpdatedCallDepth >= 0)
-                        currentCallDepth = handlingResult.UpdatedCallDepth;
                 }
-            }
 
-            // Финальный анализ частичных битв
-            if (result.PartialBattleInfo.Count > 0)
-            {
-                AnalyzePartialBattleRanges(br, result);
-            }
+                // Финальный анализ частичных битв
+                if (result.PartialBattleInfo.Count > 0)
+                {
+                    AnalyzePartialBattleRanges(br, result);
+                }
 
-            result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
-            result.ExitCallDepth = currentCallDepth;
-            FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
-            return result;
+                result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
+                result.ExitCallDepth = currentCallDepth;
+                FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
+                return result;
             }
             finally
             {
@@ -1535,14 +1551,43 @@ namespace MMMapEditor
                 byte immValue = instructionBytes[4];
                 ApplyTrackedByteWrite(memAddr, immValue, result, targetX, targetY, insn, debugMode, "MOV byte ptr [disp16], imm8");
             }
-            else if (instructionBytes.Length >= 4 &&
-                     instructionBytes[0] == 0x88 &&
-                     instructionBytes[1] == 0x06)
+            else if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x88)
             {
-                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
-                if (TryGetReg8ValueFromModRmRegField(instructionBytes[1], registerTracker, out byte regValue, out string regName))
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                if (mod == 0x03)
                 {
-                    ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr [disp16], {regName}");
+                    if (reg < regNames8.Length && rm < regNames8.Length &&
+                        registerTracker.TryGetByteRegisterValue(regNames8[reg], out byte srcValue))
+                    {
+                        string dstReg = regNames8[rm];
+                        string dstFullReg = GetFullRegisterNameForByteRegister(dstReg);
+
+                        if (!string.IsNullOrEmpty(dstFullReg))
+                        {
+                            registerTracker.TrackPartialRegisterOperation(
+                                dstFullReg,
+                                dstReg,
+                                srcValue,
+                                address,
+                                $"MOV {dstReg}, {regNames8[reg]}"
+                            );
+
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames8[reg]} = 0x{srcValue:X2}");
+                        }
+                    }
+                }
+                else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    if (TryGetReg8ValueFromModRmRegField(modRm, registerTracker, out byte regValue, out string regName))
+                    {
+                        ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, {regName}");
+                    }
                 }
             }
             else if (instructionBytes.Length >= 4 &&
@@ -1618,81 +1663,141 @@ namespace MMMapEditor
                     );
 
                     if (debugMode)
-                        AnalysisDebug.WriteLine($"        Загрузили AL из {( _emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} [0x{memAddr:X4}] = 0x{value:X2}");
+                        AnalysisDebug.WriteLine($"        Загрузили AL из {(_emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} [0x{memAddr:X4}] = 0x{value:X2}");
                 }
                 else if (debugMode)
                 {
                     AnalysisDebug.WriteLine($"        Не удалось загрузить AL из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
                 }
             }
-            // MOV reg8, [BP + disp16] / [BP + SI + disp16] / [BP + DI + disp16]
-            else if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x8A)
+            // MOV reg8, r/m8
+            else if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x8A)
             {
                 byte modRm = instructionBytes[1];
                 byte mod = (byte)((modRm >> 6) & 0x03);
                 byte reg = (byte)((modRm >> 3) & 0x07);
                 byte rm = (byte)(modRm & 0x07);
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
 
-                if ((mod == 0x02 || (mod == 0x00 && rm == 0x06)) && instructionBytes.Length >= 4)
+                if (mod == 0x03)
                 {
-                    short disp = (short)BitConverter.ToUInt16(instructionBytes, 2);
-                    ushort? baseAddr = null;
-
-                    switch (rm)
+                    if (reg < regNames8.Length && rm < regNames8.Length &&
+                        registerTracker.TryGetByteRegisterValue(regNames8[rm], out byte srcValue))
                     {
-                        case 0x02: // [BP + SI]
-                            if (registerTracker.TryGetRegisterValue("BP", out ushort bp2) && registerTracker.TryGetRegisterValue("SI", out ushort si))
-                                baseAddr = (ushort)(bp2 + si);
-                            break;
-                        case 0x03: // [BP + DI]
-                            if (registerTracker.TryGetRegisterValue("BP", out ushort bp3) && registerTracker.TryGetRegisterValue("DI", out ushort di))
-                                baseAddr = (ushort)(bp3 + di);
-                            break;
-                        case 0x06: // [BP] for mod=01/10, [disp16] for mod=00
-                            if (mod == 0x00)
-                                baseAddr = 0;
-                            else if (registerTracker.TryGetRegisterValue("BP", out ushort bp6))
-                                baseAddr = bp6;
-                            break;
-                    }
+                        string dstReg = regNames8[reg];
+                        string fullReg = GetFullRegisterNameForByteRegister(dstReg);
 
-                    if (baseAddr.HasValue)
-                    {
-                        ushort memAddr = (ushort)(baseAddr.Value + disp);
-                        if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
+                        if (!string.IsNullOrEmpty(fullReg))
                         {
-                            string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-                            if (reg < regNames8.Length)
+                            registerTracker.TrackPartialRegisterOperation(
+                                fullReg,
+                                dstReg,
+                                srcValue,
+                                address,
+                                $"MOV {dstReg}, {regNames8[rm]}"
+                            );
+
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames8[rm]} = 0x{srcValue:X2}");
+                        }
+                    }
+                }
+                else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
+                    {
+                        if (reg < regNames8.Length)
+                        {
+                            string regName = regNames8[reg];
+                            string fullReg = GetFullRegisterNameForByteRegister(regName);
+
+                            if (!string.IsNullOrEmpty(fullReg))
                             {
-                                string regName = regNames8[reg];
-                                string fullReg = regName switch
-                                {
-                                    "AL" or "AH" => "AX",
-                                    "CL" or "CH" => "CX",
-                                    "DL" or "DH" => "DX",
-                                    "BL" or "BH" => "BX",
-                                    _ => ""
-                                };
+                                registerTracker.TrackPartialRegisterOperation(
+                                    fullReg,
+                                    regName,
+                                    value,
+                                    address,
+                                    $"MOV {regName}, byte ptr {eaText}"
+                                );
 
-                                if (!string.IsNullOrEmpty(fullReg))
-                                {
-                                    registerTracker.TrackPartialRegisterOperation(
-                                        fullReg,
-                                        regName,
-                                        value,
-                                        address,
-                                        $"MOV {regName}, byte ptr [0x{memAddr:X4}]"
-                                    );
-
-                                    if (debugMode)
-                                        AnalysisDebug.WriteLine($"        Загрузили {regName} из {( _emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} [0x{memAddr:X4}] = 0x{value:X2}");
-                                }
+                                if (debugMode)
+                                    AnalysisDebug.WriteLine($"        Загрузили {regName} из {(_emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} {eaText} -> [0x{memAddr:X4}] = 0x{value:X2}");
                             }
                         }
-                        else if (debugMode)
+                    }
+                    else if (debugMode)
+                    {
+                        AnalysisDebug.WriteLine($"        Не удалось загрузить reg8 из {eaText} -> [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                    }
+                }
+            }
+            // MOV reg16, r/m16
+            else if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x8B)
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+                string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+
+                if (mod == 0x03)
+                {
+                    if (reg < regNames16.Length && rm < regNames16.Length &&
+                        registerTracker.TryGetRegisterValue(regNames16[rm], out ushort srcValue))
+                    {
+                        string dstReg = regNames16[reg];
+                        registerTracker.SetRegisterValue(dstReg, srcValue, address, $"MOV {dstReg}, {regNames16[rm]}");
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames16[rm]} = 0x{srcValue:X4}");
+                    }
+                }
+                else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    if (TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out ushort value))
+                    {
+                        if (reg < regNames16.Length)
                         {
-                            AnalysisDebug.WriteLine($"        Не удалось загрузить reg8 из [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                            string regName = regNames16[reg];
+                            registerTracker.SetRegisterValue(regName, value, address, $"MOV {regName}, word ptr {eaText}");
+
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Загрузили {regName} из {(IsTrackedWordInEmulatedMemory(memAddr) ? "эмулируемой памяти" : "файла")} {eaText} -> [0x{memAddr:X4}] = 0x{value:X4}");
                         }
+                    }
+                    else if (debugMode)
+                    {
+                        AnalysisDebug.WriteLine($"        Не удалось загрузить reg16 из {eaText} -> [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
+                    }
+                }
+            }
+            // MOV r/m16, reg16
+            else if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x89)
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+                string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+
+                if (mod == 0x03)
+                {
+                    if (reg < regNames16.Length && rm < regNames16.Length &&
+                        registerTracker.TryGetRegisterValue(regNames16[reg], out ushort srcValue))
+                    {
+                        string dstReg = regNames16[rm];
+                        registerTracker.SetRegisterValue(dstReg, srcValue, address, $"MOV {dstReg}, {regNames16[reg]}");
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames16[reg]} = 0x{srcValue:X4}");
+                    }
+                }
+                else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    if (TryGetReg16ValueFromModRmRegField(modRm, registerTracker, out ushort regValue, out string regName))
+                    {
+                        ApplyTrackedWordWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV word ptr {eaText}, {regName}");
                     }
                 }
             }
@@ -2080,6 +2185,191 @@ namespace MMMapEditor
         }
 
 
+        private string GetFullRegisterNameForByteRegister(string regName)
+        {
+            return regName?.ToUpperInvariant() switch
+            {
+                "AL" or "AH" => "AX",
+                "BL" or "BH" => "BX",
+                "CL" or "CH" => "CX",
+                "DL" or "DH" => "DX",
+                _ => string.Empty
+            };
+        }
+
+        private bool TryDecode16BitEffectiveAddress(
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            out ushort effectiveAddress,
+            out int decodedLength,
+            out string eaText)
+        {
+            effectiveAddress = 0;
+            decodedLength = 0;
+            eaText = null;
+
+            if (instructionBytes == null || instructionBytes.Length < 2)
+                return false;
+
+            byte modRm = instructionBytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte rm = (byte)(modRm & 0x07);
+
+            if (mod == 0x03)
+                return false;
+
+            sbyte disp8 = 0;
+            short disp16 = 0;
+            int dispSize;
+
+            switch (mod)
+            {
+                case 0x00:
+                    if (rm == 0x06)
+                    {
+                        if (instructionBytes.Length < 4)
+                            return false;
+
+                        effectiveAddress = BitConverter.ToUInt16(instructionBytes, 2);
+                        decodedLength = 4;
+                        eaText = $"[0x{effectiveAddress:X4}]";
+                        return true;
+                    }
+
+                    dispSize = 0;
+                    break;
+
+                case 0x01:
+                    if (instructionBytes.Length < 3)
+                        return false;
+
+                    disp8 = unchecked((sbyte)instructionBytes[2]);
+                    dispSize = 1;
+                    break;
+
+                case 0x02:
+                    if (instructionBytes.Length < 4)
+                        return false;
+
+                    disp16 = unchecked((short)BitConverter.ToUInt16(instructionBytes, 2));
+                    dispSize = 2;
+                    break;
+
+                default:
+                    return false;
+            }
+
+            if (!TryGet16BitAddressBase(registerTracker, rm, out ushort baseValue, out string baseText))
+                return false;
+
+            int signedDisp = dispSize switch
+            {
+                1 => disp8,
+                2 => disp16,
+                _ => 0
+            };
+
+            effectiveAddress = unchecked((ushort)(baseValue + signedDisp));
+            decodedLength = 2 + dispSize;
+
+            if (signedDisp == 0)
+                eaText = $"[{baseText}]";
+            else if (signedDisp > 0)
+                eaText = $"[{baseText}+0x{signedDisp:X}]";
+            else
+                eaText = $"[{baseText}-0x{(-signedDisp):X}]";
+
+            return true;
+        }
+
+        private bool TryGet16BitAddressBase(RegisterTracker registerTracker, byte rm, out ushort baseValue, out string baseText)
+        {
+            baseValue = 0;
+            baseText = null;
+
+            switch (rm)
+            {
+                case 0x00:
+                    if (registerTracker.TryGetRegisterValue("BX", out ushort bx0) &&
+                        registerTracker.TryGetRegisterValue("SI", out ushort si0))
+                    {
+                        baseValue = (ushort)(bx0 + si0);
+                        baseText = "BX+SI";
+                        return true;
+                    }
+                    return false;
+
+                case 0x01:
+                    if (registerTracker.TryGetRegisterValue("BX", out ushort bx1) &&
+                        registerTracker.TryGetRegisterValue("DI", out ushort di1))
+                    {
+                        baseValue = (ushort)(bx1 + di1);
+                        baseText = "BX+DI";
+                        return true;
+                    }
+                    return false;
+
+                case 0x02:
+                    if (registerTracker.TryGetRegisterValue("BP", out ushort bp2) &&
+                        registerTracker.TryGetRegisterValue("SI", out ushort si2))
+                    {
+                        baseValue = (ushort)(bp2 + si2);
+                        baseText = "BP+SI";
+                        return true;
+                    }
+                    return false;
+
+                case 0x03:
+                    if (registerTracker.TryGetRegisterValue("BP", out ushort bp3) &&
+                        registerTracker.TryGetRegisterValue("DI", out ushort di3))
+                    {
+                        baseValue = (ushort)(bp3 + di3);
+                        baseText = "BP+DI";
+                        return true;
+                    }
+                    return false;
+
+                case 0x04:
+                    if (registerTracker.TryGetRegisterValue("SI", out ushort si4))
+                    {
+                        baseValue = si4;
+                        baseText = "SI";
+                        return true;
+                    }
+                    return false;
+
+                case 0x05:
+                    if (registerTracker.TryGetRegisterValue("DI", out ushort di5))
+                    {
+                        baseValue = di5;
+                        baseText = "DI";
+                        return true;
+                    }
+                    return false;
+
+                case 0x06:
+                    if (registerTracker.TryGetRegisterValue("BP", out ushort bp6))
+                    {
+                        baseValue = bp6;
+                        baseText = "BP";
+                        return true;
+                    }
+                    return false;
+
+                case 0x07:
+                    if (registerTracker.TryGetRegisterValue("BX", out ushort bx7))
+                    {
+                        baseValue = bx7;
+                        baseText = "BX";
+                        return true;
+                    }
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+
         private bool TryGetReg8ValueFromModRmRegField(byte modRm, RegisterTracker registerTracker, out byte value, out string regName)
         {
             value = 0;
@@ -2092,6 +2382,20 @@ namespace MMMapEditor
 
             regName = regNames[regField];
             return registerTracker.TryGetByteRegisterValue(regName, out value);
+        }
+
+        private bool TryGetReg16ValueFromModRmRegField(byte modRm, RegisterTracker registerTracker, out ushort value, out string regName)
+        {
+            value = 0;
+            regName = null;
+
+            string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            byte regField = (byte)((modRm >> 3) & 0x07);
+            if (regField >= regNames.Length)
+                return false;
+
+            regName = regNames[regField];
+            return registerTracker.TryGetRegisterValue(regName, out value);
         }
 
         private bool TryResolveTrackedByteValue(BinaryReader br, ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out byte value)
@@ -2112,6 +2416,26 @@ namespace MMMapEditor
             }
 
             return TryReadOverlayByte(br, memAddr, out value);
+        }
+
+        private bool TryResolveTrackedWordValue(BinaryReader br, ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out ushort value)
+        {
+            value = 0;
+
+            if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte low) &&
+                TryResolveTrackedByteValue(br, unchecked((ushort)(memAddr + 1)), result, targetX, targetY, out byte high))
+            {
+                value = (ushort)(low | (high << 8));
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsTrackedWordInEmulatedMemory(ushort memAddr)
+        {
+            return _emulatedMemory8.ContainsKey(memAddr) ||
+                   _emulatedMemory8.ContainsKey(unchecked((ushort)(memAddr + 1)));
         }
 
         private bool TryReadOverlayByte(BinaryReader br, ushort memAddr, out byte value)
@@ -2183,6 +2507,16 @@ namespace MMMapEditor
                 if (debugMode)
                     AnalysisDebug.WriteLine($"        Обнаружен телепорт по Y: новая координата X = {result.TeleportTargetX}, Y = {value} (инструкция 0x{insn.Address:X4})");
             }
+        }
+
+        private void ApplyTrackedWordWrite(ushort memAddr, ushort value, PathAnalysisResult result,
+            byte targetX, byte targetY, X86Instruction insn, bool debugMode, string sourceDescription)
+        {
+            byte low = (byte)(value & 0x00FF);
+            byte high = (byte)((value >> 8) & 0x00FF);
+
+            ApplyTrackedByteWrite(memAddr, low, result, targetX, targetY, insn, debugMode, sourceDescription + " (low)");
+            ApplyTrackedByteWrite(unchecked((ushort)(memAddr + 1)), high, result, targetX, targetY, insn, debugMode, sourceDescription + " (high)");
         }
 
         /// <summary>
