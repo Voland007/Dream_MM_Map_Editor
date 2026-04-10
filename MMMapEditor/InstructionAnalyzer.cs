@@ -1,19 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 ﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -1284,7 +1268,7 @@ namespace MMMapEditor
                                 // Из таблиц CDA9/CDB1 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
-                                    BxIndex = originalBx ?? saveIndex,
+                                    BxIndex = saveIndex,
                                     DestAddr = 0x3C58,
                                     SrcReg = "AL",
                                     SrcRegValue = alValue,
@@ -1382,7 +1366,7 @@ namespace MMMapEditor
                                 // Из таблиц CDB1/CDA9 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
-                                    BxIndex = originalBx ?? saveIndex,
+                                    BxIndex = saveIndex,
                                     DestAddr = 0x3C29,
                                     SrcReg = "CL",
                                     SrcRegValue = clValue,
@@ -1480,7 +1464,7 @@ namespace MMMapEditor
                                 // Из таблиц CDA9/CDB1 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
-                                    BxIndex = originalBx ?? saveIndex,
+                                    BxIndex = saveIndex,
                                     DestAddr = 0x3C58,
                                     SrcReg = "DL",
                                     SrcRegValue = dlValue,
@@ -1578,7 +1562,7 @@ namespace MMMapEditor
                                 // Из таблиц CDB1/CDA9 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
-                                    BxIndex = originalBx ?? saveIndex,
+                                    BxIndex = saveIndex,
                                     DestAddr = 0x3C29,
                                     SrcReg = "DL",
                                     SrcRegValue = dlValue,
@@ -1676,7 +1660,7 @@ namespace MMMapEditor
                                 // Из таблиц CDA9/CDB1 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
-                                    BxIndex = originalBx ?? saveIndex,
+                                    BxIndex = saveIndex,
                                     DestAddr = 0x3C58,
                                     SrcReg = "BL",
                                     SrcRegValue = blValue,
@@ -1774,7 +1758,7 @@ namespace MMMapEditor
                                 // Из таблиц CDB1/CDA9 - частично определённая битва
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
-                                    BxIndex = originalBx ?? saveIndex,
+                                    BxIndex = saveIndex,
                                     DestAddr = 0x3C29,
                                     SrcReg = "BL",
                                     SrcRegValue = blValue,
@@ -1870,7 +1854,7 @@ namespace MMMapEditor
                             // Из таблиц CDA9/CDB1 - частично определённая битва
                             result.PartialBattleInfo.Add(new PartialBattleInfo
                             {
-                                BxIndex = originalBx ?? saveIndex,
+                                BxIndex = saveIndex,
                                 DestAddr = 0x3C58,
                                 SrcReg = "AL",
                                 SrcRegValue = alValue,
@@ -1965,7 +1949,7 @@ namespace MMMapEditor
                             // Из таблиц CDB1/CDA9 - частично определённая битва
                             result.PartialBattleInfo.Add(new PartialBattleInfo
                             {
-                                BxIndex = originalBx ?? saveIndex,
+                                BxIndex = saveIndex,
                                 DestAddr = 0x3C29,
                                 SrcReg = "AL",
                                 SrcRegValue = alValue,

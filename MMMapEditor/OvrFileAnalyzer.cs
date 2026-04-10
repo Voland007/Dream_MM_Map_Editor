@@ -1,20 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -275,54 +259,24 @@ namespace MMMapEditor
                 bool isY = (comparison.CoordType == CoordType.YCoord);
                 bool isFull = (comparison.CoordType == CoordType.FullCoord);
 
-                byte targetX = 0;
-                byte targetY = 0;
+                byte packedTargetX = 0;
+                byte packedTargetY = 0;
                 if (isFull)
                 {
-                    targetX = (byte)(comparison.Value & 0x0F);
-                    targetY = (byte)(comparison.Value >> 4);
-                    AnalysisDebug.WriteLine($"  Полная координата: X={targetX}, Y={targetY} (значение 0x{comparison.Value:X2})");
-                }
-
-                // Сбор альтернативных путей
-                var alternativePaths = new List<AlternativePath>();
-                _macroAnalyzer.CollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
-
-                // Анализ результатов
-                var (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, callsRandomEncounter, battleMonsterCount, battleMonsterCountRange, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern) =
-    AnalyzeMacroResults(br, comparison, alternativePaths, targetX, targetY);
-
-                bool hasSignificantCode = allTexts.Count > 0 ||
-                                          monsterPower.HasValue ||
-                                          monsterLevel.HasValue ||
-                                          darkeningLevel.HasValue ||
-                                          randomEncounterChance.HasValue ||
-                                          battleMonsters.Count > 0 ||
-                                          partialBattles.Count > 0 ||
-                                          hasPartialBattlePattern;
-
-                if (!hasSignificantCode && comparison.IsLinear &&
-                    (comparison.JumpType.ToUpper() == "JE" || comparison.JumpType.ToUpper() == "JZ") && isFull)
-                {
-                    hasSignificantCode = true;
-                    AnalysisDebug.WriteLine($"  Макрос JE/JZ для полной координаты считается значимым по умолчанию");
-                }
-
-                if (!hasSignificantCode)
-                {
-                    AnalysisDebug.WriteLine("  -> нет значимого кода, пропускаем");
-                    continue;
+                    packedTargetX = (byte)(comparison.Value & 0x0F);
+                    packedTargetY = (byte)(comparison.Value >> 4);
+                    AnalysisDebug.WriteLine($"  Полная координата: X={packedTargetX}, Y={packedTargetY} (значение 0x{comparison.Value:X2})");
                 }
 
                 // Определение целевых клеток
-                var targetCells = GetTargetCells(comparison, isX, isY, isFull, targetX, targetY);
+                var targetCells = GetTargetCells(comparison, isX, isY, isFull, packedTargetX, packedTargetY);
 
-                // ИСПРАВЛЕНИЕ: Сначала фильтруем клетки, которые ЕСТЬ в таблице - они НЕ ДОЛЖНЫ обрабатываться макросами
+                // Сначала отбрасываем клетки из табличных объектов
                 var cellsNotInTable = targetCells
                     .Where(p => !tableObjectCoords.Contains($"{p.X},{p.Y}"))
                     .ToList();
 
-                // Затем из оставшихся выбираем только те, что помечены как случайные встречи
+                // Затем оставляем только клетки со случайной встречей
                 var validCells = cellsNotInTable
                     .Where(p => existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча")
                     .ToList();
@@ -333,15 +287,58 @@ namespace MMMapEditor
                     continue;
                 }
 
+                // Сбор альтернативных путей один раз на макрос
+                var alternativePaths = new List<AlternativePath>();
+                _macroAnalyzer.CollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
+
                 AnalysisDebug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
 
                 int objectsCreated = 0;
                 foreach (var cellPos in validCells)
                 {
-                    var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, callsRandomEncounter, battleMonsterCount,
-                        battleMonsterCountRange, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
-                    objects.Add(obj);
-                    objectsCreated++;
+                    byte cellX = (byte)cellPos.X;
+                    byte cellY = (byte)cellPos.Y;
+
+                    using (AnalysisDebug.BeginCellScope(cellX, cellY))
+                    {
+                        AnalysisDebug.WriteLine($"  -> анализ результатов макроса для клетки ({cellX},{cellY})");
+
+                        var (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance,
+                            callsRandomEncounter, battleMonsterCount, battleMonsterCountRange,
+                            isBattleMonsterCountIndeterminate, battleMonsters, partialBattles,
+                            hasPartialBattlePattern) =
+                            AnalyzeMacroResults(br, comparison, alternativePaths, cellX, cellY);
+
+                        bool hasSignificantCode = allTexts.Count > 0 ||
+                                                  monsterPower.HasValue ||
+                                                  monsterLevel.HasValue ||
+                                                  darkeningLevel.HasValue ||
+                                                  randomEncounterChance.HasValue ||
+                                                  battleMonsters.Count > 0 ||
+                                                  partialBattles.Count > 0 ||
+                                                  hasPartialBattlePattern;
+
+                        if (!hasSignificantCode && comparison.IsLinear &&
+                            (comparison.JumpType.ToUpper() == "JE" || comparison.JumpType.ToUpper() == "JZ") && isFull)
+                        {
+                            hasSignificantCode = true;
+                            AnalysisDebug.WriteLine("  Макрос JE/JZ для полной координаты считается значимым по умолчанию");
+                        }
+
+                        if (!hasSignificantCode)
+                        {
+                            AnalysisDebug.WriteLine($"  -> для клетки ({cellX},{cellY}) значимого кода не найдено, пропускаем");
+                            continue;
+                        }
+
+                        var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel, darkeningLevel,
+                            randomEncounterChance, callsRandomEncounter, battleMonsterCount,
+                            battleMonsterCountRange, isBattleMonsterCountIndeterminate,
+                            battleMonsters, partialBattles, hasPartialBattlePattern);
+
+                        objects.Add(obj);
+                        objectsCreated++;
+                    }
                 }
 
                 AnalysisDebug.WriteLine($"  -> создано объектов из макроса: {objectsCreated}");
@@ -371,43 +368,69 @@ namespace MMMapEditor
             var partialBattleInfo = new List<PartialBattleInfo>();
             bool hasPartialBattlePattern = false;
 
-            IDisposable debugScope = comparison.CoordType == CoordType.FullCoord
-                ? AnalysisDebug.BeginCellScope(targetX, targetY)
-                : null;
-            try
+            using (AnalysisDebug.BeginCellScope(targetX, targetY))
             {
+                AnalysisDebug.WriteLine($"    AnalyzeMacroResults: старт для клетки ({targetX},{targetY}), JumpTarget=0x{comparison.JumpTarget:X4}");
 
-            // Анализ основного пути
-            var mainRegisterTracker = new RegisterTracker();
-            var macroProcessedBackEdges = new HashSet<(uint From, uint To)>();
-            var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, comparison.JumpTarget, mainRegisterTracker,
-                new HashSet<uint>(), 0, 0, 0, targetX, targetY, macroProcessedBackEdges);
+                // Анализ основного пути
+                var mainRegisterTracker = new RegisterTracker();
+                var macroProcessedBackEdges = new HashSet<(uint From, uint To)>();
+                var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(
+                    br,
+                    comparison.JumpTarget,
+                    mainRegisterTracker,
+                    new HashSet<uint>(),
+                    0,
+                    0,
+                    0,
+                    targetX,
+                    targetY,
+                    macroProcessedBackEdges);
 
-            MergeMacroResults(mainPathResult, allTexts, ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance, ref callsRandomEncounter, ref battleMonsterCount,
-                ref battleMonsterCountRange, ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
+                MergeMacroResults(mainPathResult, allTexts,
+                    ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance,
+                    ref callsRandomEncounter, ref battleMonsterCount, ref battleMonsterCountRange,
+                    ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles,
+                    partialBattleInfo, ref hasPartialBattlePattern);
 
-            // Анализ альтернативных путей
-            var processedTargets = new HashSet<uint>();
-            foreach (var path in alternativePaths)
-            {
-                if (processedTargets.Contains(path.TargetAddress))
-                    continue;
+                // Анализ альтернативных путей
+                var processedTargets = new HashSet<uint>();
+                foreach (var path in alternativePaths)
+                {
+                    if (processedTargets.Contains(path.TargetAddress))
+                        continue;
 
-                processedTargets.Add(path.TargetAddress);
+                    processedTargets.Add(path.TargetAddress);
 
-                var pathRegisterTracker = new RegisterTracker();
-                var pathResult = _codeExecutor.ExecuteCodeAtAddress(br, path.TargetAddress, pathRegisterTracker,
-                    new HashSet<uint>(), 0, 0, 0, targetX, targetY);
+                    AnalysisDebug.WriteLine($"    AnalyzeMacroResults: альтернативный путь 0x{path.TargetAddress:X4} для клетки ({targetX},{targetY})");
 
-                MergeMacroResults(pathResult, allTexts, ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance, ref callsRandomEncounter, ref battleMonsterCount,
-                    ref battleMonsterCountRange, ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, partialBattleInfo, ref hasPartialBattlePattern);
-            }
+                    var pathRegisterTracker = new RegisterTracker();
+                    var pathResult = _codeExecutor.ExecuteCodeAtAddress(
+                        br,
+                        path.TargetAddress,
+                        pathRegisterTracker,
+                        new HashSet<uint>(),
+                        0,
+                        0,
+                        0,
+                        targetX,
+                        targetY);
 
-            return (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance, callsRandomEncounter, battleMonsterCount, battleMonsterCountRange, isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
-            }
-            finally
-            {
-                debugScope?.Dispose();
+                    MergeMacroResults(pathResult, allTexts,
+                        ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance,
+                        ref callsRandomEncounter, ref battleMonsterCount, ref battleMonsterCountRange,
+                        ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles,
+                        partialBattleInfo, ref hasPartialBattlePattern);
+                }
+
+                AnalysisDebug.WriteLine(
+                    $"    AnalyzeMacroResults: итог для ({targetX},{targetY}) -> texts={allTexts.Count}, " +
+                    $"battleMonsters={battleMonsters.Count}, partialBattles={partialBattles.Count}, " +
+                    $"hasPartialBattlePattern={hasPartialBattlePattern}");
+
+                return (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance,
+                    callsRandomEncounter, battleMonsterCount, battleMonsterCountRange,
+                    isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
             }
         }
 
