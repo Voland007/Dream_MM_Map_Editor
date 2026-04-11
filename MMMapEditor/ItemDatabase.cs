@@ -28,21 +28,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 
 ﻿using System;
 using System.Collections.Generic;
@@ -55,7 +40,6 @@ namespace MMMapEditor
         public string Name { get; set; }
         public byte[] RawData { get; set; }
         public int Index { get; set; }
-        public byte? LootCode { get; set; }
 
         public override string ToString()
         {
@@ -67,7 +51,6 @@ namespace MMMapEditor
     {
         private static List<ItemInfo> _items = null;
         private static Dictionary<int, ItemInfo> _itemsById = null;
-        private static Dictionary<byte, ItemInfo> _itemsByLootCode = null;
 
         public static IReadOnlyList<ItemInfo> Items
         {
@@ -107,27 +90,10 @@ namespace MMMapEditor
             return false;
         }
 
-
-        public static bool TryGetItemNameByLootCode(byte lootCode, out string itemName)
-        {
-            if (_itemsById == null || _itemsByLootCode == null)
-                ParseItemData();
-
-            if (_itemsByLootCode.TryGetValue(lootCode, out var item))
-            {
-                itemName = CleanItemName(item.Name);
-                return !string.IsNullOrWhiteSpace(itemName);
-            }
-
-            itemName = null;
-            return false;
-        }
-
         private static void ParseItemData()
         {
             _items = new List<ItemInfo>();
             _itemsById = new Dictionary<int, ItemInfo>();
-            _itemsByLootCode = new Dictionary<byte, ItemInfo>();
 
             string hexData = @"43 4C 55 42 20 20 20 20 20 20 20 20 20 20 00 00
 00 00 00 00 00 01 03 00 44 41 47 47 45 52 20 20
@@ -532,8 +498,6 @@ namespace MMMapEditor
                 _items.Add(item);
                 _itemsById[itemId] = item;
 
-                if (item.LootCode.HasValue && !_itemsByLootCode.ContainsKey(item.LootCode.Value))
-                    _itemsByLootCode[item.LootCode.Value] = item;
                 itemId++;
             }
         }
@@ -557,10 +521,6 @@ namespace MMMapEditor
             item.Name = nameLength > 0
                 ? CleanItemName(Encoding.ASCII.GetString(data, 0, nameLength))
                 : $"Item_{index}";
-
-            item.LootCode = TryExtractLootCode(data, index, out byte lootCode)
-                ? (byte?)lootCode
-                : null;
 
             return item;
         }
@@ -597,24 +557,6 @@ namespace MMMapEditor
             }
 
             return sb.ToString().Trim();
-        }
-
-
-        private static bool TryExtractLootCode(byte[] data, int index, out byte lootCode)
-        {
-            lootCode = 0;
-
-            // В имеющейся структуре ItemDatabase.RawData нет надёжно документированного
-            // единственного поля "сырой код лута". Прежняя логика ошибочно использовала
-            // порядковый индекс записи как игровой код. Чтобы не порождать ложные
-            // сопоставления, здесь пока не извлекаем код эвристически.
-            //
-            // Метод оставлен как точка расширения: когда будет восстановлено точное
-            // соответствие игрового кода и структуры записи, его можно будет добавить сюда
-            // и анализатор автоматически начнёт распознавать реальные предметы по байту
-            // из [3C7C].
-
-            return false;
         }
     }
 }

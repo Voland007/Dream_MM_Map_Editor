@@ -253,83 +253,97 @@ namespace MMMapEditor
             AddContainerText(instructionAddress, output, 0x00, treatZeroAsDestroyed: false);
         }
 
+        private static bool IsItemAddress(ushort address)
+        {
+            return address == 0x3C7A || address == 0x3C7B || address == 0x3C7C;
+        }
+
         private void ProcessItemTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
             HashSet<string> output)
         {
-            // MOV byte ptr [0x3C7C], imm8
+            // MOV byte ptr [disp16], imm8
             if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06)
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ: прямая запись [3C7C] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddSingleItemText(instructionAddress, output, instructionBytes[4]);
-                return;
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                if (IsItemAddress(memAddr))
+                {
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: прямая запись [0x{memAddr:X4}] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                    AddSingleItemText(instructionAddress, output, instructionBytes[4], memAddr);
+                    return;
+                }
             }
 
-            // MOV byte ptr [0x3C7C], reg8
+            // MOV byte ptr [disp16], reg8
             if (instructionBytes.Length >= 4 &&
-                instructionBytes[0] == 0x88 &&
-                instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
+                instructionBytes[0] == 0x88)
             {
-                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-
-                if (regField < regNames.Length)
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                if (IsItemAddress(memAddr))
                 {
-                    string regName = regNames[regField];
-                    if (registerTracker.TryGetByteRegisterValue(regName, out byte value))
+                    byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
+                    string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                    if (regField < regNames.Length)
                     {
-                        AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regName} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                        AddSingleItemText(instructionAddress, output, value);
+                        string regName = regNames[regField];
+                        if (registerTracker.TryGetByteRegisterValue(regName, out byte value))
+                        {
+                            AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из {regName} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                            AddSingleItemText(instructionAddress, output, value, memAddr);
+                        }
+                        else if (registerTracker.TryGetRegisterRange(regName, out ValueRange8 range))
+                        {
+                            AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из {regName} в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
+                            AddItemRangeText(instructionAddress, output, range, memAddr);
+                        }
                     }
-                    else if (registerTracker.TryGetRegisterRange(regName, out ValueRange8 range))
-                    {
-                        AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regName} в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
-                        AddItemRangeText(instructionAddress, output, range);
-                    }
+                    return;
                 }
-                return;
             }
 
-            // MOV [0x3C7C], AL
+            // MOV [moffs8], AL
             if (instructionBytes.Length >= 3 &&
-                instructionBytes[0] == 0xA2 &&
-                instructionBytes[1] == 0x7C && instructionBytes[2] == 0x3C)
+                instructionBytes[0] == 0xA2)
             {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                if (IsItemAddress(memAddr))
                 {
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddSingleItemText(instructionAddress, output, alValue);
-                }
-                else if (registerTracker.TryGetRegisterRange("AL", out ValueRange8 range))
-                {
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
-                    AddItemRangeText(instructionAddress, output, range);
+                    if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                    {
+                        AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                        AddSingleItemText(instructionAddress, output, alValue, memAddr);
+                    }
+                    else if (registerTracker.TryGetRegisterRange("AL", out ValueRange8 range))
+                    {
+                        AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из AL в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
+                        AddItemRangeText(instructionAddress, output, range, memAddr);
+                    }
                 }
             }
         }
 
-        private void AddSingleItemText(uint instructionAddress, HashSet<string> output, byte itemIndex)
+        private void AddSingleItemText(uint instructionAddress, HashSet<string> output, byte itemIndex, ushort itemAddress)
         {
             string itemText = ResolveItemText(itemIndex, out int databaseIndex, out string debugStatus);
 
             if (itemIndex == 0)
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ УНИЧТОЖЕН: [3C7C] = 0x00 (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ УНИЧТОЖЕН: [0x{itemAddress:X4}] = 0x00 (инструкция 0x{instructionAddress:X4})");
             }
             else if (itemText == "Нет предмета")
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ ОТСУТСТВУЕТ: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} ({debugStatus}) (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ ОТСУТСТВУЕТ: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} ({debugStatus}) через [0x{itemAddress:X4}] (инструкция 0x{instructionAddress:X4})");
             }
             else
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemText} (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemText} через [0x{itemAddress:X4}] (инструкция 0x{instructionAddress:X4})");
             }
 
             output.Add(itemText);
         }
 
-        private void AddItemRangeText(uint instructionAddress, HashSet<string> output, ValueRange8 range)
+        private void AddItemRangeText(uint instructionAddress, HashSet<string> output, ValueRange8 range, ushort itemAddress)
         {
             int totalValues = range.Max - range.Min + 1;
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -340,16 +354,16 @@ namespace MMMapEditor
                 string itemText = ResolveItemText(itemIndex, out int databaseIndex, out string debugStatus);
 
                 if (itemText == "Нет предмета")
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ ДИАПАЗОН: 0x{itemIndex:X2} -> Нет предмета (запись #{databaseIndex}, {debugStatus})");
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ ДИАПАЗОН: [0x{itemAddress:X4}] 0x{itemIndex:X2} -> Нет предмета (запись #{databaseIndex}, {debugStatus})");
                 else
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ ДИАПАЗОН: 0x{itemIndex:X2} -> {itemText} (запись #{databaseIndex})");
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ ДИАПАЗОН: [0x{itemAddress:X4}] 0x{itemIndex:X2} -> {itemText} (запись #{databaseIndex})");
 
                 if (!counts.ContainsKey(itemText))
                     counts[itemText] = 0;
                 counts[itemText]++;
             }
 
-            AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН ПО ДИАПАЗОНУ: 0x{range.Min:X2}-0x{range.Max:X2} -> {counts.Count} итоговых вариантов (инструкция 0x{instructionAddress:X4})");
+            AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН ПО ДИАПАЗОНУ: [0x{itemAddress:X4}] 0x{range.Min:X2}-0x{range.Max:X2} -> {counts.Count} итоговых вариантов (инструкция 0x{instructionAddress:X4})");
 
             output.Add("Возможный предмет:");
 
@@ -715,6 +729,8 @@ namespace MMMapEditor
                 {
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕН ВОЗМОЖНЫЙ ЦИКЛ ОЧИСТКИ ЛУТА 3C77-3C7F (инструкция 0x{instructionAddress:X4})");
                     AddLootDestructionByAddress(instructionAddress, output, 0x3C79);
+                    AddLootDestructionByAddress(instructionAddress, output, 0x3C7A);
+                    AddLootDestructionByAddress(instructionAddress, output, 0x3C7B);
                     AddLootDestructionByAddress(instructionAddress, output, 0x3C7C);
                     AddLootDestructionByAddress(instructionAddress, output, 0x3C7D);
                     AddLootDestructionByAddress(instructionAddress, output, 0x3C7F);
@@ -762,8 +778,10 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C79] = 0x00 (инструкция 0x{instructionAddress:X4})");
                     output.Add("!!! Контейнер с лутом уничтожен !!!");
                     break;
+                case 0x3C7A:
+                case 0x3C7B:
                 case 0x3C7C:
-                    AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C7C] = 0x00 (инструкция 0x{instructionAddress:X4})");
+                    AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [0x{address:X4}] = 0x00 (инструкция 0x{instructionAddress:X4})");
                     output.Add("!!! Предмет уничтожен !!!");
                     break;
                 case 0x3C7D:

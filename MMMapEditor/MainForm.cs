@@ -1,18 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 ﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -1791,7 +1776,8 @@ namespace MMMapEditor
 
                 Group headerGroup = match.Groups[2];
                 rt.Select(headerGroup.Index, headerGroup.Length);
-                rt.SelectionColor = Color.FromArgb(180, 230, 255);
+                rt.SelectionColor = Color.Black;
+                rt.SelectionBackColor = Color.FromArgb(180, 230, 255);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
             }
 
