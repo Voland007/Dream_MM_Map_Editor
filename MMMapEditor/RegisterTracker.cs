@@ -107,12 +107,29 @@ namespace MMMapEditor
             registerRanges[regUpper] = new ValueRange8(min, max);
             registerRangeDistributions[regUpper] = distribution;
 
-            if (regUpper == "AX" || regUpper == "AL" || regUpper == "AH")
+            registers.Remove(regUpper);
+
+            if (regUpper == "AX")
             {
                 registerRanges["AX"] = new ValueRange8(min, max);
                 registerRanges["AL"] = new ValueRange8(min, max);
                 registerRangeDistributions["AX"] = distribution;
                 registerRangeDistributions["AL"] = distribution;
+
+                registers.Remove("AX");
+                registers.Remove("AL");
+                registers.Remove("AH");
+            }
+            else if (regUpper == "AL" || regUpper == "AH")
+            {
+                registerRanges["AX"] = new ValueRange8(min, max);
+                registerRanges["AL"] = new ValueRange8(min, max);
+                registerRangeDistributions["AX"] = distribution;
+                registerRangeDistributions["AL"] = distribution;
+
+                registers.Remove("AX");
+                registers.Remove("AL");
+                registers.Remove("AH");
             }
         }
 

@@ -1,3 +1,18 @@
+// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 ﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -199,7 +214,7 @@ namespace MMMapEditor
                 instructionBytes[2] == 0x7C && instructionBytes[3] == 0x3C)
             {
                 AnalysisDebug.WriteLine($"    ПРЕДМЕТ: прямая запись [3C7C] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddItemText(instructionAddress, output, instructionBytes[4]);
+                AddSingleItemText(instructionAddress, output, instructionBytes[4]);
                 return;
             }
 
@@ -211,11 +226,19 @@ namespace MMMapEditor
                 byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
                 string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
 
-                if (regField < regNames.Length &&
-                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
+                if (regField < regNames.Length)
                 {
-                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                    AddItemText(instructionAddress, output, value);
+                    string regName = regNames[regField];
+                    if (registerTracker.TryGetByteRegisterValue(regName, out byte value))
+                    {
+                        AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regName} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                        AddSingleItemText(instructionAddress, output, value);
+                    }
+                    else if (registerTracker.TryGetRegisterRange(regName, out ValueRange8 range))
+                    {
+                        AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из {regName} в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
+                        AddItemRangeText(instructionAddress, output, range);
+                    }
                 }
                 return;
             }
@@ -228,32 +251,90 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddItemText(instructionAddress, output, alValue);
+                    AddSingleItemText(instructionAddress, output, alValue);
+                }
+                else if (registerTracker.TryGetRegisterRange("AL", out ValueRange8 range))
+                {
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [3C7C] из AL в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
+                    AddItemRangeText(instructionAddress, output, range);
                 }
             }
         }
 
-        private void AddItemText(uint instructionAddress, HashSet<string> output, byte itemIndex)
+        private void AddSingleItemText(uint instructionAddress, HashSet<string> output, byte itemIndex)
         {
+            string itemText = ResolveItemText(itemIndex, out int databaseIndex, out string debugStatus);
+
             if (itemIndex == 0)
             {
                 AnalysisDebug.WriteLine($"    ПРЕДМЕТ УНИЧТОЖЕН: [3C7C] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                output.Add("!!! Предмет уничтожен !!!");
-                return;
             }
-
-            int databaseIndex = itemIndex - 1;
-
-            if (ItemDatabase.TryGetItemName(databaseIndex, out string itemName))
+            else if (itemText == "Нет предмета")
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemName} (инструкция 0x{instructionAddress:X4})");
-                output.Add(itemName);
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ ОТСУТСТВУЕТ: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} ({debugStatus}) (инструкция 0x{instructionAddress:X4})");
             }
             else
             {
-                AnalysisDebug.WriteLine($"    ПРЕДМЕТ НЕ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} (инструкция 0x{instructionAddress:X4})");
-                output.Add($"предмет #{itemIndex}");
+                AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemText} (инструкция 0x{instructionAddress:X4})");
             }
+
+            output.Add(itemText);
+        }
+
+        private void AddItemRangeText(uint instructionAddress, HashSet<string> output, ValueRange8 range)
+        {
+            int totalValues = range.Max - range.Min + 1;
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            for (int raw = range.Min; raw <= range.Max; raw++)
+            {
+                byte itemIndex = (byte)raw;
+                string itemText = ResolveItemText(itemIndex, out int databaseIndex, out string debugStatus);
+
+                if (itemText == "Нет предмета")
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ ДИАПАЗОН: 0x{itemIndex:X2} -> Нет предмета (запись #{databaseIndex}, {debugStatus})");
+                else
+                    AnalysisDebug.WriteLine($"    ПРЕДМЕТ ДИАПАЗОН: 0x{itemIndex:X2} -> {itemText} (запись #{databaseIndex})");
+
+                if (!counts.ContainsKey(itemText))
+                    counts[itemText] = 0;
+                counts[itemText]++;
+            }
+
+            AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН ПО ДИАПАЗОНУ: 0x{range.Min:X2}-0x{range.Max:X2} -> {counts.Count} итоговых вариантов (инструкция 0x{instructionAddress:X4})");
+
+            output.Add("Возможные предметы:");
+
+            foreach (var pair in counts.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
+            {
+                double probability = totalValues > 0 ? pair.Value * 100.0 / totalValues : 0.0;
+                output.Add($"{pair.Key} ({FormatProbability(probability)})");
+            }
+        }
+
+        private string ResolveItemText(byte itemIndex, out int databaseIndex, out string debugStatus)
+        {
+            if (itemIndex == 0)
+            {
+                databaseIndex = -1;
+                debugStatus = "destroyed";
+                return "!!! Предмет уничтожен !!!";
+            }
+
+            databaseIndex = itemIndex - 1;
+            if (ItemDatabase.TryGetItemName(databaseIndex, out string itemName) && !string.IsNullOrWhiteSpace(itemName))
+            {
+                debugStatus = "resolved";
+                return itemName.Trim();
+            }
+
+            debugStatus = "not found in ItemDatabase";
+            return "Нет предмета";
+        }
+
+        private string FormatProbability(double probability)
+        {
+            return probability.ToString("0.##").Replace('.', ',') + "%";
         }
 
         private void ProcessGemsTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
