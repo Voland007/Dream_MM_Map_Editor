@@ -655,6 +655,7 @@ namespace MMMapEditor
             string trimmed = RemoveExistingLootNumbering(line.Trim());
 
             return trimmed.Equals("Возможный предмет:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Случайный предмет:", StringComparison.OrdinalIgnoreCase)
                 || trimmed.Equals("Возможные предметы:", StringComparison.OrdinalIgnoreCase)
                 || trimmed.Equals("Possible item:", StringComparison.OrdinalIgnoreCase)
                 || trimmed.Equals("Possible items:", StringComparison.OrdinalIgnoreCase);

@@ -1757,7 +1757,7 @@ namespace MMMapEditor
 
             var probabilityHeaderMatches = Regex.Matches(
                 noteText,
-                @"^(\d+[\)\.]\s+)(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:)$",
+                @"^(\d+[\)\.]\s+)(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:|Случайный предмет:)$",
                 RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
             foreach (Match match in probabilityHeaderMatches)

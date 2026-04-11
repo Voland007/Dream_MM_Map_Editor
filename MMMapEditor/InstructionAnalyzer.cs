@@ -365,7 +365,7 @@ namespace MMMapEditor
 
             AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН ПО ДИАПАЗОНУ: [0x{itemAddress:X4}] 0x{range.Min:X2}-0x{range.Max:X2} -> {counts.Count} итоговых вариантов (инструкция 0x{instructionAddress:X4})");
 
-            output.Add("Возможный предмет:");
+            output.Add("Случайный предмет:");
 
             foreach (var pair in counts.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
             {
