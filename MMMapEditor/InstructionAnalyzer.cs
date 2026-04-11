@@ -36,7 +36,8 @@ namespace MMMapEditor
         }
 
         public void FindTextsInInstruction(X86Instruction insn, BinaryReader br,
-            RegisterTracker registerTracker, int depth, HashSet<string> output)
+            RegisterTracker registerTracker, int depth, HashSet<string> output,
+            Func<ushort, byte?> tryReadMemory8 = null)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
@@ -45,7 +46,7 @@ namespace MMMapEditor
             ProcessContainerTexts(address, instructionBytes, registerTracker, output);
             ProcessItemTexts(address, instructionBytes, registerTracker, output);
             ProcessGemsTexts(address, instructionBytes, registerTracker, output);
-            ProcessGoldTexts(address, instructionBytes, registerTracker, output);
+            ProcessGoldTexts(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessLootDestructionPatterns(address, instructionBytes, registerTracker, output);
 
             // MOV word ptr [0x3BD4], imm16
@@ -312,60 +313,258 @@ namespace MMMapEditor
         }
 
         private void ProcessGoldTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
-            HashSet<string> output)
+            HashSet<string> output, Func<ushort, byte?> tryReadMemory8 = null)
         {
-            // MOV byte ptr [0x3C7D], imm8
-            if (instructionBytes.Length >= 5 &&
-                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
-                instructionBytes[2] == 0x7D && instructionBytes[3] == 0x3C)
+            if (TryGetDirectByteMemoryWrite(instructionBytes, registerTracker, out ushort memAddr, out byte writtenValue) &&
+                (memAddr == 0x3C7D || memAddr == 0x3C7E))
             {
-                AnalysisDebug.WriteLine($"    GOLD: прямая запись [3C7D] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
-                AddGoldText(instructionAddress, output, instructionBytes[4]);
-                return;
-            }
+                byte? lowByte = memAddr == 0x3C7D ? writtenValue : tryReadMemory8?.Invoke(0x3C7D);
+                byte? highByte = memAddr == 0x3C7E ? writtenValue : tryReadMemory8?.Invoke(0x3C7E);
 
-            // MOV byte ptr [0x3C7D], reg8
-            if (instructionBytes.Length >= 4 &&
-                instructionBytes[0] == 0x88 &&
-                instructionBytes[2] == 0x7D && instructionBytes[3] == 0x3C)
-            {
-                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
-                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                string partName = memAddr == 0x3C7D ? "low" : "high";
+                AnalysisDebug.WriteLine($"    GOLD: обновлён {partName}-byte [{memAddr:X4}] = 0x{writtenValue:X2} по адресу 0x{instructionAddress:X4}");
 
-                if (regField < regNames.Length &&
-                    registerTracker.TryGetByteRegisterValue(regNames[regField], out byte value))
+                if (!lowByte.HasValue || !highByte.HasValue)
                 {
-                    AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] из {regNames[regField]} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
-                    AddGoldText(instructionAddress, output, value);
+                    AnalysisDebug.WriteLine($"    GOLD: ждём вторую половину значения: low={(lowByte.HasValue ? $"0x{lowByte.Value:X2}" : "??")}, high={(highByte.HasValue ? $"0x{highByte.Value:X2}" : "??")}");
+                    return;
                 }
+
+                AddGoldText(instructionAddress, output, lowByte.Value, highByte.Value);
                 return;
             }
 
-            // MOV [0x3C7D], AL
-            if (instructionBytes.Length >= 3 &&
-                instructionBytes[0] == 0xA2 &&
-                instructionBytes[1] == 0x7D && instructionBytes[2] == 0x3C)
+            if (TryGetDirectWordMemoryWrite(instructionBytes, registerTracker, out ushort wordMemAddr, out ushort wordValue))
             {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                if (wordMemAddr == 0x3C7D)
                 {
-                    AnalysisDebug.WriteLine($"    GOLD: запись [3C7D] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
-                    AddGoldText(instructionAddress, output, alValue);
+                    AnalysisDebug.WriteLine($"    GOLD: обновлено word-значение [3C7D:3C7E] = 0x{wordValue:X4} по адресу 0x{instructionAddress:X4}");
+                    AddGoldText(instructionAddress, output, (byte)(wordValue & 0x00FF), (byte)(wordValue >> 8));
+                    return;
+                }
+
+                if (wordMemAddr == 0x3C7E)
+                {
+                    byte lowByte = tryReadMemory8?.Invoke(0x3C7D) ?? 0;
+                    byte highByte = (byte)(wordValue & 0x00FF);
+
+                    AnalysisDebug.WriteLine($"    GOLD: word-запись начата с [3C7E], используем младший байт 0x{highByte:X2} и текущий [3C7D]=0x{lowByte:X2} по адресу 0x{instructionAddress:X4}");
+                    AddGoldText(instructionAddress, output, lowByte, highByte);
                 }
             }
         }
 
-        private void AddGoldText(uint instructionAddress, HashSet<string> output, byte goldValue)
+        private void AddGoldText(uint instructionAddress, HashSet<string> output, byte lowByte, byte highByte)
         {
-            if (goldValue == 0)
+            ushort rawGoldValue = (ushort)(lowByte | (highByte << 8));
+            int goldValue = rawGoldValue >> 1;
+
+            if (rawGoldValue == 0)
             {
-                AnalysisDebug.WriteLine($"    GOLD УНИЧТОЖЕНО: [3C7D] = 0x00 (инструкция 0x{instructionAddress:X4})");
+                AnalysisDebug.WriteLine($"    GOLD УНИЧТОЖЕНО: [3C7D:3C7E] = 0x0000 (инструкция 0x{instructionAddress:X4})");
                 output.Add("!!! GOLD уничтожено !!!");
                 return;
             }
 
-            AnalysisDebug.WriteLine($"    GOLD РАСПОЗНАНО: {goldValue} GOLD (инструкция 0x{instructionAddress:X4})");
+            AnalysisDebug.WriteLine($"    GOLD РАСПОЗНАНО: raw=0x{rawGoldValue:X4} -> {goldValue} GOLD (инструкция 0x{instructionAddress:X4})");
             output.Add($"{goldValue} GOLD");
         }
+
+        private bool TryGetDirectByteMemoryWrite(byte[] instructionBytes, RegisterTracker registerTracker,
+            out ushort memAddr, out byte value)
+        {
+            memAddr = 0;
+            value = 0;
+
+            // MOV byte ptr [disp16], imm8
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06)
+            {
+                memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                value = instructionBytes[4];
+                return true;
+            }
+
+            // MOV byte ptr [disp16], reg8
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x88 && instructionBytes[1] == 0x06)
+            {
+                string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                byte regField = (byte)((instructionBytes[1] >> 3) & 0x07);
+                if (regField >= regNames.Length)
+                    return false;
+
+                memAddr = BitConverter.ToUInt16(instructionBytes, 2);
+                return registerTracker.TryGetByteRegisterValue(regNames[regField], out value);
+            }
+
+            // MOV [moffs8], AL
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2)
+            {
+                memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                return registerTracker.TryGetByteRegisterValue("AL", out value);
+            }
+
+            return false;
+        }
+
+        private bool TryGetDirectWordMemoryWrite(byte[] instructionBytes, RegisterTracker registerTracker,
+            out ushort memAddr, out ushort value)
+        {
+            memAddr = 0;
+            value = 0;
+
+            // MOV word ptr r/m16, imm16
+            if (instructionBytes.Length >= 4 && instructionBytes[0] == 0xC7)
+            {
+                byte modRm = instructionBytes[1];
+                byte regField = (byte)((modRm >> 3) & 0x07);
+                if (regField == 0 &&
+                    TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out memAddr, out int decodedLength) &&
+                    instructionBytes.Length >= decodedLength + 2)
+                {
+                    value = BitConverter.ToUInt16(instructionBytes, decodedLength);
+                    return true;
+                }
+            }
+
+            // MOV word ptr r/m16, reg16
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x89)
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                if (mod != 0x03 &&
+                    TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out memAddr, out _) &&
+                    TryGetReg16ValueFromModRmRegField(modRm, registerTracker, out value))
+                {
+                    return true;
+                }
+            }
+
+            // MOV [moffs16], AX
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA3)
+            {
+                memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                return registerTracker.TryGetRegisterValue("AX", out value);
+            }
+
+            return false;
+        }
+
+        private bool TryDecode16BitEffectiveAddress(byte[] instructionBytes, RegisterTracker registerTracker,
+            out ushort effectiveAddress, out int decodedLength)
+        {
+            effectiveAddress = 0;
+            decodedLength = 0;
+
+            if (instructionBytes == null || instructionBytes.Length < 2)
+                return false;
+
+            byte modRm = instructionBytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte rm = (byte)(modRm & 0x07);
+
+            if (mod == 0x03)
+                return false;
+
+            sbyte disp8 = 0;
+            short disp16 = 0;
+            int dispSize;
+
+            switch (mod)
+            {
+                case 0x00:
+                    if (rm == 0x06)
+                    {
+                        if (instructionBytes.Length < 4)
+                            return false;
+
+                        effectiveAddress = BitConverter.ToUInt16(instructionBytes, 2);
+                        decodedLength = 4;
+                        return true;
+                    }
+
+                    dispSize = 0;
+                    break;
+
+                case 0x01:
+                    if (instructionBytes.Length < 3)
+                        return false;
+
+                    disp8 = unchecked((sbyte)instructionBytes[2]);
+                    dispSize = 1;
+                    break;
+
+                case 0x02:
+                    if (instructionBytes.Length < 4)
+                        return false;
+
+                    disp16 = unchecked((short)BitConverter.ToUInt16(instructionBytes, 2));
+                    dispSize = 2;
+                    break;
+
+                default:
+                    return false;
+            }
+
+            if (!TryGet16BitAddressBase(registerTracker, rm, out ushort baseValue))
+                return false;
+
+            int signedDisp = dispSize == 1 ? disp8 : (dispSize == 2 ? disp16 : 0);
+            effectiveAddress = unchecked((ushort)(baseValue + signedDisp));
+            decodedLength = 2 + dispSize;
+            return true;
+        }
+
+        private bool TryGet16BitAddressBase(RegisterTracker registerTracker, byte rm, out ushort baseValue)
+        {
+            baseValue = 0;
+
+            switch (rm)
+            {
+                case 0x00:
+                    return registerTracker.TryGetRegisterValue("BX", out ushort bx0) &&
+                           registerTracker.TryGetRegisterValue("SI", out ushort si0) &&
+                           TryCombineAddressParts(bx0, si0, out baseValue);
+                case 0x01:
+                    return registerTracker.TryGetRegisterValue("BX", out ushort bx1) &&
+                           registerTracker.TryGetRegisterValue("DI", out ushort di1) &&
+                           TryCombineAddressParts(bx1, di1, out baseValue);
+                case 0x02:
+                    return registerTracker.TryGetRegisterValue("BP", out ushort bp2) &&
+                           registerTracker.TryGetRegisterValue("SI", out ushort si2) &&
+                           TryCombineAddressParts(bp2, si2, out baseValue);
+                case 0x03:
+                    return registerTracker.TryGetRegisterValue("BP", out ushort bp3) &&
+                           registerTracker.TryGetRegisterValue("DI", out ushort di3) &&
+                           TryCombineAddressParts(bp3, di3, out baseValue);
+                case 0x04:
+                    return registerTracker.TryGetRegisterValue("SI", out baseValue);
+                case 0x05:
+                    return registerTracker.TryGetRegisterValue("DI", out baseValue);
+                case 0x06:
+                    return registerTracker.TryGetRegisterValue("BP", out baseValue);
+                case 0x07:
+                    return registerTracker.TryGetRegisterValue("BX", out baseValue);
+                default:
+                    return false;
+            }
+        }
+
+        private bool TryCombineAddressParts(ushort a, ushort b, out ushort sum)
+        {
+            sum = unchecked((ushort)(a + b));
+            return true;
+        }
+
+        private bool TryGetReg16ValueFromModRmRegField(byte modRm, RegisterTracker registerTracker, out ushort value)
+        {
+            value = 0;
+            string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            byte regField = (byte)((modRm >> 3) & 0x07);
+            return regField < regNames.Length && registerTracker.TryGetRegisterValue(regNames[regField], out value);
+        }
+
 
 
         private void ProcessLootDestructionPatterns(uint instructionAddress, byte[] instructionBytes,

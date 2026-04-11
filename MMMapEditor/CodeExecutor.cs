@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 using System;
 using System.Collections.Generic;
@@ -169,7 +184,7 @@ namespace MMMapEditor
 
                         // Поиск прямых текстов
                         var newTexts = new HashSet<string>();
-                        _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts);
+                        _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts, TryGetEmulatedMemory8Value);
                         ProcessFoundTexts(newTexts, foundTextsInThisPath, result, currentCallDepth, insn, debugMode, ref textOrderCounter);
 
                         // Поиск изменений статистики монстров и информации о битвах
@@ -1475,7 +1490,29 @@ namespace MMMapEditor
             }
 
             // Сохраняем изменения в эмулируемую память (runtime state)
-            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2)
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA3)
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                if (registerTracker.TryGetRegisterValue("AX", out ushort axValue))
+                {
+                    ApplyTrackedWordWrite(memAddr, axValue, result, targetX, targetY, insn, debugMode, "MOV [moffs16], AX");
+                }
+            }
+            else if (instructionBytes.Length >= 4 && instructionBytes[0] == 0xC7)
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte regField = (byte)((modRm >> 3) & 0x07);
+
+                if (mod != 0x03 && regField == 0 &&
+                    TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out int decodedLength, out string eaText) &&
+                    instructionBytes.Length >= decodedLength + 2)
+                {
+                    ushort immValue = BitConverter.ToUInt16(instructionBytes, decodedLength);
+                    ApplyTrackedWordWrite(memAddr, immValue, result, targetX, targetY, insn, debugMode, $"MOV word ptr {eaText}, 0x{immValue:X4}");
+                }
+            }
+            else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2)
             {
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
 

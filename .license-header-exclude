@@ -5,3 +5,4 @@ MMMapEditor/PathAnalyzer.cs
 MMMapEditor/Properties/Resources.Designer.cs
 MMMapEditor/Properties/Settings.Designer.cs
 MMMapEditor/obj/Debug/net6.0-windows/MMMapEditor.GlobalUsings.g.cs
+MMMapEditor/CodeExecutor.cs
