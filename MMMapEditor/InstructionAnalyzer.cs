@@ -59,6 +59,7 @@ namespace MMMapEditor
             int initialCount = output.Count;
 
             ProcessContainerTexts(address, instructionBytes, registerTracker, output);
+            ProcessImplicitContainerTextForLoot(address, instructionBytes, output, tryReadMemory8);
             ProcessItemTexts(address, instructionBytes, registerTracker, output);
             ProcessGemsTexts(address, instructionBytes, registerTracker, output);
             ProcessGoldTexts(address, instructionBytes, registerTracker, output, tryReadMemory8);
@@ -186,7 +187,12 @@ namespace MMMapEditor
 
         private void AddContainerText(uint instructionAddress, HashSet<string> output, byte containerIndex)
         {
-            if (containerIndex == 0)
+            AddContainerText(instructionAddress, output, containerIndex, treatZeroAsDestroyed: true);
+        }
+
+        private void AddContainerText(uint instructionAddress, HashSet<string> output, byte containerIndex, bool treatZeroAsDestroyed)
+        {
+            if (containerIndex == 0 && treatZeroAsDestroyed)
             {
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР УНИЧТОЖЕН: [3C79] = 0x00 (инструкция 0x{instructionAddress:X4})");
                 output.Add("!!! Контейнер с лутом уничтожен !!!");
@@ -203,6 +209,63 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР НЕ РАСПОЗНАН: индекс 0x{containerIndex:X2} (инструкция 0x{instructionAddress:X4})");
                 output.Add($"На ячейке находится контейнер #{containerIndex} в котором лежит:");
             }
+        }
+
+        private void ProcessImplicitContainerTextForLoot(uint instructionAddress, byte[] instructionBytes,
+            HashSet<string> output, Func<ushort, byte?> tryReadMemory8)
+        {
+            if (tryReadMemory8 == null)
+                return;
+
+            bool hasExplicitContainerWrite = IsExplicitContainerWrite(instructionBytes);
+            bool hasTrackedContainerValue = tryReadMemory8(0x3C79).HasValue;
+
+            bool hasItem = (tryReadMemory8(0x3C7C) ?? 0) != 0;
+            bool hasGold = (tryReadMemory8(0x3C7D) ?? 0) != 0 || (tryReadMemory8(0x3C7E) ?? 0) != 0;
+            bool hasGems = (tryReadMemory8(0x3C7F) ?? 0) != 0;
+
+            if (!hasExplicitContainerWrite && !hasTrackedContainerValue && (hasItem || hasGold || hasGems))
+            {
+                AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: неявный контейнер по луту без явной записи [3C79], используем индекс 0x00 как обычный контейнер (инструкция 0x{instructionAddress:X4})");
+                AddImplicitContainerText(instructionAddress, output);
+            }
+        }
+
+        private bool IsExplicitContainerWrite(byte[] instructionBytes)
+        {
+            if (instructionBytes == null)
+                return false;
+
+            // MOV byte ptr [0x3C79], imm8
+            if (instructionBytes.Length >= 5 &&
+                instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
+                instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
+            {
+                return true;
+            }
+
+            // MOV byte ptr [0x3C79], reg8
+            if (instructionBytes.Length >= 4 &&
+                instructionBytes[0] == 0x88 &&
+                instructionBytes[2] == 0x79 && instructionBytes[3] == 0x3C)
+            {
+                return true;
+            }
+
+            // MOV [0x3C79], AL
+            if (instructionBytes.Length >= 3 &&
+                instructionBytes[0] == 0xA2 &&
+                instructionBytes[1] == 0x79 && instructionBytes[2] == 0x3C)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private void AddImplicitContainerText(uint instructionAddress, HashSet<string> output)
+        {
+            AddContainerText(instructionAddress, output, 0x00, treatZeroAsDestroyed: false);
         }
 
         private void ProcessItemTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
