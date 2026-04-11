@@ -5468,7 +5468,11 @@ namespace MMMapEditor
                 {
                     // Если центральный объект не найден, рисуем вопросительный знак
                     Font questionFont = new Font("Arial", 24, FontStyle.Bold);
-                    g.DrawString("?", questionFont, Brushes.White, new PointF(
+                    Brush questionBrush = centralOption == "AnyObjectSpec"
+                        ? Brushes.LightSkyBlue
+                        : Brushes.White;
+
+                    g.DrawString("?", questionFont, questionBrush, new PointF(
             bounds.X + bounds.Width / 2, // центр по горизонтали
             bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
                                            ), new StringFormat()
