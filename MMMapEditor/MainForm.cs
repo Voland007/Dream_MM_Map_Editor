@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 using System;
 using System.Collections.Generic;
@@ -1753,6 +1768,61 @@ namespace MMMapEditor
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(255, 228, 120);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var probabilityHeaderMatches = Regex.Matches(
+                noteText,
+                @"^(\d+[\)\.]\s+)(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:)$",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+            foreach (Match match in probabilityHeaderMatches)
+            {
+                if (!match.Success || match.Groups.Count < 3)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 236, 139);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group numberGroup = match.Groups[1];
+                rt.Select(numberGroup.Index, numberGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 170, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group headerGroup = match.Groups[2];
+                rt.Select(headerGroup.Index, headerGroup.Length);
+                rt.SelectionColor = Color.FromArgb(180, 230, 255);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+            }
+
+            var probabilitySubItemMatches = Regex.Matches(
+                noteText,
+                @"^(\s*•\s+)([^\n]+?)(\s+\(\d+(?:[\.,]\d+)?%\))$",
+                RegexOptions.Multiline);
+
+            foreach (Match match in probabilitySubItemMatches)
+            {
+                if (!match.Success || match.Groups.Count < 4)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(210, 230, 255);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                Group bulletGroup = match.Groups[1];
+                rt.Select(bulletGroup.Index, bulletGroup.Length);
+                rt.SelectionColor = Color.FromArgb(120, 180, 245);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group itemGroup = match.Groups[2];
+                rt.Select(itemGroup.Index, itemGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group probabilityGroup = match.Groups[3];
+                rt.Select(probabilityGroup.Index, probabilityGroup.Length);
+                rt.SelectionColor = Color.FromArgb(144, 238, 144);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
             }
         }
 

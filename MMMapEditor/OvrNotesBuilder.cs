@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 ﻿using System;
 using System.Collections.Generic;
@@ -544,65 +559,67 @@ namespace MMMapEditor
             if (lines == null || lines.Count == 0)
                 return lines;
 
-            var result = new List<string>(lines);
-            var numberedIndexes = new HashSet<int>();
+            var result = new List<string>();
+            int i = 0;
 
-            for (int i = 0; i < result.Count; i++)
+            while (i < lines.Count)
             {
-                if (!IsExplicitLootValueLine(result[i]))
-                    continue;
+                string current = lines[i] ?? string.Empty;
 
-                var entries = CollectLootEntries(result, i);
-                if (entries.Count <= 1)
-                    continue;
-
-                for (int entryNumber = 0; entryNumber < entries.Count; entryNumber++)
+                if (!IsContainerLootIntroLine(current))
                 {
-                    int entryIndex = entries[entryNumber];
-                    if (numberedIndexes.Contains(entryIndex))
-                        continue;
+                    result.Add(current);
+                    i++;
+                    continue;
+                }
 
-                    result[entryIndex] = $"{entryNumber + 1}) {RemoveExistingLootNumbering(result[entryIndex])}";
-                    numberedIndexes.Add(entryIndex);
+                result.Add(current);
+                i++;
+
+                int entryNumber = 1;
+
+                while (i < lines.Count)
+                {
+                    string line = lines[i] ?? string.Empty;
+
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        result.Add(line);
+                        i++;
+                        break;
+                    }
+
+                    if (IsContainerLootIntroLine(line))
+                        break;
+
+                    if (IsProbabilityLootHeader(line))
+                    {
+                        result.Add($"{entryNumber}) {RemoveExistingLootNumbering(line)}");
+                        entryNumber++;
+                        i++;
+
+                        while (i < lines.Count && IsProbabilityLootItemLine(lines[i]))
+                        {
+                            result.Add($"   • {RemoveProbabilityBullet(lines[i])}");
+                            i++;
+                        }
+
+                        continue;
+                    }
+
+                    if (IsExplicitLootValueLine(line) || IsPlainLootItemLine(line))
+                    {
+                        result.Add($"{entryNumber}) {RemoveExistingLootNumbering(line)}");
+                        entryNumber++;
+                        i++;
+                        continue;
+                    }
+
+                    break;
                 }
             }
 
             return result;
-        }
-
-        private static List<int> CollectLootEntries(List<string> lines, int anchorIndex)
-        {
-            var entries = new List<int> { anchorIndex };
-
-            for (int i = anchorIndex - 1; i >= 0; i--)
-            {
-                if (string.IsNullOrWhiteSpace(lines[i]) || IsLootIntroLine(lines[i]))
-                    break;
-
-                if (IsPossibleLootItemLine(lines[i]))
-                {
-                    entries.Insert(0, i);
-                    continue;
-                }
-
-                break;
-            }
-
-            for (int i = anchorIndex + 1; i < lines.Count; i++)
-            {
-                if (string.IsNullOrWhiteSpace(lines[i]) || IsLootIntroLine(lines[i]))
-                    break;
-
-                if (IsExplicitLootValueLine(lines[i]) || IsPossibleLootItemLine(lines[i]))
-                {
-                    entries.Add(i);
-                    continue;
-                }
-
-                break;
-            }
-
-            return entries.Distinct().ToList();
         }
 
         private static bool IsExplicitLootValueLine(string line)
@@ -634,17 +651,79 @@ namespace MMMapEditor
             return false;
         }
 
-        private static bool IsPossibleLootItemLine(string line)
+        private static bool IsContainerLootIntroLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.Trim();
+
+            return trimmed.StartsWith("На ячейке находится ", StringComparison.OrdinalIgnoreCase)
+                && trimmed.EndsWith("в котором лежит:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsProbabilityLootHeader(string line)
         {
             if (string.IsNullOrWhiteSpace(line))
                 return false;
 
             string trimmed = RemoveExistingLootNumbering(line.Trim());
-            if (trimmed.Length == 0 || IsLootIntroLine(trimmed))
+
+            return trimmed.Equals("Возможный предмет:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Возможные предметы:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Possible item:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Possible items:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsProbabilityLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveProbabilityBullet(RemoveExistingLootNumbering(line.Trim()));
+
+            return System.Text.RegularExpressions.Regex.IsMatch(
+                trimmed,
+                @"^[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 '\-\+\.]{1,60}\s+\(\d+(?:[.,]\d+)?%\)$",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        }
+
+        private static string RemoveProbabilityBullet(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+
+            if (trimmed.StartsWith("• "))
+                return trimmed.Substring(2).TrimStart();
+
+            if (trimmed.StartsWith("- "))
+                return trimmed.Substring(2).TrimStart();
+
+            if (trimmed.StartsWith("* "))
+                return trimmed.Substring(2).TrimStart();
+
+            return trimmed;
+        }
+
+        private static bool IsPlainLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveExistingLootNumbering(line.Trim());
+            if (trimmed.Length == 0)
+                return false;
+
+            if (IsContainerLootIntroLine(trimmed) || IsProbabilityLootHeader(trimmed))
                 return false;
 
             if (IsExplicitLootValueLine(trimmed))
                 return true;
+
+            if (IsProbabilityLootItemLine(trimmed))
+                return false;
 
             if (trimmed.Length > 60)
                 return false;
@@ -664,15 +743,6 @@ namespace MMMapEditor
 
             int upperCount = trimmed.Count(char.IsUpper);
             return upperCount >= Math.Max(3, letterCount * 3 / 4);
-        }
-
-        private static bool IsLootIntroLine(string line)
-        {
-            if (string.IsNullOrWhiteSpace(line))
-                return false;
-
-            string trimmed = line.Trim();
-            return trimmed.EndsWith(":");
         }
 
         private static string RemoveExistingLootNumbering(string line)
