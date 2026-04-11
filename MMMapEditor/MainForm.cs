@@ -5470,7 +5470,9 @@ namespace MMMapEditor
                     Font questionFont = new Font("Arial", 24, FontStyle.Bold);
                     Brush questionBrush = centralOption == "AnyObjectSpec"
                         ? Brushes.LightSkyBlue
-                        : Brushes.White;
+                        : centralOption == "AnyObject"
+                            ? Brushes.White
+                            : Brushes.Yellow;
 
                     g.DrawString("?", questionFont, questionBrush, new PointF(
             bounds.X + bounds.Width / 2, // центр по горизонтали
