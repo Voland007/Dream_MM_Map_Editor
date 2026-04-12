@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -129,7 +129,7 @@ namespace MMMapEditor
 
                 result.MessageStates[pos] = currentMessages;
 
-                Dictionary<int, List<string>> variantContents = BuildVariantContents(
+                string hierarchicalNotes = BuildHierarchicalVariantNotes(
                     obj,
                     defaultMonsterPower,
                     defaultMonsterLevel,
@@ -137,45 +137,60 @@ namespace MMMapEditor
                     defaultDarkeningLevel,
                     defaultRandomEncounterChance);
 
-                foreach (var key in variantContents.Keys.ToList())
-                    variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
-
-                // Для объектов с PathVariants сохраняем все варианты исполнения как есть.
-                // Иначе разные ветки с одинаковым текстом (например, найденные внутри CALL)
-                // снова схлопнутся уже на этапе построения заметок.
-                bool preserveExplicitPathVariants = obj.PathVariants != null && obj.PathVariants.Count > 0;
-                if (!preserveExplicitPathVariants)
-                    variantContents = DeduplicateVariantContents(variantContents);
-
                 StringBuilder newNotes = new StringBuilder();
 
-                if (variantContents.Count == 0)
+                if (!string.IsNullOrWhiteSpace(hierarchicalNotes))
                 {
-                    newNotes.Append(existingCellNotes);
-                }
-                else if (variantContents.Count == 1)
-                {
-                    var singleVariant = variantContents.First().Value;
-                    foreach (var line in singleVariant)
-                        newNotes.Append(line + "\n");
+                    newNotes.Append(hierarchicalNotes);
                 }
                 else
                 {
-                    newNotes.AppendLine("Эта ячейка содержит различные варианты текста:");
+                    Dictionary<int, List<string>> variantContents = BuildVariantContents(
+                        obj,
+                        defaultMonsterPower,
+                        defaultMonsterLevel,
+                        defaultMonsterBatchCount,
+                        defaultDarkeningLevel,
+                        defaultRandomEncounterChance);
 
-                    var sortedVariants = variantContents.OrderBy(v => v.Key).ToList();
-                    for (int i = 0; i < sortedVariants.Count; i++)
+                    foreach (var key in variantContents.Keys.ToList())
+                        variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
+
+                    // Для объектов с PathVariants сохраняем все варианты исполнения как есть.
+                    // Иначе разные ветки с одинаковым текстом (например, найденные внутри CALL)
+                    // снова схлопнутся уже на этапе построения заметок.
+                    bool preserveExplicitPathVariants = obj.PathVariants != null && obj.PathVariants.Count > 0;
+                    if (!preserveExplicitPathVariants)
+                        variantContents = DeduplicateVariantContents(variantContents);
+
+                    if (variantContents.Count == 0)
                     {
-                        var variant = sortedVariants[i];
-                        string variantHeader = BuildVariantHeader(obj, variant.Key, i + 1);
-                        bool headerContainsProbability = VariantHeaderContainsProbability(variantHeader);
-                        newNotes.Append($"{variantHeader}:\n");
+                        newNotes.Append(existingCellNotes);
+                    }
+                    else if (variantContents.Count == 1)
+                    {
+                        var singleVariant = variantContents.First().Value;
+                        foreach (var line in singleVariant)
+                            newNotes.Append(line + "\n");
+                    }
+                    else
+                    {
+                        newNotes.AppendLine("Эта ячейка содержит различные варианты текста:");
 
-                        foreach (var line in variant.Value)
-                            newNotes.Append(FormatVariantLine(line, headerContainsProbability) + "\n");
+                        var sortedVariants = variantContents.OrderBy(v => v.Key).ToList();
+                        for (int i = 0; i < sortedVariants.Count; i++)
+                        {
+                            var variant = sortedVariants[i];
+                            string variantHeader = BuildVariantHeader(obj, variant.Key, i + 1);
+                            bool headerContainsProbability = VariantHeaderContainsProbability(variantHeader);
+                            newNotes.Append($"{variantHeader}:\n");
 
-                        if (i < sortedVariants.Count - 1)
-                            newNotes.AppendLine();
+                            foreach (var line in variant.Value)
+                                newNotes.Append(FormatVariantLine(line, headerContainsProbability) + "\n");
+
+                            if (i < sortedVariants.Count - 1)
+                                newNotes.AppendLine();
+                        }
                     }
                 }
 
@@ -334,7 +349,7 @@ namespace MMMapEditor
 
         private static string BuildVariantHeader(OvrObject obj, int variantKey, int displayVariantNumber)
         {
-            string header = $"Вариант{displayVariantNumber}";
+            string header = $"Вариант {displayVariantNumber}";
 
             if (obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var pathVariant))
             {
@@ -425,6 +440,360 @@ namespace MMMapEditor
             }
         }
 
+        private sealed class VariantRenderItem
+        {
+            public PathVariantInfo Variant { get; set; }
+            public List<string> Lines { get; set; } = new List<string>();
+        }
+
+        private sealed class VariantTreeNode
+        {
+            public string SegmentKey { get; set; }
+            public string Label { get; set; }
+            public List<string> CommonLines { get; set; } = new List<string>();
+            public List<VariantRenderItem> DirectVariants { get; set; } = new List<VariantRenderItem>();
+            public List<VariantTreeNode> Children { get; set; } = new List<VariantTreeNode>();
+        }
+
+        private sealed class TopLevelVariantGroup
+        {
+            public List<VariantRenderItem> Items { get; set; } = new List<VariantRenderItem>();
+            public VariantTreeNode TreeRoot { get; set; }
+        }
+
+        private static string BuildHierarchicalVariantNotes(
+            OvrObject obj,
+            byte defaultMonsterPower,
+            byte defaultMonsterLevel,
+            byte defaultMonsterBatchCount,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance)
+        {
+            if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
+                return null;
+
+            var items = new List<VariantRenderItem>();
+            foreach (var variant in obj.PathVariants.Values
+                .Where(v => v != null)
+                .OrderBy(v => v.PathId))
+            {
+                var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
+                var lines = BuildVariantLines(
+                    variantObject,
+                    variant.Texts,
+                    defaultMonsterPower,
+                    defaultMonsterLevel,
+                    defaultMonsterBatchCount,
+                    defaultDarkeningLevel,
+                    defaultRandomEncounterChance);
+
+                lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
+                items.Add(new VariantRenderItem { Variant = variant, Lines = lines });
+            }
+
+            if (items.Count <= 1)
+                return null;
+
+            var groups = BuildTopLevelVariantGroups(items);
+            if (groups.Count <= 1 && groups[0].TreeRoot.Children.Count == 0)
+                return null;
+
+            var sb = new StringBuilder();
+            for (int i = 0; i < groups.Count; i++)
+            {
+                RenderTopLevelGroup(groups[i], sb, i + 1);
+                if (i < groups.Count - 1)
+                    sb.AppendLine();
+            }
+
+            return sb.ToString().TrimEnd('\n');
+        }
+
+        private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(List<VariantRenderItem> items)
+        {
+            var groups = items
+                .GroupBy(item => BuildTopLevelGroupKey(item))
+                .Select(g => new TopLevelVariantGroup
+                {
+                    Items = g.OrderBy(v => v.Variant?.PathId ?? int.MaxValue).ToList()
+                })
+                .OrderBy(g => g.Items.Min(v => v.Variant?.PathId ?? int.MaxValue))
+                .ToList();
+
+            foreach (var group in groups)
+            {
+                var root = BuildVariantTree(group.Items);
+                ComputeCommonLines(root);
+                group.TreeRoot = CompressVariantTree(root);
+            }
+
+            return groups;
+        }
+
+        private static string BuildTopLevelGroupKey(VariantRenderItem item)
+        {
+            if (item?.Lines == null || item.Lines.Count == 0)
+                return "<NO_LINES>";
+
+            return string.Join("\n---\n", item.Lines.Take(1));
+        }
+
+        private static VariantTreeNode BuildVariantTree(List<VariantRenderItem> items)
+        {
+            var root = new VariantTreeNode();
+
+            foreach (var item in items)
+            {
+                var current = root;
+                var choices = GetRelevantBranchChoices(item?.Variant).ToList();
+
+                for (int i = 0; i < choices.Count; i++)
+                {
+                    var choice = choices[i];
+                    string key = BuildChoiceKey(choice, i);
+                    var child = current.Children.FirstOrDefault(c => c.SegmentKey == key);
+                    if (child == null)
+                    {
+                        child = new VariantTreeNode
+                        {
+                            SegmentKey = key,
+                            Label = NormalizeChoiceLabel(choice?.Label)
+                        };
+                        current.Children.Add(child);
+                    }
+                    else if (string.IsNullOrWhiteSpace(child.Label))
+                    {
+                        child.Label = NormalizeChoiceLabel(choice?.Label);
+                    }
+
+                    current = child;
+                }
+
+                current.DirectVariants.Add(item);
+            }
+
+            return root;
+        }
+
+        private static IEnumerable<BranchChoice> GetRelevantBranchChoices(PathVariantInfo variant)
+        {
+            if (variant?.BranchChoices == null)
+                yield break;
+
+            foreach (var choice in variant.BranchChoices)
+            {
+                if (choice == null)
+                    continue;
+
+                if (!string.IsNullOrWhiteSpace(choice.Label))
+                    yield return choice;
+            }
+        }
+
+        private static string BuildChoiceKey(BranchChoice choice, int index)
+        {
+            if (choice == null)
+                return $"{index}:<null>";
+
+            return string.Join("|",
+                index,
+                choice.Label ?? string.Empty,
+                choice.CompareRegister ?? string.Empty,
+                choice.CompareValue?.ToString() ?? string.Empty);
+        }
+
+        private static string NormalizeChoiceLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return null;
+
+            label = label.Trim();
+            return label.EndsWith(")", StringComparison.Ordinal) ? label : label + ")";
+        }
+
+        private static List<VariantRenderItem> GetAllVariants(VariantTreeNode node)
+        {
+            var result = new List<VariantRenderItem>();
+            if (node == null)
+                return result;
+
+            result.AddRange(node.DirectVariants);
+            foreach (var child in node.Children)
+                result.AddRange(GetAllVariants(child));
+
+            return result;
+        }
+
+        private static void ComputeCommonLines(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            var descendants = GetAllVariants(node);
+            if (descendants.Count > 0)
+            {
+                var commonLines = GetCommonPrefix(descendants.Select(v => v.Lines).ToList());
+                if (commonLines.Count > 0)
+                {
+                    node.CommonLines = commonLines;
+                    foreach (var item in descendants)
+                        item.Lines = item.Lines.Skip(commonLines.Count).ToList();
+                }
+            }
+
+            foreach (var child in node.Children)
+                ComputeCommonLines(child);
+        }
+
+        private static List<string> GetCommonPrefix(List<List<string>> source)
+        {
+            var result = new List<string>();
+            if (source == null || source.Count == 0)
+                return result;
+
+            int minCount = source.Min(lines => lines?.Count ?? 0);
+            for (int i = 0; i < minCount; i++)
+            {
+                string first = source[0][i] ?? string.Empty;
+                if (source.All(lines => string.Equals(lines[i] ?? string.Empty, first, StringComparison.Ordinal)))
+                    result.Add(first);
+                else
+                    break;
+            }
+
+            return result;
+        }
+
+        private static VariantTreeNode CompressVariantTree(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            for (int i = 0; i < node.Children.Count; i++)
+                node.Children[i] = CompressVariantTree(node.Children[i]);
+
+            while (node.Children.Count == 1 &&
+                   node.DirectVariants.Count == 0 &&
+                   node.CommonLines.Count == 0 &&
+                   string.IsNullOrWhiteSpace(node.Label))
+            {
+                node = node.Children[0];
+            }
+
+            return node;
+        }
+
+        private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
+        {
+            sb.AppendLine($"Вариант {groupNumber}:");
+
+            foreach (var line in group.TreeRoot?.CommonLines ?? Enumerable.Empty<string>())
+                sb.AppendLine("   " + line);
+
+            bool needGapAfterCommon = (group.TreeRoot?.CommonLines?.Count ?? 0) > 0 &&
+                                      ((group.TreeRoot?.Children?.Count ?? 0) > 0 || (group.TreeRoot?.DirectVariants?.Count ?? 0) > 0);
+            if (needGapAfterCommon)
+                sb.AppendLine();
+
+            int childIndex = 1;
+            bool wroteAnyChild = false;
+
+            foreach (var child in group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
+            {
+                if (wroteAnyChild)
+                    sb.AppendLine();
+                RenderVariantTreeNode(child, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                wroteAnyChild = true;
+            }
+
+            foreach (var item in group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                if (wroteAnyChild)
+                    sb.AppendLine();
+                RenderLooseVariant(item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                wroteAnyChild = true;
+            }
+        }
+
+        private static void RenderVariantTreeNode(VariantTreeNode node, StringBuilder sb, List<int> numbering, int depth)
+        {
+            string indent = new string(' ', depth * 3);
+            string variantNumber = string.Join(".", numbering);
+            var singleLeaf = node.DirectVariants.Count == 1 && node.Children.Count == 0
+                ? node.DirectVariants[0].Variant
+                : null;
+
+            string header = $"{indent}Вариант {variantNumber}";
+            if (singleLeaf != null)
+            {
+                string probability = BuildProbabilityLine(singleLeaf);
+                if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
+                    header += $" ({probability.Substring("Вероятность: ".Length)})";
+            }
+
+            if (!string.IsNullOrWhiteSpace(node.Label))
+                header += $": {node.Label}";
+            else
+                header += ":";
+
+            sb.AppendLine(header);
+
+            foreach (var line in node.CommonLines)
+                sb.AppendLine(indent + "   " + FormatVariantLine(line, singleLeaf != null && singleLeaf.HasProbabilityInfo));
+
+            if (node.DirectVariants.Count == 1 && node.Children.Count == 0)
+            {
+                foreach (var line in node.DirectVariants[0].Lines)
+                    sb.AppendLine(indent + "   " + FormatVariantLine(line, singleLeaf != null && singleLeaf.HasProbabilityInfo));
+                return;
+            }
+
+            bool hasBody = node.CommonLines.Count > 0 || node.DirectVariants.Count > 0 || node.Children.Count > 0;
+            if (hasBody)
+                sb.AppendLine();
+
+            int nestedIndex = 1;
+            bool wroteAny = false;
+
+            foreach (var child in node.Children)
+            {
+                if (wroteAny)
+                    sb.AppendLine();
+                RenderVariantTreeNode(child, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                wroteAny = true;
+            }
+
+            foreach (var variant in OrderDirectVariants(node.DirectVariants))
+            {
+                if (wroteAny)
+                    sb.AppendLine();
+                RenderLooseVariant(variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                wroteAny = true;
+            }
+        }
+
+        private static IEnumerable<VariantRenderItem> OrderDirectVariants(IEnumerable<VariantRenderItem> variants)
+        {
+            return (variants ?? Enumerable.Empty<VariantRenderItem>())
+                .OrderBy(v => v?.Lines?.Count ?? 0)
+                .ThenByDescending(v => v?.Variant?.ProbabilityDenominator ?? 1)
+                .ThenByDescending(v => v?.Variant?.ProbabilityNumerator ?? 1)
+                .ThenBy(v => v?.Variant?.PathId ?? int.MaxValue);
+        }
+
+        private static void RenderLooseVariant(VariantRenderItem item, StringBuilder sb, List<int> numbering, int depth)
+        {
+            string indent = new string(' ', depth * 3);
+            string header = $"{indent}Вариант {string.Join(".", numbering)}";
+            string probability = BuildProbabilityLine(item?.Variant);
+            if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
+                header += $" ({probability.Substring("Вероятность: ".Length)})";
+            header += ":";
+            sb.AppendLine(header);
+
+            foreach (var line in item?.Lines ?? Enumerable.Empty<string>())
+                sb.AppendLine(indent + "   " + FormatVariantLine(line, item?.Variant?.HasProbabilityInfo == true));
+        }
         private static List<string> DecodeNoteTexts(IEnumerable<string> rawTexts)
         {
             var result = new List<string>();

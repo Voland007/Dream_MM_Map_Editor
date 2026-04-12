@@ -790,12 +790,22 @@ namespace MMMapEditor
         }
     }
 
+    public class BranchChoice
+    {
+        public string Label { get; set; }
+        public string Condition { get; set; }
+        public byte? CompareValue { get; set; }
+        public string CompareRegister { get; set; }
+        public bool IsLinear { get; set; }
+    }
+
     public class PathVariantInfo
     {
         public int PathId { get; set; }
         public bool IsLeaf { get; set; }
 
         public List<string> Texts { get; set; } = new List<string>();
+        public List<BranchChoice> BranchChoices { get; set; } = new List<BranchChoice>();
 
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }
@@ -863,6 +873,17 @@ namespace MMMapEditor
             }
 
             obj.PathVariants[0] = this;
+            obj.PathVariants[0].BranchChoices = BranchChoices?
+                .Select(choice => choice == null ? null : new BranchChoice
+                {
+                    Label = choice.Label,
+                    Condition = choice.Condition,
+                    CompareValue = choice.CompareValue,
+                    CompareRegister = choice.CompareRegister,
+                    IsLinear = choice.IsLinear
+                })
+                .Where(choice => choice != null)
+                .ToList() ?? new List<BranchChoice>();
 
             if (BattleMonsters != null)
             {

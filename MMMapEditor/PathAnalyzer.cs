@@ -47,7 +47,8 @@ namespace MMMapEditor
             PathAnalysisResult inheritedState = null,
             int inheritedProbabilityNumerator = 1,
             int inheritedProbabilityDenominator = 1,
-            bool inheritedProbabilityApplicable = false)
+            bool inheritedProbabilityApplicable = false,
+            List<BranchChoice> inheritedBranchChoices = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -121,8 +122,13 @@ namespace MMMapEditor
                     combinedProbabilityDenominator = 1;
                 }
 
+                var currentBranchChoices = CloneBranchChoices(inheritedBranchChoices);
+                var currentChoice = CreateBranchChoice(path);
+                if (currentChoice != null)
+                    currentBranchChoices.Add(currentChoice);
+
                 // Добавляем путь в результаты
-                allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult, combinedProbabilityNumerator, combinedProbabilityDenominator));
+                allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult, combinedProbabilityNumerator, combinedProbabilityDenominator, currentBranchChoices));
 
                 if (debugMode && pathTexts.Count > 0)
                 {
@@ -151,7 +157,8 @@ namespace MMMapEditor
                         effectivePathResult,
                         combinedProbabilityNumerator,
                         combinedProbabilityDenominator,
-                        combinedProbabilityApplicable);
+                        combinedProbabilityApplicable,
+                        currentBranchChoices);
                 }
             }
         }
@@ -420,7 +427,7 @@ namespace MMMapEditor
             return clone;
         }
 
-        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator)
+        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
         {
             return new PathVariantInfo
             {
@@ -451,7 +458,57 @@ namespace MMMapEditor
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
-                TerminatedByTerminalRet = source.TerminatedByTerminalRet
+                TerminatedByTerminalRet = source.TerminatedByTerminalRet,
+                BranchChoices = CloneBranchChoices(branchChoices)
+            };
+        }
+
+        private List<BranchChoice> CloneBranchChoices(IEnumerable<BranchChoice> branchChoices)
+        {
+            return (branchChoices ?? Enumerable.Empty<BranchChoice>())
+                .Where(choice => choice != null)
+                .Select(choice => new BranchChoice
+                {
+                    Label = choice.Label,
+                    Condition = choice.Condition,
+                    CompareValue = choice.CompareValue,
+                    CompareRegister = choice.CompareRegister,
+                    IsLinear = choice.IsLinear
+                })
+                .ToList();
+        }
+
+        private BranchChoice CreateBranchChoice(AlternativePath path)
+        {
+            if (path == null)
+                return null;
+
+            bool isLinear = !string.IsNullOrWhiteSpace(path.Condition) &&
+                path.Condition.StartsWith("LINEAR after ", StringComparison.OrdinalIgnoreCase);
+            string mnemonic = ExtractBranchMnemonic(path.Condition);
+
+            string label = null;
+            if (path.CompareValue.HasValue)
+            {
+                bool branchRepresentsEquality =
+                    (!isLinear && (mnemonic == "JE" || mnemonic == "JZ")) ||
+                    (isLinear && (mnemonic == "JNE" || mnemonic == "JNZ"));
+
+                if (branchRepresentsEquality)
+                {
+                    byte value = path.CompareValue.Value;
+                    if (value >= 0x20 && value <= 0x7E)
+                        label = ((char)value).ToString();
+                }
+            }
+
+            return new BranchChoice
+            {
+                Label = label,
+                Condition = path.Condition,
+                CompareValue = path.CompareValue,
+                CompareRegister = path.CompareRegister,
+                IsLinear = isLinear
             };
         }
 
