@@ -2057,7 +2057,7 @@ namespace MMMapEditor
 
             var teleportMatches = Regex.Matches(
                 noteText,
-                @"Телепорт на клетку \(X=\??\d+, Y=\??\d+\)",
+                @"Телепорт на (?:(случайную)\s+)?клетку \(X=(?:\??\d+|\d+\.\.\d+), Y=(?:\??\d+|\d+\.\.\d+)\)",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in teleportMatches)
@@ -2066,6 +2066,14 @@ namespace MMMapEditor
                 rt.SelectionColor = Color.FromArgb(120, 210, 255);
                 rt.SelectionBackColor = Color.FromArgb(0, 35, 70);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+
+                if (match.Groups.Count > 1 && match.Groups[1].Success)
+                {
+                    rt.Select(match.Groups[1].Index, match.Groups[1].Length);
+                    rt.SelectionColor = Color.FromArgb(120, 210, 255);
+                    rt.SelectionBackColor = Color.FromArgb(65, 35, 0);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic | FontStyle.Underline);
+                }
             }
 
             var lootWarningMatches = Regex.Matches(
