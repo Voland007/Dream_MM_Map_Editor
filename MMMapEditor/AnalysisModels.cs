@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -272,6 +272,7 @@ namespace MMMapEditor
         public int PathNumber { get; set; }
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
+        public bool IsInputChoiceBranch { get; set; }
         public RegisterTracker RegisterState { get; set; }
         public int ProbabilityNumerator { get; set; } = 1;
         public int ProbabilityDenominator { get; set; } = 1;

@@ -728,6 +728,7 @@ namespace MMMapEditor
                             PathNumber = result.AlternativePaths.Count + 1,
                             CompareValue = altPath.CompareValue,
                             CompareRegister = altPath.CompareRegister,
+                            IsInputChoiceBranch = altPath.IsInputChoiceBranch,
                             RegisterState = altPath.RegisterState?.Clone(),
                             ProbabilityNumerator = altPath.ProbabilityNumerator,
                             ProbabilityDenominator = altPath.ProbabilityDenominator,
@@ -855,6 +856,13 @@ namespace MMMapEditor
                 var takenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: true);
                 var notTakenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: false);
 
+                bool isInputChoiceBranch = false;
+                if (string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase) &&
+                    registerTracker.TryGetRegisterRange("AL", out var alInputRange) && alInputRange != null)
+                {
+                    isInputChoiceBranch = alInputRange.Min == 0x1B && alInputRange.Max == 0x35;
+                }
+
                 // Добавляем целевой адрес перехода как альтернативный путь
                 var altPath = new AlternativePath
                 {
@@ -866,6 +874,7 @@ namespace MMMapEditor
                     RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
+                    IsInputChoiceBranch = isInputChoiceBranch,
                     ProbabilityNumerator = takenProbability.numerator,
                     ProbabilityDenominator = takenProbability.denominator,
                     CallDepth = callDepth,
@@ -892,6 +901,7 @@ namespace MMMapEditor
                     RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
+                    IsInputChoiceBranch = isInputChoiceBranch,
                     ProbabilityNumerator = notTakenProbability.numerator,
                     ProbabilityDenominator = notTakenProbability.denominator,
                     CallDepth = callDepth,
@@ -1577,6 +1587,7 @@ namespace MMMapEditor
                             RegisterState = splitTracker,
                             CompareRegister = registerTracker.LastFlagsRegister,
                             CompareValue = registerTracker.LastCompareImmediate,
+                            IsInputChoiceBranch = false,
                             ProbabilityNumerator = 1,
                             ProbabilityDenominator = 1,
                             CallDepth = callDepth,

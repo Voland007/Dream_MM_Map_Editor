@@ -488,7 +488,7 @@ namespace MMMapEditor
             string mnemonic = ExtractBranchMnemonic(path.Condition);
 
             string label = null;
-            if (path.CompareValue.HasValue)
+            if (path.IsInputChoiceBranch && path.CompareValue.HasValue)
             {
                 bool branchRepresentsEquality =
                     (!isLinear && (mnemonic == "JE" || mnemonic == "JZ")) ||
