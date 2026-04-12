@@ -1049,7 +1049,8 @@ namespace MMMapEditor
             if (!TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out string reg, out int min, out int max))
                 return;
 
-            registerTracker.SetRegisterRange(reg, (byte)min, (byte)max, RegisterValueDistribution.UniformDiscreteRange);
+            var distribution = GetExistingRegisterDistributionOrUnknown(registerTracker, reg);
+            registerTracker.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
 
             if (debugMode)
             {
@@ -1066,8 +1067,21 @@ namespace MMMapEditor
             if (!TryCalculateBranchConstraint(clone, mnemonic, branchTaken, out string reg, out int min, out int max))
                 return clone;
 
-            clone.SetRegisterRange(reg, (byte)min, (byte)max, RegisterValueDistribution.UniformDiscreteRange);
+            var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
+            clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
             return clone;
+        }
+
+        private RegisterValueDistribution GetExistingRegisterDistributionOrUnknown(RegisterTracker registerTracker, string reg)
+        {
+            if (registerTracker != null &&
+                !string.IsNullOrWhiteSpace(reg) &&
+                registerTracker.TryGetRegisterDistribution(reg, out var distribution))
+            {
+                return distribution;
+            }
+
+            return RegisterValueDistribution.Unknown;
         }
 
         private (int numerator, int denominator) EstimateBranchProbability(string mnemonic, RegisterTracker registerTracker, bool branchTaken)

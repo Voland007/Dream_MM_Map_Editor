@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -47,7 +47,7 @@ namespace MMMapEditor
             PathAnalysisResult inheritedState = null,
             int inheritedProbabilityNumerator = 1,
             int inheritedProbabilityDenominator = 1,
-            bool inheritedProbabilityApplicable = true)
+            bool inheritedProbabilityApplicable = false)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -88,15 +88,38 @@ namespace MMMapEditor
                 bool isLeaf = pathResult.AlternativePaths.Count == 0;
 
                 var effectiveProbability = GetEffectivePathProbability(path);
-                bool currentBranchProbabilityApplicable = effectiveProbability.denominator > 1;
-                bool combinedProbabilityApplicable = inheritedProbabilityApplicable && currentBranchProbabilityApplicable;
+                bool currentBranchProbabilityApplicable = effectiveProbability.denominator > 1 &&
+                    effectiveProbability.numerator > 0 &&
+                    effectiveProbability.numerator < effectiveProbability.denominator;
 
-                int combinedProbabilityNumerator = combinedProbabilityApplicable
-                    ? inheritedProbabilityNumerator * Math.Max(0, effectiveProbability.numerator)
-                    : 1;
-                int combinedProbabilityDenominator = combinedProbabilityApplicable
-                    ? inheritedProbabilityDenominator * Math.Max(1, effectiveProbability.denominator)
-                    : 1;
+                bool combinedProbabilityApplicable;
+                int combinedProbabilityNumerator;
+                int combinedProbabilityDenominator;
+
+                if (inheritedProbabilityApplicable && currentBranchProbabilityApplicable)
+                {
+                    combinedProbabilityApplicable = true;
+                    combinedProbabilityNumerator = inheritedProbabilityNumerator * Math.Max(0, effectiveProbability.numerator);
+                    combinedProbabilityDenominator = inheritedProbabilityDenominator * Math.Max(1, effectiveProbability.denominator);
+                }
+                else if (inheritedProbabilityApplicable)
+                {
+                    combinedProbabilityApplicable = true;
+                    combinedProbabilityNumerator = inheritedProbabilityNumerator;
+                    combinedProbabilityDenominator = inheritedProbabilityDenominator;
+                }
+                else if (currentBranchProbabilityApplicable)
+                {
+                    combinedProbabilityApplicable = true;
+                    combinedProbabilityNumerator = Math.Max(0, effectiveProbability.numerator);
+                    combinedProbabilityDenominator = Math.Max(1, effectiveProbability.denominator);
+                }
+                else
+                {
+                    combinedProbabilityApplicable = false;
+                    combinedProbabilityNumerator = 1;
+                    combinedProbabilityDenominator = 1;
+                }
 
                 // Добавляем путь в результаты
                 allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult, combinedProbabilityNumerator, combinedProbabilityDenominator));
@@ -542,16 +565,10 @@ namespace MMMapEditor
             if (IsPureEmptyLeafVariant(variant))
                 return true;
 
-            // Верхнеуровневые leaf-ветки с собственным текстовым результатом
-            // считаем осмысленными, даже если они не материализовали отдельный
-            // outcome в модели. Это позволяет сохранить случаи вроде "TRAP DOOR!",
-            // но не возвращать глубокие промежуточные ветки из меню выбора.
-            if (variant.Texts != null && variant.Texts.Count > 0 && GetPathDepth(variant.PathId) <= 1)
-                return true;
-
-            // Несколько текстов в leaf-ветке почти всегда означают уже собранную
-            // конечную заметку, а не промежуточный prompt.
-            if (variant.Texts != null && variant.Texts.Count > 1)
+            // Любая leaf-ветка с собственным текстом считается осмысленной.
+            // Иначе теряются реальные конечные варианты без явного outcome,
+            // например вариант с одним сообщением после выбора в меню.
+            if (variant.Texts != null && variant.Texts.Count > 0)
                 return true;
 
             return false;
@@ -610,15 +627,9 @@ namespace MMMapEditor
                 }
 
                 var existingExact = uniqueVariants[exactKey];
-                SumVariantProbability(existingExact, result);
-
                 if (GetVariantPrecisionScore(result) > GetVariantPrecisionScore(existingExact))
                 {
-                    int mergedNumerator = existingExact.ProbabilityNumerator;
-                    int mergedDenominator = existingExact.ProbabilityDenominator;
                     uniqueVariants[exactKey] = result;
-                    uniqueVariants[exactKey].ProbabilityNumerator = mergedNumerator;
-                    uniqueVariants[exactKey].ProbabilityDenominator = mergedDenominator;
                 }
             }
 
@@ -635,15 +646,9 @@ namespace MMMapEditor
                     continue;
                 }
 
-                SumVariantProbability(existing, variant);
-
                 if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
                 {
-                    int mergedNumerator = existing.ProbabilityNumerator;
-                    int mergedDenominator = existing.ProbabilityDenominator;
                     semanticallyUnique[semanticKey] = variant;
-                    semanticallyUnique[semanticKey].ProbabilityNumerator = mergedNumerator;
-                    semanticallyUnique[semanticKey].ProbabilityDenominator = mergedDenominator;
                 }
             }
 
@@ -659,63 +664,19 @@ namespace MMMapEditor
 
             return finalVariants;
         }
-
-
-
         private (int numerator, int denominator) GetEffectivePathProbability(AlternativePath path)
         {
             if (path == null)
                 return (1, 1);
 
+            // Вероятности разрешены только для веток, где они были выставлены явно
+            // реальным источником случайности (например, SUB_509A).
+            // Ничего не вычисляем постфактум по диапазонам регистров, чтобы ветки,
+            // зависящие от пользовательского ввода (SUB_5101), не получали probability.
             if (path.ProbabilityDenominator > 1 || path.ProbabilityNumerator == 0)
                 return (path.ProbabilityNumerator, Math.Max(1, path.ProbabilityDenominator));
 
-            if (path.RegisterState == null)
-                return (1, 1);
-
-            string compareRegister = path.CompareRegister?.ToUpperInvariant();
-            if (string.IsNullOrWhiteSpace(compareRegister) || !path.CompareValue.HasValue)
-                return (1, 1);
-
-            if (!path.RegisterState.TryGetRegisterRange(compareRegister, out var range) || range == null)
-                return (1, 1);
-
-            if (!path.RegisterState.TryGetRegisterDistribution(compareRegister, out var distribution) ||
-                distribution != RegisterValueDistribution.UniformDiscreteRange)
-                return (1, 1);
-
-            string mnemonic = ExtractBranchMnemonic(path.Condition);
-            if (string.IsNullOrEmpty(mnemonic))
-                return (1, 1);
-
-            bool branchTaken = !path.Condition.StartsWith("LINEAR", StringComparison.OrdinalIgnoreCase);
-            int total = range.Max - range.Min + 1;
-            if (total <= 0)
-                return (1, 1);
-
-            int favorable = 0;
-            for (int value = range.Min; value <= range.Max; value++)
-            {
-                bool taken = mnemonic switch
-                {
-                    "JE" or "JZ" => value == path.CompareValue.Value,
-                    "JNE" or "JNZ" => value != path.CompareValue.Value,
-                    "JB" or "JC" or "JNAE" => value < path.CompareValue.Value,
-                    "JAE" or "JNB" or "JNC" => value >= path.CompareValue.Value,
-                    "JBE" or "JNA" => value <= path.CompareValue.Value,
-                    "JA" or "JNBE" => value > path.CompareValue.Value,
-                    _ => false
-                };
-
-                if (taken == branchTaken)
-                    favorable++;
-            }
-
-            if (favorable < 0 || favorable > total)
-                return (1, 1);
-
-            int gcd = GreatestCommonDivisor(favorable, total);
-            return (favorable / gcd, total / gcd);
+            return (1, 1);
         }
 
         private string ExtractBranchMnemonic(string condition)
@@ -755,37 +716,6 @@ namespace MMMapEditor
                 : "<NO_PARTIAL>";
 
             return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}";
-        }
-
-
-
-        private void SumVariantProbability(PathVariantInfo target, PathVariantInfo source)
-        {
-            if (target == null || source == null)
-                return;
-
-            if (!target.HasProbabilityInfo && !source.HasProbabilityInfo)
-                return;
-
-            if (!target.HasProbabilityInfo && source.HasProbabilityInfo)
-            {
-                target.ProbabilityNumerator = source.ProbabilityNumerator;
-                target.ProbabilityDenominator = source.ProbabilityDenominator;
-                return;
-            }
-
-            if (!source.HasProbabilityInfo)
-                return;
-
-            int leftDen = Math.Max(1, target.ProbabilityDenominator);
-            int rightDen = Math.Max(1, source.ProbabilityDenominator);
-            int lcm = LeastCommonMultiple(leftDen, rightDen);
-            int leftNum = target.ProbabilityNumerator * (lcm / leftDen);
-            int rightNum = source.ProbabilityNumerator * (lcm / rightDen);
-            int sum = leftNum + rightNum;
-            int gcd = GreatestCommonDivisor(sum, lcm);
-            target.ProbabilityNumerator = gcd == 0 ? sum : sum / gcd;
-            target.ProbabilityDenominator = gcd == 0 ? lcm : lcm / gcd;
         }
 
         private int GreatestCommonDivisor(int a, int b)
