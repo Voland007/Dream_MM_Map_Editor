@@ -495,12 +495,11 @@ namespace MMMapEditor
                     (isLinear && (mnemonic == "JNE" || mnemonic == "JNZ"));
 
                 if (branchRepresentsEquality)
-                {
-                    byte value = path.CompareValue.Value;
-                    if (value >= 0x20 && value <= 0x7E)
-                        label = ((char)value).ToString();
-                }
+                    label = ConvertChoiceValueToLabel(path.CompareValue.Value);
             }
+
+            if (string.IsNullOrWhiteSpace(label) && TryExtractSplitAssignedValue(path.Condition, out byte splitValue))
+                label = ConvertChoiceValueToLabel(splitValue);
 
             return new BranchChoice
             {
@@ -510,6 +509,36 @@ namespace MMMapEditor
                 CompareRegister = path.CompareRegister,
                 IsLinear = isLinear
             };
+        }
+
+        private string ConvertChoiceValueToLabel(byte value)
+        {
+            if (value == 0x1B)
+                return "ESC";
+
+            if (value >= 0x20 && value <= 0x7E)
+                return ((char)value).ToString();
+
+            return null;
+        }
+
+        private bool TryExtractSplitAssignedValue(string condition, out byte value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(condition))
+                return false;
+
+            const string marker = " = 0x";
+            int markerIndex = condition.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+                return false;
+
+            int hexStart = markerIndex + marker.Length;
+            if (hexStart + 2 > condition.Length)
+                return false;
+
+            string hex = condition.Substring(hexStart, 2);
+            return byte.TryParse(hex, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out value);
         }
 
         private List<BattleMonster> CloneBattleMonsters(PathAnalysisResult source)
