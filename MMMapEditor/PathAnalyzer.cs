@@ -610,9 +610,15 @@ namespace MMMapEditor
                 }
 
                 var existingExact = uniqueVariants[exactKey];
+                SumVariantProbability(existingExact, result);
+
                 if (GetVariantPrecisionScore(result) > GetVariantPrecisionScore(existingExact))
                 {
+                    int mergedNumerator = existingExact.ProbabilityNumerator;
+                    int mergedDenominator = existingExact.ProbabilityDenominator;
                     uniqueVariants[exactKey] = result;
+                    uniqueVariants[exactKey].ProbabilityNumerator = mergedNumerator;
+                    uniqueVariants[exactKey].ProbabilityDenominator = mergedDenominator;
                 }
             }
 
@@ -629,9 +635,15 @@ namespace MMMapEditor
                     continue;
                 }
 
+                SumVariantProbability(existing, variant);
+
                 if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
                 {
+                    int mergedNumerator = existing.ProbabilityNumerator;
+                    int mergedDenominator = existing.ProbabilityDenominator;
                     semanticallyUnique[semanticKey] = variant;
+                    semanticallyUnique[semanticKey].ProbabilityNumerator = mergedNumerator;
+                    semanticallyUnique[semanticKey].ProbabilityDenominator = mergedDenominator;
                 }
             }
 
@@ -750,6 +762,19 @@ namespace MMMapEditor
         private void SumVariantProbability(PathVariantInfo target, PathVariantInfo source)
         {
             if (target == null || source == null)
+                return;
+
+            if (!target.HasProbabilityInfo && !source.HasProbabilityInfo)
+                return;
+
+            if (!target.HasProbabilityInfo && source.HasProbabilityInfo)
+            {
+                target.ProbabilityNumerator = source.ProbabilityNumerator;
+                target.ProbabilityDenominator = source.ProbabilityDenominator;
+                return;
+            }
+
+            if (!source.HasProbabilityInfo)
                 return;
 
             int leftDen = Math.Max(1, target.ProbabilityDenominator);

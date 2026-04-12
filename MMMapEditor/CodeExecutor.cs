@@ -345,6 +345,39 @@ namespace MMMapEditor
             }
         }
 
+        private void AppendPrintedCharToLastText(PathAnalysisResult result, RegisterTracker registerTracker,
+            uint instructionAddress, bool debugMode)
+        {
+            if (result == null || registerTracker == null)
+                return;
+
+            if (!registerTracker.TryGetByteRegisterValue("AL", out byte charValue))
+                return;
+
+            if (charValue < 0x20 || charValue > 0x7E)
+                return;
+
+            var lastText = result.OrderedTexts
+                .Where(t => t != null && !string.IsNullOrEmpty(t.Text) && !t.IsContextual)
+                .OrderBy(t => t.Order)
+                .LastOrDefault();
+
+            if (lastText == null)
+                return;
+
+            string previousText = lastText.Text;
+            string appendedText = previousText + (char)charValue;
+            lastText.Text = appendedText;
+            lastText.Address = instructionAddress;
+
+            if (result.FoundTexts.Contains(previousText))
+                result.FoundTexts.Remove(previousText);
+            result.FoundTexts.Add(appendedText);
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        Дописали символ '{(char)charValue}' к последнему тексту -> {appendedText}");
+        }
+
         /// <summary>
         /// Обрабатывает инструкции управления потоком
         /// </summary>
@@ -595,6 +628,12 @@ namespace MMMapEditor
                 if (debugMode)
                     AnalysisDebug.WriteLine("        Распознана SUB_5101: AL получает код клавиши в диапазоне ESC..'5'");
 
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            }
+
+            if (callTarget == 0x4C55)
+            {
+                AppendPrintedCharToLastText(result, registerTracker, (uint)insn.Address, debugMode);
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
             }
 
