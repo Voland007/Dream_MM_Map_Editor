@@ -52,7 +52,9 @@ namespace MMMapEditor
         public bool CallsRandomEncounter { get; set; } = false;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
-        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue;
+        public ValueRange8 TeleportTargetXRange { get; set; }
+        public ValueRange8 TeleportTargetYRange { get; set; }
+        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue || TeleportTargetXRange != null || TeleportTargetYRange != null;
 
         #endregion
 
@@ -389,8 +391,24 @@ namespace MMMapEditor
             if (!HasTeleportTarget)
                 return null;
 
-            string xPart = TeleportTargetX.HasValue ? $"X={TeleportTargetX.Value}" : "X=?";
-            string yPart = TeleportTargetY.HasValue ? $"Y={TeleportTargetY.Value}" : "Y=?";
+            bool hasRandomX = TeleportTargetXRange != null && !TeleportTargetXRange.IsExact;
+            bool hasRandomY = TeleportTargetYRange != null && !TeleportTargetYRange.IsExact;
+
+            string xPart = TeleportTargetX.HasValue
+                ? $"X={TeleportTargetX.Value}"
+                : TeleportTargetXRange != null
+                    ? $"X={TeleportTargetXRange.Min}..{TeleportTargetXRange.Max}"
+                    : "X=?";
+
+            string yPart = TeleportTargetY.HasValue
+                ? $"Y={TeleportTargetY.Value}"
+                : TeleportTargetYRange != null
+                    ? $"Y={TeleportTargetYRange.Min}..{TeleportTargetYRange.Max}"
+                    : "Y=?";
+
+            if (hasRandomX || hasRandomY)
+                return $"Телепорт на случайную клетку ({xPart}, {yPart})";
+
             return $"Телепорт на клетку ({xPart}, {yPart})";
         }
 
@@ -787,7 +805,9 @@ namespace MMMapEditor
         public bool CallsRandomEncounter { get; set; } = false;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
-        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue;
+        public ValueRange8 TeleportTargetXRange { get; set; }
+        public ValueRange8 TeleportTargetYRange { get; set; }
+        public bool HasTeleportTarget => TeleportTargetX.HasValue || TeleportTargetY.HasValue || TeleportTargetXRange != null || TeleportTargetYRange != null;
 
         public byte? BattleMonsterCount { get; set; }
         public ValueRange8 BattleMonsterCountRange { get; set; }
@@ -825,6 +845,8 @@ namespace MMMapEditor
                 CallsRandomEncounter = CallsRandomEncounter,
                 TeleportTargetX = TeleportTargetX,
                 TeleportTargetY = TeleportTargetY,
+                TeleportTargetXRange = TeleportTargetXRange == null ? null : new ValueRange8(TeleportTargetXRange.Min, TeleportTargetXRange.Max),
+                TeleportTargetYRange = TeleportTargetYRange == null ? null : new ValueRange8(TeleportTargetYRange.Min, TeleportTargetYRange.Max),
                 BattleMonsterCount = BattleMonsterCount,
                 BattleMonsterCountRange = BattleMonsterCountRange == null ? null : new ValueRange8(BattleMonsterCountRange.Min, BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,

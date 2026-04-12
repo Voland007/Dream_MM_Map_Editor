@@ -1541,8 +1541,30 @@ namespace MMMapEditor
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && !alRange.IsExact)
                 {
-                    if (debugMode)
+                    if (memAddr == 0x3C38)
+                    {
+                        result.TeleportTargetX = null;
+                        result.TeleportTargetXRange = new ValueRange8(alRange.Min, alRange.Max);
+                        if (!result.TeleportTargetY.HasValue && result.TeleportTargetYRange == null)
+                            result.TeleportTargetY = targetY;
+                        result.HasSignificantCode = true;
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Обнаружен случайный телепорт по X: диапазон X = {alRange.Min}..{alRange.Max}, Y = {(result.TeleportTargetY.HasValue ? result.TeleportTargetY.Value.ToString() : result.TeleportTargetYRange != null ? $"{result.TeleportTargetYRange.Min}..{result.TeleportTargetYRange.Max}" : "?")} (инструкция 0x{insn.Address:X4})");
+                    }
+                    else if (memAddr == 0x3C39)
+                    {
+                        result.TeleportTargetY = null;
+                        result.TeleportTargetYRange = new ValueRange8(alRange.Min, alRange.Max);
+                        if (!result.TeleportTargetX.HasValue && result.TeleportTargetXRange == null)
+                            result.TeleportTargetX = targetX;
+                        result.HasSignificantCode = true;
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Обнаружен случайный телепорт по Y: X = {(result.TeleportTargetX.HasValue ? result.TeleportTargetX.Value.ToString() : result.TeleportTargetXRange != null ? $"{result.TeleportTargetXRange.Min}..{result.TeleportTargetXRange.Max}" : "?")}, диапазон Y = {alRange.Min}..{alRange.Max} (инструкция 0x{insn.Address:X4})");
+                    }
+                    else if (debugMode)
+                    {
                         AnalysisDebug.WriteLine($"        Не сохраняем точное значение AL в эмулируемую память [0x{memAddr:X4}], так как AL имеет диапазон {alRange.Min}-{alRange.Max}");
+                    }
                 }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
@@ -2498,7 +2520,8 @@ namespace MMMapEditor
             if (memAddr == 0x3C38)
             {
                 result.TeleportTargetX = value;
-                if (!result.TeleportTargetY.HasValue)
+                result.TeleportTargetXRange = new ValueRange8(value, value);
+                if (!result.TeleportTargetY.HasValue && result.TeleportTargetYRange == null)
                     result.TeleportTargetY = targetY;
                 result.HasSignificantCode = true;
                 if (debugMode)
@@ -2507,7 +2530,8 @@ namespace MMMapEditor
             else if (memAddr == 0x3C39)
             {
                 result.TeleportTargetY = value;
-                if (!result.TeleportTargetX.HasValue)
+                result.TeleportTargetYRange = new ValueRange8(value, value);
+                if (!result.TeleportTargetX.HasValue && result.TeleportTargetXRange == null)
                     result.TeleportTargetX = targetX;
                 result.HasSignificantCode = true;
                 if (debugMode)
