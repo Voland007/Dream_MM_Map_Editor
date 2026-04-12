@@ -495,7 +495,13 @@ namespace MMMapEditor
                 return null;
 
             var groups = BuildTopLevelVariantGroups(items);
-            if (groups.Count <= 1 && groups[0].TreeRoot.Children.Count == 0)
+
+            bool hasRealMultiplicity =
+                groups.Count > 1 ||
+                ((groups[0].TreeRoot?.Children?.Count ?? 0) > 0) ||
+                ((groups[0].TreeRoot?.DirectVariants?.Count ?? 0) > 1);
+
+            if (!hasRealMultiplicity)
                 return null;
 
             var sb = new StringBuilder();
