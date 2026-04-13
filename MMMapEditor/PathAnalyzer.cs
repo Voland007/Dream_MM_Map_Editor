@@ -878,7 +878,13 @@ namespace MMMapEditor
                     .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
                 : "<NO_LOADS>";
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}";
+            string branchKey = variant.BranchChoices != null && variant.BranchChoices.Count > 0
+                ? string.Join(";", variant.BranchChoices
+                    .Where(c => c != null)
+                    .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
+                : "<NO_BRANCHES>";
+
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{branchKey}";
         }
     }
 }

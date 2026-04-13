@@ -444,6 +444,7 @@ namespace MMMapEditor
         {
             public PathVariantInfo Variant { get; set; }
             public List<string> Lines { get; set; } = new List<string>();
+            public List<string> NarrativeLines { get; set; } = new List<string>();
         }
 
         private sealed class VariantTreeNode
@@ -459,6 +460,8 @@ namespace MMMapEditor
         {
             public List<VariantRenderItem> Items { get; set; } = new List<VariantRenderItem>();
             public VariantTreeNode TreeRoot { get; set; }
+            public string Label { get; set; }
+            public bool GroupedByChoice { get; set; }
         }
 
         private static string BuildHierarchicalVariantNotes(
@@ -478,6 +481,7 @@ namespace MMMapEditor
                 .OrderBy(v => v.PathId))
             {
                 var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
+                var narrativeLines = DecodeNoteTexts(variant.Texts);
                 var lines = BuildVariantLines(
                     variantObject,
                     variant.Texts,
@@ -488,7 +492,16 @@ namespace MMMapEditor
                     defaultRandomEncounterChance);
 
                 lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
-                items.Add(new VariantRenderItem { Variant = variant, Lines = lines });
+
+                if (ShouldSkipHierarchicalVariant(lines, narrativeLines))
+                    continue;
+
+                items.Add(new VariantRenderItem
+                {
+                    Variant = variant,
+                    Lines = lines,
+                    NarrativeLines = narrativeLines
+                });
             }
 
             if (items.Count <= 1)
@@ -519,32 +532,115 @@ namespace MMMapEditor
         {
             var groups = items
                 .GroupBy(item => BuildTopLevelGroupKey(item))
-                .Select(g => new TopLevelVariantGroup
+                .Select(g =>
                 {
-                    Items = g.OrderBy(v => v.Variant?.PathId ?? int.MaxValue).ToList()
+                    var ordered = g.OrderBy(v => v.Variant?.PathId ?? int.MaxValue).ToList();
+                    var first = ordered.FirstOrDefault();
+                    var firstChoice = GetRelevantBranchChoices(first?.Variant).FirstOrDefault();
+                    string firstNarrativeLine = GetNarrativeRootLine(first);
+                    bool groupedByChoice = string.IsNullOrWhiteSpace(firstNarrativeLine) &&
+                        !string.IsNullOrWhiteSpace(firstChoice?.Label);
+
+                    return new TopLevelVariantGroup
+                    {
+                        Items = ordered,
+                        Label = groupedByChoice ? NormalizeChoiceLabel(firstChoice?.Label) : null,
+                        GroupedByChoice = groupedByChoice
+                    };
                 })
-                .OrderBy(g => g.Items.Min(v => v.Variant?.PathId ?? int.MaxValue))
                 .ToList();
 
             foreach (var group in groups)
             {
-                var root = BuildVariantTree(group.Items);
+                var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
                 group.TreeRoot = CompressVariantTree(root);
             }
 
+            groups = groups
+                .Where(HasRenderableTopLevelContent)
+                .OrderBy(g => IsNoOpTopLevelGroup(g) ? 1 : 0)
+                .ThenByDescending(g => g.GroupedByChoice)
+                .ThenBy(g => g.Items.Min(v => v.Variant?.PathId ?? int.MaxValue))
+                .ToList();
+
             return groups;
+        }
+
+
+        private static bool HasRenderableTopLevelContent(TopLevelVariantGroup group)
+        {
+            if (group?.TreeRoot == null)
+                return false;
+
+            if ((group.TreeRoot.CommonLines?.Count ?? 0) > 0)
+                return true;
+
+            if ((group.TreeRoot.Children?.Count ?? 0) > 0)
+                return true;
+
+            return (group.TreeRoot.DirectVariants?.Any(v => v != null && (v.Lines?.Count ?? 0) > 0) ?? false);
+        }
+
+
+        private static bool IsNoOpTopLevelGroup(TopLevelVariantGroup group)
+        {
+            if (group?.TreeRoot == null)
+                return false;
+
+            bool hasChildren = (group.TreeRoot.Children?.Count ?? 0) > 0;
+            bool hasCommon = (group.TreeRoot.CommonLines?.Count ?? 0) > 0;
+            if (hasChildren || hasCommon)
+                return false;
+
+            var variants = group.TreeRoot.DirectVariants ?? new List<VariantRenderItem>();
+            if (variants.Count != 1)
+                return false;
+
+            return IsNoOpOnly(variants[0]?.Lines);
+        }
+
+        private static bool IsNoOpOnly(List<string> lines)
+        {
+            if (lines == null)
+                return false;
+
+            var normalized = lines
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Select(l => l.Trim())
+                .ToList();
+
+            return normalized.Count == 1 &&
+                   string.Equals(normalized[0], "Ничего не происходит", StringComparison.Ordinal);
         }
 
         private static string BuildTopLevelGroupKey(VariantRenderItem item)
         {
+            string narrativeRootLine = GetNarrativeRootLine(item);
+            if (!string.IsNullOrWhiteSpace(narrativeRootLine))
+                return "LINE|" + narrativeRootLine;
+
+            var firstChoice = GetRelevantBranchChoices(item?.Variant).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(firstChoice?.Label))
+                return "CHOICE|" + NormalizeChoiceLabel(firstChoice.Label);
+
             if (item?.Lines == null || item.Lines.Count == 0)
                 return "<NO_LINES>";
 
-            return string.Join("\n---\n", item.Lines.Take(1));
+            return "LINE|" + string.Join("\n---\n", item.Lines.Take(1));
         }
 
-        private static VariantTreeNode BuildVariantTree(List<VariantRenderItem> items)
+        private static string GetNarrativeRootLine(VariantRenderItem item)
+        {
+            if (item?.NarrativeLines == null)
+                return null;
+
+            return item.NarrativeLines
+                .FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))
+                ?.Trim();
+        }
+
+        private static VariantTreeNode BuildVariantTree(List<VariantRenderItem> items, string consumedTopChoiceLabel = null)
         {
             var root = new VariantTreeNode();
 
@@ -552,6 +648,12 @@ namespace MMMapEditor
             {
                 var current = root;
                 var choices = GetRelevantBranchChoices(item?.Variant).ToList();
+                if (!string.IsNullOrWhiteSpace(consumedTopChoiceLabel) &&
+                    choices.Count > 0 &&
+                    string.Equals(NormalizeChoiceLabel(choices[0].Label), consumedTopChoiceLabel, StringComparison.Ordinal))
+                {
+                    choices = choices.Skip(1).ToList();
+                }
 
                 for (int i = 0; i < choices.Count; i++)
                 {
@@ -608,6 +710,11 @@ namespace MMMapEditor
                 choice.CompareValue?.ToString() ?? string.Empty);
         }
 
+        private static bool ShouldSkipHierarchicalVariant(List<string> lines, List<string> narrativeLines)
+        {
+            return false;
+        }
+
         private static string NormalizeChoiceLabel(string label)
         {
             if (string.IsNullOrWhiteSpace(label))
@@ -638,12 +745,21 @@ namespace MMMapEditor
             var descendants = GetAllVariants(node);
             if (descendants.Count > 0)
             {
-                var commonLines = GetCommonPrefix(descendants.Select(v => v.Lines).ToList());
-                if (commonLines.Count > 0)
+                var distinctNarrativeRoots = descendants
+                    .Select(d => d.NarrativeLines?.FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                if (distinctNarrativeRoots.Count <= 1)
                 {
-                    node.CommonLines = commonLines;
-                    foreach (var item in descendants)
-                        item.Lines = item.Lines.Skip(commonLines.Count).ToList();
+                    var commonLines = GetCommonPrefix(descendants.Select(v => v.Lines).ToList());
+                    if (commonLines.Count > 0)
+                    {
+                        node.CommonLines = commonLines;
+                        foreach (var item in descendants)
+                            item.Lines = item.Lines.Skip(commonLines.Count).ToList();
+                    }
                 }
             }
 
@@ -691,13 +807,24 @@ namespace MMMapEditor
 
         private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
         {
-            sb.AppendLine($"Вариант {groupNumber}:");
+            string header = $"Вариант {groupNumber}";
+            if (!string.IsNullOrWhiteSpace(group?.Label))
+                header += $": {group.Label}";
+            else
+                header += ":";
+
+            sb.AppendLine(header);
 
             foreach (var line in group.TreeRoot?.CommonLines ?? Enumerable.Empty<string>())
                 sb.AppendLine("   " + line);
 
+            bool isPureTopLevelNoOp = IsPureTopLevelNoOpGroup(group);
+            if (isPureTopLevelNoOp)
+                return;
+
             bool needGapAfterCommon = (group.TreeRoot?.CommonLines?.Count ?? 0) > 0 &&
-                                      ((group.TreeRoot?.Children?.Count ?? 0) > 0 || (group.TreeRoot?.DirectVariants?.Count ?? 0) > 0);
+                                      ((group.TreeRoot?.Children?.Count ?? 0) > 0 ||
+                                       (group.TreeRoot?.DirectVariants?.Any(v => v != null && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? false));
             if (needGapAfterCommon)
                 sb.AppendLine();
 
@@ -712,13 +839,48 @@ namespace MMMapEditor
                 wroteAnyChild = true;
             }
 
-            foreach (var item in group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+            var directVariants = (group.TreeRoot?.DirectVariants?.Where(v => v != null && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? Enumerable.Empty<VariantRenderItem>()).ToList();
+            bool canPromoteNoToChoice = (group.TreeRoot?.Children?.Count ?? 0) > 0 &&
+                                        !HasNodeWithLabel(group.TreeRoot, "N)");
+            int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+
+            foreach (var item in directVariants)
             {
                 if (wroteAnyChild)
                     sb.AppendLine();
-                RenderLooseVariant(item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+
+                if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(item))
+                    RenderChoiceLeaf("N)", item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                else
+                    RenderLooseVariant(item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+
                 wroteAnyChild = true;
             }
+        }
+
+
+        private static bool IsPureTopLevelNoOpGroup(TopLevelVariantGroup group)
+        {
+            if (group?.TreeRoot == null)
+                return false;
+
+            if ((group.TreeRoot.Children?.Count ?? 0) > 0)
+                return false;
+
+            if (!IsNoOpOnly(group.TreeRoot.CommonLines))
+                return false;
+
+            return !(group.TreeRoot.DirectVariants?.Any(v => v != null && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? false);
+        }
+
+        private static bool ShouldSuppressAsRedundantTopLevelNoOpLeaf(TopLevelVariantGroup group, VariantRenderItem item)
+        {
+            if (group?.TreeRoot == null || item == null)
+                return false;
+
+            return IsNoOpOnly(group.TreeRoot.CommonLines) &&
+                   (group.TreeRoot.Children?.Count ?? 0) == 0 &&
+                   ShouldRenderAsNoChoiceVariant(item);
         }
 
         private static void RenderVariantTreeNode(VariantTreeNode node, StringBuilder sb, List<int> numbering, int depth)
@@ -769,13 +931,54 @@ namespace MMMapEditor
                 wroteAny = true;
             }
 
-            foreach (var variant in OrderDirectVariants(node.DirectVariants))
+            var directVariants = OrderDirectVariants(node.DirectVariants).Where(v => v != null).ToList();
+            bool canPromoteNoToChoice = node.Children.Count > 0 && !HasNodeWithLabel(node, "N)");
+            int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+
+            foreach (var variant in directVariants)
             {
                 if (wroteAny)
                     sb.AppendLine();
-                RenderLooseVariant(variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+
+                if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(variant))
+                    RenderChoiceLeaf("N)", variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                else
+                    RenderLooseVariant(variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+
                 wroteAny = true;
             }
+        }
+
+        private static bool ShouldRenderAsNoChoiceVariant(VariantRenderItem item)
+        {
+            if (item == null)
+                return false;
+
+            if (GetRelevantBranchChoices(item.Variant).Any())
+                return false;
+
+            return item.Lines == null || item.Lines.Count == 0 || IsNoOpOnly(item.Lines);
+        }
+
+        private static bool HasNodeWithLabel(VariantTreeNode node, string label)
+        {
+            if (node == null || string.IsNullOrWhiteSpace(label))
+                return false;
+
+            foreach (var child in node.Children)
+            {
+                if (string.Equals(child?.Label, label, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static void RenderChoiceLeaf(string label, VariantRenderItem item, StringBuilder sb, List<int> numbering, int depth)
+        {
+            string indent = new string(' ', depth * 3);
+            string header = $"{indent}Вариант {string.Join(".", numbering)}: {label}";
+            sb.AppendLine(header);
         }
 
         private static IEnumerable<VariantRenderItem> OrderDirectVariants(IEnumerable<VariantRenderItem> variants)

@@ -29,8 +29,8 @@ namespace MMMapEditor
 
         public static bool Enabled { get; private set; } = true;
         public static bool EnableGlobalLogs { get; private set; } = false;
-        public static byte? TargetX { get; private set; } = 8;
-        public static byte? TargetY { get; private set; } = 5;
+        public static byte? TargetX { get; private set; } = 1;
+        public static byte? TargetY { get; private set; } = 2;
 
         public static void Configure(bool enabled, byte? targetX = null, byte? targetY = null, bool enableGlobalLogs = false)
         {
