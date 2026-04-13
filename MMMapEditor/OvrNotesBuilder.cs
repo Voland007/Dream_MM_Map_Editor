@@ -558,13 +558,17 @@ namespace MMMapEditor
             if (items.Count <= 1)
                 return null;
 
-            // NEW:
-            // Иерархический вывод нужен только когда есть реальные choice-ветки
-            // (например, кнопки/меню), а не просто несколько листовых исходов.
+            // Иерархический вывод нужен либо когда есть реальные choice-ветки,
+            // либо когда у листовых вариантов есть общий текстовый префикс.
             bool hasMeaningfulChoiceHierarchy = items.Any(item =>
                 GetRelevantBranchChoices(item?.Variant).Any());
 
-            if (!hasMeaningfulChoiceHierarchy)
+            bool hasCommonPrefixHierarchy =
+    items.Count > 1 &&
+    GetCommonPrefix(items.Select(item => item.Lines).ToList())
+        .Any(line => !string.IsNullOrWhiteSpace(line));
+
+            if (!hasMeaningfulChoiceHierarchy && !hasCommonPrefixHierarchy)
                 return null;
 
             var groups = BuildTopLevelVariantGroups(items);
