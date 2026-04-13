@@ -1518,18 +1518,30 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(0xB539FF);
             rt.SelectionBackColor = rt.BackColor;
 
-            int openParenIndex = headerText.IndexOf('(');
-            int closeParenIndex = headerText.LastIndexOf(')');
-            if (openParenIndex < 0 || closeParenIndex <= openParenIndex)
-                return;
+            Match probabilityMatch = Regex.Match(headerText, @"\([^\r\n]*\)");
+            if (probabilityMatch.Success)
+            {
+                int probabilityStart = startIndex + probabilityMatch.Index;
+                int probabilityLength = probabilityMatch.Length;
 
-            int probabilityStart = startIndex + openParenIndex;
-            int probabilityLength = closeParenIndex - openParenIndex + 1;
+                rt.Select(probabilityStart, probabilityLength);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+                rt.SelectionColor = Color.FromArgb(210, 190, 255);
+                rt.SelectionBackColor = Color.FromArgb(45, 28, 60);
+            }
 
-            rt.Select(probabilityStart, probabilityLength);
-            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
-            rt.SelectionColor = Color.FromArgb(210, 190, 255);
-            rt.SelectionBackColor = Color.FromArgb(45, 28, 60);
+            Match choiceMatch = Regex.Match(headerText, @":\s*(([A-ZА-ЯЁ]+|\d+)\)\s*)$");
+            if (choiceMatch.Success)
+            {
+                Group choiceGroup = choiceMatch.Groups[1];
+                int choiceStart = startIndex + choiceGroup.Index;
+                int choiceLength = choiceGroup.Length;
+
+                rt.Select(choiceStart, choiceLength);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                rt.SelectionColor = Color.FromArgb(255, 220, 120);
+                rt.SelectionBackColor = Color.FromArgb(60, 45, 20);
+            }
         }
 
         // Теперь форматируем силу, уровень, затемнённость и шанс случайной встречи
@@ -1615,7 +1627,7 @@ namespace MMMapEditor
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.LightYellow;
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
             // Строки с монстрами (в формате xN, xM-N или x? (Random count))
@@ -1708,7 +1720,7 @@ namespace MMMapEditor
                 // Затем усиливаем только имя контейнера
                 rt.Select(containerNameGroup.Index, containerNameGroup.Length);
                 rt.SelectionColor = Color.FromArgb(255, 215, 0);
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
             var numberedLootMatches = Regex.Matches(noteText, @"^(\d+[\)\.]\s+)([^\n]+)$", RegexOptions.Multiline);
@@ -1856,7 +1868,11 @@ namespace MMMapEditor
                 }
 
                 // Форматирование заголовков вариантов и вероятности в скобках
-                MatchCollection matches = Regex.Matches(noteText, @"Вариант\d+(?:\s*\([^\r\n]*\))?:");
+                MatchCollection matches = Regex.Matches(
+                    noteText,
+                    @"^[ \t]*Вариант\s+\d+(?:\.\d+)*(?:\s*\([^\r\n]*\))?(?::\s*(?:[A-ZА-ЯЁ]+|\d+)\)|:)",
+                    RegexOptions.Multiline
+                );
                 foreach (Match match in matches)
                 {
                     ApplyVariantHeaderStyle(notesTextBox, match.Index, match.Length, match.Value);
