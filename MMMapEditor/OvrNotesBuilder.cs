@@ -483,12 +483,12 @@ namespace MMMapEditor
         }
 
         private static string BuildHierarchicalVariantNotes(
-            OvrObject obj,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
-            byte defaultDarkeningLevel,
-            byte defaultRandomEncounterChance)
+    OvrObject obj,
+    byte defaultMonsterPower,
+    byte defaultMonsterLevel,
+    byte defaultMonsterBatchCount,
+    byte defaultDarkeningLevel,
+    byte defaultRandomEncounterChance)
         {
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
@@ -523,6 +523,15 @@ namespace MMMapEditor
             }
 
             if (items.Count <= 1)
+                return null;
+
+            // NEW:
+            // Иерархический вывод нужен только когда есть реальные choice-ветки
+            // (например, кнопки/меню), а не просто несколько листовых исходов.
+            bool hasMeaningfulChoiceHierarchy = items.Any(item =>
+                GetRelevantBranchChoices(item?.Variant).Any());
+
+            if (!hasMeaningfulChoiceHierarchy)
                 return null;
 
             var groups = BuildTopLevelVariantGroups(items);
