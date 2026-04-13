@@ -511,8 +511,8 @@ namespace MMMapEditor
 
             bool hasRealMultiplicity =
                 groups.Count > 1 ||
-                ((groups[0].TreeRoot?.Children?.Count ?? 0) > 0) ||
-                ((groups[0].TreeRoot?.DirectVariants?.Count ?? 0) > 1);
+                ((groups[0].TreeRoot?.Children?.Any(IsRenderableStructuralNode) ?? false)) ||
+                ((groups[0].TreeRoot?.DirectVariants?.Count(v => v != null && IsRenderableDirectVariant(v)) ?? 0) > 1);
 
             if (!hasRealMultiplicity)
                 return null;
@@ -571,18 +571,39 @@ namespace MMMapEditor
 
         private static bool HasRenderableTopLevelContent(TopLevelVariantGroup group)
         {
-            if (group?.TreeRoot == null)
-                return false;
-
-            if ((group.TreeRoot.CommonLines?.Count ?? 0) > 0)
-                return true;
-
-            if ((group.TreeRoot.Children?.Count ?? 0) > 0)
-                return true;
-
-            return (group.TreeRoot.DirectVariants?.Any(v => v != null && (v.Lines?.Count ?? 0) > 0) ?? false);
+            return IsRenderableStructuralNode(group?.TreeRoot);
         }
 
+        private static bool IsRenderableStructuralNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(node.Label))
+                return true;
+
+            if ((node.CommonLines?.Count ?? 0) > 0)
+                return true;
+
+            if (node.Children != null && node.Children.Any(IsRenderableStructuralNode))
+                return true;
+
+            return node.DirectVariants != null && node.DirectVariants.Any(IsRenderableDirectVariant);
+        }
+
+        private static bool IsRenderableDirectVariant(VariantRenderItem item)
+        {
+            if (item == null)
+                return false;
+
+            if ((item.Lines?.Count ?? 0) > 0)
+                return true;
+
+            if (item.Variant?.HasProbabilityInfo == true)
+                return true;
+
+            return false;
+        }
 
         private static bool IsNoOpTopLevelGroup(TopLevelVariantGroup group)
         {
@@ -823,16 +844,23 @@ namespace MMMapEditor
             if (isPureTopLevelNoOp)
                 return;
 
+            var renderableChildren = (group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+
+            var directVariants = (group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+                .Where(v => v != null && IsRenderableDirectVariant(v) && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
+                .ToList();
+
             bool needGapAfterCommon = (group.TreeRoot?.CommonLines?.Count ?? 0) > 0 &&
-                                      ((group.TreeRoot?.Children?.Count ?? 0) > 0 ||
-                                       (group.TreeRoot?.DirectVariants?.Any(v => v != null && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? false));
+                                      (renderableChildren.Count > 0 || directVariants.Count > 0);
             if (needGapAfterCommon)
                 sb.AppendLine();
 
             int childIndex = 1;
             bool wroteAnyChild = false;
 
-            foreach (var child in group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
+            foreach (var child in renderableChildren)
             {
                 if (wroteAnyChild)
                     sb.AppendLine();
@@ -840,8 +868,7 @@ namespace MMMapEditor
                 wroteAnyChild = true;
             }
 
-            var directVariants = (group.TreeRoot?.DirectVariants?.Where(v => v != null && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? Enumerable.Empty<VariantRenderItem>()).ToList();
-            bool canPromoteNoToChoice = (group.TreeRoot?.Children?.Count ?? 0) > 0 &&
+            bool canPromoteNoToChoice = renderableChildren.Count > 0 &&
                                         !HasNodeWithLabel(group.TreeRoot, "N)");
             int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
 
@@ -865,13 +892,15 @@ namespace MMMapEditor
             if (group?.TreeRoot == null)
                 return false;
 
-            if ((group.TreeRoot.Children?.Count ?? 0) > 0)
+            if ((group.TreeRoot.Children?.Any(IsRenderableStructuralNode) ?? false))
                 return false;
 
             if (!IsNoOpOnly(group.TreeRoot.CommonLines))
                 return false;
 
-            return !(group.TreeRoot.DirectVariants?.Any(v => v != null && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? false);
+            return !(group.TreeRoot.DirectVariants?.Any(v => v != null &&
+                IsRenderableDirectVariant(v) &&
+                !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v)) ?? false);
         }
 
         private static bool ShouldSuppressAsRedundantTopLevelNoOpLeaf(TopLevelVariantGroup group, VariantRenderItem item)
@@ -880,16 +909,26 @@ namespace MMMapEditor
                 return false;
 
             return IsNoOpOnly(group.TreeRoot.CommonLines) &&
-                   (group.TreeRoot.Children?.Count ?? 0) == 0 &&
+                   !(group.TreeRoot.Children?.Any(IsRenderableStructuralNode) ?? false) &&
                    ShouldRenderAsNoChoiceVariant(item);
         }
 
         private static void RenderVariantTreeNode(VariantTreeNode node, StringBuilder sb, List<int> numbering, int depth)
         {
+            if (!IsRenderableStructuralNode(node))
+                return;
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
+                .Where(v => v != null && IsRenderableDirectVariant(v))
+                .ToList();
+
             string indent = new string(' ', depth * 3);
             string variantNumber = string.Join(".", numbering);
-            var singleLeaf = node.DirectVariants.Count == 1 && node.Children.Count == 0
-                ? node.DirectVariants[0].Variant
+            var singleLeaf = renderableDirectVariants.Count == 1 && renderableChildren.Count == 0
+                ? renderableDirectVariants[0].Variant
                 : null;
 
             string header = $"{indent}Вариант {variantNumber}";
@@ -910,21 +949,21 @@ namespace MMMapEditor
             foreach (var line in node.CommonLines)
                 sb.AppendLine(indent + "   " + FormatVariantLine(line, singleLeaf != null && singleLeaf.HasProbabilityInfo));
 
-            if (node.DirectVariants.Count == 1 && node.Children.Count == 0)
+            if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
             {
-                foreach (var line in node.DirectVariants[0].Lines)
+                foreach (var line in renderableDirectVariants[0].Lines)
                     sb.AppendLine(indent + "   " + FormatVariantLine(line, singleLeaf != null && singleLeaf.HasProbabilityInfo));
                 return;
             }
 
-            bool hasBody = node.CommonLines.Count > 0 || node.DirectVariants.Count > 0 || node.Children.Count > 0;
+            bool hasBody = node.CommonLines.Count > 0 || renderableDirectVariants.Count > 0 || renderableChildren.Count > 0;
             if (hasBody)
                 sb.AppendLine();
 
             int nestedIndex = 1;
             bool wroteAny = false;
 
-            foreach (var child in node.Children)
+            foreach (var child in renderableChildren)
             {
                 if (wroteAny)
                     sb.AppendLine();
@@ -932,11 +971,10 @@ namespace MMMapEditor
                 wroteAny = true;
             }
 
-            var directVariants = OrderDirectVariants(node.DirectVariants).Where(v => v != null).ToList();
-            bool canPromoteNoToChoice = node.Children.Count > 0 && !HasNodeWithLabel(node, "N)");
-            int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+            bool canPromoteNoToChoice = renderableChildren.Count > 0 && !HasNodeWithLabel(node, "N)");
+            int noChoiceCount = renderableDirectVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
 
-            foreach (var variant in directVariants)
+            foreach (var variant in renderableDirectVariants)
             {
                 if (wroteAny)
                     sb.AppendLine();
@@ -966,7 +1004,7 @@ namespace MMMapEditor
             if (node == null || string.IsNullOrWhiteSpace(label))
                 return false;
 
-            foreach (var child in node.Children)
+            foreach (var child in node.Children.Where(IsRenderableStructuralNode))
             {
                 if (string.Equals(child?.Label, label, StringComparison.OrdinalIgnoreCase))
                     return true;
