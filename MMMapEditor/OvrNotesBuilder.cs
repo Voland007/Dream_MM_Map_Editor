@@ -378,6 +378,39 @@ namespace MMMapEditor
             return line;
         }
 
+        private static IEnumerable<string> SplitDisplayLines(string text)
+        {
+            if (text == null)
+                yield break;
+
+            string normalized = text
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n');
+
+            foreach (var part in normalized.Split('\n'))
+                yield return part;
+        }
+
+        private static void AppendIndentedDisplayLine(
+            StringBuilder sb,
+            string indent,
+            string line,
+            bool headerContainsProbability)
+        {
+            foreach (var part in SplitDisplayLines(FormatVariantLine(line, headerContainsProbability)))
+                sb.AppendLine(indent + part);
+        }
+
+        private static void AppendIndentedDisplayLines(
+            StringBuilder sb,
+            string indent,
+            IEnumerable<string> lines,
+            bool headerContainsProbability)
+        {
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+                AppendIndentedDisplayLine(sb, indent, line, headerContainsProbability);
+        }
+
         private static string PrefixProbabilityWordInParentheses(string text)
         {
             if (string.IsNullOrEmpty(text))
@@ -864,8 +897,11 @@ namespace MMMapEditor
 
             sb.AppendLine(header);
 
-            foreach (var line in group.TreeRoot?.CommonLines ?? Enumerable.Empty<string>())
-                sb.AppendLine("   " + line);
+            AppendIndentedDisplayLines(
+                sb,
+                "   ",
+                group.TreeRoot?.CommonLines,
+                false);
 
             bool isPureTopLevelNoOp = IsPureTopLevelNoOpGroup(group);
             if (isPureTopLevelNoOp)
@@ -976,18 +1012,26 @@ namespace MMMapEditor
 
             sb.AppendLine(header);
 
-            foreach (var line in node.CommonLines)
-                sb.AppendLine(indent + "   " + FormatVariantLine(line, singleLeaf != null && singleLeaf.HasProbabilityInfo));
+            AppendIndentedDisplayLines(
+                sb,
+                indent + "   ",
+                node.CommonLines,
+                singleLeaf != null && singleLeaf.HasProbabilityInfo);
 
             if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
             {
-                foreach (var line in renderableDirectVariants[0].Lines)
-                    sb.AppendLine(indent + "   " + FormatVariantLine(line, singleLeaf != null && singleLeaf.HasProbabilityInfo));
+                AppendIndentedDisplayLines(
+                    sb,
+                    indent + "   ",
+                    renderableDirectVariants[0].Lines,
+                    singleLeaf != null && singleLeaf.HasProbabilityInfo);
                 return;
             }
 
-            bool hasBody = node.CommonLines.Count > 0 || renderableDirectVariants.Count > 0 || renderableChildren.Count > 0;
-            if (hasBody)
+            bool needGapAfterCommon =
+                node.CommonLines.Count > 0 &&
+                (renderableChildren.Count > 0 || renderableDirectVariants.Count > 0);
+            if (needGapAfterCommon)
                 sb.AppendLine();
 
             int nestedIndex = 1;
@@ -1069,8 +1113,11 @@ namespace MMMapEditor
             header += ":";
             sb.AppendLine(header);
 
-            foreach (var line in item?.Lines ?? Enumerable.Empty<string>())
-                sb.AppendLine(indent + "   " + FormatVariantLine(line, item?.Variant?.HasProbabilityInfo == true));
+            AppendIndentedDisplayLines(
+                sb,
+                indent + "   ",
+                item?.Lines,
+                item?.Variant?.HasProbabilityInfo == true);
         }
         private static List<string> DecodeNoteTexts(IEnumerable<string> rawTexts)
         {
