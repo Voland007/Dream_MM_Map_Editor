@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 using System;
 using System.Collections.Generic;
@@ -53,6 +68,7 @@ namespace MMMapEditor.Tests
         public bool Passed { get; set; }
         public string AnalysisTrace { get; set; }
         public string Notes { get; set; }
+        public string ViewMode { get; set; }
     }
 
     /// <summary>
@@ -269,62 +285,21 @@ namespace MMMapEditor.Tests
                         }
                     }
 
-
-                    System.Diagnostics.Debug.WriteLine("Запуск OvrOverlayLoader.Load(...)...");
-
-                    // Строим полный боевой результат тем же кодом, что использует MainForm
-                    var loadResult = OvrOverlayLoader.Load(
-                        testCase.OvrFilePath,
+                    RunChecksForMode(
+                        result,
+                        logger,
+                        testCase,
                         centralOptions,
-                        null,
-                        null);
+                        useHierarchical: false,
+                        modeName: "Плоский");
 
-                    System.Diagnostics.Debug.WriteLine(
-                        $"Load завершён. NotesPerCell={loadResult.NotesPerCell.Count}, " +
-                        $"CentralOptions={loadResult.CentralOptions.Count}, " +
-                        $"Objects: total={loadResult.TotalObjects}, table={loadResult.TableObjects}, spec={loadResult.SpecObjects}");
-
-                    // Проверяем каждую ожидаемую клетку
-                    if (testCase.ExpectedCellTexts != null)
-                    {
-                        foreach (var kvp in testCase.ExpectedCellTexts)
-                        {
-                            var cellPos = kvp.Key;
-                            var expectation = kvp.Value;
-
-                            System.Diagnostics.Debug.WriteLine($"\nПроверка клетки ({cellPos.X},{cellPos.Y}):");
-                            System.Diagnostics.Debug.WriteLine($"  Ожидание: {expectation.GetDescription()}");
-
-                            string actualText = "";
-                            if (loadResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
-                            {
-                                actualText = noteText ?? "";
-                            }
-
-                            string actualPreview = string.IsNullOrEmpty(actualText)
-                                ? "<пусто>"
-                                : (actualText.Length > 200 ? actualText.Substring(0, 200) + "..." : actualText);
-
-                            System.Diagnostics.Debug.WriteLine($"  Фактический текст: {actualPreview}");
-
-                            bool passed = expectation.Matches(actualText);
-
-                            System.Diagnostics.Debug.WriteLine(
-                                $"  Результат: {(passed ? "СОВПАДАЕТ" : "НЕ СОВПАДАЕТ")}");
-
-                            var cellResult = new CellCheckResult
-                            {
-                                Cell = cellPos,
-                                Expected = expectation.GetFullTextForDisplay(),
-                                Actual = actualText,
-                                Passed = passed,
-                                AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y),
-                                Notes = expectation.Comment
-                            };
-
-                            result.CellResults.Add(cellResult);
-                        }
-                    }
+                    RunChecksForMode(
+                        result,
+                        logger,
+                        testCase,
+                        centralOptions,
+                        useHierarchical: true,
+                        modeName: "Иерархический");
 
                     result.Passed = result.CellResults.All(r => r.Passed);
 
@@ -345,6 +320,73 @@ namespace MMMapEditor.Tests
             }
 
             return result;
+        }
+
+        private void RunChecksForMode(
+            TestResult result,
+            TestLogger logger,
+            TestCase testCase,
+            Dictionary<Point, string> centralOptions,
+            bool useHierarchical,
+            string modeName)
+        {
+            System.Diagnostics.Debug.WriteLine($"\n--- Проверка режима: {modeName} ---");
+
+            var buildResult = OvrNotesBuilder.BuildNotes(
+                testCase.OvrFilePath,
+                new Dictionary<Point, string>(centralOptions),
+                null,
+                null,
+                useHierarchical);
+
+            System.Diagnostics.Debug.WriteLine(
+                $"BuildNotes({modeName}) завершён. NotesPerCell={buildResult.NotesPerCell.Count}, " +
+                $"CentralOptions={buildResult.CentralOptions.Count}, " +
+                $"Objects: total={buildResult.TotalObjects}, table={buildResult.TableObjects}, spec={buildResult.SpecObjects}");
+
+            if (testCase.ExpectedCellTexts == null)
+                return;
+
+            foreach (var kvp in testCase.ExpectedCellTexts)
+            {
+                var cellPos = kvp.Key;
+                var expectation = kvp.Value;
+
+                System.Diagnostics.Debug.WriteLine($"\nПроверка клетки ({cellPos.X},{cellPos.Y}) [{modeName}]:");
+                System.Diagnostics.Debug.WriteLine($"  Ожидание: {expectation.GetDescription(useHierarchical)}");
+
+                string actualText = "";
+                if (buildResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
+                {
+                    actualText = noteText ?? "";
+                }
+
+                string actualPreview = string.IsNullOrEmpty(actualText)
+                    ? "<пусто>"
+                    : (actualText.Length > 200 ? actualText.Substring(0, 200) + "..." : actualText);
+
+                System.Diagnostics.Debug.WriteLine($"  Фактический текст: {actualPreview}");
+
+                bool passed = expectation.Matches(actualText, useHierarchical);
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"  Результат: {(passed ? "СОВПАДАЕТ" : "НЕ СОВПАДАЕТ")}");
+
+                var cellResult = new CellCheckResult
+                {
+                    Cell = cellPos,
+                    Expected = expectation.GetFullTextForDisplay(useHierarchical),
+                    Actual = actualText,
+                    Passed = passed,
+                    AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y),
+                    Notes = string.IsNullOrWhiteSpace(expectation.Comment)
+                        ? modeName
+                        : $"{expectation.Comment} [{modeName}]",
+                    ViewMode = modeName
+                };
+
+                result.CellResults.Add(cellResult);
+            }
         }
 
 

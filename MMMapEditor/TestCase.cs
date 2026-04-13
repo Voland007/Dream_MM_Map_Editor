@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 ﻿using Newtonsoft.Json;
 using System;
@@ -67,9 +82,15 @@ namespace MMMapEditor.Tests
     public class CellExpectation
     {
         /// <summary>
-        /// Ожидаемые тексты (можно указать несколько вариантов)
+        /// Ожидаемые тексты для плоского режима (можно указать несколько вариантов)
         /// </summary>
         public List<string> ExpectedTexts { get; set; } = new List<string>();
+
+        /// <summary>
+        /// Ожидаемые тексты для иерархического режима (можно указать несколько вариантов)
+        /// </summary>
+        [JsonProperty("ExpectedTexts_Hierarch")]
+        public List<string> ExpectedTextsHierarch { get; set; } = new List<string>();
 
         /// <summary>
         /// Должен ли текст отсутствовать (пустая строка)
@@ -130,20 +151,46 @@ namespace MMMapEditor.Tests
             return analyzerText;
         }
 
+        private List<string> GetExpectedTextsForMode(bool hierarchical)
+        {
+            bool hasFlat = ExpectedTexts != null && ExpectedTexts.Count > 0;
+            bool hasHierarchical = ExpectedTextsHierarch != null && ExpectedTextsHierarch.Count > 0;
+
+            if (hierarchical)
+            {
+                if (hasHierarchical)
+                    return ExpectedTextsHierarch;
+
+                if (hasFlat)
+                    return ExpectedTexts;
+            }
+            else
+            {
+                if (hasFlat)
+                    return ExpectedTexts;
+
+                if (hasHierarchical)
+                    return ExpectedTextsHierarch;
+            }
+
+            return new List<string>();
+        }
+
         /// <summary>
         /// Проверить, соответствует ли фактический текст ожиданию
         /// </summary>
-        public bool Matches(string actualText)
+        public bool Matches(string actualText, bool hierarchical)
         {
             string normalizedActual = NormalizeString(actualText ?? "");
 
             if (ShouldBeEmpty)
                 return string.IsNullOrWhiteSpace(normalizedActual);
 
-            if (ExpectedTexts == null || ExpectedTexts.Count == 0)
+            var expectedTexts = GetExpectedTextsForMode(hierarchical);
+            if (expectedTexts == null || expectedTexts.Count == 0)
                 return false;
 
-            foreach (var expected in ExpectedTexts)
+            foreach (var expected in expectedTexts)
             {
                 string decodedExpected = DecodeString(expected ?? "");
                 string normalizedExpected = NormalizeString(decodedExpected);
@@ -158,15 +205,16 @@ namespace MMMapEditor.Tests
         /// <summary>
         /// Получить краткое описание ожидания
         /// </summary>
-        public string GetDescription()
+        public string GetDescription(bool hierarchical)
         {
             if (ShouldBeEmpty)
                 return "Пустой текст";
 
-            if (ExpectedTexts != null && ExpectedTexts.Count > 0)
+            var expectedTexts = GetExpectedTextsForMode(hierarchical);
+            if (expectedTexts != null && expectedTexts.Count > 0)
             {
                 var descriptions = new List<string>();
-                foreach (var text in ExpectedTexts)
+                foreach (var text in expectedTexts)
                 {
                     // Для краткого отображения показываем текст с реальными переносами,
                     // но ограничиваем длину превью
@@ -185,17 +233,18 @@ namespace MMMapEditor.Tests
         /// <summary>
         /// Получить полный ожидаемый текст для отображения без обрезки
         /// </summary>
-        public string GetFullTextForDisplay()
+        public string GetFullTextForDisplay(bool hierarchical)
         {
             if (ShouldBeEmpty)
                 return "Пустой текст";
 
-            if (ExpectedTexts == null || ExpectedTexts.Count == 0)
+            var expectedTexts = GetExpectedTextsForMode(hierarchical);
+            if (expectedTexts == null || expectedTexts.Count == 0)
                 return "Любой текст";
 
             return string.Join(
                 Environment.NewLine + "ИЛИ" + Environment.NewLine,
-                ExpectedTexts.Select(text => DecodeString(text ?? ""))
+                expectedTexts.Select(text => DecodeString(text ?? ""))
             );
         }
     }
