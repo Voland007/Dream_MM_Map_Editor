@@ -259,7 +259,7 @@ namespace MMMapEditor
                     defaultRandomEncounterChance);
 
                 if (lines.Count == 0)
-                    lines.Add("Ничего не происходит");
+                    lines.Add("Ничего не происходит (не выполнены условия для наступления ни одного варианта)");
 
                 variantContents[variantNumber] = lines;
             }
@@ -342,7 +342,7 @@ namespace MMMapEditor
             lines.AddRange(GetSpecialNoteLines(variantObject));
 
             if (lines.Count == 0)
-                lines.Add("Ничего не происходит");
+                lines.Add("Ничего не происходит (не выполнены условия для наступления ни одного варианта)");
 
             return lines;
         }
@@ -518,6 +518,7 @@ namespace MMMapEditor
                 return null;
 
             var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
             for (int i = 0; i < groups.Count; i++)
             {
                 RenderTopLevelGroup(groups[i], sb, i + 1);
@@ -611,7 +612,7 @@ namespace MMMapEditor
                 .ToList();
 
             return normalized.Count == 1 &&
-                   string.Equals(normalized[0], "Ничего не происходит", StringComparison.Ordinal);
+                   string.Equals(normalized[0], "Ничего не происходит (не выполнены условия для наступления ни одного варианта)", StringComparison.Ordinal);
         }
 
         private static string BuildTopLevelGroupKey(VariantRenderItem item)
