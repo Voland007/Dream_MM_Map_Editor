@@ -849,7 +849,9 @@ namespace MMMapEditor
                 .ToList();
 
             var directVariants = (group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
-                .Where(v => v != null && IsRenderableDirectVariant(v) && !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
+                .Where(v => v != null &&
+                (IsRenderableDirectVariant(v) || (renderableChildren.Count > 0 && ShouldRenderAsNoChoiceVariant(v))) &&
+                !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
                 .ToList();
 
             bool needGapAfterCommon = (group.TreeRoot?.CommonLines?.Count ?? 0) > 0 &&
@@ -922,7 +924,8 @@ namespace MMMapEditor
                 .Where(IsRenderableStructuralNode)
                 .ToList();
             var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
-                .Where(v => v != null && IsRenderableDirectVariant(v))
+                .Where(v => v != null &&
+                (IsRenderableDirectVariant(v) || (renderableChildren.Count > 0 && ShouldRenderAsNoChoiceVariant(v))))
                 .ToList();
 
             string indent = new string(' ', depth * 3);
