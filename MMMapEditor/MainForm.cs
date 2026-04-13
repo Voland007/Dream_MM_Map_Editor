@@ -1724,10 +1724,10 @@ namespace MMMapEditor
                 // Затем усиливаем только имя контейнера
                 rt.Select(containerNameGroup.Index, containerNameGroup.Length);
                 rt.SelectionColor = Color.FromArgb(255, 215, 0);
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
             }
 
-            var numberedLootMatches = Regex.Matches(noteText, @"^(\d+[\)\.]\s+)([^\n]+)$", RegexOptions.Multiline);
+            var numberedLootMatches = Regex.Matches(noteText, @"^(\s*\d+[\)\.]\s+)([^\n]+)$", RegexOptions.Multiline);
             foreach (Match match in numberedLootMatches)
             {
                 rt.Select(match.Index, match.Length);
@@ -1759,7 +1759,7 @@ namespace MMMapEditor
                 }
             }
 
-            var singleLootValueMatches = Regex.Matches(noteText, @"^(предмет\b.*|ITEM[: ].*|\d+\s+GEMS?$|GEMS?[:\s]+\d+$|\d+\s+GOLD$|GOLD[:\s]+\d+$)$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            var singleLootValueMatches = Regex.Matches(noteText, @"^\s*(предмет\b.*|ITEM[: ].*|\d+\s+GEMS?$|GEMS?[:\s]+\d+$|\d+\s+GOLD$|GOLD[:\s]+\d+$)$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
             foreach (Match match in singleLootValueMatches)
             {
                 bool startsWithNumbering = match.Value.Length > 0 && char.IsDigit(match.Value[0]);
@@ -1773,7 +1773,7 @@ namespace MMMapEditor
 
             var probabilityHeaderMatches = Regex.Matches(
                 noteText,
-                @"^(\d+[\)\.]\s+)(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:|Случайный предмет:)$",
+                @"^(\s*\d+[\)\.]\s+)(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:|Случайный предмет:)$",
                 RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
             foreach (Match match in probabilityHeaderMatches)
