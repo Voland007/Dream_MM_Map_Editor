@@ -228,6 +228,18 @@ namespace MMMapEditor
             }
         }
 
+        public static bool GetBooleanSetting(string section, string key, bool fallbackValue = false)
+        {
+            string rawValue = GetSetting(section, key, fallbackValue.ToString());
+            if (bool.TryParse(rawValue, out bool boolValue))
+                return boolValue;
+
+            if (int.TryParse(rawValue, out int intValue))
+                return intValue != 0;
+
+            return fallbackValue;
+        }
+
         public void ReloadData(string configCentralObjectFile)
         {
             _objectsData.Clear();
@@ -990,6 +1002,11 @@ namespace MMMapEditor
             // Добавляем подпункт в меню "Настройки"
             settingMenuItem.DropDownItems.Add(directionsMenuItem);
 
+            // Создаем пункт меню "Загрузка .OVR файлов"
+            ToolStripMenuItem ovrLoadSettingsMenuItem = new ToolStripMenuItem("Загрузка .OVR файлов");
+            ovrLoadSettingsMenuItem.Click += OvrLoadSettingsMenuItem_Click;
+            settingMenuItem.DropDownItems.Add(ovrLoadSettingsMenuItem);
+
             ToolStripMenuItem testMenuItem = new ToolStripMenuItem("Тестирование");
             ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Юнит-функциональные тесты");
             runAnalyzerTestsItem.Click += RunAnalyzerTests_Click;
@@ -1464,11 +1481,14 @@ namespace MMMapEditor
         {
             try
             {
+                bool useHierarchical = GetBooleanSetting("OvrLoadSettings", "Hierarchical", true);
+
                 var buildResult = OvrNotesBuilder.BuildNotes(
                     filename,
                     centralOptions,
                     notesPerCell,
-                    messageStates);
+                    messageStates,
+                    useHierarchical);
 
                 centralOptions = buildResult.CentralOptions;
                 notesPerCell = buildResult.NotesPerCell;
@@ -2998,6 +3018,14 @@ namespace MMMapEditor
                 localizedDirectionsForm.LocalizationChanged += LocalizedDirectionsForm_LocalizationChanged;
             }
             localizedDirectionsForm.Show();
+        }
+
+        private void OvrLoadSettingsMenuItem_Click(object sender, EventArgs e)
+        {
+            using (var form = new OvrLoadSettingsForm())
+            {
+                form.ShowDialog();
+            }
         }
 
         // Обработчик события обновления локализации направления

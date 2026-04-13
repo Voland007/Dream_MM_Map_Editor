@@ -41,7 +41,8 @@ namespace MMMapEditor
             string filename,
             Dictionary<Point, string> existingCentralOptions,
             Dictionary<Point, string> existingNotes = null,
-            Dictionary<Point, MainForm.SideValues<bool>> existingMessageStates = null)
+            Dictionary<Point, MainForm.SideValues<bool>> existingMessageStates = null,
+            bool? useHierarchicalView = null)
         {
             var result = new OvrNotesBuildResult
             {
@@ -89,6 +90,9 @@ namespace MMMapEditor
             {
             }
 
+            bool useHierarchical = useHierarchicalView
+                ?? MainForm.GetBooleanSetting("OvrLoadSettings", "Hierarchical", true);
+
             var allObjects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions);
 
             result.TotalObjects = allObjects.Count;
@@ -129,17 +133,19 @@ namespace MMMapEditor
 
                 result.MessageStates[pos] = currentMessages;
 
-                string hierarchicalNotes = BuildHierarchicalVariantNotes(
-                    obj,
-                    defaultMonsterPower,
-                    defaultMonsterLevel,
-                    defaultMonsterBatchCount,
-                    defaultDarkeningLevel,
-                    defaultRandomEncounterChance);
+                string hierarchicalNotes = useHierarchical
+                    ? BuildHierarchicalVariantNotes(
+                        obj,
+                        defaultMonsterPower,
+                        defaultMonsterLevel,
+                        defaultMonsterBatchCount,
+                        defaultDarkeningLevel,
+                        defaultRandomEncounterChance)
+                    : string.Empty;
 
                 StringBuilder newNotes = new StringBuilder();
 
-                if (!string.IsNullOrWhiteSpace(hierarchicalNotes))
+                if (useHierarchical && !string.IsNullOrWhiteSpace(hierarchicalNotes))
                 {
                     newNotes.Append(hierarchicalNotes);
                 }
