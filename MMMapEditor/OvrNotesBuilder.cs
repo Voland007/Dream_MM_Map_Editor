@@ -348,7 +348,7 @@ namespace MMMapEditor
             lines.AddRange(GetSpecialNoteLines(variantObject));
 
             if (lines.Count == 0)
-                lines.Add("Ничего не происходит (не выполнены условия для наступления ни одного варианта)");
+                lines.Add("Ничего не происходит");
 
             return lines;
         }
