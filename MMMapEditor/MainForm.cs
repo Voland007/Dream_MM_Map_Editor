@@ -1622,51 +1622,56 @@ namespace MMMapEditor
         private void FormatMonsterBattleInfo(RichTextBox rt, string noteText)
         {
             // Заголовок группы
-            var groupHeaderMatches = Regex.Matches(noteText, @"^Битва с группой монстров:$", RegexOptions.Multiline);
+            var groupHeaderMatches = Regex.Matches(
+                noteText,
+                @"^([ \t]*)(Битва с группой монстров:)$",
+                RegexOptions.Multiline);
+
             foreach (Match match in groupHeaderMatches)
             {
-                rt.Select(match.Index, match.Length);
+                Group textGroup = match.Groups[2];
+                rt.Select(textGroup.Index, textGroup.Length);
                 rt.SelectionColor = Color.LightYellow;
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
             }
 
-            // Строки с монстрами (в формате xN, xM-N или x? (Random count))
-            var bulletMatches = Regex.Matches(noteText, @"^(  • [^
-]+? x(\d+|\d+-\d+|\? \(Random count\)))$", RegexOptions.Multiline);
+            // Строки с монстрами
+            var bulletMatches = Regex.Matches(
+                noteText,
+                @"^([ \t]*)(•\s+[^\n]+?\s+x(\d+|\d+-\d+|\? \(Random count\)))$",
+                RegexOptions.Multiline);
+
             for (int bulletIndex = 0; bulletIndex < bulletMatches.Count; bulletIndex++)
             {
                 Match match = bulletMatches[bulletIndex];
+                Group bulletTextGroup = match.Groups[2];
 
-                // Определяем тип строки
-                bool isRandom = match.Value.Contains("x? (Random count)");
+                string bulletText = bulletTextGroup.Value;
+                bool isRandom = bulletText.Contains("x? (Random count)");
 
-                // Чередуем оттенок для каждой второй строки, сохраняя палитру для random/non-random
                 Color lineColor;
                 if (isRandom)
                     lineColor = (bulletIndex % 2 == 0) ? Color.FromArgb(255, 71, 151) : Color.FromArgb(255, 96, 171);
                 else
                     lineColor = (bulletIndex % 2 == 0) ? Color.FromArgb(240, 31, 111) : Color.FromArgb(255, 76, 146);
 
-                rt.Select(match.Index, match.Length);
+                rt.Select(bulletTextGroup.Index, bulletTextGroup.Length);
                 rt.SelectionColor = lineColor;
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
 
                 if (isRandom)
                 {
-                    // Форматирование для "x? (Random count)"
-                    int xPos = match.Value.IndexOf('x');
+                    int xPos = bulletText.LastIndexOf('x');
                     if (xPos >= 0)
                     {
-                        // Выделяем всю часть с количеством
-                        rt.Select(match.Index + xPos, match.Length - xPos);
+                        rt.Select(bulletTextGroup.Index + xPos, bulletText.Length - xPos);
                         rt.SelectionColor = Color.FromArgb(255, 51, 131);
                         rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
 
-                        // Находим и форматируем "(Random count)" курсивом
-                        int randomCountPos = match.Value.IndexOf("(Random count)");
+                        int randomCountPos = bulletText.IndexOf("(Random count)");
                         if (randomCountPos >= 0)
                         {
-                            rt.Select(match.Index + randomCountPos, "(Random count)".Length);
+                            rt.Select(bulletTextGroup.Index + randomCountPos, "(Random count)".Length);
                             rt.SelectionColor = Color.FromArgb(255, 51, 131);
                             rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
                         }
@@ -1674,13 +1679,12 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    // Форматирование для обычного числа или диапазона (xN / xM-N)
-                    var countMatch = Regex.Match(match.Value, @"x(\d+|\d+-\d+)$");
+                    var countMatch = Regex.Match(bulletText, @"x(\d+|\d+-\d+)$");
                     if (countMatch.Success)
                     {
-                        int countIndex = match.Index + match.Value.LastIndexOf('x');
-                        rt.Select(countIndex, countMatch.Length);
-                        rt.SelectionColor = Color.FromArgb(255, 51, 131);
+                        int countIndex = bulletTextGroup.Index + bulletText.LastIndexOf('x');
+                        rt.Select(countIndex, bulletText.Length - bulletText.LastIndexOf('x'));
+                        rt.SelectionColor = Color.FromArgb(255, 182, 193);
                         rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
                     }
                 }
