@@ -357,7 +357,7 @@ namespace MMMapEditor
                 if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: "))
                 {
                     probability = probability.Substring("Вероятность: ".Length);
-                    header += $" (вероятность наступления {probability})";
+                    header += $" ({PrefixProbabilityWordInParentheses(probability)})";
                 }
             }
 
@@ -376,6 +376,24 @@ namespace MMMapEditor
                 return "Ничего не происходит (не выполнены условия для наступления ни одного варианта)";
 
             return line;
+        }
+
+        private static string PrefixProbabilityWordInParentheses(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            if (text.IndexOf("вероятность наступления", StringComparison.OrdinalIgnoreCase) >= 0)
+                return text;
+
+            var regex = new System.Text.RegularExpressions.Regex(
+                @"(\d+(?:[.,]\d+)?\s*%)",
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+            if (!regex.IsMatch(text))
+                return text;
+
+            return regex.Replace(text, "вероятность наступления $1", 1);
         }
 
         private static string BuildProbabilityLine(PathVariantInfo variant)
@@ -939,7 +957,7 @@ namespace MMMapEditor
             {
                 string probability = BuildProbabilityLine(singleLeaf);
                 if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
-                    header += $" ({probability.Substring("Вероятность: ".Length)})";
+                    header += $" ({PrefixProbabilityWordInParentheses(probability.Substring("Вероятность: ".Length))})";
             }
 
             if (!string.IsNullOrWhiteSpace(node.Label))
@@ -1038,7 +1056,7 @@ namespace MMMapEditor
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
             string probability = BuildProbabilityLine(item?.Variant);
             if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
-                header += $" ({probability.Substring("Вероятность: ".Length)})";
+                header += $" ({PrefixProbabilityWordInParentheses(probability.Substring("Вероятность: ".Length))})";
             header += ":";
             sb.AppendLine(header);
 
