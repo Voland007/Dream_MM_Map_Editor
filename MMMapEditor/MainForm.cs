@@ -636,6 +636,7 @@ namespace MMMapEditor
             };
 
             notesTextBox.TextChanged += NotesTextBox_TextChanged;
+            notesTextBox.MouseDoubleClick += NotesTextBox_MouseDoubleClick;
 
             mainMapImage = Properties.Resources.Unknown_Panno;
 
@@ -3725,6 +3726,31 @@ namespace MMMapEditor
         private Point GetPositionFromControl(Button button)
         {
             return new Point(button.Location.X / CellSize, GridSize - 1 - (button.Location.Y / CellSize));
+        }
+
+        private void NotesTextBox_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            if (!selectedPosition.HasValue)
+                return;
+
+            Point pos = selectedPosition.Value;
+
+            using (var editorForm = new NotesEditorForm(this, notesTextBox))
+            {
+                if (editorForm.ShowDialog(this) == DialogResult.OK)
+                {
+                    string newNoteText = editorForm.EditedText;
+                    string previousNote = notesPerCell.TryGetValue(pos, out var prev) ? prev : "";
+
+                    if (previousNote != newNoteText)
+                    {
+                        notesPerCell[pos] = newNoteText;
+                        notesTextBox.Text = newNoteText;
+                        UpdateNotesFormatting();
+                        isMapModified = true;
+                    }
+                }
+            }
         }
 
         private void NotesTextBox_TextChanged(object sender, EventArgs e)
