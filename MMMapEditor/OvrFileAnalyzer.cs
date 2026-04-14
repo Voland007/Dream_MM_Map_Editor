@@ -206,10 +206,15 @@ namespace MMMapEditor
             HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions)
         {
             var objects = new List<OvrObject>();
+            var processedMacroCells = new HashSet<string>();
 
             foreach (var comparison in comparisons)
             {
-                AnalysisDebug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
+                uint macroStartAddress = comparison.MacroEntryAddress != 0
+                    ? comparison.MacroEntryAddress
+                    : comparison.JumpTarget;
+
+                AnalysisDebug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} (entry 0x{macroStartAddress:X4}) для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
 
                 bool isX = comparison.CoordType == CoordType.XCoord;
                 bool isY = comparison.CoordType == CoordType.YCoord;
@@ -240,9 +245,6 @@ namespace MMMapEditor
                     continue;
                 }
 
-                var alternativePaths = new List<AlternativePath>();
-                _macroAnalyzer.CollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
-
                 AnalysisDebug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
 
                 int objectsCreated = 0;
@@ -253,31 +255,37 @@ namespace MMMapEditor
 
                     using (AnalysisDebug.BeginCellScope(cellX, cellY))
                     {
+                        string macroCellKey = $"{macroStartAddress:X4}:{cellX},{cellY}";
+                        if (processedMacroCells.Contains(macroCellKey))
+                        {
+                            AnalysisDebug.WriteLine("  -> пропуск: клетка уже обработана для этого macro-entry");
+                            continue;
+                        }
+
                         AnalysisDebug.WriteLine($"  -> анализ результатов макроса для клетки ({cellX},{cellY})");
 
                         var finalVariants = AnalyzeObjectVariants(
                             br,
-                            comparison.JumpTarget,
+                            macroStartAddress,
                             cellX,
                             cellY,
-                            predefinedAlternativePaths: alternativePaths,
+                            predefinedAlternativePaths: null,
                             reachableAddresses: null,
                             initializeRegisters: tracker =>
                             {
-                                tracker.SetRegisterValue("BL", cellX, comparison.JumpTarget, $"Macro init BL = X ({cellX})");
-                                tracker.SetRegisterValue("BH", 0, comparison.JumpTarget, "Macro init BH = 0");
-                                tracker.SetRegisterValue("BX", (ushort)cellX, comparison.JumpTarget, $"Macro init BX = X ({cellX})");
+                                tracker.SetRegisterValue("BL", cellX, macroStartAddress, $"Macro init BL = X ({cellX})");
+                                tracker.SetRegisterValue("BH", 0, macroStartAddress, "Macro init BH = 0");
+                                tracker.SetRegisterValue("BX", (ushort)cellX, macroStartAddress, $"Macro init BX = X ({cellX})");
 
-                                if (isY)
-                                {
-                                    tracker.SetRegisterValue("AL", cellY, comparison.JumpTarget, $"Macro init AL = Y ({cellY})");
-                                }
-
+                                // В macro-mode нельзя слепо подставлять AL=Y/AH=0 для YCoord.
+                                // Иначе ранние guard-проверки по AL начинают ошибочно схлопываться
+                                // как координатные, хотя реальный код ещё не загрузил координату в AL.
+                                // Полную packed-координату в AX/AL инициализируем только для FullCoord.
                                 if (isFull)
                                 {
                                     ushort packed = (ushort)(((cellY & 0x0F) << 4) | (cellX & 0x0F));
-                                    tracker.SetRegisterValue("AX", packed, comparison.JumpTarget, $"Macro init AX = packed XY 0x{packed:X2}");
-                                    tracker.SetRegisterValue("AL", packed, comparison.JumpTarget, $"Macro init AL = packed XY 0x{packed:X2}");
+                                    tracker.SetRegisterValue("AX", packed, macroStartAddress, $"Macro init AX = packed XY 0x{packed:X2}");
+                                    tracker.SetRegisterValue("AL", packed, macroStartAddress, $"Macro init AL = packed XY 0x{packed:X2}");
                                 }
                             });
 

@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 ﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
@@ -84,12 +99,14 @@ namespace MMMapEditor
         public FlagsOriginKind LastFlagsOrigin { get; set; }
         public uint? LastFlagsInstructionAddress { get; set; }
         public byte? LastCompareImmediate { get; set; }
+        public bool LastFlagsFromCoordinate { get; set; }
 
-        public void SetFlagsMetadata(string register, FlagsOriginKind origin, uint? instructionAddress = null)
+        public void SetFlagsMetadata(string register, FlagsOriginKind origin, uint? instructionAddress = null, bool? fromCoordinate = null)
         {
             LastFlagsRegister = register?.ToUpperInvariant();
             LastFlagsOrigin = origin;
             LastFlagsInstructionAddress = instructionAddress;
+            LastFlagsFromCoordinate = fromCoordinate ?? IsCoordinateSourceForRegister(register);
         }
 
         public void ClearFlagsMetadata()
@@ -98,6 +115,20 @@ namespace MMMapEditor
             LastFlagsOrigin = FlagsOriginKind.Unknown;
             LastFlagsInstructionAddress = null;
             LastCompareImmediate = null;
+            LastFlagsFromCoordinate = false;
+        }
+
+        public bool IsCoordinateSourceForRegister(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (regUpper == "BL" || regUpper == "BH" || regUpper == "BX")
+                return true;
+
+            ushort? sourceAddr = GetSourceAddress(regUpper);
+            return sourceAddr == 0x3C38 || sourceAddr == 0x3C39 || sourceAddr == 0x3C3A;
         }
 
 
@@ -820,6 +851,21 @@ namespace MMMapEditor
             }
         }
 
+        public void SetByteRegisterValueWithSource(string fullReg, string partialReg, byte value, ushort sourceAddr, uint address, string instruction)
+        {
+            TrackPartialRegisterOperation(fullReg, partialReg, value, address, instruction);
+
+            string fullRegUpper = fullReg?.ToUpperInvariant();
+            string partialRegUpper = partialReg?.ToUpperInvariant();
+            var srcInfo = (addr: sourceAddr, fromTable: false, originalBx: (ushort)0, sourceTable: (string)null);
+
+            if (!string.IsNullOrWhiteSpace(partialRegUpper))
+                registerSources2[partialRegUpper] = srcInfo;
+
+            if (!string.IsNullOrWhiteSpace(fullRegUpper))
+                registerSources2[fullRegUpper] = srcInfo;
+        }
+
         public RegisterTracker Clone()
         {
             var clone = new RegisterTracker();
@@ -860,6 +906,7 @@ namespace MMMapEditor
             clone.LastFlagsOrigin = this.LastFlagsOrigin;
             clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             clone.LastCompareImmediate = this.LastCompareImmediate;
+            clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
             return clone;
         }
     }

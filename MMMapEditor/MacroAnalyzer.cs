@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 ﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
@@ -84,6 +99,7 @@ namespace MMMapEditor
             ushort sourceAddr, CoordType coordType)
         {
             var result = new List<CoordinateComparison>();
+            uint rootAddress = DetermineMacroEntryAddress(allInstructions, startIndex, reg);
 
             int j = startIndex + 1;
             byte? lastCompareValue = null;
@@ -116,7 +132,8 @@ namespace MMMapEditor
                     Value = firstImmValue,
                     JumpTarget = jumpTarget,
                     JumpType = nextInsn.Mnemonic.ToUpper(),
-                    IsLinear = false
+                    IsLinear = false,
+                    MacroEntryAddress = rootAddress
                 });
 
                 AnalysisDebug.WriteLine($"  Найдено сравнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={firstImmValue} -> 0x{jumpTarget:X4} ({nextInsn.Mnemonic}) [{coordType}]");
@@ -151,7 +168,8 @@ namespace MMMapEditor
                         JumpType = "LINEAR",
                         IsLinear = true,
                         LinearStart = linearRange.Value.start,
-                        LinearEnd = linearRange.Value.end
+                        LinearEnd = linearRange.Value.end,
+                        MacroEntryAddress = rootAddress
                     });
 
                     AnalysisDebug.WriteLine($"  Найдено линейное выполнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={lastCompareValue} -> 0x{allInstructions[j].Address:X4} для значений [{linearRange.Value.start}-{linearRange.Value.end}] [{coordType}]");
@@ -181,6 +199,226 @@ namespace MMMapEditor
                 }
             }
             return (false, 0, null);
+        }
+
+        private uint DetermineMacroEntryAddress(List<X86Instruction> instructions, int compareIndex, string compareRegister)
+        {
+            if (instructions == null || compareIndex < 0 || compareIndex >= instructions.Count)
+                return 0;
+
+            int rootIndex = ExpandBackwardToBasicBlockStart(instructions, compareIndex);
+            bool changed;
+
+            do
+            {
+                changed = false;
+                int branchIndex = FindDominatingGuardJumpIndex(instructions, rootIndex);
+                if (branchIndex < 0)
+                    break;
+
+                int flagsIndex = FindFlagsProducerIndex(instructions, branchIndex);
+                if (flagsIndex < 0)
+                    break;
+
+                int expandedIndex = ExpandBackwardToRegisterPreparation(instructions, flagsIndex);
+                expandedIndex = ExpandBackwardToBasicBlockStart(instructions, expandedIndex);
+
+                if (expandedIndex < rootIndex)
+                {
+                    rootIndex = expandedIndex;
+                    changed = true;
+                }
+            }
+            while (changed);
+
+            uint entryAddress = (uint)instructions[rootIndex].Address;
+            if (entryAddress != (uint)instructions[compareIndex].Address)
+            {
+                AnalysisDebug.WriteLine($"  Root cause entry: 0x{entryAddress:X4} for compare 0x{instructions[compareIndex].Address:X4} ({compareRegister})");
+            }
+
+            return entryAddress;
+        }
+
+        private int FindDominatingGuardJumpIndex(List<X86Instruction> instructions, int rootIndex)
+        {
+            if (instructions == null || rootIndex <= 0 || rootIndex >= instructions.Count)
+                return -1;
+
+            uint rootAddress = (uint)instructions[rootIndex].Address;
+            int lookBackStart = Math.Max(0, rootIndex - 48);
+            for (int i = rootIndex - 1; i >= lookBackStart; i--)
+            {
+                if (!IsConditionalJump(instructions[i], out uint jumpTarget))
+                    continue;
+
+                uint fallthrough = (uint)(instructions[i].Address + instructions[i].Bytes.Length);
+
+                // Доминирующий guard может вести в текущий блок как по fallthrough,
+                // так и явным переходом в rootAddress. Второй вариант важен для
+                // ранних проверок внешних флагов, которые прыгают прямо в начало
+                // координатного decision-tree.
+                if (fallthrough == rootAddress || jumpTarget == rootAddress)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private int FindFlagsProducerIndex(List<X86Instruction> instructions, int branchIndex)
+        {
+            for (int i = branchIndex - 1; i >= Math.Max(0, branchIndex - 8); i--)
+            {
+                if (IsFlagProducer(instructions[i]))
+                    return i;
+
+                string mnemonic = instructions[i].Mnemonic?.ToUpperInvariant() ?? string.Empty;
+                if (mnemonic == "JMP" || mnemonic.StartsWith("J", StringComparison.Ordinal) ||
+                    mnemonic.StartsWith("RET", StringComparison.Ordinal) || mnemonic == "CALL")
+                {
+                    break;
+                }
+            }
+
+            return -1;
+        }
+
+        private int ExpandBackwardToRegisterPreparation(List<X86Instruction> instructions, int flagsIndex)
+        {
+            if (flagsIndex <= 0)
+                return flagsIndex;
+
+            string comparedRegister = TryGetFlagProducerRegister(instructions[flagsIndex]);
+            if (string.IsNullOrEmpty(comparedRegister))
+                return flagsIndex;
+
+            int candidate = flagsIndex;
+            for (int i = flagsIndex - 1; i >= Math.Max(0, flagsIndex - 8); i--)
+            {
+                if (IsDirectRegisterPreparation(instructions[i], comparedRegister))
+                {
+                    candidate = i;
+                    continue;
+                }
+
+                string mnemonic = instructions[i].Mnemonic?.ToUpperInvariant() ?? string.Empty;
+                if (mnemonic == "NOP")
+                    continue;
+
+                if (mnemonic == "JMP" || mnemonic.StartsWith("J", StringComparison.Ordinal) ||
+                    mnemonic.StartsWith("RET", StringComparison.Ordinal) || mnemonic == "CALL")
+                {
+                    break;
+                }
+
+                // Разрешаем немного подняться над подготовкой регистра, чтобы захватить
+                // ранние guard-проверки и загрузки до CMP/TEST/OR внутри того же блока.
+                candidate = i;
+            }
+
+            return candidate;
+        }
+
+        private int ExpandBackwardToBasicBlockStart(List<X86Instruction> instructions, int startIndex)
+        {
+            if (instructions == null || startIndex <= 0 || startIndex >= instructions.Count)
+                return startIndex;
+
+            var incomingTargets = new HashSet<uint>();
+            for (int i = 0; i < instructions.Count; i++)
+            {
+                if (IsConditionalJump(instructions[i], out uint target))
+                    incomingTargets.Add(target);
+                else if (IsUnconditionalJump(instructions[i], out target))
+                    incomingTargets.Add(target);
+            }
+
+            int candidate = startIndex;
+            for (int i = startIndex - 1; i >= Math.Max(0, startIndex - 24); i--)
+            {
+                var current = instructions[i];
+                var next = instructions[i + 1];
+                string mnemonic = current.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+
+                if (incomingTargets.Contains((uint)next.Address))
+                    break;
+
+                if (mnemonic == "JMP" || mnemonic.StartsWith("RET", StringComparison.Ordinal) || mnemonic == "CALL")
+                    break;
+
+                candidate = i;
+            }
+
+            return candidate;
+        }
+
+        private bool IsFlagProducer(X86Instruction insn)
+        {
+            byte[] bytes = insn?.Bytes;
+            if (bytes == null || bytes.Length == 0)
+                return false;
+
+            string mnemonic = insn.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            return mnemonic == "CMP" || mnemonic == "TEST" || mnemonic == "OR" || mnemonic == "AND";
+        }
+
+        private string TryGetFlagProducerRegister(X86Instruction insn)
+        {
+            byte[] bytes = insn?.Bytes;
+            if (bytes == null || bytes.Length == 0)
+                return null;
+
+            if (IsCompareWithImmediate(insn, out _, out string reg))
+                return reg;
+
+            if (bytes.Length >= 2 && bytes[0] == 0x0A)
+            {
+                return DecodeReg8FromRmField(bytes[1]);
+            }
+
+            if (bytes.Length >= 2 && bytes[0] == 0x84)
+            {
+                return DecodeReg8FromRmField(bytes[1]);
+            }
+
+            return null;
+        }
+
+        private bool IsDirectRegisterPreparation(X86Instruction insn, string reg)
+        {
+            byte[] bytes = insn?.Bytes;
+            if (bytes == null || bytes.Length == 0 || string.IsNullOrEmpty(reg))
+                return false;
+
+            switch (reg.ToUpperInvariant())
+            {
+                case "AL":
+                    return (bytes.Length >= 3 && bytes[0] == 0xA0) ||
+                           (bytes.Length >= 2 && bytes[0] == 0xB0) ||
+                           (bytes.Length >= 2 && bytes[0] == 0x8A && ((bytes[1] >> 3) & 0x07) == 0);
+                case "AX":
+                    return (bytes.Length >= 3 && bytes[0] == 0xA1) ||
+                           (bytes.Length >= 3 && bytes[0] == 0xB8) ||
+                           (bytes.Length >= 2 && bytes[0] == 0x8B && ((bytes[1] >> 3) & 0x07) == 0);
+                case "BL":
+                    return (bytes.Length >= 2 && bytes[0] == 0xB3) ||
+                           (bytes.Length >= 2 && bytes[0] == 0x8A && ((bytes[1] >> 3) & 0x07) == 3);
+                case "CL":
+                    return (bytes.Length >= 2 && bytes[0] == 0xB1) ||
+                           (bytes.Length >= 2 && bytes[0] == 0x8A && ((bytes[1] >> 3) & 0x07) == 1);
+                case "DL":
+                    return (bytes.Length >= 2 && bytes[0] == 0xB2) ||
+                           (bytes.Length >= 2 && bytes[0] == 0x8A && ((bytes[1] >> 3) & 0x07) == 2);
+                default:
+                    return false;
+            }
+        }
+
+        private string DecodeReg8FromRmField(byte modRm)
+        {
+            string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+            int rm = modRm & 0x07;
+            return rm >= 0 && rm < regNames.Length ? regNames[rm] : null;
         }
 
         /// <summary>
@@ -291,6 +529,24 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private bool IsUnconditionalJump(X86Instruction insn, out uint target)
+        {
+            target = 0;
+            if (insn == null)
+                return false;
+
+            string mnemonic = insn.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            if (mnemonic != "JMP")
+                return false;
+
+            byte[] bytes = insn.Bytes;
+            if (bytes == null || bytes.Length == 0)
+                return false;
+
+            target = GetJumpTarget(insn);
+            return target != 0;
         }
 
         private bool IsConditionalJump(X86Instruction insn, out uint target)

@@ -1178,14 +1178,26 @@ namespace MMMapEditor
             if (registerTracker == null || !registerTracker.FlagsKnown)
                 return null;
 
-            // Разрешаем схлопывание условного перехода только для координатных сравнений.
-            // Это сохраняет фикс для веток по X/Y и не ломает внутренние циклы объектов.
-            string flagsReg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
-            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
-                (flagsReg != "BL" && flagsReg != "BH"))
-            {
+            // Схлопываем только координатные проверки.
+            // Внешние guard-условия вроде MOV AL,[0xCAFE] / OR AL,AL / JNE должны
+            // оставаться развилкой, даже если текущее значение известно.
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.Test)
                 return null;
-            }
+
+            if (!registerTracker.LastFlagsFromCoordinate)
+                return null;
+
+            string flagsReg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(flagsReg))
+                return null;
+
+            bool hasExactValue = registerTracker.TryGetRegisterValue(flagsReg, out _)
+                || (flagsReg.Length == 2 && flagsReg[1] == 'L' && registerTracker.TryGetByteRegisterValue(flagsReg, out _))
+                || (flagsReg.Length == 2 && flagsReg[1] == 'H' && registerTracker.TryGetByteRegisterValue(flagsReg, out _));
+
+            if (!hasExactValue)
+                return null;
 
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
             return jump switch
@@ -1768,10 +1780,11 @@ namespace MMMapEditor
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
                 if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
                 {
-                    registerTracker.TrackPartialRegisterOperation(
+                    registerTracker.SetByteRegisterValueWithSource(
                         "AX",
                         "AL",
                         value,
+                        memAddr,
                         address,
                         $"MOV AL, [0x{memAddr:X4}]"
                     );
@@ -1827,10 +1840,11 @@ namespace MMMapEditor
 
                             if (!string.IsNullOrEmpty(fullReg))
                             {
-                                registerTracker.TrackPartialRegisterOperation(
+                                registerTracker.SetByteRegisterValueWithSource(
                                     fullReg,
                                     regName,
                                     value,
+                                    memAddr,
                                     address,
                                     $"MOV {regName}, byte ptr {eaText}"
                                 );
@@ -2031,6 +2045,33 @@ namespace MMMapEditor
                 }
 
                 registerTracker.LastCompareImmediate = immediateValue;
+            }
+
+            // OR AL, AL / TEST AL, AL (точное выставление флагов для проверок на ноль)
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x0A && instructionBytes[1] == 0xC0)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    registerTracker.ZeroFlag = alValue == 0;
+                    registerTracker.SignFlag = (alValue & 0x80) != 0;
+                    registerTracker.CarryFlag = false;
+                    registerTracker.OverflowFlag = false;
+                    registerTracker.FlagsKnown = true;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x84 && instructionBytes[1] == 0xC0)
+            {
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    registerTracker.ZeroFlag = alValue == 0;
+                    registerTracker.SignFlag = (alValue & 0x80) != 0;
+                    registerTracker.CarryFlag = false;
+                    registerTracker.OverflowFlag = false;
+                    registerTracker.FlagsKnown = true;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
             }
 
             if (instructionBytes.Length >= 3 && instructionBytes[0] == 0x80)

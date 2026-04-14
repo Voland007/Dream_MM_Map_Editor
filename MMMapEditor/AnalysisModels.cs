@@ -178,6 +178,13 @@ namespace MMMapEditor
         public byte LinearStart { get; set; }
         public byte LinearEnd { get; set; }
         public CoordType CoordType { get; set; } = CoordType.Unknown;
+
+        /// <summary>
+        /// Общая точка входа в decision-tree, к которому относится найденное сравнение.
+        /// Может быть раньше CompareAddress, если перед координатной проверкой есть
+        /// доминирующие guard-условия (например, внешний флаг, который отсекает весь блок).
+        /// </summary>
+        public uint MacroEntryAddress { get; set; }
     }
 
     public class TextEntry
