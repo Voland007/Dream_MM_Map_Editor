@@ -464,6 +464,40 @@ namespace MMMapEditor
             public int UpdatedCallDepth { get; set; } = -1;
         }
 
+        private void MarkRandomEncounterJump(PathAnalysisResult result, bool debugMode, string jumpKind)
+        {
+            if (result == null)
+                return;
+
+            bool hasOtherEffects =
+                (result.OrderedTexts != null && result.OrderedTexts.Count > 0) ||
+                result.MonsterPower.HasValue ||
+                result.MonsterLevel.HasValue ||
+                result.MonsterBatchCount.HasValue ||
+                result.DarkeningLevel.HasValue ||
+                result.RandomEncounterChance.HasValue ||
+                result.HasTeleportTarget ||
+                result.BattleMonsterCount.HasValue ||
+                result.BattleMonsterCountRange != null ||
+                result.IsBattleMonsterCountIndeterminate ||
+                (result.BattleMonsterEntries != null && result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 || entry.val2 != 0 || entry.isIndeterminate)) ||
+                (result.PartialBattles != null && result.PartialBattles.Count > 0) ||
+                result.HasPartialBattlePattern ||
+                (result.PartialBattleInfo != null && result.PartialBattleInfo.Count > 0);
+
+            result.CallsRandomEncounter = true;
+            result.IsOnlyRandomEncounterJump = !hasOtherEffects;
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+            {
+                string suffix = result.IsOnlyRandomEncounterJump
+                    ? " без иных эффектов"
+                    : " с дополнительными эффектами";
+                AnalysisDebug.WriteLine($"      Обнаружен вызов random encounter через {jumpKind} к 0x517C{suffix}");
+            }
+        }
+
         /// <summary>
         /// Обрабатывает инструкцию JMP
         /// </summary>
@@ -474,12 +508,7 @@ namespace MMMapEditor
 
             if (jumpTarget == 0x517C)
             {
-                result.CallsRandomEncounter = true;
-                result.HasSignificantCode = true;
-
-                if (debugMode)
-                    AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через JMP к 0x517C");
-
+                MarkRandomEncounterJump(result, debugMode, "JMP");
                 result.IsTerminated = true;
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
@@ -519,12 +548,7 @@ namespace MMMapEditor
                 // потому что адрес 0x517C обычно находится вне текущего overlay-файла.
                 if (jumpTarget == 0x517C)
                 {
-                    result.CallsRandomEncounter = true;
-                    result.HasSignificantCode = true;
-
-                    if (debugMode)
-                        AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через JMP к 0x517C");
-
+                    MarkRandomEncounterJump(result, debugMode, "JMP");
                     result.IsTerminated = true;
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
@@ -564,10 +588,7 @@ namespace MMMapEditor
                 {
                     if (jumpTarget == 0x517C)
                     {
-                        result.CallsRandomEncounter = true;
-                        result.HasSignificantCode = true;
-                        if (debugMode)
-                            AnalysisDebug.WriteLine("      Обнаружен вызов random encounter через SHORT JMP к 0x517C");
+                        MarkRandomEncounterJump(result, debugMode, "SHORT JMP");
                     }
 
                     if (debugMode)
@@ -745,6 +766,7 @@ namespace MMMapEditor
 
                 result.IsTerminated = subroutineResult.IsTerminated;
                 result.HasSignificantCode = result.HasSignificantCode || subroutineResult.HasSignificantCode;
+                result.IsOnlyRandomEncounterJump = result.IsOnlyRandomEncounterJump || subroutineResult.IsOnlyRandomEncounterJump;
                 result.ExitPendingReturnAddresses = subroutineResult.ExitPendingReturnAddresses == null
                     ? new List<uint>()
                     : new List<uint>(subroutineResult.ExitPendingReturnAddresses);

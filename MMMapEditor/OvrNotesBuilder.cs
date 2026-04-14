@@ -118,7 +118,14 @@ namespace MMMapEditor
                     ? notes
                     : "";
 
-                result.CentralOptions[pos] = obj.IsFromTable ? "AnyObject" : "AnyObjectSpec";
+                if (obj.IsFromTable)
+                {
+                    result.CentralOptions[pos] = "AnyObject";
+                }
+                else if (!obj.ShouldKeepOriginalCentralOption)
+                {
+                    result.CentralOptions[pos] = "AnyObjectSpec";
+                }
 
                 var directionsWithMessages = obj.GetDirectionsWithMessages();
 

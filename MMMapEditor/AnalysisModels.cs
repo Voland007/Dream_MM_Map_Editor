@@ -237,6 +237,7 @@ namespace MMMapEditor
         public bool TerminatedByRepeatedBackEdge { get; set; } = false;
         public bool TerminatedByTerminalRet { get; set; } = false;
         public bool CallsRandomEncounter { get; set; } = false;
+        public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }

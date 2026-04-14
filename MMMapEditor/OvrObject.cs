@@ -753,6 +753,17 @@ namespace MMMapEditor
             HasAnyTableLoad ||
             CallsRandomEncounter;
 
+        public bool ShouldKeepOriginalCentralOption
+        {
+            get
+            {
+                if (IsFromTable || PathVariants == null || PathVariants.Count == 0)
+                    return false;
+
+                return PathVariants.Values.All(variant => variant != null && variant.IsNoOpSpecVariant);
+            }
+        }
+
         #endregion
 
         public override string ToString()
@@ -813,6 +824,7 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
+        public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -834,6 +846,23 @@ namespace MMMapEditor
         public bool TerminatedByRepeatedBackEdge { get; set; } = false;
         public bool TerminatedByTerminalRet { get; set; } = false;
         public bool HasBranchSpecificContribution { get; set; } = false;
+
+        public bool IsNoOpSpecVariant =>
+            IsOnlyRandomEncounterJump &&
+            (Texts == null || Texts.Count == 0) &&
+            !MonsterPower.HasValue &&
+            !MonsterLevel.HasValue &&
+            !MonsterBatchCount.HasValue &&
+            !DarkeningLevel.HasValue &&
+            !RandomEncounterChance.HasValue &&
+            !HasTeleportTarget &&
+            !BattleMonsterCount.HasValue &&
+            BattleMonsterCountRange == null &&
+            !IsBattleMonsterCountIndeterminate &&
+            (BattleMonsters == null || BattleMonsters.Count == 0) &&
+            (PartiallyDefinedBattles == null || PartiallyDefinedBattles.Count == 0) &&
+            !HasAnyTableLoad &&
+            (LoadedValues == null || LoadedValues.Count == 0);
 
         public bool HasProbabilityInfo => ProbabilityDenominator > 1;
 

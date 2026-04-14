@@ -349,6 +349,7 @@ namespace MMMapEditor
             clone.DarkeningLevel = source.DarkeningLevel;
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.CallsRandomEncounter = source.CallsRandomEncounter;
+            clone.IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump;
             clone.TeleportTargetX = source.TeleportTargetX;
             clone.TeleportTargetY = source.TeleportTargetY;
             clone.TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max);
@@ -444,6 +445,7 @@ namespace MMMapEditor
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
+                IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
