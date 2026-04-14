@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -43,9 +43,18 @@ namespace MMMapEditor.Tests
     /// </summary>
     public class TestResultsViewer : Form
     {
+        private enum CharDiffKind
+        {
+            Replace,
+            Insert,
+            Delete
+        }
+
         private sealed class CharDiffEntry
         {
-            public int Index { get; set; }
+            public CharDiffKind Kind { get; set; }
+            public int ExpectedIndex { get; set; }
+            public int ActualIndex { get; set; }
             public char? ExpectedChar { get; set; }
             public char? ActualChar { get; set; }
         }
@@ -901,7 +910,7 @@ namespace MMMapEditor.Tests
             AppendStyledText("Ожидаемый текст:\n",
                 new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(156, 220, 254));
             if (diffResult != null && diffResult.HasDifferences)
-                AppendDiffText(diffResult.ExpectedText + "\n\n", diffResult.Differences, true);
+                AppendDiffText(diffResult.ExpectedText, diffResult.Differences, true);
             else
                 AppendStyledText(result.Expected + "\n\n",
                     _detailsBox.Font, Color.FromArgb(156, 220, 254));
@@ -909,7 +918,7 @@ namespace MMMapEditor.Tests
             AppendStyledText("Фактический текст:\n",
                 new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(206, 145, 120));
             if (diffResult != null && diffResult.HasDifferences)
-                AppendDiffText(diffResult.ActualText + "\n\n", diffResult.Differences, false);
+                AppendDiffText(diffResult.ActualText, diffResult.Differences, false);
             else
                 AppendStyledText(result.Actual + "\n\n",
                     _detailsBox.Font, Color.FromArgb(206, 145, 120));
@@ -953,29 +962,117 @@ namespace MMMapEditor.Tests
             }
         }
 
+        private static string NormalizeTextForDiff(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text ?? string.Empty;
+
+            return text
+                .Replace("\r\n", "\n")
+                .Replace("\r", "\n");
+        }
+
         private CharDiffResult BuildCharDiff(string expectedText, string actualText)
         {
             var result = new CharDiffResult
             {
-                ExpectedText = expectedText ?? string.Empty,
-                ActualText = actualText ?? string.Empty
+                ExpectedText = NormalizeTextForDiff(expectedText),
+                ActualText = NormalizeTextForDiff(actualText)
             };
 
-            int maxLength = Math.Max(result.ExpectedText.Length, result.ActualText.Length);
-            for (int i = 0; i < maxLength; i++)
-            {
-                char? expectedChar = i < result.ExpectedText.Length ? result.ExpectedText[i] : (char?)null;
-                char? actualChar = i < result.ActualText.Length ? result.ActualText[i] : (char?)null;
+            string expected = result.ExpectedText;
+            string actual = result.ActualText;
+            int expectedLength = expected.Length;
+            int actualLength = actual.Length;
 
-                if (expectedChar != actualChar)
+            var lcs = new int[expectedLength + 1, actualLength + 1];
+
+            for (int i = expectedLength - 1; i >= 0; i--)
+            {
+                for (int j = actualLength - 1; j >= 0; j--)
+                {
+                    if (expected[i] == actual[j])
+                        lcs[i, j] = lcs[i + 1, j + 1] + 1;
+                    else
+                        lcs[i, j] = Math.Max(lcs[i + 1, j], lcs[i, j + 1]);
+                }
+            }
+
+            int x = 0;
+            int y = 0;
+
+            while (x < expectedLength && y < actualLength)
+            {
+                if (expected[x] == actual[y])
+                {
+                    x++;
+                    y++;
+                    continue;
+                }
+
+                if (lcs[x + 1, y] == lcs[x, y + 1])
                 {
                     result.Differences.Add(new CharDiffEntry
                     {
-                        Index = i,
-                        ExpectedChar = expectedChar,
-                        ActualChar = actualChar
+                        Kind = CharDiffKind.Replace,
+                        ExpectedIndex = x,
+                        ActualIndex = y,
+                        ExpectedChar = expected[x],
+                        ActualChar = actual[y]
                     });
+                    x++;
+                    y++;
                 }
+                else if (lcs[x + 1, y] > lcs[x, y + 1])
+                {
+                    result.Differences.Add(new CharDiffEntry
+                    {
+                        Kind = CharDiffKind.Delete,
+                        ExpectedIndex = x,
+                        ActualIndex = y,
+                        ExpectedChar = expected[x],
+                        ActualChar = null
+                    });
+                    x++;
+                }
+                else
+                {
+                    result.Differences.Add(new CharDiffEntry
+                    {
+                        Kind = CharDiffKind.Insert,
+                        ExpectedIndex = x,
+                        ActualIndex = y,
+                        ExpectedChar = null,
+                        ActualChar = actual[y]
+                    });
+                    y++;
+                }
+            }
+
+            while (x < expectedLength)
+            {
+                result.Differences.Add(new CharDiffEntry
+                {
+                    Kind = CharDiffKind.Delete,
+                    ExpectedIndex = x,
+                    ActualIndex = actualLength,
+                    ExpectedChar = expected[x],
+                    ActualChar = null
+                });
+                x++;
+            }
+
+            while (y < actualLength)
+            {
+                result.Differences.Add(new CharDiffEntry
+                {
+                    Kind = CharDiffKind.Insert,
+                    ExpectedIndex = expectedLength,
+                    ActualIndex = y,
+                    ExpectedChar = null,
+                    ActualChar = actual[y]
+                });
+                y++;
             }
 
             return result;
@@ -988,7 +1085,20 @@ namespace MMMapEditor.Tests
 
             foreach (var diff in diffResult.Differences)
             {
-                yield return $"Позиция {diff.Index + 1}: ожидался {FormatCharForLog(diff.ExpectedChar)}, фактически {FormatCharForLog(diff.ActualChar)}";
+                switch (diff.Kind)
+                {
+                    case CharDiffKind.Insert:
+                        yield return $"Позиция {diff.ActualIndex + 1}: ожидался <отсутствует>, фактически {FormatCharForLog(diff.ActualChar)}";
+                        break;
+
+                    case CharDiffKind.Delete:
+                        yield return $"Позиция {diff.ExpectedIndex + 1}: ожидался {FormatCharForLog(diff.ExpectedChar)}, фактически <отсутствует>";
+                        break;
+
+                    default:
+                        yield return $"Позиция {Math.Max(diff.ExpectedIndex, diff.ActualIndex) + 1}: ожидался {FormatCharForLog(diff.ExpectedChar)}, фактически {FormatCharForLog(diff.ActualChar)}";
+                        break;
+                }
             }
         }
 
@@ -1024,36 +1134,67 @@ namespace MMMapEditor.Tests
 
         private void AppendDiffText(string text, IEnumerable<CharDiffEntry> differences, bool expectedSide)
         {
-            int baseStart = _detailsBox.TextLength;
             Color normalColor = expectedSide
                 ? Color.FromArgb(156, 220, 254)
                 : Color.FromArgb(206, 145, 120);
 
-            AppendStyledText(text, _detailsBox.Font, normalColor);
-
-            if (differences == null)
-                return;
-
-            foreach (var diff in differences)
+            var diffIndexes = new HashSet<int>();
+            if (differences != null)
             {
-                char? relevantChar = expectedSide ? diff.ExpectedChar : diff.ActualChar;
-                if (!relevantChar.HasValue)
-                    continue;
+                foreach (var diff in differences)
+                {
+                    char? relevantChar = expectedSide ? diff.ExpectedChar : diff.ActualChar;
+                    if (!relevantChar.HasValue)
+                        continue;
 
-                int charPosition = baseStart + diff.Index;
-                if (charPosition < 0 || charPosition >= _detailsBox.TextLength)
-                    continue;
-
-                _detailsBox.Select(charPosition, 1);
-                _detailsBox.SelectionBackColor = Color.FromArgb(120, 180, 50, 50);
-                _detailsBox.SelectionColor = Color.White;
-                _detailsBox.SelectionFont = new Font(_detailsBox.Font, FontStyle.Bold);
+                    int charIndex = expectedSide ? diff.ExpectedIndex : diff.ActualIndex;
+                    if (charIndex >= 0)
+                        diffIndexes.Add(charIndex);
+                }
             }
 
+            string sourceText = text ?? string.Empty;
+            for (int i = 0; i < sourceText.Length; i++)
+            {
+                bool highlight = diffIndexes.Contains(i);
+                string displayChunk = highlight
+                    ? GetVisibleDiffChunk(sourceText[i])
+                    : sourceText[i].ToString();
+
+                AppendStyledText(
+                    displayChunk,
+                    highlight ? new Font(_detailsBox.Font, FontStyle.Bold) : _detailsBox.Font,
+                    highlight ? Color.White : normalColor);
+
+                if (highlight)
+                {
+                    _detailsBox.Select(_detailsBox.TextLength - displayChunk.Length, displayChunk.Length);
+                    _detailsBox.SelectionBackColor = Color.FromArgb(120, 180, 50, 50);
+                }
+            }
+
+            AppendStyledText("\n\n", _detailsBox.Font, normalColor);
             _detailsBox.Select(_detailsBox.TextLength, 0);
             _detailsBox.SelectionBackColor = _detailsBox.BackColor;
             _detailsBox.SelectionColor = _detailsBox.ForeColor;
             _detailsBox.SelectionFont = _detailsBox.Font;
+        }
+
+        private string GetVisibleDiffChunk(char value)
+        {
+            switch (value)
+            {
+                case '\r':
+                    return "␍";
+                case '\n':
+                    return "␊";
+                case '\t':
+                    return "⇥";
+                default:
+                    return char.IsControl(value)
+                        ? $"\\u{(int)value:X4}"
+                        : value.ToString();
+            }
         }
 
         private string FormatCharForLog(char? value)
