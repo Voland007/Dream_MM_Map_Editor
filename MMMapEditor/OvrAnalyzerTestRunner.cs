@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -332,7 +332,7 @@ namespace MMMapEditor.Tests
         {
             System.Diagnostics.Debug.WriteLine($"\n--- Проверка режима: {modeName} ---");
 
-            var buildResult = OvrNotesBuilder.BuildNotes(
+            var loadResult = OvrOverlayLoader.Load(
                 testCase.OvrFilePath,
                 new Dictionary<Point, string>(centralOptions),
                 null,
@@ -340,9 +340,9 @@ namespace MMMapEditor.Tests
                 useHierarchical);
 
             System.Diagnostics.Debug.WriteLine(
-                $"BuildNotes({modeName}) завершён. NotesPerCell={buildResult.NotesPerCell.Count}, " +
-                $"CentralOptions={buildResult.CentralOptions.Count}, " +
-                $"Objects: total={buildResult.TotalObjects}, table={buildResult.TableObjects}, spec={buildResult.SpecObjects}");
+                $"Load({modeName}) завершён. NotesPerCell={loadResult.NotesPerCell.Count}, " +
+                $"CentralOptions={loadResult.CentralOptions.Count}, " +
+                $"Objects: total={loadResult.TotalObjects}, table={loadResult.TableObjects}, spec={loadResult.SpecObjects}");
 
             if (testCase.ExpectedCellTexts == null)
                 return;
@@ -356,7 +356,7 @@ namespace MMMapEditor.Tests
                 System.Diagnostics.Debug.WriteLine($"  Ожидание: {expectation.GetDescription(useHierarchical)}");
 
                 string actualText = "";
-                if (buildResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
+                if (loadResult.NotesPerCell.TryGetValue(cellPos, out string noteText))
                 {
                     actualText = noteText ?? "";
                 }
