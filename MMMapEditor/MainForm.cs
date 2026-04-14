@@ -1766,8 +1766,13 @@ namespace MMMapEditor
                 var valueMatch = Regex.Match(body, @"\b(\d+\s+GEMS?|GEMS?[:\s]+\d+|\d+\s+GOLD|GOLD[:\s]+\d+)\b", RegexOptions.IgnoreCase);
                 if (valueMatch.Success)
                 {
+                    string valueText = valueMatch.Value;
+                    Color lootValueColor = Regex.IsMatch(valueText, @"GEMS?", RegexOptions.IgnoreCase)
+                        ? Color.FromArgb(105, 228, 185)
+                        : Color.FromArgb(165, 235, 120);
+
                     rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
-                    rt.SelectionColor = Color.FromArgb(144, 238, 144);
+                    rt.SelectionColor = lootValueColor;
                     rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
                 }
 
@@ -1787,8 +1792,12 @@ namespace MMMapEditor
                 if (startsWithNumbering)
                     continue;
 
+                Color singleLootColor = Regex.IsMatch(match.Value, @"GEMS?", RegexOptions.IgnoreCase)
+                    ? Color.FromArgb(245, 208, 155)
+                    : Color.FromArgb(255, 232, 105);
+
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(255, 228, 120);
+                rt.SelectionColor = singleLootColor;
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
@@ -1844,7 +1853,7 @@ namespace MMMapEditor
 
                 Group probabilityGroup = match.Groups[3];
                 rt.Select(probabilityGroup.Index, probabilityGroup.Length);
-                rt.SelectionColor = Color.FromArgb(144, 238, 144);
+                rt.SelectionColor = Color.FromArgb(165, 235, 120);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
             }
         }
