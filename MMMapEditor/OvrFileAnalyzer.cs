@@ -1,4 +1,4 @@
-﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -167,60 +167,16 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"PatchAddress: 0x{patchAddress:X4}");
                 }
 
-                // Анализ основного пути
-                var mainRegisterTracker = new RegisterTracker();
-                SetInitialRegistersFromCoordinates(mainRegisterTracker, ovrObject.X, ovrObject.Y, patchAddress);
+                var finalVariants = AnalyzeObjectVariants(
+                    br,
+                    patchAddress,
+                    ovrObject.X,
+                    ovrObject.Y,
+                    predefinedAlternativePaths: null,
+                    reachableAddresses: tableReachableAddresses,
+                    initializeRegisters: tracker => SetInitialRegistersFromCoordinates(tracker, ovrObject.X, ovrObject.Y, patchAddress));
 
-                var processedBackEdges = new HashSet<(uint From, uint To)>();
-
-                var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, patchAddress, mainRegisterTracker,
-                    new HashSet<uint>(), 0, 0, 0, ovrObject.X, ovrObject.Y,
-                    processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
-
-                foreach (var visitedAddress in mainPathResult.VisitedAddresses)
-                    tableReachableAddresses.Add(visitedAddress);
-
-                // Сбор результатов основного пути
-                var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
-                var mainDisplayTexts = BuildDisplayTexts(mainPathResult.OrderedTexts, mainContextTexts, mainLocalTexts);
-
-                // Обработка альтернативных путей
-                var allResults = new List<PathVariantInfo>();
-                allResults.Add(CreatePathVariant(1, mainDisplayTexts, mainPathResult.AlternativePaths.Count == 0, mainPathResult));
-
-                if (mainPathResult.AlternativePaths.Count > 0)
-                {
-                    if (debugMode)
-                    {
-                        AnalysisDebug.WriteLine($"\nСобрано путей из основного анализа: {mainPathResult.AlternativePaths.Count}");
-                        foreach (var path in mainPathResult.AlternativePaths)
-                        {
-                            AnalysisDebug.WriteLine($"  Путь: 0x{path.Address:X4} -> 0x{path.TargetAddress:X4} ({path.Condition})");
-                        }
-                    }
-
-                    _pathAnalyzer.ProcessPaths(mainPathResult.AlternativePaths, 1, 0,
-                        mainDisplayTexts,
-                        br,
-                        ovrObject.X, ovrObject.Y, allResults, ovrObject, processedBackEdges,
-                        invalidateReturnRegistersAfterExternalCall: true,
-                        reachableAddresses: tableReachableAddresses,
-                        inheritedState: mainPathResult);
-                }
-
-                // Формирование финальных путевых вариантов
-                var finalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults);
-
-                ovrObject.PathVariants = finalVariants;
-                ovrObject.PathTexts = new Dictionary<int, HashSet<string>>();
-                ovrObject.PathTextsOrdered = new Dictionary<int, List<string>>();
-
-                foreach (var kvp in finalVariants)
-                {
-                    ovrObject.PathTexts[kvp.Key] = new HashSet<string>(kvp.Value.Texts ?? new List<string>());
-                    ovrObject.PathTextsOrdered[kvp.Key] = kvp.Value.Texts ?? new List<string>();
-                }
-
+                PopulateObjectPathData(ovrObject, finalVariants);
                 ApplyResolvedVariantInfoToObject(ovrObject);
 
                 if (debugMode)
@@ -247,7 +203,7 @@ namespace MMMapEditor
         }
 
         private List<OvrObject> ProcessMacros(BinaryReader br, List<CoordinateComparison> comparisons,
-    HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions)
+            HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions)
         {
             var objects = new List<OvrObject>();
 
@@ -255,9 +211,9 @@ namespace MMMapEditor
             {
                 AnalysisDebug.WriteLine($"\nАнализ макроса по адресу 0x{comparison.JumpTarget:X4} для [{comparison.MemAddr:X4}]={comparison.Value} ({(comparison.IsLinear ? "линейный" : comparison.JumpType)})");
 
-                bool isX = (comparison.CoordType == CoordType.XCoord);
-                bool isY = (comparison.CoordType == CoordType.YCoord);
-                bool isFull = (comparison.CoordType == CoordType.FullCoord);
+                bool isX = comparison.CoordType == CoordType.XCoord;
+                bool isY = comparison.CoordType == CoordType.YCoord;
+                bool isFull = comparison.CoordType == CoordType.FullCoord;
 
                 byte packedTargetX = 0;
                 byte packedTargetY = 0;
@@ -268,15 +224,12 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"  Полная координата: X={packedTargetX}, Y={packedTargetY} (значение 0x{comparison.Value:X2})");
                 }
 
-                // Определение целевых клеток
                 var targetCells = GetTargetCells(comparison, isX, isY, isFull, packedTargetX, packedTargetY);
 
-                // Сначала отбрасываем клетки из табличных объектов
                 var cellsNotInTable = targetCells
                     .Where(p => !tableObjectCoords.Contains($"{p.X},{p.Y}"))
                     .ToList();
 
-                // Затем оставляем только клетки со случайной встречей
                 var validCells = cellsNotInTable
                     .Where(p => existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча")
                     .ToList();
@@ -287,7 +240,6 @@ namespace MMMapEditor
                     continue;
                 }
 
-                // Сбор альтернативных путей один раз на макрос
                 var alternativePaths = new List<AlternativePath>();
                 _macroAnalyzer.CollectAlternativePaths(br, comparison.JumpTarget, alternativePaths, 0);
 
@@ -303,20 +255,72 @@ namespace MMMapEditor
                     {
                         AnalysisDebug.WriteLine($"  -> анализ результатов макроса для клетки ({cellX},{cellY})");
 
-                        var (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance,
-                            callsRandomEncounter, battleMonsterCount, battleMonsterCountRange,
-                            isBattleMonsterCountIndeterminate, battleMonsters, partialBattles,
-                            hasPartialBattlePattern) =
-                            AnalyzeMacroResults(br, comparison, alternativePaths, cellX, cellY);
+                        var finalVariants = AnalyzeObjectVariants(
+                            br,
+                            comparison.JumpTarget,
+                            cellX,
+                            cellY,
+                            predefinedAlternativePaths: alternativePaths,
+                            reachableAddresses: null,
+                            initializeRegisters: tracker =>
+                            {
+                                tracker.SetRegisterValue("BL", cellX, comparison.JumpTarget, $"Macro init BL = X ({cellX})");
+                                tracker.SetRegisterValue("BH", 0, comparison.JumpTarget, "Macro init BH = 0");
+                                tracker.SetRegisterValue("BX", (ushort)cellX, comparison.JumpTarget, $"Macro init BX = X ({cellX})");
 
-                        bool hasSignificantCode = allTexts.Count > 0 ||
-                                                  monsterPower.HasValue ||
-                                                  monsterLevel.HasValue ||
-                                                  darkeningLevel.HasValue ||
-                                                  randomEncounterChance.HasValue ||
-                                                  battleMonsters.Count > 0 ||
-                                                  partialBattles.Count > 0 ||
-                                                  hasPartialBattlePattern;
+                                if (isY)
+                                {
+                                    tracker.SetRegisterValue("AL", cellY, comparison.JumpTarget, $"Macro init AL = Y ({cellY})");
+                                }
+
+                                if (isFull)
+                                {
+                                    ushort packed = (ushort)(((cellY & 0x0F) << 4) | (cellX & 0x0F));
+                                    tracker.SetRegisterValue("AX", packed, comparison.JumpTarget, $"Macro init AX = packed XY 0x{packed:X2}");
+                                    tracker.SetRegisterValue("AL", packed, comparison.JumpTarget, $"Macro init AL = packed XY 0x{packed:X2}");
+                                }
+                            });
+
+                        bool debugMode = AnalysisDebug.IsEnabledFor(cellX, cellY);
+
+                        if (debugMode)
+                        {
+                            AnalysisDebug.WriteLine($"    Вариантов после AnalyzeObjectVariants: {finalVariants?.Count ?? 0}");
+
+                            if (finalVariants != null)
+                            {
+                                foreach (var kvp in finalVariants.OrderBy(k => k.Key))
+                                {
+                                    var variant = kvp.Value;
+                                    var texts = variant?.Texts ?? new List<string>();
+
+                                    AnalysisDebug.WriteLine($"      Variant {kvp.Key}: {texts.Count} текстов");
+                                    foreach (var text in texts)
+                                        AnalysisDebug.WriteLine($"        {text}");
+
+                                    AnalysisDebug.WriteLine(
+                                        $"        Significant flags: " +
+                                        $"MP={variant?.MonsterPower?.ToString() ?? "-"}, " +
+                                        $"ML={variant?.MonsterLevel?.ToString() ?? "-"}, " +
+                                        $"MBC={variant?.MonsterBatchCount?.ToString() ?? "-"}, " +
+                                        $"Dark={variant?.DarkeningLevel?.ToString() ?? "-"}, " +
+                                        $"RE={variant?.RandomEncounterChance?.ToString() ?? "-"}, " +
+                                        $"CallRE={variant?.CallsRandomEncounter ?? false}, " +
+                                        $"BattleCount={variant?.BattleMonsterCount?.ToString() ?? "-"}, " +
+                                        $"BattleRange={(variant?.BattleMonsterCountRange != null ? variant.BattleMonsterCountRange.ToString() : "-")}, " +
+                                        $"Indeterminate={variant?.IsBattleMonsterCountIndeterminate ?? false}, " +
+                                        $"BattleMonsters={variant?.BattleMonsters?.Count ?? 0}, " +
+                                        $"PartialBattles={variant?.PartiallyDefinedBattles?.Count ?? 0}, " +
+                                        $"HasAnyTableLoad={variant?.HasAnyTableLoad ?? false}, " +
+                                        $"LoadedValues={variant?.LoadedValues?.Count ?? 0}, " +
+                                        $"HasTeleport={variant?.HasTeleportTarget ?? false}");
+
+                                    WriteVariantDebugSummary(variant, cellX, cellY, 0);
+                                }
+                            }
+                        }
+
+                        bool hasSignificantCode = HasSignificantVariants(finalVariants);
 
                         if (!hasSignificantCode && comparison.IsLinear &&
                             (comparison.JumpType.ToUpper() == "JE" || comparison.JumpType.ToUpper() == "JZ") && isFull)
@@ -331,10 +335,34 @@ namespace MMMapEditor
                             continue;
                         }
 
-                        var obj = CreateMacroObject(cellPos, allTexts, monsterPower, monsterLevel, darkeningLevel,
-                            randomEncounterChance, callsRandomEncounter, battleMonsterCount,
-                            battleMonsterCountRange, isBattleMonsterCountIndeterminate,
-                            battleMonsters, partialBattles, hasPartialBattlePattern);
+                        var obj = new OvrObject
+                        {
+                            X = cellX,
+                            Y = cellY,
+                            DirectionByte = 0,
+                            IsFromTable = false
+                        };
+
+                        PopulateObjectPathData(obj, finalVariants);
+                        ApplyResolvedVariantInfoToObject(obj);
+
+                        if (debugMode)
+                        {
+                            AnalysisDebug.WriteLine($"\n    ИТОГО для макро-клетки ({obj.X},{obj.Y}):");
+                            AnalysisDebug.WriteLine($"      Всего путей: {obj.PathVariants.Count}");
+
+                            foreach (var kvp in obj.PathVariants.OrderBy(k => k.Key))
+                            {
+                                var variant = kvp.Value;
+                                var texts = variant?.Texts ?? new List<string>();
+
+                                AnalysisDebug.WriteLine($"      Path {kvp.Key}: {texts.Count} текстов");
+                                foreach (var text in texts)
+                                    AnalysisDebug.WriteLine($"        {text}");
+
+                                WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
+                            }
+                        }
 
                         objects.Add(obj);
                         objectsCreated++;
@@ -347,96 +375,97 @@ namespace MMMapEditor
             return objects;
         }
 
-        private (HashSet<string> texts, byte? monsterPower, byte? monsterLevel, byte? darkeningLevel, byte? randomEncounterChance, bool callsRandomEncounter, byte? battleMonsterCount,
-            ValueRange8 battleMonsterCountRange, bool isBattleMonsterCountIndeterminate,
-            Dictionary<int, (byte, byte, bool)> battleMonsters,
-            List<PartiallyDefinedBattle> partialBattles, bool hasPartialBattlePattern)
-            AnalyzeMacroResults(BinaryReader br, CoordinateComparison comparison,
-                List<AlternativePath> alternativePaths, byte targetX, byte targetY)
+        private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
+            byte targetX, byte targetY, List<AlternativePath> predefinedAlternativePaths,
+            HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null)
         {
-            var allTexts = new HashSet<string>();
-            byte? monsterPower = null;
-            byte? monsterLevel = null;
-            byte? darkeningLevel = null;
-            byte? randomEncounterChance = null;
-            bool callsRandomEncounter = false;
-            byte? battleMonsterCount = null;
-            ValueRange8 battleMonsterCountRange = null;
-            bool isBattleMonsterCountIndeterminate = false;
-            var battleMonsters = new Dictionary<int, (byte val1, byte val2, bool isIndeterminate)>();
-            var partialBattles = new List<PartiallyDefinedBattle>();
-            var partialBattleInfo = new List<PartialBattleInfo>();
-            bool hasPartialBattlePattern = false;
+            var registerTracker = new RegisterTracker();
+            initializeRegisters?.Invoke(registerTracker);
 
-            using (AnalysisDebug.BeginCellScope(targetX, targetY))
+            var processedBackEdges = new HashSet<(uint From, uint To)>();
+            var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, startAddress, registerTracker,
+                new HashSet<uint>(), 0, 0, 0, targetX, targetY,
+                processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
+
+            if (reachableAddresses != null)
             {
-                AnalysisDebug.WriteLine($"    AnalyzeMacroResults: старт для клетки ({targetX},{targetY}), JumpTarget=0x{comparison.JumpTarget:X4}");
+                foreach (var visitedAddress in mainPathResult.VisitedAddresses)
+                    reachableAddresses.Add(visitedAddress);
+            }
 
-                // Анализ основного пути
-                var mainRegisterTracker = new RegisterTracker();
-                var macroProcessedBackEdges = new HashSet<(uint From, uint To)>();
-                var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(
-                    br,
-                    comparison.JumpTarget,
-                    mainRegisterTracker,
-                    new HashSet<uint>(),
-                    0,
-                    0,
-                    0,
-                    targetX,
-                    targetY,
-                    macroProcessedBackEdges);
+            var (mainLocalTexts, mainContextTexts) = CollectTextsFromResult(mainPathResult);
+            var mainDisplayTexts = BuildDisplayTexts(mainPathResult.OrderedTexts, mainContextTexts, mainLocalTexts);
 
-                MergeMacroResults(mainPathResult, allTexts,
-                    ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance,
-                    ref callsRandomEncounter, ref battleMonsterCount, ref battleMonsterCountRange,
-                    ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles,
-                    partialBattleInfo, ref hasPartialBattlePattern);
+            var allResults = new List<PathVariantInfo>
+            {
+                CreatePathVariant(1, mainDisplayTexts, mainPathResult.AlternativePaths.Count == 0, mainPathResult)
+            };
 
-                // Анализ альтернативных путей
-                var processedTargets = new HashSet<uint>();
-                foreach (var path in alternativePaths)
+            var effectiveAlternativePaths = predefinedAlternativePaths ?? mainPathResult.AlternativePaths;
+            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
+
+            if (effectiveAlternativePaths.Count > 0)
+            {
+                if (debugMode)
                 {
-                    if (processedTargets.Contains(path.TargetAddress))
-                        continue;
-
-                    processedTargets.Add(path.TargetAddress);
-
-                    AnalysisDebug.WriteLine($"    AnalyzeMacroResults: альтернативный путь 0x{path.TargetAddress:X4} для клетки ({targetX},{targetY})");
-
-                    var pathRegisterTracker = new RegisterTracker();
-                    var pathResult = _codeExecutor.ExecuteCodeAtAddress(
-                        br,
-                        path.TargetAddress,
-                        pathRegisterTracker,
-                        new HashSet<uint>(),
-                        0,
-                        0,
-                        0,
-                        targetX,
-                        targetY);
-
-                    MergeMacroResults(pathResult, allTexts,
-                        ref monsterPower, ref monsterLevel, ref darkeningLevel, ref randomEncounterChance,
-                        ref callsRandomEncounter, ref battleMonsterCount, ref battleMonsterCountRange,
-                        ref isBattleMonsterCountIndeterminate, battleMonsters, partialBattles,
-                        partialBattleInfo, ref hasPartialBattlePattern);
+                    AnalysisDebug.WriteLine($"\nСобрано путей из основного анализа: {effectiveAlternativePaths.Count}");
+                    foreach (var path in effectiveAlternativePaths)
+                    {
+                        AnalysisDebug.WriteLine($"  Путь: 0x{path.Address:X4} -> 0x{path.TargetAddress:X4} ({path.Condition})");
+                    }
                 }
 
-                AnalysisDebug.WriteLine(
-                    $"    AnalyzeMacroResults: итог для ({targetX},{targetY}) -> texts={allTexts.Count}, " +
-                    $"battleMonsters={battleMonsters.Count}, partialBattles={partialBattles.Count}, " +
-                    $"hasPartialBattlePattern={hasPartialBattlePattern}");
+                _pathAnalyzer.ProcessPaths(effectiveAlternativePaths, 1, 0,
+                    mainDisplayTexts,
+                    br,
+                    targetX, targetY, allResults, null, processedBackEdges,
+                    invalidateReturnRegistersAfterExternalCall: true,
+                    reachableAddresses: reachableAddresses,
+                    inheritedState: mainPathResult);
+            }
 
-                return (allTexts, monsterPower, monsterLevel, darkeningLevel, randomEncounterChance,
-                    callsRandomEncounter, battleMonsterCount, battleMonsterCountRange,
-                    isBattleMonsterCountIndeterminate, battleMonsters, partialBattles, hasPartialBattlePattern);
+            return _pathAnalyzer.BuildFinalPathVariants(allResults);
+        }
+
+        private void PopulateObjectPathData(OvrObject obj, Dictionary<int, PathVariantInfo> finalVariants)
+        {
+            obj.PathVariants = finalVariants ?? new Dictionary<int, PathVariantInfo>();
+            obj.PathTexts = new Dictionary<int, HashSet<string>>();
+            obj.PathTextsOrdered = new Dictionary<int, List<string>>();
+
+            foreach (var kvp in obj.PathVariants)
+            {
+                obj.PathTexts[kvp.Key] = new HashSet<string>(kvp.Value.Texts ?? new List<string>());
+                obj.PathTextsOrdered[kvp.Key] = kvp.Value.Texts ?? new List<string>();
             }
         }
 
+        private bool HasSignificantVariants(Dictionary<int, PathVariantInfo> variants)
+        {
+            if (variants == null || variants.Count == 0)
+                return false;
+
+            return variants.Values.Any(variant =>
+                (variant.Texts?.Count ?? 0) > 0 ||
+                variant.MonsterPower.HasValue ||
+                variant.MonsterLevel.HasValue ||
+                variant.MonsterBatchCount.HasValue ||
+                variant.DarkeningLevel.HasValue ||
+                variant.RandomEncounterChance.HasValue ||
+                variant.CallsRandomEncounter ||
+                variant.BattleMonsterCount.HasValue ||
+                variant.BattleMonsterCountRange != null ||
+                variant.IsBattleMonsterCountIndeterminate ||
+                (variant.BattleMonsters?.Count ?? 0) > 0 ||
+                (variant.PartiallyDefinedBattles?.Count ?? 0) > 0 ||
+                variant.HasAnyTableLoad ||
+                (variant.LoadedValues?.Count ?? 0) > 0 ||
+                variant.HasTeleportTarget);
+        }
+
         private List<OvrObject> ProcessDefaultPath(BinaryReader br, List<X86Instruction> allInstructions,
-            HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions,
-            List<OvrObject> existingObjects)
+    HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions,
+    List<OvrObject> existingObjects)
         {
             var objects = new List<OvrObject>();
 
@@ -445,76 +474,106 @@ namespace MMMapEditor
             if (!defaultPathAddress.HasValue)
                 return objects;
 
-            using (AnalysisDebug.BeginCellScope(0, 0))
+            AnalysisDebug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
+            AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
+
+            int objectsCreated = 0;
+
+            for (byte x = 0; x < 16; x++)
             {
-                AnalysisDebug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
-                AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
-
-                var defaultRegisterTracker = new RegisterTracker();
-                var defaultPathResult = _codeExecutor.ExecuteCodeAtAddress(br, defaultPathAddress.Value, defaultRegisterTracker,
-                    new HashSet<uint>(), 0, 0, 0, 0, 0);
-
-                // Сбор текстов
-                var defaultTexts = new HashSet<string>();
-                foreach (var text in defaultPathResult.FoundTexts)
-                    defaultTexts.Add(text);
-                foreach (var text in defaultPathResult.ContextTexts)
-                    defaultTexts.Add(text);
-
-                bool hasSignificantCode = defaultTexts.Count > 0 ||
-                                          defaultPathResult.MonsterPower.HasValue ||
-                                          defaultPathResult.MonsterLevel.HasValue ||
-                                          defaultPathResult.DarkeningLevel.HasValue ||
-                                          defaultPathResult.RandomEncounterChance.HasValue ||
-                                          defaultPathResult.BattleMonsterEntries.Count > 0 ||
-                                          defaultPathResult.PartialBattles.Count > 0;
-
-                if (!hasSignificantCode)
+                for (byte y = 0; y < 16; y++)
                 {
-                    AnalysisDebug.WriteLine($"  Путь по умолчанию не содержит значимого кода");
-                    return objects;
-                }
+                    var cellPos = new Point(x, y);
+                    string coordKey = $"{x},{y}";
 
-                AnalysisDebug.WriteLine($"  Найден значимый код в пути по умолчанию:");
-                AnalysisDebug.WriteLine($"    Текстов: {defaultTexts.Count}");
-                AnalysisDebug.WriteLine($"    MonsterPower: {defaultPathResult.MonsterPower}");
-                AnalysisDebug.WriteLine($"    MonsterLevel: {defaultPathResult.MonsterLevel}");
-                AnalysisDebug.WriteLine($"    DarkeningLevel: {defaultPathResult.DarkeningLevel}");
-                AnalysisDebug.WriteLine($"    RandomEncounterChance: {defaultPathResult.RandomEncounterChance}");
-                AnalysisDebug.WriteLine($"    CallsRandomEncounter: {defaultPathResult.CallsRandomEncounter}");
-                AnalysisDebug.WriteLine($"    BattleMonsters: {defaultPathResult.BattleMonsterEntries.Count}");
-
-                // Создание объектов для всех подходящих клеток
-                int objectsCreated = 0;
-                for (byte x = 0; x < 16; x++)
-                {
-                    for (byte y = 0; y < 16; y++)
+                    if (tableObjectCoords.Contains(coordKey))
                     {
-                        var cellPos = new Point(x, y);
-                        string coordKey = $"{x},{y}";
+                        using (AnalysisDebug.BeginCellScope(x, y))
+                        {
+                            AnalysisDebug.WriteLine("  -> пропуск: клетка уже обработана табличным объектом");
+                        }
+                        continue;
+                    }
 
-                        if (tableObjectCoords.Contains(coordKey))
+                    bool isRandomEncounter = existingCentralOptions.TryGetValue(cellPos, out string option) &&
+                                             option == "Случайная встреча";
+
+                    if (!isRandomEncounter)
+                    {
+                        using (AnalysisDebug.BeginCellScope(x, y))
+                        {
+                            AnalysisDebug.WriteLine("  -> пропуск: клетка не помечена как \"Случайная встреча\"");
+                        }
+                        continue;
+                    }
+
+                    bool alreadyExists = existingObjects.Any(o => o.X == x && o.Y == y);
+                    if (alreadyExists)
+                    {
+                        using (AnalysisDebug.BeginCellScope(x, y))
+                        {
+                            AnalysisDebug.WriteLine("  -> пропуск: объект для клетки уже создан другим режимом");
+                        }
+                        continue;
+                    }
+
+                    using (AnalysisDebug.BeginCellScope(x, y))
+                    {
+                        AnalysisDebug.WriteLine($"  -> анализ default-path для клетки ({x},{y})");
+
+                        var finalVariants = AnalyzeObjectVariants(
+                            br,
+                            defaultPathAddress.Value,
+                            x,
+                            y,
+                            predefinedAlternativePaths: null,
+                            reachableAddresses: null,
+                            initializeRegisters: tracker =>
+                                SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress.Value));
+
+                        bool hasSignificantCode = HasSignificantVariants(finalVariants);
+                        if (!hasSignificantCode)
+                        {
+                            AnalysisDebug.WriteLine($"  -> для клетки ({x},{y}) значимого кода не найдено, пропускаем");
                             continue;
+                        }
 
-                        bool isRandomEncounter = existingCentralOptions.TryGetValue(cellPos, out string option) &&
-                                                 option == "Случайная встреча";
+                        var obj = new OvrObject
+                        {
+                            X = x,
+                            Y = y,
+                            DirectionByte = 0,
+                            IsFromTable = false
+                        };
 
-                        if (!isRandomEncounter)
-                            continue;
+                        PopulateObjectPathData(obj, finalVariants);
+                        ApplyResolvedVariantInfoToObject(obj);
 
-                        bool alreadyExists = existingObjects.Any(o => o.X == x && o.Y == y);
-                        if (alreadyExists)
-                            continue;
+                        AnalysisDebug.WriteLine($"    Создан объект default-path для клетки ({obj.X},{obj.Y})");
+                        AnalysisDebug.WriteLine($"    Всего путей: {obj.PathVariants.Count}");
 
-                        var obj = CreateDefaultObject(cellPos, defaultPathResult, defaultTexts);
+                        foreach (var kvp in obj.PathVariants.OrderBy(k => k.Key))
+                        {
+                            var variant = kvp.Value;
+                            var texts = variant?.Texts ?? new List<string>();
+
+                            AnalysisDebug.WriteLine($"      Path {kvp.Key}: {texts.Count} текстов");
+                            foreach (var text in texts)
+                            {
+                                AnalysisDebug.WriteLine($"        {text}");
+                            }
+
+                            WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
+                        }
+
                         objects.Add(obj);
                         objectsCreated++;
                     }
                 }
-
-                AnalysisDebug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
-                return objects;
             }
+
+            AnalysisDebug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
+            return objects;
         }
 
         // Вспомогательные методы
@@ -872,98 +931,6 @@ namespace MMMapEditor
             }
         }
 
-        private void MergeMacroResults(PathAnalysisResult source, HashSet<string> allTexts,
-            ref byte? monsterPower, ref byte? monsterLevel, ref byte? darkeningLevel, ref byte? randomEncounterChance, ref bool callsRandomEncounter, ref byte? battleMonsterCount,
-            ref ValueRange8 battleMonsterCountRange, ref bool isBattleMonsterCountIndeterminate,
-            Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
-            List<PartiallyDefinedBattle> partialBattles,
-            List<PartialBattleInfo> partialBattleInfo,
-            ref bool hasPartialBattlePattern)
-        {
-            if (source == null) return;
-
-            foreach (var text in source.FoundTexts)
-                allTexts.Add(text);
-            foreach (var text in source.ContextTexts)
-                allTexts.Add(text);
-
-            if (source.MonsterPower.HasValue)
-                monsterPower = source.MonsterPower;
-
-            if (source.MonsterLevel.HasValue)
-                monsterLevel = source.MonsterLevel;
-
-            if (source.DarkeningLevel.HasValue)
-                darkeningLevel = source.DarkeningLevel;
-
-            if (source.RandomEncounterChance.HasValue)
-                randomEncounterChance = source.RandomEncounterChance;
-
-            callsRandomEncounter = callsRandomEncounter || source.CallsRandomEncounter;
-
-            if (source.BattleMonsterCountRange != null)
-            {
-                battleMonsterCountRange = new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max);
-                battleMonsterCount = source.BattleMonsterCountRange.IsExact ? source.BattleMonsterCountRange.Min : (byte?)null;
-                isBattleMonsterCountIndeterminate = false;
-            }
-            else if (source.BattleMonsterCount.HasValue)
-            {
-                battleMonsterCount = source.BattleMonsterCount;
-                battleMonsterCountRange = new ValueRange8(source.BattleMonsterCount.Value, source.BattleMonsterCount.Value);
-                isBattleMonsterCountIndeterminate = false;
-            }
-            else if (source.IsBattleMonsterCountIndeterminate && !battleMonsterCount.HasValue && battleMonsterCountRange == null)
-            {
-                isBattleMonsterCountIndeterminate = true;
-            }
-
-            foreach (var entry in source.BattleMonsterEntries)
-            {
-                if (!battleMonsters.TryGetValue(entry.Key, out var existing))
-                {
-                    battleMonsters[entry.Key] = entry.Value;
-                    continue;
-                }
-
-                bool existingDefined = existing.val1 != 0 && existing.val2 != 0 && !existing.isIndeterminate;
-                bool newDefined = entry.Value.val1 != 0 && entry.Value.val2 != 0 && !entry.Value.isIndeterminate;
-
-                if (!existingDefined && newDefined)
-                {
-                    battleMonsters[entry.Key] = entry.Value;
-                }
-                else if (existing.isIndeterminate && !entry.Value.isIndeterminate)
-                {
-                    battleMonsters[entry.Key] = entry.Value;
-                }
-                else if (!existing.isIndeterminate && entry.Value.isIndeterminate)
-                {
-                    // Оставляем существующую определённую запись.
-                }
-                else
-                {
-                    // При одинаковой степени определённости оставляем последнюю.
-                    battleMonsters[entry.Key] = entry.Value;
-                }
-            }
-
-            foreach (var partial in source.PartialBattles)
-            {
-                if (!partialBattles.Any(p => p.BxIndex == partial.BxIndex))
-                    partialBattles.Add(partial);
-            }
-
-            foreach (var info in source.PartialBattleInfo)
-            {
-                if (!partialBattleInfo.Any(i => i.BxIndex == info.BxIndex &&
-                                                 i.DestAddr == info.DestAddr))
-                    partialBattleInfo.Add(info);
-            }
-
-            hasPartialBattlePattern = hasPartialBattlePattern || source.HasPartialBattlePattern;
-        }
-
         private List<Point> GetTargetCells(CoordinateComparison comparison, bool isX, bool isY, bool isFull, byte targetX, byte targetY)
         {
             var targetCells = new List<Point>();
@@ -1168,4 +1135,5 @@ namespace MMMapEditor
             return obj;
         }
     }
+
 }
