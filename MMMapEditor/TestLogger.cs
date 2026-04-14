@@ -13,6 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 
 ﻿using System;
 using System.Collections.Generic;
@@ -104,6 +119,32 @@ namespace MMMapEditor.Tests
             }
 
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// Явно добавить строку в лог теста
+        /// </summary>
+        public void LogLine(string message)
+        {
+            string line = message ?? string.Empty;
+
+            // Этот метод может вызываться уже после завершения теста,
+            // когда Dispose() закрыл внутренний StringWriter.
+            // Для отображения на форме и в экспортируемых результатах
+            // достаточно сохранить строку в захваченном списке логов.
+            _capturedLogs.Add(line);
+        }
+
+        /// <summary>
+        /// Явно добавить несколько строк в лог теста
+        /// </summary>
+        public void LogLines(IEnumerable<string> messages)
+        {
+            if (messages == null)
+                return;
+
+            foreach (var message in messages)
+                LogLine(message);
         }
 
         /// <summary>

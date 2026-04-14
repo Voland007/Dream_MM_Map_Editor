@@ -596,7 +596,7 @@ namespace MMMapEditor
                     sb.AppendLine();
             }
 
-            return sb.ToString().TrimEnd('\n');
+            return sb.ToString().TrimEnd('\r', '\n');
         }
 
         private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(List<VariantRenderItem> items)

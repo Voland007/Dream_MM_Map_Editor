@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -43,6 +43,22 @@ namespace MMMapEditor.Tests
     /// </summary>
     public class TestResultsViewer : Form
     {
+        private sealed class CharDiffEntry
+        {
+            public int Index { get; set; }
+            public char? ExpectedChar { get; set; }
+            public char? ActualChar { get; set; }
+        }
+
+        private sealed class CharDiffResult
+        {
+            public string ExpectedText { get; set; }
+            public string ActualText { get; set; }
+            public List<CharDiffEntry> Differences { get; } = new List<CharDiffEntry>();
+
+            public bool HasDifferences => Differences.Count > 0;
+        }
+
         private readonly List<TestResult> _results;
         private TreeView _treeView;
         private RichTextBox _detailsBox;
@@ -820,6 +836,8 @@ namespace MMMapEditor.Tests
                     new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(244, 135, 113));
             }
 
+            EnsureCharDiffsLogged(result);
+
             if (result.Logger != null)
             {
                 AppendStyledText("\n=== ЛОГ ВЫПОЛНЕНИЯ ===\n\n",
@@ -846,6 +864,26 @@ namespace MMMapEditor.Tests
             }
         }
 
+        private void EnsureCharDiffsLogged(TestResult result)
+        {
+            if (result?.Logger == null || result.Passed || result.CellResults == null)
+                return;
+
+            foreach (var cellResult in result.CellResults.Where(c => c != null && !c.Passed))
+            {
+                var diffResult = BuildCharDiff(cellResult.Expected, cellResult.Actual);
+                if (!diffResult.HasDifferences)
+                    continue;
+
+                string header = $"=== ПОСИМВОЛЬНОЕ СРАВНЕНИЕ ДЛЯ КЛЕТКИ ({cellResult.Cell.X},{cellResult.Cell.Y}) ===";
+                bool alreadyLogged = result.Logger.CapturedLogs.Any(log =>
+                    string.Equals(log, header, StringComparison.Ordinal));
+
+                if (!alreadyLogged)
+                    result.Logger.LogLines(BuildDiffLogLines(cellResult, diffResult));
+            }
+        }
+
         private void ShowCellResult(CellCheckResult result)
         {
             _detailsBox.Clear();
@@ -853,18 +891,43 @@ namespace MMMapEditor.Tests
             AppendStyledText($"=== КЛЕТКА ({result.Cell.X},{result.Cell.Y}) ===\n\n",
                 new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(255, 215, 0));
 
-            // ПОКАЗЫВАЕМ ПОЛНЫЙ ТЕКСТ БЕЗ ВСЯКОЙ ОБРЕЗКИ
+            CharDiffResult diffResult = !result.Passed
+                ? BuildCharDiff(result.Expected, result.Actual)
+                : null;
+
+            if (diffResult != null && diffResult.HasDifferences)
+                LogCharDiffs(result, diffResult);
+
             AppendStyledText("Ожидаемый текст:\n",
                 new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(156, 220, 254));
-            AppendStyledText(result.Expected + "\n\n",
-                _detailsBox.Font, Color.FromArgb(156, 220, 254));
+            if (diffResult != null && diffResult.HasDifferences)
+                AppendDiffText(diffResult.ExpectedText + "\n\n", diffResult.Differences, true);
+            else
+                AppendStyledText(result.Expected + "\n\n",
+                    _detailsBox.Font, Color.FromArgb(156, 220, 254));
 
             AppendStyledText("Фактический текст:\n",
                 new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(206, 145, 120));
-            AppendStyledText(result.Actual + "\n\n",
-                _detailsBox.Font, Color.FromArgb(206, 145, 120));
+            if (diffResult != null && diffResult.HasDifferences)
+                AppendDiffText(diffResult.ActualText + "\n\n", diffResult.Differences, false);
+            else
+                AppendStyledText(result.Actual + "\n\n",
+                    _detailsBox.Font, Color.FromArgb(206, 145, 120));
 
-            // Добавляем разделитель для наглядности
+            if (diffResult != null && diffResult.HasDifferences)
+            {
+                AppendStyledText("Посимвольные расхождения:\n",
+                    new Font(_detailsBox.Font, FontStyle.Bold), Color.FromArgb(255, 215, 0));
+
+                foreach (var line in BuildDiffLogLines(result, diffResult))
+                {
+                    AppendStyledText(line + "\n",
+                        new Font("Consolas", 9), Color.FromArgb(255, 215, 0));
+                }
+
+                AppendStyledText("\n", _detailsBox.Font, Color.White);
+            }
+
             AppendStyledText(new string('-', 50) + "\n\n",
                 _detailsBox.Font, Color.Gray);
 
@@ -887,6 +950,129 @@ namespace MMMapEditor.Tests
 
                 AppendStyledText(result.AnalysisTrace,
                     new Font("Consolas", 9), Color.FromArgb(212, 212, 212));
+            }
+        }
+
+        private CharDiffResult BuildCharDiff(string expectedText, string actualText)
+        {
+            var result = new CharDiffResult
+            {
+                ExpectedText = expectedText ?? string.Empty,
+                ActualText = actualText ?? string.Empty
+            };
+
+            int maxLength = Math.Max(result.ExpectedText.Length, result.ActualText.Length);
+            for (int i = 0; i < maxLength; i++)
+            {
+                char? expectedChar = i < result.ExpectedText.Length ? result.ExpectedText[i] : (char?)null;
+                char? actualChar = i < result.ActualText.Length ? result.ActualText[i] : (char?)null;
+
+                if (expectedChar != actualChar)
+                {
+                    result.Differences.Add(new CharDiffEntry
+                    {
+                        Index = i,
+                        ExpectedChar = expectedChar,
+                        ActualChar = actualChar
+                    });
+                }
+            }
+
+            return result;
+        }
+
+        private IEnumerable<string> BuildDiffLogLines(CellCheckResult result, CharDiffResult diffResult)
+        {
+            yield return $"=== ПОСИМВОЛЬНОЕ СРАВНЕНИЕ ДЛЯ КЛЕТКИ ({result.Cell.X},{result.Cell.Y}) ===";
+            yield return $"Всего расхождений: {diffResult.Differences.Count}";
+
+            foreach (var diff in diffResult.Differences)
+            {
+                yield return $"Позиция {diff.Index + 1}: ожидался {FormatCharForLog(diff.ExpectedChar)}, фактически {FormatCharForLog(diff.ActualChar)}";
+            }
+        }
+
+        private void LogCharDiffs(CellCheckResult result, CharDiffResult diffResult)
+        {
+            var testResult = GetSelectedTestResult();
+            if (testResult?.Logger == null)
+                return;
+
+            string header = $"=== ПОСИМВОЛЬНОЕ СРАВНЕНИЕ ДЛЯ КЛЕТКИ ({result.Cell.X},{result.Cell.Y}) ===";
+            bool alreadyLogged = testResult.Logger.CapturedLogs.Any(log =>
+                string.Equals(log, header, StringComparison.Ordinal));
+
+            if (alreadyLogged)
+                return;
+
+            testResult.Logger.LogLines(BuildDiffLogLines(result, diffResult));
+        }
+
+        private TestResult GetSelectedTestResult()
+        {
+            TreeNode node = _treeView.SelectedNode;
+            while (node != null)
+            {
+                if (node.Tag is TestResult testResult)
+                    return testResult;
+
+                node = node.Parent;
+            }
+
+            return null;
+        }
+
+        private void AppendDiffText(string text, IEnumerable<CharDiffEntry> differences, bool expectedSide)
+        {
+            int baseStart = _detailsBox.TextLength;
+            Color normalColor = expectedSide
+                ? Color.FromArgb(156, 220, 254)
+                : Color.FromArgb(206, 145, 120);
+
+            AppendStyledText(text, _detailsBox.Font, normalColor);
+
+            if (differences == null)
+                return;
+
+            foreach (var diff in differences)
+            {
+                char? relevantChar = expectedSide ? diff.ExpectedChar : diff.ActualChar;
+                if (!relevantChar.HasValue)
+                    continue;
+
+                int charPosition = baseStart + diff.Index;
+                if (charPosition < 0 || charPosition >= _detailsBox.TextLength)
+                    continue;
+
+                _detailsBox.Select(charPosition, 1);
+                _detailsBox.SelectionBackColor = Color.FromArgb(120, 180, 50, 50);
+                _detailsBox.SelectionColor = Color.White;
+                _detailsBox.SelectionFont = new Font(_detailsBox.Font, FontStyle.Bold);
+            }
+
+            _detailsBox.Select(_detailsBox.TextLength, 0);
+            _detailsBox.SelectionBackColor = _detailsBox.BackColor;
+            _detailsBox.SelectionColor = _detailsBox.ForeColor;
+            _detailsBox.SelectionFont = _detailsBox.Font;
+        }
+
+        private string FormatCharForLog(char? value)
+        {
+            if (!value.HasValue)
+                return "<отсутствует>";
+
+            switch (value.Value)
+            {
+                case '\r':
+                    return "'\\r'";
+                case '\n':
+                    return "'\\n'";
+                case '\t':
+                    return "'\\t'";
+                case ' ':
+                    return "'пробел'";
+                default:
+                    return $"'{value.Value}'";
             }
         }
 
