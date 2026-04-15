@@ -1215,6 +1215,10 @@ namespace MMMapEditor
             if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleLikeInfo)
                 lines.Add("⚠Вызывается random encounter ⚠");
 
+            var partyLines = obj.GetPartyEffectDescriptions();
+            if (partyLines != null && partyLines.Count > 0)
+                lines.AddRange(partyLines);
+
             return lines;
         }
 

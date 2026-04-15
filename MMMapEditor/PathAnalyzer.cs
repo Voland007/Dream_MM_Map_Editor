@@ -74,6 +74,19 @@ namespace MMMapEditor
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall,
                     path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses),
                     path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8));
+
+                if (path.BranchPartyCondition != PartyConditionKind.None)
+                {
+                    pathResult.ActivePartyCondition = path.BranchPartyCondition;
+
+                    if (path.BranchPartyCondition == PartyConditionKind.MaleOnly)
+                        pathRegisterTracker.CurrentGenderBranchIsMale = true;
+                    else if (path.BranchPartyCondition == PartyConditionKind.FemaleOnly)
+                        pathRegisterTracker.CurrentGenderBranchIsMale = false;
+                    else
+                        pathRegisterTracker.CurrentGenderBranchIsMale = null;
+                }
+
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -332,6 +345,48 @@ namespace MMMapEditor
             }
 
             merged.HasPartialBattlePattern = merged.HasPartialBattlePattern || currentState.HasPartialBattlePattern;
+
+            foreach (var access in currentState.PartyFieldAccesses ?? Enumerable.Empty<PartyFieldReference>())
+            {
+                if (access == null)
+                    continue;
+
+                bool exists = merged.PartyFieldAccesses.Any(a =>
+                    a != null &&
+                    a.Field == access.Field &&
+                    a.Offset == access.Offset &&
+                    a.EffectiveAddress == access.EffectiveAddress &&
+                    a.IsRead == access.IsRead &&
+                    a.IsWrite == access.IsWrite &&
+                    a.IsCompare == access.IsCompare &&
+                    ((a.Member?.MemberIndex) == (access.Member?.MemberIndex)) &&
+                    ((a.Member?.PointerAddress) == (access.Member?.PointerAddress)));
+
+                if (!exists)
+                    merged.PartyFieldAccesses.Add(access.Clone());
+            }
+
+            if (currentState.PendingPartyHpOperation != null)
+                merged.PendingPartyHpOperation = currentState.PendingPartyHpOperation.Clone();
+
+            if (currentState.ActivePartyCondition != PartyConditionKind.None)
+                merged.ActivePartyCondition = currentState.ActivePartyCondition;
+            else if (inheritedState.ActivePartyCondition != PartyConditionKind.None)
+                merged.ActivePartyCondition = inheritedState.ActivePartyCondition;
+
+            foreach (var effect in currentState.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+            {
+                if (effect == null)
+                    continue;
+
+                string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
+                bool exists = merged.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
+                if (!exists)
+                    merged.PartyEffects.Add(effect.Clone());
+            }
+
+            if (merged.LoopSemantic == LoopSemanticKind.None)
+                merged.LoopSemantic = currentState.LoopSemantic;
             merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             return merged;
@@ -358,6 +413,14 @@ namespace MMMapEditor
             clone.BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max);
             clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
             clone.HasPartialBattlePattern = source.HasPartialBattlePattern;
+            clone.IsInLoop = source.IsInLoop;
+            clone.LoopSemantic = source.LoopSemantic;
+            clone.LoopStartAddress = source.LoopStartAddress;
+            clone.LoopIteration = source.LoopIteration;
+            clone.IsIndeterminateLoop = source.IsIndeterminateLoop;
+            clone.LoopIterationCount = source.LoopIterationCount;
+            clone.IsTerminated = source.IsTerminated;
+            clone.HasSignificantCode = source.HasSignificantCode;
 
             foreach (var entry in source.BattleMonsterEntries)
                 clone.BattleMonsterEntries[entry.Key] = entry.Value;
@@ -399,6 +462,10 @@ namespace MMMapEditor
             clone.ExitCallDepth = source.ExitCallDepth;
             clone.TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge;
             clone.TerminatedByTerminalRet = source.TerminatedByTerminalRet;
+            clone.PartyFieldAccesses = source.PartyFieldAccesses?.Select(a => a?.Clone()).Where(a => a != null).ToList() ?? new List<PartyFieldReference>();
+            clone.PendingPartyHpOperation = source.PendingPartyHpOperation?.Clone();
+            clone.ActivePartyCondition = source.ActivePartyCondition;
+            clone.PartyEffects = source.PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>();
 
             foreach (var alt in source.AlternativePaths)
             {
@@ -421,7 +488,8 @@ namespace MMMapEditor
                         : new List<uint>(alt.PendingReturnAddresses),
                     EmulatedMemory8 = alt.EmulatedMemory8 == null
                         ? new Dictionary<ushort, byte>()
-                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8)
+                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8),
+                    BranchPartyCondition = alt.BranchPartyCondition
                 });
             }
 
@@ -457,12 +525,116 @@ namespace MMMapEditor
                 PartiallyDefinedBattles = ClonePartialBattles(source),
                 HasAnyTableLoad = source.HasPartialBattlePattern,
                 LoadedValues = CloneLoadedValues(source),
+                PartyEffects = BuildNormalizedPartyEffects(source),
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 BranchChoices = CloneBranchChoices(branchChoices)
             };
+        }
+
+        private List<PartyEffect> BuildNormalizedPartyEffects(PathAnalysisResult source)
+        {
+            var result = new List<PartyEffect>();
+            if (source == null)
+                return result;
+
+            var allPartyEffects = source.PartyEffects?.Where(e => e != null).ToList() ?? new List<PartyEffect>();
+            var stateChangingEffects = allPartyEffects
+                .Where(PartyEffectSemantics.IsStateChanging)
+                .Select(e => e.Clone())
+                .ToList();
+
+            result.AddRange(stateChangingEffects);
+
+            if (source.PendingPartyHpOperation != null)
+                ApplyPartyConditionToPending(source.PendingPartyHpOperation, source.ActivePartyCondition);
+
+            PartyConditionKind inferredCondition = InferPartyCondition(source.PendingPartyHpOperation, allPartyEffects);
+
+            if (IsCompletedHpHalvingPattern(source.PendingPartyHpOperation))
+            {
+                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(
+                    source.PendingPartyHpOperation,
+                    source.LoopSemantic,
+                    inferredCondition);
+
+                if (hpHalved != null)
+                {
+                    // Нормализованный HpHalved должен подавлять низкоуровневые записи тех же HP-байтов
+                    // из того же loop-derived паттерна, иначе в варианте остаются и реализация, и смысл.
+                    result.RemoveAll(e =>
+                        e != null &&
+                        PartyEffectSemantics.GetEffectiveField(e) == PartyFieldKind.Hp &&
+                        PartyEffectSemantics.GetEffectiveOperation(e) == PartyEffectOperation.Write &&
+                        PartyEffectSemantics.IsLoopDerived(e));
+
+                    result.Add(hpHalved);
+                }
+            }
+
+            return result
+                .Where(e => e != null)
+                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                .Select(g => g.First())
+                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+                .ToList();
+        }
+
+        private PartyConditionKind InferPartyCondition(PendingPartyHpOperation pending, IEnumerable<PartyEffect> effects)
+        {
+            foreach (var effect in effects ?? Enumerable.Empty<PartyEffect>())
+            {
+                if (effect == null || !PartyEffectSemantics.IsGuardLike(effect))
+                    continue;
+
+                if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Gender)
+                    continue;
+
+                var condition = PartyEffectSemantics.GetEffectiveCondition(effect);
+                if (condition != PartyConditionKind.None)
+                    return condition;
+            }
+
+            if (pending?.MaleOnly == true)
+                return PartyConditionKind.MaleOnly;
+
+            if (pending?.FemaleOnly == true)
+                return PartyConditionKind.FemaleOnly;
+
+            return PartyConditionKind.None;
+        }
+
+        private static void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
+        {
+            if (pending == null)
+                return;
+
+            if (condition == PartyConditionKind.MaleOnly)
+            {
+                pending.MaleOnly = true;
+                pending.FemaleOnly = false;
+            }
+            else if (condition == PartyConditionKind.FemaleOnly)
+            {
+                pending.FemaleOnly = true;
+                pending.MaleOnly = false;
+            }
+        }
+
+        private bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
+        {
+            if (pending == null)
+                return false;
+
+            return pending.SawReadHigh &&
+                   pending.SawReadLow &&
+                   pending.SawWriteHigh &&
+                   pending.SawWriteLow &&
+                   pending.SawClc &&
+                   pending.SawShrHigh &&
+                   pending.SawRcrLow;
         }
 
         private List<BranchChoice> CloneBranchChoices(IEnumerable<BranchChoice> branchChoices)
@@ -622,6 +794,9 @@ namespace MMMapEditor
             if (variant.LoadedValues != null && variant.LoadedValues.Count > 0)
                 return true;
 
+            if (variant.PartyEffects != null && variant.PartyEffects.Count > 0)
+                return true;
+
             return false;
         }
 
@@ -740,7 +915,24 @@ namespace MMMapEditor
                 }
             }
 
-            var orderedUniqueVariants = semanticallyUnique.Values
+            // Дополнительная branch-insensitive дедупликация для циклов перебора партии:
+            // одинаковые тексты и одинаковые party-effects, различающиеся только историей
+            // прохода по итерациям цикла, считаем одним вариантом.
+            var branchInsensitiveUnique = new Dictionary<string, PathVariantInfo>();
+            foreach (var variant in semanticallyUnique.Values.OrderBy(v => v.PathId))
+            {
+                string key = BuildVariantIdentityKey(variant);
+                if (!branchInsensitiveUnique.TryGetValue(key, out var existing))
+                {
+                    branchInsensitiveUnique[key] = variant;
+                    continue;
+                }
+
+                if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
+                    branchInsensitiveUnique[key] = variant;
+            }
+
+            var orderedUniqueVariants = branchInsensitiveUnique.Values
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -803,7 +995,9 @@ namespace MMMapEditor
                     .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
                 : "<NO_PARTIAL>";
 
-            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}";
+            string partyKey = BuildPartyEffectsKey(variant);
+
+            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}";
         }
 
         private int GreatestCommonDivisor(int a, int b)
@@ -822,6 +1016,39 @@ namespace MMMapEditor
         private int LeastCommonMultiple(int a, int b)
         {
             return Math.Abs(a / GreatestCommonDivisor(a, b) * b);
+        }
+
+
+        private bool ShouldIgnoreBranchHistoryForIdentity(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.PartyEffects == null || variant.PartyEffects.Count == 0)
+                return false;
+
+            return variant.PartyEffects.Any(e =>
+            {
+                if (e == null)
+                    return false;
+
+                string semanticKey = PartyEffectSemantics.BuildSemanticKey(e);
+                bool partyWide = semanticKey.Contains($"|{PartyEffectScope.PartySubset}|") ||
+                                 semanticKey.Contains($"|{PartyEffectScope.WholeParty}|");
+                bool compareOnly = semanticKey.Contains($"|{PartyEffectOperation.Compare}|");
+                return partyWide && !compareOnly;
+            });
+        }
+
+        private string BuildPartyEffectsKey(PathVariantInfo variant)
+        {
+            if (variant?.PartyEffects == null || variant.PartyEffects.Count == 0)
+                return "<NO_PARTY>";
+
+            return string.Join(";", variant.PartyEffects
+                .Where(e => e != null)
+                .Select(PartyEffectSemantics.BuildSemanticKey)
+                .OrderBy(x => x));
         }
 
         private int GetVariantPrecisionScore(PathVariantInfo variant)
@@ -880,13 +1107,17 @@ namespace MMMapEditor
                     .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
                 : "<NO_LOADS>";
 
-            string branchKey = variant.BranchChoices != null && variant.BranchChoices.Count > 0
-                ? string.Join(";", variant.BranchChoices
-                    .Where(c => c != null)
-                    .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
-                : "<NO_BRANCHES>";
+            string partyKey = BuildPartyEffectsKey(variant);
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{branchKey}";
+            string branchKey = ShouldIgnoreBranchHistoryForIdentity(variant)
+                ? "<IGNORED_BRANCHES>"
+                : (variant.BranchChoices != null && variant.BranchChoices.Count > 0
+                    ? string.Join(";", variant.BranchChoices
+                        .Where(c => c != null)
+                        .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
+                    : "<NO_BRANCHES>");
+
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}";
         }
     }
 }

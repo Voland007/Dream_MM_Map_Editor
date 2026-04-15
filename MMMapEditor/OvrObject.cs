@@ -39,6 +39,8 @@ namespace MMMapEditor
         public Dictionary<int, PathVariantInfo> PathVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
 
         public bool IsFromTable { get; set; } = false;
+        public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
+        public bool HasPartyEffects => PartyEffects != null && PartyEffects.Count > 0;
 
         #endregion
 
@@ -77,6 +79,16 @@ namespace MMMapEditor
             HasBattleInfo ||
             HasPartiallyDefinedBattles ||
             (HasAnyTableLoad && LoadedValues.Count > 0);
+
+        public List<string> GetPartyEffectDescriptions()
+        {
+            return (PartyEffects ?? new List<PartyEffect>())
+                .Where(effect => effect != null)
+                .Select(PartyEffectSemantics.BuildHumanDescription)
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Distinct()
+                .ToList();
+        }
 
         #endregion
 
@@ -843,6 +855,7 @@ namespace MMMapEditor
 
         public bool HasAnyTableLoad { get; set; }
         public List<OvrObject.LoadedValueInfo> LoadedValues { get; set; } = new List<OvrObject.LoadedValueInfo>();
+        public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
 
         public int ProbabilityNumerator { get; set; } = 1;
         public int ProbabilityDenominator { get; set; } = 1;
@@ -865,7 +878,8 @@ namespace MMMapEditor
             (BattleMonsters == null || BattleMonsters.Count == 0) &&
             (PartiallyDefinedBattles == null || PartiallyDefinedBattles.Count == 0) &&
             !HasAnyTableLoad &&
-            (LoadedValues == null || LoadedValues.Count == 0);
+            (LoadedValues == null || LoadedValues.Count == 0) &&
+            (PartyEffects == null || PartyEffects.Count == 0);
 
         public bool HasProbabilityInfo => ProbabilityDenominator > 1;
 
@@ -893,7 +907,8 @@ namespace MMMapEditor
                 BattleMonsterCountRange = BattleMonsterCountRange == null ? null : new ValueRange8(BattleMonsterCountRange.Min, BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,
                 IsFromTable = true,
-                HasAnyTableLoad = HasAnyTableLoad
+                HasAnyTableLoad = HasAnyTableLoad,
+                PartyEffects = PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>()
             };
 
             // Вероятность варианта хранится в PathVariantInfo и используется построителем заметок.
@@ -982,7 +997,8 @@ namespace MMMapEditor
             HasBattleLikeInfo ||
             HasAnyTableLoad ||
             CallsRandomEncounter ||
-            HasProbabilityInfo;
+            HasProbabilityInfo ||
+            (PartyEffects != null && PartyEffects.Count > 0);
 
         public string GetProbabilityDescription()
         {

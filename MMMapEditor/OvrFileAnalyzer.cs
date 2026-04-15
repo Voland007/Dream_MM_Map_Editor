@@ -195,6 +195,7 @@ namespace MMMapEditor
                         }
 
                         WriteVariantDebugSummary(variant, ovrObject.X, ovrObject.Y, ovrObject.DirectionByte);
+                        WritePartyEffectsDebugSummary(variant);
                     }
                 }
 
@@ -321,9 +322,11 @@ namespace MMMapEditor
                                         $"PartialBattles={variant?.PartiallyDefinedBattles?.Count ?? 0}, " +
                                         $"HasAnyTableLoad={variant?.HasAnyTableLoad ?? false}, " +
                                         $"LoadedValues={variant?.LoadedValues?.Count ?? 0}, " +
-                                        $"HasTeleport={variant?.HasTeleportTarget ?? false}");
+                                        $"HasTeleport={variant?.HasTeleportTarget ?? false}, " +
+                                        $"PartyEffects={variant?.PartyEffects?.Count ?? 0}");
 
                                     WriteVariantDebugSummary(variant, cellX, cellY, 0);
+                                    WritePartyEffectsDebugSummary(variant);
                                 }
                             }
                         }
@@ -369,6 +372,8 @@ namespace MMMapEditor
                                     AnalysisDebug.WriteLine($"        {text}");
 
                                 WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
+                            WritePartyEffectsDebugSummary(variant);
+                                WritePartyEffectsDebugSummary(variant);
                             }
                         }
 
@@ -381,6 +386,18 @@ namespace MMMapEditor
             }
 
             return objects;
+        }
+
+        private void WritePartyEffectsDebugSummary(PathVariantInfo variant)
+        {
+            if (variant?.PartyEffects == null || variant.PartyEffects.Count == 0)
+                return;
+
+            AnalysisDebug.WriteLine("        PartyEffects:");
+            foreach (var effect in variant.PartyEffects)
+            {
+                AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
+            }
         }
 
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
@@ -413,13 +430,14 @@ namespace MMMapEditor
                 .ToList();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
 
-            // Если основной путь уже распознал partial-battle loop и развернул его по таблицам,
+            // Если основной путь уже распознал внутренний семантический цикл
+            // (например, partial-battle или перебор членов партии),
             // не анализируем обратные переходы, возвращающиеся внутрь этого же цикла.
-            // Иначе возникают дубликаты partial battles со сдвигом BX.
+            // Иначе цикл разворачивается как дерево альтернативных сценариев.
             bool suppressLoopBackAlternatives =
-                mainPathResult.HasPartialBattlePattern &&
                 mainPathResult.IsInLoop &&
-                mainPathResult.LoopStartAddress != 0;
+                mainPathResult.LoopStartAddress != 0 &&
+                mainPathResult.LoopSemantic != LoopSemanticKind.None;
 
             if (suppressLoopBackAlternatives)
             {
@@ -485,6 +503,7 @@ namespace MMMapEditor
                 (variant.PartiallyDefinedBattles?.Count ?? 0) > 0 ||
                 variant.HasAnyTableLoad ||
                 (variant.LoadedValues?.Count ?? 0) > 0 ||
+                (variant.PartyEffects?.Count ?? 0) > 0 ||
                 variant.HasTeleportTarget);
         }
 
@@ -589,6 +608,7 @@ namespace MMMapEditor
                             }
 
                             WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
+                            WritePartyEffectsDebugSummary(variant);
                         }
 
                         objects.Add(obj);
@@ -822,8 +842,118 @@ namespace MMMapEditor
                         IsFirstTable = info.IsFromTable,
                         IsSaved = false
                     })
-                    .ToList()
+                    .ToList(),
+                PartyEffects = BuildNormalizedPartyEffects(source)
             };
+        }
+
+        private static void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
+        {
+            if (pending == null)
+                return;
+
+            if (condition == PartyConditionKind.MaleOnly)
+            {
+                pending.MaleOnly = true;
+                pending.FemaleOnly = false;
+            }
+            else if (condition == PartyConditionKind.FemaleOnly)
+            {
+                pending.FemaleOnly = true;
+                pending.MaleOnly = false;
+            }
+        }
+
+        private List<PartyEffect> BuildNormalizedPartyEffects(PathAnalysisResult source)
+        {
+            var result = new List<PartyEffect>();
+            if (source == null)
+                return result;
+
+            if (source.PartyEffects != null)
+            {
+                result.AddRange(source.PartyEffects
+                    .Where(e => e != null && PartyEffectSemantics.IsStateChanging(e))
+                    .Select(e => e.Clone()));
+            }
+
+            if (source.PendingPartyHpOperation != null)
+                ApplyPartyConditionToPending(source.PendingPartyHpOperation, source.ActivePartyCondition);
+
+            PartyConditionKind derivedCondition = PartyConditionKind.None;
+            if (source.PartyEffects != null)
+            {
+                foreach (var effect in source.PartyEffects.Where(e => e != null))
+                {
+                    if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Gender)
+                        continue;
+
+                    if (PartyEffectSemantics.GetEffectiveOperation(effect) != PartyEffectOperation.Compare)
+                        continue;
+
+                    var condition = PartyEffectSemantics.GetEffectiveCondition(effect);
+                    if (condition != PartyConditionKind.None)
+                    {
+                        derivedCondition = condition;
+                        break;
+                    }
+                }
+            }
+
+            if (derivedCondition == PartyConditionKind.None && source.PendingPartyHpOperation != null)
+            {
+                if (source.PendingPartyHpOperation.MaleOnly)
+                    derivedCondition = PartyConditionKind.MaleOnly;
+                else if (source.PendingPartyHpOperation.FemaleOnly)
+                    derivedCondition = PartyConditionKind.FemaleOnly;
+            }
+
+            bool hasNormalizedHpHalved = false;
+            if (IsCompletedHpHalvingPattern(source.PendingPartyHpOperation))
+            {
+                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(source.PendingPartyHpOperation, source.LoopSemantic, derivedCondition);
+                if (hpHalved != null)
+                {
+                    hasNormalizedHpHalved = true;
+                    result.Add(hpHalved);
+                }
+            }
+
+            if (hasNormalizedHpHalved)
+            {
+                result = result
+                    .Where(e => e != null)
+                    .Where(e => !(PartyEffectSemantics.GetEffectiveField(e) == PartyFieldKind.Hp &&
+                                  PartyEffectSemantics.GetEffectiveOperation(e) == PartyEffectOperation.Write &&
+                                  PartyEffectSemantics.IsLoopDerived(e)))
+                    .ToList();
+
+                // Вернуть нормализованный halve после фильтрации, если он случайно попал под общие условия.
+                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(source.PendingPartyHpOperation, source.LoopSemantic, derivedCondition);
+                if (hpHalved != null)
+                    result.Add(hpHalved);
+            }
+
+            return result
+                .Where(e => e != null)
+                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                .Select(g => g.First())
+                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+                .ToList();
+        }
+
+        private bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
+        {
+            if (pending == null)
+                return false;
+
+            return pending.SawReadHigh &&
+                   pending.SawReadLow &&
+                   pending.SawWriteHigh &&
+                   pending.SawWriteLow &&
+                   pending.SawClc &&
+                   pending.SawShrHigh &&
+                   pending.SawRcrLow;
         }
 
         private void WriteVariantDebugSummary(PathVariantInfo variant, byte x, byte y, byte directionByte)
@@ -910,6 +1040,7 @@ namespace MMMapEditor
             target.BattleMonsters.Clear();
             target.PartiallyDefinedBattles.Clear();
             target.HasAnyTableLoad = false;
+            target.PartyEffects.Clear();
 
             if (target.PathVariants == null || target.PathVariants.Count != 1)
                 return;
@@ -925,6 +1056,7 @@ namespace MMMapEditor
             target.BattleMonsterCountRange = variant.BattleMonsterCountRange == null ? null : new ValueRange8(variant.BattleMonsterCountRange.Min, variant.BattleMonsterCountRange.Max);
             target.IsBattleMonsterCountIndeterminate = variant.IsBattleMonsterCountIndeterminate;
             target.HasAnyTableLoad = variant.HasAnyTableLoad;
+            target.PartyEffects = variant.PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>();
 
             foreach (var battleMonster in variant.BattleMonsters)
             {

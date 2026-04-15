@@ -970,6 +970,7 @@ namespace MMMapEditor
                 instructionBytes[2] == 0x1D && instructionBytes[3] == 0x3C)
             {
                 result.IsInLoop = true;
+                result.LoopSemantic = LoopSemanticKind.PartialBattle;
                 result.LoopStartAddress = address;
 
                 byte? knownLoopLimit = tryReadMemory8?.Invoke(0x3C1D);

@@ -33,8 +33,14 @@ namespace MMMapEditor
         private readonly OvrFileConfig _config;
         private readonly InstructionAnalyzer _instructionAnalyzer;
         private readonly Dictionary<ushort, byte> _emulatedMemory8 = new Dictionary<ushort, byte>();
+        private readonly Dictionary<ushort, PartyMemberReference> _emulatedPartyPointers = new Dictionary<ushort, PartyMemberReference>();
 
         private const int MAX_DEPTH = 12;
+        private const ushort PARTY_POINTER_TABLE = 0x3CA8;
+        private const int PARTY_MEMBER_COUNT = 6;
+        private const int PARTY_GENDER_OFFSET = 0x10;
+        private const int PARTY_HP_LOW_OFFSET = 0x33;
+        private const int PARTY_HP_HIGH_OFFSET = 0x34;
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
 
@@ -50,7 +56,8 @@ namespace MMMapEditor
             HashSet<(uint From, uint To)> processedBackEdges = null,
             bool invalidateReturnRegistersAfterExternalCall = false,
             List<uint> pendingReturnAddresses = null,
-            Dictionary<ushort, byte> initialEmulatedMemory8 = null)
+            Dictionary<ushort, byte> initialEmulatedMemory8 = null,
+            Dictionary<ushort, PartyMemberReference> initialEmulatedPartyPointers = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
@@ -63,11 +70,18 @@ namespace MMMapEditor
             }
 
             var savedEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
+            var savedEmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone());
             _emulatedMemory8.Clear();
+            _emulatedPartyPointers.Clear();
             if (initialEmulatedMemory8 != null)
             {
                 foreach (var kv in initialEmulatedMemory8)
                     _emulatedMemory8[kv.Key] = kv.Value;
+            }
+            if (initialEmulatedPartyPointers != null)
+            {
+                foreach (var kv in initialEmulatedPartyPointers)
+                    _emulatedPartyPointers[kv.Key] = kv.Value?.Clone();
             }
 
             try
@@ -220,6 +234,9 @@ namespace MMMapEditor
                 _emulatedMemory8.Clear();
                 foreach (var kv in savedEmulatedMemory8)
                     _emulatedMemory8[kv.Key] = kv.Value;
+                _emulatedPartyPointers.Clear();
+                foreach (var kv in savedEmulatedPartyPointers)
+                    _emulatedPartyPointers[kv.Key] = kv.Value?.Clone();
             }
         }
 
@@ -229,6 +246,356 @@ namespace MMMapEditor
                 ? value
                 : (byte?)null;
         }
+        private bool TryGetEmulatedPartyPointer(ushort address, out PartyMemberReference member)
+        {
+            member = null;
+            if (!_emulatedPartyPointers.TryGetValue(address, out var existing) || existing == null)
+                return false;
+
+            member = existing.Clone();
+            return true;
+        }
+
+        private void ApplyTrackedPartyPointerWrite(ushort memAddr, PartyMemberReference member)
+        {
+            if (member == null)
+            {
+                _emulatedPartyPointers.Remove(memAddr);
+                return;
+            }
+
+            _emulatedPartyPointers[memAddr] = member.Clone();
+        }
+
+        private bool TryResolvePartyPointerTableAddress(ushort effectiveAddress, out int memberIndex)
+        {
+            memberIndex = -1;
+
+            if (effectiveAddress < PARTY_POINTER_TABLE || effectiveAddress >= PARTY_POINTER_TABLE + PARTY_MEMBER_COUNT * 2)
+                return false;
+
+            int delta = effectiveAddress - PARTY_POINTER_TABLE;
+            if ((delta & 1) != 0)
+                return false;
+
+            memberIndex = delta / 2;
+            return memberIndex >= 0 && memberIndex < PARTY_MEMBER_COUNT;
+        }
+
+        private bool TryResolvePartyFieldAccess(byte modRm, RegisterTracker tracker, ushort? effectiveAddress, out PartyFieldReference fieldRef)
+        {
+            fieldRef = null;
+            if (tracker == null)
+                return false;
+
+            byte rm = (byte)(modRm & 0x07);
+
+            PartyMemberReference member = null;
+            int offset = 0;
+
+            bool tryReg(string regName, out ushort regValue, out PartyMemberReference partyMember)
+            {
+                regValue = 0;
+                partyMember = null;
+                return tracker.TryGetRegisterValue(regName, out regValue) && tracker.TryGetPartyMemberBase(regName, out partyMember);
+            }
+
+            bool exact(string regName, out ushort regValue) => tracker.TryGetRegisterValue(regName, out regValue);
+
+            switch (rm)
+            {
+                case 0x03: // BP+DI
+                    if (tracker.TryGetPartyMemberBase("DI", out member) && exact("BP", out ushort bp))
+                        offset = bp;
+                    else if (tracker.TryGetPartyMemberBase("BP", out member) && exact("DI", out ushort di))
+                        offset = di;
+                    else
+                        return false;
+                    break;
+                case 0x02: // BP+SI
+                    if (tracker.TryGetPartyMemberBase("SI", out member) && exact("BP", out ushort bp2))
+                        offset = bp2;
+                    else if (tracker.TryGetPartyMemberBase("BP", out member) && exact("SI", out ushort si2))
+                        offset = si2;
+                    else
+                        return false;
+                    break;
+                case 0x05: // DI
+                    if (!tracker.TryGetPartyMemberBase("DI", out member))
+                        return false;
+                    offset = 0;
+                    break;
+                case 0x04: // SI
+                    if (!tracker.TryGetPartyMemberBase("SI", out member))
+                        return false;
+                    offset = 0;
+                    break;
+                case 0x07: // BX
+                    if (!tracker.TryGetPartyMemberBase("BX", out member))
+                        return false;
+                    offset = 0;
+                    break;
+                default:
+                    return false;
+            }
+
+            PartyFieldKind field = offset switch
+            {
+                PARTY_GENDER_OFFSET => PartyFieldKind.Gender,
+                PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
+                PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
+                _ => PartyFieldKind.Unknown
+            };
+
+            if (field == PartyFieldKind.Unknown)
+                return false;
+
+            fieldRef = new PartyFieldReference
+            {
+                Member = member?.Clone(),
+                Field = field,
+                Offset = offset,
+                EffectiveAddress = effectiveAddress
+            };
+
+            return true;
+        }
+
+
+        private PartyConditionKind GetCurrentPartyCondition(RegisterTracker registerTracker)
+        {
+            if (registerTracker?.CurrentGenderBranchIsMale == true)
+                return PartyConditionKind.MaleOnly;
+
+            if (registerTracker?.CurrentGenderBranchIsMale == false)
+                return PartyConditionKind.FemaleOnly;
+
+            return PartyConditionKind.None;
+        }
+
+        private void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
+        {
+            if (pending == null)
+                return;
+
+            if (condition == PartyConditionKind.MaleOnly)
+            {
+                pending.MaleOnly = true;
+                pending.FemaleOnly = false;
+            }
+            else if (condition == PartyConditionKind.FemaleOnly)
+            {
+                pending.FemaleOnly = true;
+                pending.MaleOnly = false;
+            }
+        }
+
+        private PartyConditionKind InferPartyConditionForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        {
+            if (registerTracker == null)
+                return PartyConditionKind.None;
+
+            if (!string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase))
+                return PartyConditionKind.None;
+
+            if (registerTracker.LastCompareImmediate != 1)
+                return PartyConditionKind.None;
+
+            if (!registerTracker.TryGetPartyFieldValue("AL", out var comparedField) || comparedField?.Field != PartyFieldKind.Gender)
+                return PartyConditionKind.None;
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            bool equalityBranch =
+                (branchTaken && (jump == "JE" || jump == "JZ")) ||
+                (!branchTaken && (jump == "JNE" || jump == "JNZ"));
+
+            bool inequalityBranch =
+                (branchTaken && (jump == "JNE" || jump == "JNZ")) ||
+                (!branchTaken && (jump == "JE" || jump == "JZ"));
+
+            if (equalityBranch)
+                return PartyConditionKind.MaleOnly;
+
+            if (inequalityBranch)
+                return PartyConditionKind.FemaleOnly;
+
+            return PartyConditionKind.None;
+        }
+
+        private void RegisterPartyFieldRead(PathAnalysisResult result, PartyFieldReference fieldRef, RegisterTracker registerTracker, uint instructionAddress = 0)
+        {
+            if (result == null || fieldRef == null)
+                return;
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = fieldRef.Member?.Clone(),
+                Field = fieldRef.Field,
+                Offset = fieldRef.Offset,
+                EffectiveAddress = fieldRef.EffectiveAddress,
+                IsRead = true
+            });
+
+            var currentCondition = GetCurrentPartyCondition(registerTracker);
+
+            if (fieldRef.Field == PartyFieldKind.HpHigh)
+            {
+                result.PendingPartyHpOperation = new PendingPartyHpOperation
+                {
+                    Member = fieldRef.Member?.Clone(),
+                    MaleOnly = result.PendingPartyHpOperation?.MaleOnly ?? false,
+                    FemaleOnly = result.PendingPartyHpOperation?.FemaleOnly ?? false,
+                    SawReadHigh = true,
+                    StartAddress = instructionAddress
+                };
+                ApplyPartyConditionToPending(result.PendingPartyHpOperation, currentCondition);
+            }
+            else if (fieldRef.Field == PartyFieldKind.HpLow && result.PendingPartyHpOperation != null)
+            {
+                result.PendingPartyHpOperation.SawReadLow = true;
+                ApplyPartyConditionToPending(result.PendingPartyHpOperation, currentCondition);
+            }
+        }
+
+        private void RegisterPartyFieldWrite(PathAnalysisResult result, PartyFieldReference fieldRef, RegisterTracker registerTracker, uint instructionAddress, bool debugMode)
+        {
+            if (result == null || fieldRef == null)
+                return;
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = fieldRef.Member?.Clone(),
+                Field = fieldRef.Field,
+                Offset = fieldRef.Offset,
+                EffectiveAddress = fieldRef.EffectiveAddress,
+                IsWrite = true
+            });
+
+            var currentCondition = GetCurrentPartyCondition(registerTracker);
+            PartyEffect effect = null;
+            if (fieldRef.Field == PartyFieldKind.Gender)
+            {
+                effect = new PartyEffect
+                {
+                    Kind = PartyEffectKind.GenderWritten,
+                    MemberIndex = fieldRef.Member?.IsPartyLoopMember == true ? null : fieldRef.Member?.MemberIndex,
+                    AppliesToWholePartyLoop = fieldRef.Member?.IsPartyLoopMember == true,
+                    InstructionAddress = instructionAddress,
+                    Description = fieldRef.Member?.IsPartyLoopMember == true ? "Меняется пол членов партии" : "Меняется пол персонажа"
+                };
+            }
+            else if (fieldRef.Field == PartyFieldKind.HpHigh || fieldRef.Field == PartyFieldKind.HpLow)
+            {
+                effect = new PartyEffect
+                {
+                    Kind = PartyEffectKind.HpWritten,
+                    MemberIndex = fieldRef.Member?.IsPartyLoopMember == true ? null : fieldRef.Member?.MemberIndex,
+                    AppliesToWholePartyLoop = fieldRef.Member?.IsPartyLoopMember == true,
+                    Condition = currentCondition != PartyConditionKind.None
+                        ? currentCondition
+                        : (fieldRef.Member?.IsPartyLoopMember == true && result.PendingPartyHpOperation?.MaleOnly == true
+                            ? PartyConditionKind.MaleOnly
+                            : fieldRef.Member?.IsPartyLoopMember == true && result.PendingPartyHpOperation?.FemaleOnly == true
+                                ? PartyConditionKind.FemaleOnly
+                                : PartyConditionKind.None),
+                    InstructionAddress = instructionAddress,
+                    Description = fieldRef.Member?.IsPartyLoopMember == true ? "Изменяется HP членов партии" : "Изменяется HP персонажа"
+                };
+
+                if (result.PendingPartyHpOperation == null)
+                {
+                    result.PendingPartyHpOperation = new PendingPartyHpOperation
+                    {
+                        Member = fieldRef.Member?.Clone(),
+                        MaleOnly = false,
+                        FemaleOnly = false,
+                        StartAddress = instructionAddress
+                    };
+                }
+
+                ApplyPartyConditionToPending(result.PendingPartyHpOperation, currentCondition);
+
+                if (fieldRef.Field == PartyFieldKind.HpHigh)
+                    result.PendingPartyHpOperation.SawWriteHigh = true;
+                else
+                    result.PendingPartyHpOperation.SawWriteLow = true;
+            }
+
+            if (effect != null && !result.PartyEffects.Any(e => e.Kind == effect.Kind && e.MemberIndex == effect.MemberIndex && e.AppliesToWholePartyLoop == effect.AppliesToWholePartyLoop && e.Condition == effect.Condition && e.Description == effect.Description))
+                result.PartyEffects.Add(effect);
+
+            if (result.PendingPartyHpOperation != null &&
+                result.PendingPartyHpOperation.SawReadHigh &&
+                result.PendingPartyHpOperation.SawWriteHigh &&
+                result.PendingPartyHpOperation.SawReadLow &&
+                result.PendingPartyHpOperation.SawWriteLow &&
+                result.PendingPartyHpOperation.SawClc &&
+                result.PendingPartyHpOperation.SawShrHigh &&
+                result.PendingPartyHpOperation.SawRcrLow)
+            {
+                PartyConditionKind hpCondition = result.PendingPartyHpOperation.MaleOnly
+                    ? PartyConditionKind.MaleOnly
+                    : result.PendingPartyHpOperation.FemaleOnly
+                        ? PartyConditionKind.FemaleOnly
+                        : PartyConditionKind.None;
+
+                string hpDescription = result.PendingPartyHpOperation.Member?.IsPartyLoopMember == true
+                    ? hpCondition == PartyConditionKind.MaleOnly
+                        ? "HP всех мужчин в партии уменьшается вдвое"
+                        : hpCondition == PartyConditionKind.FemaleOnly
+                            ? "HP всех женщин в партии уменьшается вдвое"
+                            : "HP членов партии уменьшается вдвое"
+                    : hpCondition == PartyConditionKind.MaleOnly
+                        ? "Если персонаж мужского пола, его HP уменьшается вдвое"
+                        : hpCondition == PartyConditionKind.FemaleOnly
+                            ? "Если персонаж женского пола, его HP уменьшается вдвое"
+                            : "HP персонажа уменьшается вдвое";
+
+                var hpEffect = new PartyEffect
+                {
+                    Kind = PartyEffectKind.HpHalved,
+                    MemberIndex = result.PendingPartyHpOperation.Member?.IsPartyLoopMember == true ? null : result.PendingPartyHpOperation.Member?.MemberIndex,
+                    AppliesToWholePartyLoop = result.PendingPartyHpOperation.Member?.IsPartyLoopMember == true,
+                    Condition = hpCondition,
+                    InstructionAddress = result.PendingPartyHpOperation.StartAddress,
+                    Description = hpDescription
+                };
+
+                if (!result.PartyEffects.Any(e => e.Kind == hpEffect.Kind && e.MemberIndex == hpEffect.MemberIndex && e.AppliesToWholePartyLoop == hpEffect.AppliesToWholePartyLoop && e.Condition == hpEffect.Condition && e.Description == hpEffect.Description))
+                    result.PartyEffects.Add(hpEffect);
+
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Распознан party-effect: {hpEffect.Description}");
+
+                result.PendingPartyHpOperation = null;
+            }
+        }
+
+        private void TrackPartyArithmeticInstruction(X86Instruction insn, RegisterTracker registerTracker, PathAnalysisResult result)
+        {
+            if (result?.PendingPartyHpOperation == null || insn?.Bytes == null || insn.Bytes.Length == 0)
+                return;
+
+            byte[] bytes = insn.Bytes;
+
+            if (bytes.Length == 1 && bytes[0] == 0xF8)
+            {
+                result.PendingPartyHpOperation.SawClc = true;
+                return;
+            }
+
+            if (bytes.Length >= 2 && bytes[0] == 0xD0 && bytes[1] == 0xE8 && registerTracker.TryGetPartyFieldValue("AL", out var shrField) && shrField.Field == PartyFieldKind.HpHigh)
+            {
+                result.PendingPartyHpOperation.SawShrHigh = true;
+                return;
+            }
+
+            if (bytes.Length >= 2 && bytes[0] == 0xD0 && bytes[1] == 0xD8 && registerTracker.TryGetPartyFieldValue("AL", out var rcrField) && rcrField.Field == PartyFieldKind.HpLow)
+            {
+                result.PendingPartyHpOperation.SawRcrLow = true;
+            }
+        }
+
 
         private void AddOrderedText(PathAnalysisResult result, string text, bool isContextual, uint instructionAddress, ref int textOrderCounter)
         {
@@ -669,7 +1036,8 @@ namespace MMMapEditor
                 var subroutineResult = ExecuteCodeAtAddress(br, callTarget, subroutineTracker,
                     globallyAnalyzedAddresses, depth + 1, callDepth + 1, pathId, targetX, targetY,
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall, subroutinePendingReturnAddresses,
-                    new Dictionary<ushort, byte>(_emulatedMemory8));
+                    new Dictionary<ushort, byte>(_emulatedMemory8),
+                    _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()));
 
                 // Добавляем результаты из подпрограммы
                 foreach (var visitedAddress in subroutineResult.VisitedAddresses)
@@ -759,7 +1127,11 @@ namespace MMMapEditor
                                 : new List<uint>(altPath.PendingReturnAddresses),
                             EmulatedMemory8 = altPath.EmulatedMemory8 == null
                                 ? new Dictionary<ushort, byte>()
-                                : new Dictionary<ushort, byte>(altPath.EmulatedMemory8)
+                                : new Dictionary<ushort, byte>(altPath.EmulatedMemory8),
+                            EmulatedPartyPointers = altPath.EmulatedPartyPointers == null
+                                ? new Dictionary<ushort, PartyMemberReference>()
+                                : altPath.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                            BranchPartyCondition = altPath.BranchPartyCondition
                         });
                     }
                 }
@@ -901,7 +1273,9 @@ namespace MMMapEditor
                     ProbabilityDenominator = takenProbability.denominator,
                     CallDepth = callDepth,
                     PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
-                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8)
+                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
+                    EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true)
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
@@ -928,7 +1302,9 @@ namespace MMMapEditor
                     ProbabilityDenominator = notTakenProbability.denominator,
                     CallDepth = callDepth,
                     PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
-                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8)
+                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
+                    EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false)
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
@@ -1096,11 +1472,18 @@ namespace MMMapEditor
         {
             var clone = registerTracker?.Clone() ?? new RegisterTracker();
 
-            if (!TryCalculateBranchConstraint(clone, mnemonic, branchTaken, out string reg, out int min, out int max))
-                return clone;
+            if (TryCalculateBranchConstraint(clone, mnemonic, branchTaken, out string reg, out int min, out int max))
+            {
+                var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
+                clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
+            }
 
-            var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
-            clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
+            var branchCondition = InferPartyConditionForBranch(registerTracker, mnemonic, branchTaken);
+            clone.CurrentGenderBranchIsMale =
+                branchCondition == PartyConditionKind.MaleOnly ? true :
+                branchCondition == PartyConditionKind.FemaleOnly ? false :
+                (bool?)null;
+
             return clone;
         }
 
@@ -1571,6 +1954,8 @@ namespace MMMapEditor
                     InvalidateFlags(registerTracker);
             }
 
+            TrackPartyArithmeticInstruction(insn, registerTracker, result);
+
             // Сохраняем изменения в эмулируемую память (runtime state)
             if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA3)
             {
@@ -1579,6 +1964,11 @@ namespace MMMapEditor
                 {
                     ApplyTrackedWordWrite(memAddr, axValue, result, targetX, targetY, insn, debugMode, "MOV [moffs16], AX");
                 }
+
+                if (registerTracker.TryGetPartyMemberBase("AX", out var axPartyMember))
+                    ApplyTrackedPartyPointerWrite(memAddr, axPartyMember);
+                else
+                    ApplyTrackedPartyPointerWrite(memAddr, null);
             }
             else if (instructionBytes.Length >= 4 && instructionBytes[0] == 0xC7)
             {
@@ -1626,7 +2016,8 @@ namespace MMMapEditor
                             ProbabilityDenominator = 1,
                             CallDepth = callDepth,
                             PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
-                            EmulatedMemory8 = splitMemory
+                            EmulatedMemory8 = splitMemory,
+                            EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone())
                         });
                     }
 
@@ -1710,9 +2101,28 @@ namespace MMMapEditor
                 }
                 else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
                 {
+                    PartyFieldReference partyFieldRef = null;
+                    bool hasPartyFieldRef = TryResolvePartyFieldAccess(modRm, registerTracker, memAddr, out partyFieldRef);
                     if (TryGetReg8ValueFromModRmRegField(modRm, registerTracker, out byte regValue, out string regName))
                     {
-                        ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, {regName}");
+                        if (hasPartyFieldRef)
+                        {
+                            RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode);
+
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Распознана запись поля персонажа {partyFieldRef.Field} из {regName} через {eaText} (сырую эмулируемую память не обновляем)");
+                        }
+                        else
+                        {
+                            ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, {regName}");
+                        }
+                    }
+                    else if (hasPartyFieldRef)
+                    {
+                        RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode);
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Распознана запись поля персонажа {partyFieldRef.Field} через {eaText} без точного значения источника");
                     }
                 }
             }
@@ -1731,6 +2141,29 @@ namespace MMMapEditor
                 else if (debugMode)
                 {
                     AnalysisDebug.WriteLine($"        Не удалось определить текущее значение для {(delta > 0 ? "INC" : "DEC")} [0x{memAddr:X4}]");
+                }
+            }
+
+
+            // INC/DEC reg16 (в частности важно для DEC BP перед доступом к HP low)
+            if (instructionBytes.Length >= 1 && instructionBytes[0] >= 0x40 && instructionBytes[0] <= 0x4F)
+            {
+                byte opcode = instructionBytes[0];
+                bool isInc = opcode < 0x48;
+                int regIndex = isInc ? opcode - 0x40 : opcode - 0x48;
+                string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+
+                if (regIndex >= 0 && regIndex < regNames16.Length)
+                {
+                    string regName = regNames16[regIndex];
+                    if (registerTracker.TryGetRegisterValue(regName, out ushort regValue))
+                    {
+                        ushort newValue = unchecked((ushort)(regValue + (isInc ? 1 : -1)));
+                        registerTracker.SetRegisterValue(regName, newValue, address, $"{(isInc ? "INC" : "DEC")} {regName}");
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        {(isInc ? "Увеличили" : "Уменьшили")} {regName} -> 0x{newValue:X4}");
+                    }
                 }
             }
 
@@ -1831,6 +2264,9 @@ namespace MMMapEditor
                 }
                 else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
                 {
+                    PartyFieldReference partyFieldRef = null;
+                    bool hasPartyFieldRef = TryResolvePartyFieldAccess(modRm, registerTracker, memAddr, out partyFieldRef);
+
                     if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
                     {
                         if (reg < regNames8.Length)
@@ -1849,10 +2285,26 @@ namespace MMMapEditor
                                     $"MOV {regName}, byte ptr {eaText}"
                                 );
 
+                                if (hasPartyFieldRef)
+                                {
+                                    registerTracker.SetPartyFieldValue(regName, partyFieldRef);
+                                    RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address);
+                                }
+
                                 if (debugMode)
                                     AnalysisDebug.WriteLine($"        Загрузили {regName} из {(_emulatedMemory8.ContainsKey(memAddr) ? "эмулируемой памяти" : "файла")} {eaText} -> [0x{memAddr:X4}] = 0x{value:X2}");
                             }
                         }
+                    }
+                    else if (hasPartyFieldRef && reg < regNames8.Length)
+                    {
+                        string regName = regNames8[reg];
+                        registerTracker.ClearConcreteByteRegisterValueKeepSemantic(regName);
+                        registerTracker.SetPartyFieldValue(regName, partyFieldRef);
+                        RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address);
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Распознано чтение поля персонажа {partyFieldRef.Field} из {eaText} без точного байтового значения; точное значение {regName} сброшено");
                     }
                     else if (debugMode)
                     {
@@ -1876,6 +2328,10 @@ namespace MMMapEditor
                     {
                         string dstReg = regNames16[reg];
                         registerTracker.SetRegisterValue(dstReg, srcValue, address, $"MOV {dstReg}, {regNames16[rm]}");
+                        if (registerTracker.TryGetPartyMemberBase(regNames16[rm], out var copiedPartyMember))
+                            registerTracker.SetPartyMemberBase(dstReg, copiedPartyMember);
+                        else
+                            registerTracker.ClearPartyMemberBase(dstReg);
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames16[rm]} = 0x{srcValue:X4}");
@@ -1883,18 +2339,47 @@ namespace MMMapEditor
                 }
                 else if (TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
                 {
-                    if (TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out ushort value))
+                    bool loadedAnySemantic = false;
+                    if (reg < regNames16.Length)
                     {
-                        if (reg < regNames16.Length)
+                        string regName = regNames16[reg];
+
+                        if (TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out ushort value))
                         {
-                            string regName = regNames16[reg];
                             registerTracker.SetRegisterValue(regName, value, address, $"MOV {regName}, word ptr {eaText}");
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Загрузили {regName} из {(IsTrackedWordInEmulatedMemory(memAddr) ? "эмулируемой памяти" : "файла")} {eaText} -> [0x{memAddr:X4}] = 0x{value:X4}");
                         }
+
+                        if (TryResolvePartyPointerTableAddress(memAddr, out int memberIndex))
+                        {
+                            var memberRef = new PartyMemberReference
+                            {
+                                MemberIndex = memberIndex,
+                                PointerTableAddress = memAddr,
+                                StructureAddress = registerTracker.TryGetRegisterValue(regName, out ushort structureAddr) ? structureAddr : (ushort?)null,
+                                IsPartyLoopMember = true
+                            };
+                            registerTracker.SetPartyMemberBase(regName, memberRef);
+                            loadedAnySemantic = true;
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Распознана таблица членов партии: {regName} = ptr(member #{memberIndex + 1})");
+                        }
+                        else if (TryGetEmulatedPartyPointer(memAddr, out var partyPtr))
+                        {
+                            registerTracker.SetPartyMemberBase(regName, partyPtr);
+                            loadedAnySemantic = true;
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Восстановлен указатель на члена партии в {regName} из эмулируемой памяти [0x{memAddr:X4}]");
+                        }
+                        else
+                        {
+                            registerTracker.ClearPartyMemberBase(regName);
+                        }
                     }
-                    else if (debugMode)
+
+                    if (!loadedAnySemantic && !TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out _ ) && debugMode)
                     {
                         AnalysisDebug.WriteLine($"        Не удалось загрузить reg16 из {eaText} -> [0x{memAddr:X4}] - адрес вне диапазона файла и эмулируемой памяти");
                     }
@@ -1927,6 +2412,13 @@ namespace MMMapEditor
                     {
                         ApplyTrackedWordWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV word ptr {eaText}, {regName}");
                     }
+
+                    string[] regNames16Local = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+                    byte regFieldLocal = (byte)((modRm >> 3) & 0x07);
+                    if (regFieldLocal < regNames16Local.Length && registerTracker.TryGetPartyMemberBase(regNames16Local[regFieldLocal], out var partyMemberSrc))
+                        ApplyTrackedPartyPointerWrite(memAddr, partyMemberSrc);
+                    else
+                        ApplyTrackedPartyPointerWrite(memAddr, null);
                 }
             }
 
@@ -1981,6 +2473,63 @@ namespace MMMapEditor
                     address, $"MOV AL, 0x{immediateValue:X2}");
             }
 
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xD0)
+            {
+                byte modRm = instructionBytes[1];
+                byte mode = (byte)((modRm >> 6) & 0x03);
+                byte operation = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                if (mode == 0x03 && rm < regNames8.Length && registerTracker.TryGetByteRegisterValue(regNames8[rm], out byte oldValue))
+                {
+                    string regName = regNames8[rm];
+                    string fullReg = GetFullRegisterNameForByteRegister(regName);
+                    byte newValue = oldValue;
+                    bool handled = true;
+
+                    switch (operation)
+                    {
+                        case 4: // SHL/SAL r/m8,1
+                            newValue = (byte)(oldValue << 1);
+                            registerTracker.CarryFlag = (oldValue & 0x80) != 0;
+                            registerTracker.ZeroFlag = newValue == 0;
+                            registerTracker.SignFlag = (newValue & 0x80) != 0;
+                            registerTracker.OverflowFlag = ((oldValue ^ newValue) & 0x80) != 0;
+                            registerTracker.FlagsKnown = true;
+                            break;
+                        case 5: // SHR r/m8,1
+                            newValue = (byte)(oldValue >> 1);
+                            registerTracker.CarryFlag = (oldValue & 0x01) != 0;
+                            registerTracker.ZeroFlag = newValue == 0;
+                            registerTracker.SignFlag = false;
+                            registerTracker.OverflowFlag = (oldValue & 0x80) != 0;
+                            registerTracker.FlagsKnown = true;
+                            break;
+                        case 3: // RCR r/m8,1
+                            {
+                                int carryIn = registerTracker.FlagsKnown && registerTracker.CarryFlag ? 0x80 : 0x00;
+                                bool newCarry = (oldValue & 0x01) != 0;
+                                newValue = (byte)((oldValue >> 1) | carryIn);
+                                registerTracker.CarryFlag = newCarry;
+                                registerTracker.ZeroFlag = newValue == 0;
+                                registerTracker.SignFlag = (newValue & 0x80) != 0;
+                                registerTracker.OverflowFlag = ((newValue ^ (newValue << 1)) & 0x80) != 0;
+                                registerTracker.FlagsKnown = true;
+                            }
+                            break;
+                        default:
+                            handled = false;
+                            break;
+                    }
+
+                    if (handled && !string.IsNullOrEmpty(fullReg))
+                    {
+                        registerTracker.TrackPartialRegisterOperation(fullReg, regName, newValue, address, $"{mnemonicUpper} {regName}, 1");
+                    }
+                }
+            }
+
             // Арифметические операции
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x04)
             {
@@ -2033,7 +2582,11 @@ namespace MMMapEditor
             {
                 byte immediateValue = instructionBytes[1];
 
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                bool hasKnownAlForCompare = registerTracker.TryGetByteRegisterValue("AL", out byte alValue);
+                bool hasPartyGenderCompare = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
+                    comparedPartyField?.Field == PartyFieldKind.Gender;
+
+                if (hasKnownAlForCompare)
                 {
                     byte cmpResult = (byte)(alValue - immediateValue);
                     SetArithmeticFlagsForSub8(registerTracker, alValue, immediateValue, cmpResult,
@@ -2041,10 +2594,47 @@ namespace MMMapEditor
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _))
                 {
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                }
+                else if (hasPartyGenderCompare)
+                {
+                    registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                 }
 
                 registerTracker.LastCompareImmediate = immediateValue;
+
+                if (hasPartyGenderCompare)
+                {
+                    result.PartyFieldAccesses.Add(new PartyFieldReference
+                    {
+                        Member = comparedPartyField.Member?.Clone(),
+                        Field = comparedPartyField.Field,
+                        Offset = comparedPartyField.Offset,
+                        EffectiveAddress = comparedPartyField.EffectiveAddress,
+                        IsRead = true,
+                        IsCompare = true
+                    });
+
+                    if (immediateValue == 1)
+                    {
+                        var compareEffect = new PartyEffect
+                        {
+                            Kind = PartyEffectKind.GenderCompared,
+                            MemberIndex = comparedPartyField.Member?.IsPartyLoopMember == true ? null : comparedPartyField.Member?.MemberIndex,
+                            AppliesToWholePartyLoop = comparedPartyField.Member?.IsPartyLoopMember == true,
+                            MaleOnly = true,
+                            InstructionAddress = address,
+                            Description = comparedPartyField.Member?.IsPartyLoopMember == true
+                                ? "Проверяется, есть ли мужчина в партии"
+                                : "Проверяется, является ли персонаж мужчиной"
+                        };
+
+                        if (!result.PartyEffects.Any(e => e.Kind == compareEffect.Kind && e.MemberIndex == compareEffect.MemberIndex && e.AppliesToWholePartyLoop == compareEffect.AppliesToWholePartyLoop && e.MaleOnly == compareEffect.MaleOnly && e.Description == compareEffect.Description))
+                            result.PartyEffects.Add(compareEffect);
+                    }
+                }
             }
 
             // OR AL, AL / TEST AL, AL (точное выставление флагов для проверок на ноль)

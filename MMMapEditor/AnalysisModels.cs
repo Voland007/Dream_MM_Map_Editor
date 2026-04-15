@@ -65,6 +65,13 @@ namespace MMMapEditor
         UniformDiscreteRange
     }
 
+    public enum LoopSemanticKind
+    {
+        None = 0,
+        PartialBattle = 1,
+        PartyMemberScan = 2
+    }
+
     public class JumpCondition
     {
         public string Type { get; set; }
@@ -88,6 +95,8 @@ namespace MMMapEditor
         public int CallDepth { get; set; } = 0;
         public List<uint> PendingReturnAddresses { get; set; } = new List<uint>();
         public Dictionary<ushort, byte> EmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
+        public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
+        public PartyConditionKind BranchPartyCondition { get; set; } = PartyConditionKind.None;
     }
 
     public class MemoryAccess
@@ -234,11 +243,15 @@ namespace MMMapEditor
         public bool HasPartialBattlePattern { get; set; } = false;
         public List<PartialBattleInfo> PartialBattleInfo { get; set; } = new List<PartialBattleInfo>();
         public List<PartiallyDefinedBattle> PartialBattles { get; set; } = new List<PartiallyDefinedBattle>();
+        public List<PartyFieldReference> PartyFieldAccesses { get; set; } = new List<PartyFieldReference>();
+        public PendingPartyHpOperation PendingPartyHpOperation { get; set; }
+        public PartyConditionKind ActivePartyCondition { get; set; } = PartyConditionKind.None;
         public bool IsInLoop { get; set; } = false;
         public uint LoopStartAddress { get; set; } = 0;
         public int LoopIteration { get; set; } = 0;
         public bool IsIndeterminateLoop { get; set; } = false;
         public int LoopIterationCount { get; set; } = 0;
+        public LoopSemanticKind LoopSemantic { get; set; } = LoopSemanticKind.None;
         public bool IsTerminated { get; set; } = false;
         public bool HasSignificantCode { get; set; } = false;
         public bool TerminatedByRepeatedBackEdge { get; set; } = false;
@@ -262,6 +275,130 @@ namespace MMMapEditor
         public string LastCompareReg { get; set; }
         public byte? LastCompareImm { get; set; }
         public ushort? LastCompareMem { get; set; }
+        public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
+    }
+
+
+    public enum PartyEffectKind
+    {
+        Unknown = 0,
+        HpHalved = 1,
+        HpWritten = 2,
+        GenderWritten = 3,
+        GenderCompared = 4
+    }
+
+    public enum PartyEffectScope
+    {
+        Unknown = 0,
+        SingleMember = 1,
+        CurrentLoopMember = 2,
+        PartySubset = 3,
+        WholeParty = 4
+    }
+
+    public enum PartyEffectOperation
+    {
+        Unknown = 0,
+        Compare = 1,
+        Write = 2,
+        Halve = 3,
+        Increment = 4,
+        Decrement = 5,
+        Transform = 6
+    }
+
+    public enum PartyConditionKind
+    {
+        None = 0,
+        MaleOnly = 1,
+        FemaleOnly = 2
+    }
+
+    public enum PartyValueKnowledge
+    {
+        Unknown = 0,
+        ExactImmediate = 1,
+        ExactDerived = 2,
+        Range = 3,
+        Structural = 4
+    }
+
+    public class PartyEffect
+    {
+        public PartyEffectKind Kind { get; set; }
+        public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
+        public PartyEffectOperation Operation { get; set; } = PartyEffectOperation.Unknown;
+        public PartyEffectScope Scope { get; set; } = PartyEffectScope.Unknown;
+        public PartyConditionKind Condition { get; set; } = PartyConditionKind.None;
+        public int? MemberIndex { get; set; }
+        public bool IsLoopDerived { get; set; }
+        public bool AppliesToWholePartyLoop
+        {
+            get => Scope == PartyEffectScope.PartySubset || Scope == PartyEffectScope.WholeParty;
+            set
+            {
+                if (value)
+                {
+                    if (Scope == PartyEffectScope.Unknown || Scope == PartyEffectScope.CurrentLoopMember)
+                        Scope = PartyEffectScope.WholeParty;
+                }
+                else if (Scope == PartyEffectScope.WholeParty)
+                {
+                    Scope = PartyEffectScope.Unknown;
+                }
+            }
+        }
+
+        // Legacy compatibility fields. New code should prefer Condition.
+        public bool? MaleOnly
+        {
+            get => Condition == PartyConditionKind.MaleOnly ? true : (bool?)null;
+            set
+            {
+                if (value == true)
+                    Condition = PartyConditionKind.MaleOnly;
+                else if (Condition == PartyConditionKind.MaleOnly)
+                    Condition = PartyConditionKind.None;
+            }
+        }
+
+        public bool? FemaleOnly
+        {
+            get => Condition == PartyConditionKind.FemaleOnly ? true : (bool?)null;
+            set
+            {
+                if (value == true)
+                    Condition = PartyConditionKind.FemaleOnly;
+                else if (Condition == PartyConditionKind.FemaleOnly)
+                    Condition = PartyConditionKind.None;
+            }
+        }
+
+        public PartyValueKnowledge ValueKnowledge { get; set; } = PartyValueKnowledge.Unknown;
+        public byte? ImmediateValue { get; set; }
+        public ValueRange8 ImmediateRange { get; set; }
+        public uint InstructionAddress { get; set; }
+        public string Description { get; set; }
+
+        public PartyEffect Clone()
+        {
+            return new PartyEffect
+            {
+                Kind = Kind,
+                Field = Field,
+                Operation = Operation,
+                Scope = Scope,
+                Condition = Condition,
+                MemberIndex = MemberIndex,
+                IsLoopDerived = IsLoopDerived,
+                ValueKnowledge = ValueKnowledge,
+                ImmediateValue = ImmediateValue,
+                ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
+                InstructionAddress = InstructionAddress,
+                Description = Description
+            };
+        }
     }
 
     public class PartialBattleInfo

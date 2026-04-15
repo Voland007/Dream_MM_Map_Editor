@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -78,6 +78,8 @@ namespace MMMapEditor
         private HashSet<string> pendingExternalCallRegisters = new HashSet<string>();
         private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
         private Dictionary<string, RegisterValueDistribution> registerRangeDistributions = new Dictionary<string, RegisterValueDistribution>();
+        private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
+        private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -100,6 +102,7 @@ namespace MMMapEditor
         public uint? LastFlagsInstructionAddress { get; set; }
         public byte? LastCompareImmediate { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
+        public bool? CurrentGenderBranchIsMale { get; set; }
 
         public void SetFlagsMetadata(string register, FlagsOriginKind origin, uint? instructionAddress = null, bool? fromCoordinate = null)
         {
@@ -131,6 +134,73 @@ namespace MMMapEditor
             return sourceAddr == 0x3C38 || sourceAddr == 0x3C39 || sourceAddr == 0x3C3A;
         }
 
+
+
+        public void SetPartyMemberBase(string reg, PartyMemberReference value)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (value == null)
+                partyMemberBases.Remove(regUpper);
+            else
+                partyMemberBases[regUpper] = value.Clone();
+        }
+
+        public bool TryGetPartyMemberBase(string reg, out PartyMemberReference value)
+        {
+            value = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (!partyMemberBases.TryGetValue(regUpper, out var existing) || existing == null)
+                return false;
+
+            value = existing.Clone();
+            return true;
+        }
+
+        public void ClearPartyMemberBase(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(regUpper))
+                partyMemberBases.Remove(regUpper);
+        }
+
+        public void SetPartyFieldValue(string reg, PartyFieldReference value)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (value == null)
+                partyFieldValues.Remove(regUpper);
+            else
+                partyFieldValues[regUpper] = value.Clone();
+        }
+
+        public bool TryGetPartyFieldValue(string reg, out PartyFieldReference value)
+        {
+            value = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (!partyFieldValues.TryGetValue(regUpper, out var existing) || existing == null)
+                return false;
+
+            value = existing.Clone();
+            return true;
+        }
+
+        public void ClearPartyFieldValue(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (!string.IsNullOrWhiteSpace(regUpper))
+                partyFieldValues.Remove(regUpper);
+        }
 
         public void SetRegisterRange(string reg, byte min, byte max, RegisterValueDistribution distribution = RegisterValueDistribution.Unknown)
         {
@@ -224,6 +294,8 @@ namespace MMMapEditor
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
+            ClearPartyMemberBase(regUpper);
+            ClearPartyFieldValue(regUpper);
             registers[regUpper] = value;
             registerSources[regUpper] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
 
@@ -662,6 +734,78 @@ namespace MMMapEditor
             return false;
         }
 
+
+        public void ClearConcreteByteRegisterValueKeepSemantic(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            registers.Remove(regUpper);
+            registerSources.Remove(regUpper);
+            registerSources2.Remove(regUpper);
+            ClearExternalDerivation(regUpper);
+            ClearPendingExternalCallResult(regUpper);
+            ClearRegisterRange(regUpper);
+
+            string fullReg = null;
+            string siblingReg = null;
+
+            switch (regUpper)
+            {
+                case "AL":
+                    fullReg = "AX";
+                    siblingReg = "AH";
+                    break;
+                case "AH":
+                    fullReg = "AX";
+                    siblingReg = "AL";
+                    break;
+                case "BL":
+                    fullReg = "BX";
+                    siblingReg = "BH";
+                    break;
+                case "BH":
+                    fullReg = "BX";
+                    siblingReg = "BL";
+                    break;
+                case "CL":
+                    fullReg = "CX";
+                    siblingReg = "CH";
+                    break;
+                case "CH":
+                    fullReg = "CX";
+                    siblingReg = "CL";
+                    break;
+                case "DL":
+                    fullReg = "DX";
+                    siblingReg = "DH";
+                    break;
+                case "DH":
+                    fullReg = "DX";
+                    siblingReg = "DL";
+                    break;
+            }
+
+            if (!string.IsNullOrEmpty(fullReg))
+            {
+                registers.Remove(fullReg);
+                registerSources.Remove(fullReg);
+                registerSources2.Remove(fullReg);
+                ClearExternalDerivation(fullReg);
+                ClearPendingExternalCallResult(fullReg);
+                ClearRegisterRange(fullReg);
+            }
+
+            if (!string.IsNullOrEmpty(siblingReg) && registers.ContainsKey(siblingReg))
+            {
+                // sibling byte may remain known, but full 16-bit register is no longer exact
+                registers.Remove(fullReg);
+                registerSources.Remove(fullReg);
+                registerSources2.Remove(fullReg);
+            }
+        }
+
         public void InvalidateRegister(string reg)
         {
             string regUpper = reg.ToUpper();
@@ -669,6 +813,7 @@ namespace MMMapEditor
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
+            ClearPartyFieldValue(regUpper);
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
@@ -720,11 +865,14 @@ namespace MMMapEditor
             pendingExternalCallRegisters.Clear();
             registerRanges.Clear();
             registerRangeDistributions.Clear();
+            partyMemberBases.Clear();
+            partyFieldValues.Clear();
             ZeroFlag = false;
             CarryFlag = false;
             SignFlag = false;
             OverflowFlag = false;
             FlagsKnown = false;
+            CurrentGenderBranchIsMale = null;
         }
 
         public void TrackPartialRegisterOperation(string fullReg, string partialReg,
@@ -781,6 +929,8 @@ namespace MMMapEditor
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
+                    ClearPartyFieldValue(partialRegUpper);
+                    ClearPartyFieldValue(fullRegUpper);
                 }
             }
             else if (partialRegUpper == "CL" || partialRegUpper == "CH")
@@ -918,6 +1068,14 @@ namespace MMMapEditor
             {
                 clone.registerRangeDistributions[kvp.Key] = kvp.Value;
             }
+            foreach (var kvp in partyMemberBases)
+            {
+                clone.partyMemberBases[kvp.Key] = kvp.Value?.Clone();
+            }
+            foreach (var kvp in partyFieldValues)
+            {
+                clone.partyFieldValues[kvp.Key] = kvp.Value?.Clone();
+            }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;
             clone.SignFlag = this.SignFlag;
@@ -928,6 +1086,7 @@ namespace MMMapEditor
             clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             clone.LastCompareImmediate = this.LastCompareImmediate;
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
+            clone.CurrentGenderBranchIsMale = this.CurrentGenderBranchIsMale;
             return clone;
         }
     }
