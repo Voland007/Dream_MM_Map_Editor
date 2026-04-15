@@ -14,7 +14,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 
-﻿﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -73,6 +73,10 @@ namespace MMMapEditor
 
         public List<PartiallyDefinedBattle> PartiallyDefinedBattles { get; set; } = new List<PartiallyDefinedBattle>();
         public bool HasPartiallyDefinedBattles => PartiallyDefinedBattles.Count > 0;
+        public bool HasBattleLikeInfo =>
+            HasBattleInfo ||
+            HasPartiallyDefinedBattles ||
+            (HasAnyTableLoad && LoadedValues.Count > 0);
 
         #endregion
 
@@ -748,8 +752,7 @@ namespace MMMapEditor
         public bool HasAnyInfo =>
             (PathTexts != null && PathTexts.Any(kvp => kvp.Value != null && kvp.Value.Count > 0)) ||
             HasMonsterStatChanges ||
-            HasBattleInfo ||
-            HasPartiallyDefinedBattles ||
+            HasBattleLikeInfo ||
             HasAnyTableLoad ||
             CallsRandomEncounter;
 
@@ -969,11 +972,14 @@ namespace MMMapEditor
 
         public bool HasBattleInfo => BattleMonsters.Count > 0;
         public bool HasPartiallyDefinedBattles => PartiallyDefinedBattles.Count > 0;
+        public bool HasBattleLikeInfo =>
+            HasBattleInfo ||
+            HasPartiallyDefinedBattles ||
+            (HasAnyTableLoad && LoadedValues.Count > 0);
         public bool HasAnyInfo =>
             (Texts != null && Texts.Any(t => !string.IsNullOrWhiteSpace(t))) ||
             HasMonsterStatChanges ||
-            HasBattleInfo ||
-            HasPartiallyDefinedBattles ||
+            HasBattleLikeInfo ||
             HasAnyTableLoad ||
             CallsRandomEncounter ||
             HasProbabilityInfo;

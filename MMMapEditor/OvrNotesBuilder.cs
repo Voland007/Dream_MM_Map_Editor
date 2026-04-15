@@ -1187,12 +1187,7 @@ namespace MMMapEditor
         {
             var lines = new List<string>();
 
-            bool hasBattleInfo =
-                obj.HasBattleInfo ||
-                obj.HasPartiallyDefinedBattles ||
-                (obj.HasAnyTableLoad && obj.LoadedValues.Count > 0);
-
-            if (!hasBattleInfo)
+            if (!obj.HasBattleLikeInfo)
                 return lines;
 
             string battleDesc = obj.GetBattleDescription();
@@ -1217,7 +1212,7 @@ namespace MMMapEditor
             // Если одновременно есть телепорт, выводим его раньше: это ближе к
             // реальному порядку исполнения патча, где сначала меняются координаты,
             // а затем вызывается random encounter / событие.
-            if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleInfo)
+            if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleLikeInfo)
                 lines.Add("⚠Вызывается random encounter ⚠");
 
             return lines;
