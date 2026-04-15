@@ -409,8 +409,25 @@ namespace MMMapEditor
                 CreatePathVariant(1, mainDisplayTexts, mainPathResult.AlternativePaths.Count == 0, mainPathResult)
             };
 
-            var effectiveAlternativePaths = predefinedAlternativePaths ?? mainPathResult.AlternativePaths;
+            var effectiveAlternativePaths = (predefinedAlternativePaths ?? mainPathResult.AlternativePaths)
+                .ToList();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
+
+            // Если основной путь уже распознал partial-battle loop и развернул его по таблицам,
+            // не анализируем обратные переходы, возвращающиеся внутрь этого же цикла.
+            // Иначе возникают дубликаты partial battles со сдвигом BX.
+            bool suppressLoopBackAlternatives =
+                mainPathResult.HasPartialBattlePattern &&
+                mainPathResult.IsInLoop &&
+                mainPathResult.LoopStartAddress != 0;
+
+            if (suppressLoopBackAlternatives)
+            {
+                effectiveAlternativePaths = effectiveAlternativePaths
+                    .Where(p => !(p.TargetAddress < p.Address &&
+                                  p.TargetAddress <= mainPathResult.LoopStartAddress))
+                    .ToList();
+            }
 
             if (effectiveAlternativePaths.Count > 0)
             {
