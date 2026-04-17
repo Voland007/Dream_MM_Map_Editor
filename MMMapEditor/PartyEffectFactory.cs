@@ -127,7 +127,11 @@ namespace MMMapEditor
                 return $"У женщин в партии {verb} {amount} HP";
 
             if (IsLoopTarget(member, loopSemantic))
-                return $"У каждого персонажа партии {verb} {amount} HP";
+            {
+                return operation == PartyEffectOperation.Decrement
+                    ? $"! У каждого персонажа партии {verb} {amount} HP !"
+                    : $"У каждого персонажа партии {verb} {amount} HP";
+            }
 
             if (member?.MemberIndex.HasValue == true)
                 return $"У персонажа #{member.MemberIndex.Value} {verb} {amount} HP";

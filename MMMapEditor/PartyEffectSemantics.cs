@@ -114,7 +114,11 @@ namespace MMMapEditor
                     return $"У женщин в партии {verb} {amount} HP";
 
                 if (scope == PartyEffectScope.WholeParty || scope == PartyEffectScope.CurrentLoopMember || IsLoopDerived(effect))
-                    return $"У каждого персонажа партии {verb} {amount} HP";
+                {
+                    return operation == PartyEffectOperation.Decrement
+                        ? $"! У каждого персонажа партии {verb} {amount} HP !"
+                        : $"У каждого персонажа партии {verb} {amount} HP";
+                }
 
                 if (scope == PartyEffectScope.PartySubset)
                     return $"У части партии {verb} {amount} HP";
