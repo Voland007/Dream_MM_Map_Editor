@@ -58,6 +58,32 @@ namespace MMMapEditor
         }
     }
 
+    public sealed class PartyPointerByteReference
+    {
+        public PartyMemberReference Member { get; set; }
+        public bool IsHighByte { get; set; }
+        public ushort? SourceAddress { get; set; }
+        public string Source { get; set; }
+
+        public PartyPointerByteReference Clone()
+        {
+            return new PartyPointerByteReference
+            {
+                Member = Member?.Clone(),
+                IsHighByte = IsHighByte,
+                SourceAddress = SourceAddress,
+                Source = Source
+            };
+        }
+
+        public override string ToString()
+        {
+            string byteText = IsHighByte ? "High" : "Low";
+            string sourceAddrText = SourceAddress.HasValue ? $"0x{SourceAddress.Value:X4}" : "?";
+            return $"PartyPointerByte(Member={Member}, Byte={byteText}, SourceAddr={sourceAddrText}, Source={Source ?? "unknown"})";
+        }
+    }
+
     public sealed class PartyFieldReference
     {
         public PartyMemberReference Member { get; set; }
@@ -113,6 +139,8 @@ namespace MMMapEditor
         public bool SawClc { get; set; }
         public bool SawShrHigh { get; set; }
         public bool SawRcrLow { get; set; }
+        public PendingPartyByteArithmetic LowByteArithmetic { get; set; }
+        public PendingPartyByteArithmetic HighByteArithmetic { get; set; }
         public uint StartAddress { get; set; }
 
         public PendingPartyHpOperation Clone()
@@ -129,13 +157,45 @@ namespace MMMapEditor
                 SawClc = SawClc,
                 SawShrHigh = SawShrHigh,
                 SawRcrLow = SawRcrLow,
+                LowByteArithmetic = LowByteArithmetic?.Clone(),
+                HighByteArithmetic = HighByteArithmetic?.Clone(),
                 StartAddress = StartAddress
             };
         }
 
         public override string ToString()
         {
-            return $"PendingPartyHp(Member={Member}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, Start=0x{StartAddress:X4})";
+            return $"PendingPartyHp(Member={Member}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, LowArith={LowByteArithmetic}, HighArith={HighByteArithmetic}, Start=0x{StartAddress:X4})";
+        }
+    }
+
+    public sealed class PendingPartyByteArithmetic
+    {
+        public PartyEffectOperation Operation { get; set; } = PartyEffectOperation.Unknown;
+        public byte RawImmediateValue { get; set; }
+        public ushort? EffectiveImmediateValue { get; set; }
+        public bool UsesCarryOpcode { get; set; }
+        public bool CarryInKnown { get; set; }
+        public bool CarryInValue { get; set; }
+        public uint InstructionAddress { get; set; }
+
+        public PendingPartyByteArithmetic Clone()
+        {
+            return new PendingPartyByteArithmetic
+            {
+                Operation = Operation,
+                RawImmediateValue = RawImmediateValue,
+                EffectiveImmediateValue = EffectiveImmediateValue,
+                UsesCarryOpcode = UsesCarryOpcode,
+                CarryInKnown = CarryInKnown,
+                CarryInValue = CarryInValue,
+                InstructionAddress = InstructionAddress
+            };
+        }
+
+        public override string ToString()
+        {
+            return $"PendingByteArith(Op={Operation}, Raw=0x{RawImmediateValue:X2}, Effective={(EffectiveImmediateValue.HasValue ? $"0x{EffectiveImmediateValue.Value:X4}" : "?")}, CarryOpcode={UsesCarryOpcode}, CarryKnown={CarryInKnown}, CarryIn={CarryInValue}, At=0x{InstructionAddress:X4})";
         }
     }
 }

@@ -80,6 +80,7 @@ namespace MMMapEditor
         private Dictionary<string, RegisterValueDistribution> registerRangeDistributions = new Dictionary<string, RegisterValueDistribution>();
         private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
+        private Dictionary<string, PartyPointerByteReference> partyPointerBytes = new Dictionary<string, PartyPointerByteReference>();
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -202,6 +203,151 @@ namespace MMMapEditor
                 partyFieldValues.Remove(regUpper);
         }
 
+        public void SetPartyPointerByteValue(string reg, PartyPointerByteReference value)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (value == null)
+                partyPointerBytes.Remove(regUpper);
+            else
+                partyPointerBytes[regUpper] = value.Clone();
+
+            RefreshPartyMemberBaseFromPointerBytes(regUpper);
+        }
+
+        public bool TryGetPartyPointerByteValue(string reg, out PartyPointerByteReference value)
+        {
+            value = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (!partyPointerBytes.TryGetValue(regUpper, out var existing) || existing == null)
+                return false;
+
+            value = existing.Clone();
+            return true;
+        }
+
+        public void ClearPartyPointerByteValue(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            partyPointerBytes.Remove(regUpper);
+            RefreshPartyMemberBaseFromPointerBytes(regUpper);
+        }
+
+        private static bool TryGetByteRegisterFamily(string regUpper, out string fullReg, out string lowReg, out string highReg)
+        {
+            fullReg = null;
+            lowReg = null;
+            highReg = null;
+
+            switch (regUpper)
+            {
+                case "AL":
+                case "AH":
+                case "AX":
+                    fullReg = "AX";
+                    lowReg = "AL";
+                    highReg = "AH";
+                    return true;
+                case "BL":
+                case "BH":
+                case "BX":
+                    fullReg = "BX";
+                    lowReg = "BL";
+                    highReg = "BH";
+                    return true;
+                case "CL":
+                case "CH":
+                case "CX":
+                    fullReg = "CX";
+                    lowReg = "CL";
+                    highReg = "CH";
+                    return true;
+                case "DL":
+                case "DH":
+                case "DX":
+                    fullReg = "DX";
+                    lowReg = "DL";
+                    highReg = "DH";
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool CanCombinePartyPointerBytes(PartyPointerByteReference low, PartyPointerByteReference high)
+        {
+            if (low == null || high == null || low.IsHighByte || !high.IsHighByte)
+                return false;
+
+            var lowMember = low.Member;
+            var highMember = high.Member;
+            if (lowMember == null || highMember == null)
+                return false;
+
+            if (lowMember.IsPartyLoopMember && highMember.IsPartyLoopMember)
+                return true;
+
+            if (lowMember.MemberIndex.HasValue && highMember.MemberIndex.HasValue)
+                return lowMember.MemberIndex.Value == highMember.MemberIndex.Value;
+
+            if (lowMember.PointerTableAddress.HasValue && highMember.PointerTableAddress.HasValue)
+                return lowMember.PointerTableAddress.Value == highMember.PointerTableAddress.Value;
+
+            if (lowMember.PointerAddress.HasValue && highMember.PointerAddress.HasValue)
+                return lowMember.PointerAddress.Value == highMember.PointerAddress.Value;
+
+            return false;
+        }
+
+        private void RefreshPartyMemberBaseFromPointerBytes(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            if (partyPointerBytes.TryGetValue(lowReg, out var lowByte) &&
+                partyPointerBytes.TryGetValue(highReg, out var highByte) &&
+                CanCombinePartyPointerBytes(lowByte, highByte))
+            {
+                partyMemberBases[fullReg] = lowByte.Member?.Clone();
+            }
+            else
+            {
+                partyMemberBases.Remove(fullReg);
+            }
+        }
+
+        private void ClearByteRegisterSemantics(string regUpper)
+        {
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
+                return;
+
+            if (regUpper != fullReg)
+            {
+                partyPointerBytes.Remove(regUpper);
+                RefreshPartyMemberBaseFromPointerBytes(fullReg);
+            }
+        }
+
+        private void ClearFullRegisterByteSemantics(string regUpper)
+        {
+            if (!TryGetByteRegisterFamily(regUpper, out _, out string lowReg, out string highReg))
+                return;
+
+            partyPointerBytes.Remove(lowReg);
+            partyPointerBytes.Remove(highReg);
+            partyFieldValues.Remove(lowReg);
+            partyFieldValues.Remove(highReg);
+        }
+
         public void SetRegisterRange(string reg, byte min, byte max, RegisterValueDistribution distribution = RegisterValueDistribution.Unknown)
         {
             string regUpper = reg.ToUpperInvariant();
@@ -296,6 +442,7 @@ namespace MMMapEditor
             ClearRegisterRange(regUpper);
             ClearPartyMemberBase(regUpper);
             ClearPartyFieldValue(regUpper);
+            ClearFullRegisterByteSemantics(regUpper);
             registers[regUpper] = value;
             registerSources[regUpper] = $"0x{value:X4} loaded at 0x{address:X4} via {instruction}";
 
@@ -814,9 +961,11 @@ namespace MMMapEditor
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
             ClearPartyFieldValue(regUpper);
+            ClearPartyMemberBase(regUpper);
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearByteRegisterSemantics(regUpper);
 
             if (regUpper == "AX")
             {
@@ -826,6 +975,10 @@ namespace MMMapEditor
                 registerSources.Remove("AH");
                 registerSources2.Remove("AL");
                 registerSources2.Remove("AH");
+                partyFieldValues.Remove("AL");
+                partyFieldValues.Remove("AH");
+                partyPointerBytes.Remove("AL");
+                partyPointerBytes.Remove("AH");
             }
             else if (regUpper == "BX")
             {
@@ -835,6 +988,10 @@ namespace MMMapEditor
                 registerSources.Remove("BH");
                 registerSources2.Remove("BL");
                 registerSources2.Remove("BH");
+                partyFieldValues.Remove("BL");
+                partyFieldValues.Remove("BH");
+                partyPointerBytes.Remove("BL");
+                partyPointerBytes.Remove("BH");
             }
             else if (regUpper == "CX")
             {
@@ -844,6 +1001,10 @@ namespace MMMapEditor
                 registerSources.Remove("CH");
                 registerSources2.Remove("CL");
                 registerSources2.Remove("CH");
+                partyFieldValues.Remove("CL");
+                partyFieldValues.Remove("CH");
+                partyPointerBytes.Remove("CL");
+                partyPointerBytes.Remove("CH");
             }
             else if (regUpper == "DX")
             {
@@ -853,6 +1014,10 @@ namespace MMMapEditor
                 registerSources.Remove("DH");
                 registerSources2.Remove("DL");
                 registerSources2.Remove("DH");
+                partyFieldValues.Remove("DL");
+                partyFieldValues.Remove("DH");
+                partyPointerBytes.Remove("DL");
+                partyPointerBytes.Remove("DH");
             }
         }
 
@@ -867,6 +1032,7 @@ namespace MMMapEditor
             registerRangeDistributions.Clear();
             partyMemberBases.Clear();
             partyFieldValues.Clear();
+            partyPointerBytes.Clear();
             ZeroFlag = false;
             CarryFlag = false;
             SignFlag = false;
@@ -909,6 +1075,14 @@ namespace MMMapEditor
                 }
             }
 
+            void ClearSemanticsAfterByteWrite()
+            {
+                ClearPartyFieldValue(partialRegUpper);
+                ClearPartyFieldValue(fullRegUpper);
+                ClearPartyMemberBase(fullRegUpper);
+                ClearPartyPointerByteValue(partialRegUpper);
+            }
+
             if (partialRegUpper == "AL" || partialRegUpper == "AH")
             {
                 if (fullRegUpper == "AX")
@@ -929,8 +1103,7 @@ namespace MMMapEditor
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
-                    ClearPartyFieldValue(partialRegUpper);
-                    ClearPartyFieldValue(fullRegUpper);
+                    ClearSemanticsAfterByteWrite();
                 }
             }
             else if (partialRegUpper == "CL" || partialRegUpper == "CH")
@@ -953,6 +1126,7 @@ namespace MMMapEditor
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
+                    ClearSemanticsAfterByteWrite();
                 }
             }
             else if (partialRegUpper == "DL" || partialRegUpper == "DH")
@@ -975,6 +1149,7 @@ namespace MMMapEditor
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
+                    ClearSemanticsAfterByteWrite();
                 }
             }
             else if (partialRegUpper == "BL" || partialRegUpper == "BH")
@@ -997,6 +1172,7 @@ namespace MMMapEditor
                     }
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
+                    ClearSemanticsAfterByteWrite();
                 }
             }
         }
@@ -1075,6 +1251,10 @@ namespace MMMapEditor
             foreach (var kvp in partyFieldValues)
             {
                 clone.partyFieldValues[kvp.Key] = kvp.Value?.Clone();
+            }
+            foreach (var kvp in partyPointerBytes)
+            {
+                clone.partyPointerBytes[kvp.Key] = kvp.Value?.Clone();
             }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;

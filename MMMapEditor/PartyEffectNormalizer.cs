@@ -34,17 +34,9 @@ namespace MMMapEditor
             result.AddRange(allPartyEffects);
 
             PartyConditionKind inferredCondition = InferPartyCondition(source.PendingPartyHpOperation, allPartyEffects);
-
-            if (IsCompletedHpHalvingPattern(source.PendingPartyHpOperation))
-            {
-                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(
-                    source.PendingPartyHpOperation,
-                    source.LoopSemantic,
-                    inferredCondition);
-
-                if (hpHalved != null)
-                    result.Add(hpHalved);
-            }
+            var normalizedHpEffect = CreateNormalizedHpEffect(source.PendingPartyHpOperation, source.LoopSemantic, inferredCondition);
+            if (normalizedHpEffect != null)
+                result.Add(normalizedHpEffect);
 
             // Если есть loop-derived эффект с условием, он относится к части партии, а не ко всей партии.
             foreach (var effect in result)
@@ -78,7 +70,19 @@ namespace MMMapEditor
                 .ToList();
         }
 
-        private static PartyConditionKind InferPartyCondition(PendingPartyHpOperation pending, IEnumerable<PartyEffect> effects)
+        public static PartyEffect CreateNormalizedHpEffect(PendingPartyHpOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition)
+        {
+            if (IsCompletedHpHalvingPattern(pending))
+                return PartyEffectFactory.CreateHpHalvedEffect(pending, loopSemantic, condition);
+
+            if (TryGetExactHpAdjustment(pending, out var operation, out ushort amount))
+                return PartyEffectFactory.CreateHpAdjustedEffect(pending, loopSemantic, condition, operation, amount);
+
+            return null;
+        }
+
+        public static PartyConditionKind InferPartyCondition(PendingPartyHpOperation pending, IEnumerable<PartyEffect> effects)
         {
             foreach (var effect in effects ?? Enumerable.Empty<PartyEffect>())
             {
@@ -102,7 +106,7 @@ namespace MMMapEditor
             return PartyConditionKind.None;
         }
 
-        private static bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
+        public static bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
         {
             if (pending == null)
                 return false;
@@ -116,18 +120,56 @@ namespace MMMapEditor
                    pending.SawRcrLow;
         }
 
+        public static bool TryGetExactHpAdjustment(PendingPartyHpOperation pending,
+            out PartyEffectOperation operation, out ushort amount)
+        {
+            operation = PartyEffectOperation.Unknown;
+            amount = 0;
+
+            if (pending == null ||
+                !pending.SawReadHigh ||
+                !pending.SawReadLow ||
+                !pending.SawWriteHigh ||
+                !pending.SawWriteLow ||
+                pending.LowByteArithmetic == null ||
+                pending.HighByteArithmetic == null)
+            {
+                return false;
+            }
+
+            var low = pending.LowByteArithmetic;
+            var high = pending.HighByteArithmetic;
+
+            if (low.Operation != high.Operation ||
+                (low.Operation != PartyEffectOperation.Increment && low.Operation != PartyEffectOperation.Decrement) ||
+                !low.EffectiveImmediateValue.HasValue ||
+                !high.EffectiveImmediateValue.HasValue ||
+                !high.UsesCarryOpcode)
+            {
+                return false;
+            }
+
+            ushort total = (ushort)(low.EffectiveImmediateValue.Value + (high.EffectiveImmediateValue.Value << 8));
+            if (total == 0)
+                return false;
+
+            operation = low.Operation;
+            amount = total;
+            return true;
+        }
+
         private static List<PartyEffect> RemoveRedundantHpWrittenEffects(List<PartyEffect> effects)
         {
             if (effects == null || effects.Count == 0)
                 return effects ?? new List<PartyEffect>();
 
-            var hpHalved = effects
+            var normalizedHpEffects = effects
                 .Where(e => e != null &&
                             PartyEffectSemantics.GetEffectiveField(e) == PartyFieldKind.Hp &&
-                            PartyEffectSemantics.GetEffectiveOperation(e) == PartyEffectOperation.Halve)
+                            PartyEffectSemantics.GetEffectiveOperation(e) != PartyEffectOperation.Write)
                 .ToList();
 
-            if (hpHalved.Count == 0)
+            if (normalizedHpEffects.Count == 0)
                 return effects;
 
             return effects
@@ -142,7 +184,7 @@ namespace MMMapEditor
                         return true;
                     }
 
-                    return !hpHalved.Any(h => MatchesSameTarget(effect, h));
+                    return !normalizedHpEffects.Any(h => MatchesSameTarget(effect, h));
                 })
                 .ToList();
         }

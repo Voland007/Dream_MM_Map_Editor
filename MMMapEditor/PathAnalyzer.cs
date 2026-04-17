@@ -73,7 +73,9 @@ namespace MMMapEditor
                     new HashSet<uint>(), depth + 1, path.CallDepth, currentPathId, targetX, targetY,
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall,
                     path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses),
-                    path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8));
+                    path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8),
+                    path.EmulatedPartyPointers == null ? null : path.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    path.EmulatedPartyPointerBytes == null ? null : path.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -392,8 +394,9 @@ namespace MMMapEditor
                     merged.PartyFieldAccesses.Add(access.Clone());
             }
 
-            if (currentState.PendingPartyHpOperation != null)
-                merged.PendingPartyHpOperation = currentState.PendingPartyHpOperation.Clone();
+            merged.PendingPartyHpOperation = MergePendingPartyHpOperation(
+                merged.PendingPartyHpOperation,
+                currentState.PendingPartyHpOperation);
 
             foreach (var effect in currentState.PartyEffects ?? Enumerable.Empty<PartyEffect>())
             {
@@ -411,6 +414,150 @@ namespace MMMapEditor
             merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             return merged;
+        }
+
+        private PendingPartyHpOperation MergePendingPartyHpOperation(
+            PendingPartyHpOperation inheritedPending,
+            PendingPartyHpOperation currentPending)
+        {
+            if (inheritedPending == null)
+                return currentPending?.Clone();
+
+            if (currentPending == null)
+                return inheritedPending.Clone();
+
+            if (!MatchesPendingPartyTarget(inheritedPending.Member, currentPending.Member))
+                return currentPending.Clone();
+
+            var merged = inheritedPending.Clone();
+            merged.Member = MergePartyMemberReference(inheritedPending.Member, currentPending.Member);
+
+            merged.MaleOnly = inheritedPending.MaleOnly || currentPending.MaleOnly;
+            merged.FemaleOnly = inheritedPending.FemaleOnly || currentPending.FemaleOnly;
+            if ((inheritedPending.MaleOnly && currentPending.FemaleOnly) ||
+                (inheritedPending.FemaleOnly && currentPending.MaleOnly))
+            {
+                merged.MaleOnly = false;
+                merged.FemaleOnly = false;
+            }
+
+            merged.SawReadHigh = inheritedPending.SawReadHigh || currentPending.SawReadHigh;
+            merged.SawReadLow = inheritedPending.SawReadLow || currentPending.SawReadLow;
+            merged.SawWriteHigh = inheritedPending.SawWriteHigh || currentPending.SawWriteHigh;
+            merged.SawWriteLow = inheritedPending.SawWriteLow || currentPending.SawWriteLow;
+            merged.SawClc = inheritedPending.SawClc || currentPending.SawClc;
+            merged.SawShrHigh = inheritedPending.SawShrHigh || currentPending.SawShrHigh;
+            merged.SawRcrLow = inheritedPending.SawRcrLow || currentPending.SawRcrLow;
+            merged.LowByteArithmetic = MergePendingPartyByteArithmetic(
+                inheritedPending.LowByteArithmetic,
+                currentPending.LowByteArithmetic);
+            merged.HighByteArithmetic = MergePendingPartyByteArithmetic(
+                inheritedPending.HighByteArithmetic,
+                currentPending.HighByteArithmetic);
+
+            if (merged.StartAddress == 0 ||
+                (currentPending.StartAddress != 0 && currentPending.StartAddress < merged.StartAddress))
+            {
+                merged.StartAddress = currentPending.StartAddress;
+            }
+
+            return merged;
+        }
+
+        private PartyMemberReference MergePartyMemberReference(
+            PartyMemberReference inheritedMember,
+            PartyMemberReference currentMember)
+        {
+            if (inheritedMember == null)
+                return currentMember?.Clone();
+
+            if (currentMember == null)
+                return inheritedMember.Clone();
+
+            var merged = inheritedMember.Clone();
+
+            if (!merged.MemberIndex.HasValue)
+                merged.MemberIndex = currentMember.MemberIndex;
+            if (!merged.PointerAddress.HasValue)
+                merged.PointerAddress = currentMember.PointerAddress;
+            if (!merged.PointerTableAddress.HasValue)
+                merged.PointerTableAddress = currentMember.PointerTableAddress;
+            if (!merged.StructureAddress.HasValue)
+                merged.StructureAddress = currentMember.StructureAddress;
+            if (string.IsNullOrWhiteSpace(merged.Source))
+                merged.Source = currentMember.Source;
+
+            merged.IsPartyLoopMember = merged.IsPartyLoopMember || currentMember.IsPartyLoopMember;
+            return merged;
+        }
+
+        private PendingPartyByteArithmetic MergePendingPartyByteArithmetic(
+            PendingPartyByteArithmetic inheritedArithmetic,
+            PendingPartyByteArithmetic currentArithmetic)
+        {
+            if (inheritedArithmetic == null)
+                return currentArithmetic?.Clone();
+
+            if (currentArithmetic == null)
+                return inheritedArithmetic.Clone();
+
+            int inheritedScore = GetPendingPartyByteArithmeticPrecisionScore(inheritedArithmetic);
+            int currentScore = GetPendingPartyByteArithmeticPrecisionScore(currentArithmetic);
+
+            if (currentScore > inheritedScore)
+                return currentArithmetic.Clone();
+
+            if (inheritedScore > currentScore)
+                return inheritedArithmetic.Clone();
+
+            return inheritedArithmetic.InstructionAddress != 0 &&
+                   (currentArithmetic.InstructionAddress == 0 ||
+                    inheritedArithmetic.InstructionAddress <= currentArithmetic.InstructionAddress)
+                ? inheritedArithmetic.Clone()
+                : currentArithmetic.Clone();
+        }
+
+        private int GetPendingPartyByteArithmeticPrecisionScore(PendingPartyByteArithmetic arithmetic)
+        {
+            if (arithmetic == null)
+                return -1;
+
+            int score = 0;
+            if (arithmetic.Operation != PartyEffectOperation.Unknown)
+                score += 4;
+            if (arithmetic.EffectiveImmediateValue.HasValue)
+                score += 8;
+            if (arithmetic.UsesCarryOpcode)
+                score += 2;
+            if (arithmetic.CarryInKnown)
+                score += 1;
+            if (arithmetic.InstructionAddress != 0)
+                score += 1;
+
+            return score;
+        }
+
+        private bool MatchesPendingPartyTarget(PartyMemberReference left, PartyMemberReference right)
+        {
+            if (left == null || right == null)
+                return true;
+
+            if (left.IsPartyLoopMember && right.IsPartyLoopMember)
+                return true;
+
+            if (left.MemberIndex.HasValue && right.MemberIndex.HasValue)
+                return left.MemberIndex.Value == right.MemberIndex.Value;
+
+            if (left.PointerTableAddress.HasValue && right.PointerTableAddress.HasValue)
+                return left.PointerTableAddress.Value == right.PointerTableAddress.Value;
+
+            if (left.PointerAddress.HasValue && right.PointerAddress.HasValue)
+                return left.PointerAddress.Value == right.PointerAddress.Value;
+
+            if (left.StructureAddress.HasValue && right.StructureAddress.HasValue)
+                return left.StructureAddress.Value == right.StructureAddress.Value;
+
+            return true;
         }
 
         private PathAnalysisResult ClonePathAnalysisResult(PathAnalysisResult source)
@@ -509,7 +656,13 @@ namespace MMMapEditor
                         : new List<uint>(alt.PendingReturnAddresses),
                     EmulatedMemory8 = alt.EmulatedMemory8 == null
                         ? new Dictionary<ushort, byte>()
-                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8)
+                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8),
+                    EmulatedPartyPointers = alt.EmulatedPartyPointers == null
+                        ? new Dictionary<ushort, PartyMemberReference>()
+                        : alt.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    EmulatedPartyPointerBytes = alt.EmulatedPartyPointerBytes == null
+                        ? new Dictionary<ushort, PartyPointerByteReference>()
+                        : alt.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone())
                 });
             }
 

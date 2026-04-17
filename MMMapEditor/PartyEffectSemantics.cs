@@ -100,6 +100,33 @@ namespace MMMapEditor
                 return "HP персонажа уменьшается вдвое";
             }
 
+            if (field == PartyFieldKind.Hp &&
+                (operation == PartyEffectOperation.Increment || operation == PartyEffectOperation.Decrement) &&
+                effect.ImmediateValue.HasValue)
+            {
+                ushort amount = effect.ImmediateValue.Value;
+                string verb = operation == PartyEffectOperation.Increment ? "добавляется" : "отнимается";
+
+                if (condition == PartyConditionKind.MaleOnly)
+                    return $"У мужчин в партии {verb} {amount} HP";
+
+                if (condition == PartyConditionKind.FemaleOnly)
+                    return $"У женщин в партии {verb} {amount} HP";
+
+                if (scope == PartyEffectScope.WholeParty || scope == PartyEffectScope.CurrentLoopMember || IsLoopDerived(effect))
+                    return $"У каждого персонажа партии {verb} {amount} HP";
+
+                if (scope == PartyEffectScope.PartySubset)
+                    return $"У части партии {verb} {amount} HP";
+
+                if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
+                    return $"У персонажа #{effect.MemberIndex.Value} {verb} {amount} HP";
+
+                return operation == PartyEffectOperation.Increment
+                    ? $"HP персонажа увеличивается на {amount}"
+                    : $"HP персонажа уменьшается на {amount}";
+            }
+
             string subject = BuildSubject(effect, field, scope, condition);
             if (string.IsNullOrWhiteSpace(subject))
                 return effect.Description;

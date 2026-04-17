@@ -850,91 +850,9 @@ namespace MMMapEditor
 
         private List<PartyEffect> BuildNormalizedPartyEffects(PathAnalysisResult source)
         {
-            var result = new List<PartyEffect>();
-            if (source == null)
-                return result;
-
-            if (source.PartyEffects != null)
-            {
-                result.AddRange(source.PartyEffects
-                    .Where(e => e != null && PartyEffectSemantics.IsStateChanging(e))
-                    .Select(e => e.Clone()));
-            }
-
-            PartyConditionKind derivedCondition = PartyConditionKind.None;
-            if (source.PartyEffects != null)
-            {
-                foreach (var effect in source.PartyEffects.Where(e => e != null))
-                {
-                    if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Gender)
-                        continue;
-
-                    if (PartyEffectSemantics.GetEffectiveOperation(effect) != PartyEffectOperation.Compare)
-                        continue;
-
-                    var condition = PartyEffectSemantics.GetEffectiveCondition(effect);
-                    if (condition != PartyConditionKind.None)
-                    {
-                        derivedCondition = condition;
-                        break;
-                    }
-                }
-            }
-
-            if (derivedCondition == PartyConditionKind.None && source.PendingPartyHpOperation != null)
-            {
-                if (source.PendingPartyHpOperation.MaleOnly)
-                    derivedCondition = PartyConditionKind.MaleOnly;
-                else if (source.PendingPartyHpOperation.FemaleOnly)
-                    derivedCondition = PartyConditionKind.FemaleOnly;
-            }
-
-            bool hasNormalizedHpHalved = false;
-            if (IsCompletedHpHalvingPattern(source.PendingPartyHpOperation))
-            {
-                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(source.PendingPartyHpOperation, source.LoopSemantic, derivedCondition);
-                if (hpHalved != null)
-                {
-                    hasNormalizedHpHalved = true;
-                    result.Add(hpHalved);
-                }
-            }
-
-            if (hasNormalizedHpHalved)
-            {
-                result = result
-                    .Where(e => e != null)
-                    .Where(e => !(PartyEffectSemantics.GetEffectiveField(e) == PartyFieldKind.Hp &&
-                                  PartyEffectSemantics.GetEffectiveOperation(e) == PartyEffectOperation.Write &&
-                                  PartyEffectSemantics.IsLoopDerived(e)))
-                    .ToList();
-
-                // Вернуть нормализованный halve после фильтрации, если он случайно попал под общие условия.
-                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(source.PendingPartyHpOperation, source.LoopSemantic, derivedCondition);
-                if (hpHalved != null)
-                    result.Add(hpHalved);
-            }
-
-            return result
-                .Where(e => e != null)
-                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
-                .Select(g => g.First())
-                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+            return PartyEffectNormalizer.Normalize(source)
+                .Where(e => e != null && PartyEffectSemantics.IsStateChanging(e))
                 .ToList();
-        }
-
-        private bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
-        {
-            if (pending == null)
-                return false;
-
-            return pending.SawReadHigh &&
-                   pending.SawReadLow &&
-                   pending.SawWriteHigh &&
-                   pending.SawWriteLow &&
-                   pending.SawClc &&
-                   pending.SawShrHigh &&
-                   pending.SawRcrLow;
         }
 
         private void WriteVariantDebugSummary(PathVariantInfo variant, byte x, byte y, byte directionByte)

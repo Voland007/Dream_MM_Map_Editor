@@ -96,6 +96,7 @@ namespace MMMapEditor
         public List<uint> PendingReturnAddresses { get; set; } = new List<uint>();
         public Dictionary<ushort, byte> EmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
+        public Dictionary<ushort, PartyPointerByteReference> EmulatedPartyPointerBytes { get; set; } = new Dictionary<ushort, PartyPointerByteReference>();
         public PartyConditionKind BranchPartyCondition { get; set; } = PartyConditionKind.None;
     }
 
@@ -376,7 +377,7 @@ namespace MMMapEditor
         }
 
         public PartyValueKnowledge ValueKnowledge { get; set; } = PartyValueKnowledge.Unknown;
-        public byte? ImmediateValue { get; set; }
+        public ushort? ImmediateValue { get; set; }
         public ValueRange8 ImmediateRange { get; set; }
         public uint InstructionAddress { get; set; }
         public string Description { get; set; }

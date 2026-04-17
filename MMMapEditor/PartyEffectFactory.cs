@@ -44,28 +44,58 @@ namespace MMMapEditor
                 Operation = PartyEffectOperation.Halve,
                 Scope = ResolveScope(pending.Member, loopSemantic, condition),
                 Condition = condition,
-                MemberIndex = pending.Member?.MemberIndex,
-                IsLoopDerived = loopSemantic == LoopSemanticKind.PartyMemberScan || pending.Member?.IsPartyLoopMember == true,
+                MemberIndex = IsLoopTarget(pending.Member, loopSemantic) ? null : pending.Member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
                 ValueKnowledge = PartyValueKnowledge.Structural,
                 InstructionAddress = pending.StartAddress,
                 Description = BuildHpHalvedDescription(condition, loopSemantic, pending.Member)
             };
         }
 
+        public static PartyEffect CreateHpAdjustedEffect(PendingPartyHpOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, PartyEffectOperation operation, ushort amount)
+        {
+            if (pending == null || amount == 0 ||
+                (operation != PartyEffectOperation.Increment && operation != PartyEffectOperation.Decrement))
+            {
+                return null;
+            }
+
+            return new PartyEffect
+            {
+                Kind = PartyEffectKind.HpWritten,
+                Field = PartyFieldKind.Hp,
+                Operation = operation,
+                Scope = ResolveScope(pending.Member, loopSemantic, condition),
+                Condition = condition,
+                MemberIndex = IsLoopTarget(pending.Member, loopSemantic) ? null : pending.Member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = amount,
+                InstructionAddress = pending.StartAddress,
+                Description = BuildHpAdjustedDescription(condition, loopSemantic, pending.Member, operation, amount)
+            };
+        }
+
         private static PartyEffectScope ResolveScope(PartyMemberReference member, LoopSemanticKind loopSemantic, PartyConditionKind condition)
         {
-            if (loopSemantic == LoopSemanticKind.PartyMemberScan || member?.IsPartyLoopMember == true)
+            if (IsLoopTarget(member, loopSemantic))
             {
                 if (condition != PartyConditionKind.None)
                     return PartyEffectScope.PartySubset;
 
-                return PartyEffectScope.CurrentLoopMember;
+                return PartyEffectScope.WholeParty;
             }
 
             if (member?.MemberIndex.HasValue == true)
                 return PartyEffectScope.SingleMember;
 
             return PartyEffectScope.Unknown;
+        }
+
+        private static bool IsLoopTarget(PartyMemberReference member, LoopSemanticKind loopSemantic)
+        {
+            return loopSemantic == LoopSemanticKind.PartyMemberScan || member?.IsPartyLoopMember == true;
         }
 
         private static string BuildHpHalvedDescription(PartyConditionKind condition, LoopSemanticKind loopSemantic, PartyMemberReference member)
@@ -76,13 +106,35 @@ namespace MMMapEditor
             if (condition == PartyConditionKind.FemaleOnly)
                 return "HP женщин в партии уменьшается вдвое";
 
-            if (loopSemantic == LoopSemanticKind.PartyMemberScan || member?.IsPartyLoopMember == true)
+            if (IsLoopTarget(member, loopSemantic))
                 return "HP членов партии уменьшается вдвое";
 
             if (member?.MemberIndex.HasValue == true)
                 return $"HP персонажа #{member.MemberIndex.Value} уменьшается вдвое";
 
             return "HP персонажа уменьшается вдвое";
+        }
+
+        private static string BuildHpAdjustedDescription(PartyConditionKind condition, LoopSemanticKind loopSemantic,
+            PartyMemberReference member, PartyEffectOperation operation, ushort amount)
+        {
+            string verb = operation == PartyEffectOperation.Increment ? "добавляется" : "отнимается";
+
+            if (condition == PartyConditionKind.MaleOnly)
+                return $"У мужчин в партии {verb} {amount} HP";
+
+            if (condition == PartyConditionKind.FemaleOnly)
+                return $"У женщин в партии {verb} {amount} HP";
+
+            if (IsLoopTarget(member, loopSemantic))
+                return $"У каждого персонажа партии {verb} {amount} HP";
+
+            if (member?.MemberIndex.HasValue == true)
+                return $"У персонажа #{member.MemberIndex.Value} {verb} {amount} HP";
+
+            return operation == PartyEffectOperation.Increment
+                ? $"HP персонажа увеличивается на {amount}"
+                : $"HP персонажа уменьшается на {amount}";
         }
     }
 }
