@@ -195,7 +195,12 @@ namespace MMMapEditor
                         }
 
                         WriteVariantDebugSummary(variant, ovrObject.X, ovrObject.Y, ovrObject.DirectionByte);
-                        WritePartyEffectsDebugSummary(variant);
+                        if (variant?.PartyEffects != null && variant.PartyEffects.Count > 0)
+                        {
+                            AnalysisDebug.WriteLine($"        PartyEffects={variant.PartyEffects.Count}");
+                            foreach (var effect in variant.PartyEffects)
+                                AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
+                        }
                     }
                 }
 
@@ -326,7 +331,12 @@ namespace MMMapEditor
                                         $"PartyEffects={variant?.PartyEffects?.Count ?? 0}");
 
                                     WriteVariantDebugSummary(variant, cellX, cellY, 0);
-                                    WritePartyEffectsDebugSummary(variant);
+                                    if (variant?.PartyEffects != null && variant.PartyEffects.Count > 0)
+                                    {
+                                        AnalysisDebug.WriteLine($"        PartyEffects={variant.PartyEffects.Count}");
+                                        foreach (var effect in variant.PartyEffects)
+                                            AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
+                                    }
                                 }
                             }
                         }
@@ -372,8 +382,12 @@ namespace MMMapEditor
                                     AnalysisDebug.WriteLine($"        {text}");
 
                                 WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
-                            WritePartyEffectsDebugSummary(variant);
-                                WritePartyEffectsDebugSummary(variant);
+                                if (variant?.PartyEffects != null && variant.PartyEffects.Count > 0)
+                                {
+                                    AnalysisDebug.WriteLine($"        PartyEffects={variant.PartyEffects.Count}");
+                                    foreach (var effect in variant.PartyEffects)
+                                        AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
+                                }
                             }
                         }
 
@@ -386,18 +400,6 @@ namespace MMMapEditor
             }
 
             return objects;
-        }
-
-        private void WritePartyEffectsDebugSummary(PathVariantInfo variant)
-        {
-            if (variant?.PartyEffects == null || variant.PartyEffects.Count == 0)
-                return;
-
-            AnalysisDebug.WriteLine("        PartyEffects:");
-            foreach (var effect in variant.PartyEffects)
-            {
-                AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
-            }
         }
 
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
@@ -608,7 +610,6 @@ namespace MMMapEditor
                             }
 
                             WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
-                            WritePartyEffectsDebugSummary(variant);
                         }
 
                         objects.Add(obj);
@@ -847,23 +848,6 @@ namespace MMMapEditor
             };
         }
 
-        private static void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
-        {
-            if (pending == null)
-                return;
-
-            if (condition == PartyConditionKind.MaleOnly)
-            {
-                pending.MaleOnly = true;
-                pending.FemaleOnly = false;
-            }
-            else if (condition == PartyConditionKind.FemaleOnly)
-            {
-                pending.FemaleOnly = true;
-                pending.MaleOnly = false;
-            }
-        }
-
         private List<PartyEffect> BuildNormalizedPartyEffects(PathAnalysisResult source)
         {
             var result = new List<PartyEffect>();
@@ -876,9 +860,6 @@ namespace MMMapEditor
                     .Where(e => e != null && PartyEffectSemantics.IsStateChanging(e))
                     .Select(e => e.Clone()));
             }
-
-            if (source.PendingPartyHpOperation != null)
-                ApplyPartyConditionToPending(source.PendingPartyHpOperation, source.ActivePartyCondition);
 
             PartyConditionKind derivedCondition = PartyConditionKind.None;
             if (source.PartyEffects != null)

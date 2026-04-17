@@ -1,24 +1,6 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
-using System;
-using System.Collections.Generic;
-using System.Drawing;
-using System.IO;
-using System.Linq;
+﻿
+using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text;
 
 namespace MMMapEditor
@@ -632,7 +614,7 @@ namespace MMMapEditor
             {
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
-                group.TreeRoot = CompressVariantTree(root);
+                group.TreeRoot = SimplifyGenericChoiceTree(CompressVariantTree(root));
             }
 
             groups = groups
@@ -789,12 +771,162 @@ namespace MMMapEditor
 
             foreach (var choice in variant.BranchChoices)
             {
-                if (choice == null)
-                    continue;
-
-                if (!string.IsNullOrWhiteSpace(choice.Label))
-                    yield return choice;
+                var normalized = NormalizeBranchChoiceForDisplay(choice);
+                if (normalized != null)
+                    yield return normalized;
             }
+        }
+
+        private static BranchChoice NormalizeBranchChoiceForDisplay(BranchChoice choice)
+        {
+            if (choice == null)
+                return null;
+
+            string rawLabel = string.IsNullOrWhiteSpace(choice.Label)
+                ? null
+                : choice.Label.Trim();
+
+            bool rawLabelIsTechnical = IsGenericTechnicalChoiceLabel(rawLabel);
+
+            string inferredLabel = InferChoiceLabel(choice);
+            string label = rawLabelIsTechnical
+                ? inferredLabel
+                : (string.IsNullOrWhiteSpace(rawLabel) ? inferredLabel : rawLabel);
+
+            if (string.IsNullOrWhiteSpace(label))
+                return null;
+
+            return new BranchChoice
+            {
+                Label = label,
+                Condition = choice.Condition,
+                CompareValue = choice.CompareValue,
+                CompareRegister = choice.CompareRegister,
+                IsLinear = choice.IsLinear
+            };
+        }
+
+        private static string InferChoiceLabel(BranchChoice choice)
+        {
+            if (choice == null)
+                return null;
+
+            string splitLabel = InferSplitChoiceLabel(choice.Condition);
+            if (!string.IsNullOrWhiteSpace(splitLabel))
+                return splitLabel;
+
+            if (!string.Equals(choice.CompareRegister, "AL", StringComparison.OrdinalIgnoreCase) ||
+                !choice.CompareValue.HasValue)
+            {
+                return null;
+            }
+
+            string mnemonic = ExtractChoiceMnemonic(choice.Condition);
+            byte value = choice.CompareValue.Value;
+            bool hasExplicitInputChoiceHint = HasExplicitInputChoiceHint(choice.Label);
+            bool isBinaryChoiceValue = value == (byte)'Y' || value == (byte)'N';
+
+            if (!choice.IsLinear)
+            {
+                if (string.Equals(mnemonic, "JE", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(mnemonic, "JZ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return hasExplicitInputChoiceHint || isBinaryChoiceValue
+                        ? ConvertChoiceValueToLabel(value)
+                        : null;
+                }
+
+                return null;
+            }
+
+            if (string.Equals(mnemonic, "JNE", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mnemonic, "JNZ", StringComparison.OrdinalIgnoreCase))
+            {
+                // LINEAR after JNE/JNZ = ветка равенства, то есть выбран именно CompareValue.
+                return hasExplicitInputChoiceHint || isBinaryChoiceValue
+                    ? ConvertChoiceValueToLabel(value)
+                    : null;
+            }
+
+            if (string.Equals(mnemonic, "JE", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(mnemonic, "JZ", StringComparison.OrdinalIgnoreCase))
+            {
+                // LINEAR after JE/JZ = ветка неравенства.
+                // Осмысленную метку восстанавливаем только для бинарных Y/N вопросов.
+                return GetBinaryOppositeChoiceLabel(value);
+            }
+
+            return null;
+        }
+
+        private static string InferSplitChoiceLabel(string condition)
+        {
+            if (string.IsNullOrWhiteSpace(condition))
+                return null;
+
+            var match = Regex.Match(
+                condition.Trim(),
+                @"^SPLIT\s+\[[^\]]+\]\s*=\s*0x([0-9A-Fa-f]{1,2})$",
+                RegexOptions.IgnoreCase);
+
+            if (!match.Success)
+                return null;
+
+            if (!byte.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte value))
+                return null;
+
+            return ConvertChoiceValueToLabel(value);
+        }
+
+        private static bool HasExplicitInputChoiceHint(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string normalized = label.Trim();
+            if (normalized.EndsWith(")", StringComparison.Ordinal))
+                normalized = normalized.Substring(0, normalized.Length - 1).TrimEnd();
+
+            return string.Equals(normalized, "InputChoiceBranch", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "InputChoiceLinear", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string GetBinaryOppositeChoiceLabel(byte value)
+        {
+            switch (char.ToUpperInvariant((char)value))
+            {
+                case 'Y':
+                    return "N";
+                case 'N':
+                    return "Y";
+                default:
+                    return null;
+            }
+        }
+
+        private static string ExtractChoiceMnemonic(string condition)
+        {
+            if (string.IsNullOrWhiteSpace(condition))
+                return null;
+
+            string trimmed = condition.Trim();
+            const string linearPrefix = "LINEAR after ";
+            if (trimmed.StartsWith(linearPrefix, StringComparison.OrdinalIgnoreCase))
+                trimmed = trimmed.Substring(linearPrefix.Length).TrimStart();
+
+            int spaceIndex = trimmed.IndexOf(' ');
+            return spaceIndex >= 0 ? trimmed.Substring(0, spaceIndex).Trim() : trimmed;
+        }
+
+        private static string ConvertChoiceValueToLabel(byte value)
+        {
+            if (value == 0x1B)
+                return "ESC";
+
+            if (value >= 0x20 && value <= 0x7E)
+                return ((char)value).ToString();
+
+            return null;
         }
 
         private static string BuildChoiceKey(BranchChoice choice, int index)
@@ -807,6 +939,328 @@ namespace MMMapEditor
                 choice.Label ?? string.Empty,
                 choice.CompareRegister ?? string.Empty,
                 choice.CompareValue?.ToString() ?? string.Empty);
+        }
+
+
+        private static VariantTreeNode SimplifyGenericChoiceTree(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            for (int i = 0; i < node.Children.Count; i++)
+                node.Children[i] = SimplifyGenericChoiceTree(node.Children[i]);
+
+            node.Children = node.Children
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+
+            if (IsGenericTechnicalChoiceLabel(node.Label))
+                node.Label = null;
+
+            while (MergeRedundantSameLabelChildren(node))
+            {
+                node.Children = node.Children
+                    .Where(IsRenderableStructuralNode)
+                    .ToList();
+            }
+
+            while (node.Children.Count == 1 &&
+                   node.DirectVariants.Count == 0 &&
+                   node.CommonLines.Count == 0 &&
+                   string.IsNullOrWhiteSpace(node.Label))
+            {
+                node = node.Children[0];
+            }
+
+            while (node.Children.Count == 1 &&
+                   node.DirectVariants.Count == 0 &&
+                   node.CommonLines.Count == 0 &&
+                   !string.IsNullOrWhiteSpace(node.Label) &&
+                   string.Equals(node.Children[0]?.Label, node.Label, StringComparison.OrdinalIgnoreCase))
+            {
+                node = node.Children[0];
+            }
+
+            return node;
+        }
+
+        private static bool MergeRedundantSameLabelChildren(VariantTreeNode node)
+        {
+            if (node == null || node.Children == null || node.Children.Count == 0)
+                return false;
+
+            bool changed = false;
+            var mergedChildren = new List<VariantTreeNode>();
+
+            foreach (var child in node.Children)
+            {
+                if (!CanMergeRedundantSameLabelChild(node, child))
+                {
+                    mergedChildren.Add(child);
+                    continue;
+                }
+
+                changed = true;
+
+                if (child.DirectVariants != null && child.DirectVariants.Count > 0)
+                    node.DirectVariants.AddRange(child.DirectVariants.Where(v => v != null));
+
+                if (child.Children != null && child.Children.Count > 0)
+                    mergedChildren.AddRange(child.Children.Where(c => c != null));
+            }
+
+            if (changed)
+                node.Children = mergedChildren;
+
+            return changed;
+        }
+
+        private static bool CanMergeRedundantSameLabelChild(VariantTreeNode parent, VariantTreeNode child)
+        {
+            if (parent == null || child == null)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(parent.Label) || string.IsNullOrWhiteSpace(child.Label))
+                return false;
+
+            if (!string.Equals(parent.Label, child.Label, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Повтор того же выбора без собственного текста у дочернего узла обычно
+            // появляется из-за цикла валидации ввода (например, повторных cmp/jcc для Y/N).
+            // Такой узел не несёт новой развилки сам по себе, поэтому поднимаем его
+            // потомков и листы на уровень выше, сохраняя реальное содержимое.
+            return (child.CommonLines?.Count ?? 0) == 0;
+        }
+
+        private static bool IsGenericTechnicalChoiceLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return true;
+
+            string normalized = label.Trim();
+            if (normalized.EndsWith(")", StringComparison.Ordinal))
+                normalized = normalized.Substring(0, normalized.Length - 1).TrimEnd();
+
+            return string.Equals(normalized, "Ветка", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "Branch", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "Linear", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "InputChoiceBranch", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "InputChoiceLinear", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static Dictionary<VariantTreeNode, string> BuildSyntheticChildLabels(
+            VariantTreeNode node,
+            List<VariantTreeNode> renderableChildren,
+            IEnumerable<VariantRenderItem> directVariants,
+            Dictionary<VariantRenderItem, string> syntheticDirectLabels)
+        {
+            var result = new Dictionary<VariantTreeNode, string>();
+            if (node == null || renderableChildren == null || renderableChildren.Count == 0)
+                return result;
+
+            string promptText = string.Join("\n", node.CommonLines ?? new List<string>());
+            if (string.IsNullOrWhiteSpace(promptText))
+                return result;
+
+            var optionLabels = ExtractPromptOptionLabels(promptText)
+                .Select(NormalizeChoiceLabel)
+                .Where(l => !string.IsNullOrWhiteSpace(l))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (optionLabels.Count == 0)
+                return result;
+
+            var consumedDirectLabels = new HashSet<string>(
+                (syntheticDirectLabels ?? new Dictionary<VariantRenderItem, string>())
+                    .Values
+                    .Where(v => !string.IsNullOrWhiteSpace(v))
+                    .Select(NormalizeChoiceLabel),
+                StringComparer.OrdinalIgnoreCase);
+
+            var consumedChildLabels = new HashSet<string>(
+                renderableChildren
+                    .Where(c => c != null && !string.IsNullOrWhiteSpace(c.Label))
+                    .Select(c => NormalizeChoiceLabel(c.Label)),
+                StringComparer.OrdinalIgnoreCase);
+
+            optionLabels = optionLabels
+                .Where(l => !consumedDirectLabels.Contains(l) && !consumedChildLabels.Contains(l))
+                .ToList();
+
+            if (optionLabels.Count == 0)
+                return result;
+
+            var unlabeledChildren = renderableChildren
+                .Where(c => c != null && string.IsNullOrWhiteSpace(c.Label))
+                .ToList();
+
+            if (unlabeledChildren.Count == 0)
+                return result;
+
+            int escIndex = optionLabels.FindIndex(l => l.Equals("ESC)", StringComparison.OrdinalIgnoreCase));
+            if (escIndex >= 0)
+            {
+                var escChild = unlabeledChildren.FirstOrDefault(IsLikelyCancelNode) ?? unlabeledChildren.First();
+                result[escChild] = "ESC)";
+                unlabeledChildren.Remove(escChild);
+                optionLabels.RemoveAt(escIndex);
+            }
+
+            int count = Math.Min(unlabeledChildren.Count, optionLabels.Count);
+            for (int i = 0; i < count; i++)
+                result[unlabeledChildren[i]] = optionLabels[i];
+
+            return result;
+        }
+
+        private static bool IsLikelyCancelNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if ((node.Children?.Any(IsRenderableStructuralNode) ?? false))
+                return false;
+
+            if ((node.CommonLines?.Count ?? 0) > 0)
+                return false;
+
+            var variants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(v => v != null)
+                .ToList();
+
+            if (variants.Count == 0)
+                return true;
+
+            return variants.All(IsLikelyPromptCancelVariant);
+        }
+
+        private static Dictionary<VariantRenderItem, string> BuildSyntheticChoiceLabels(
+            VariantTreeNode node,
+            List<VariantRenderItem> directVariants,
+            List<VariantTreeNode> renderableChildren)
+        {
+            var result = new Dictionary<VariantRenderItem, string>();
+            if (node == null || directVariants == null || directVariants.Count <= 1)
+                return result;
+
+            if (renderableChildren != null && renderableChildren.Count > 0)
+                return result;
+
+            string promptText = string.Join("\n", node.CommonLines ?? new List<string>());
+            if (string.IsNullOrWhiteSpace(promptText))
+                return result;
+
+            var optionLabels = ExtractPromptOptionLabels(promptText);
+            bool hasEscOption = promptText.IndexOf("ESC", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            var ordered = directVariants
+                .Where(v => v != null)
+                .OrderBy(v => v.Variant?.PathId ?? int.MaxValue)
+                .ToList();
+
+            if (ordered.Count <= 1)
+                return result;
+
+            var noOpVariants = ordered
+                .Where(IsLikelyPromptCancelVariant)
+                .ToList();
+
+            if (optionLabels.Count == ordered.Count)
+            {
+                for (int i = 0; i < ordered.Count; i++)
+                    result[ordered[i]] = NormalizeChoiceLabel(optionLabels[i]);
+
+                return result;
+            }
+
+            if (hasEscOption && optionLabels.Count + 1 == ordered.Count && noOpVariants.Count == 1)
+            {
+                result[noOpVariants[0]] = "ESC)";
+
+                var remainingVariants = ordered
+                    .Where(v => !ReferenceEquals(v, noOpVariants[0]))
+                    .ToList();
+
+                for (int i = 0; i < optionLabels.Count && i < remainingVariants.Count; i++)
+                    result[remainingVariants[i]] = NormalizeChoiceLabel(optionLabels[i]);
+
+                return result;
+            }
+
+            return new Dictionary<VariantRenderItem, string>();
+        }
+
+        private static List<string> ExtractPromptOptionLabels(string promptText)
+        {
+            var result = new List<string>();
+            if (string.IsNullOrWhiteSpace(promptText))
+                return result;
+
+            string normalized = promptText
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Trim();
+
+            if (normalized.IndexOf("ESC", StringComparison.OrdinalIgnoreCase) >= 0)
+                result.Add("ESC");
+
+            var matches = Regex.Matches(normalized, @"\(([^()]*)\)");
+            foreach (Match match in matches)
+            {
+                string token = match.Groups[1].Value.Trim();
+                if (string.IsNullOrWhiteSpace(token))
+                    continue;
+
+                var rangeMatch = Regex.Match(token, @"^\s*(\d+)\s*[-–—]\s*(\d+)\s*$");
+                if (rangeMatch.Success &&
+                    int.TryParse(rangeMatch.Groups[1].Value, out int from) &&
+                    int.TryParse(rangeMatch.Groups[2].Value, out int to) &&
+                    from <= to &&
+                    from >= 0 &&
+                    to - from <= 20)
+                {
+                    for (int i = from; i <= to; i++)
+                        result.Add(i.ToString());
+
+                    continue;
+                }
+
+                var slashParts = token
+                    .Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(p => p.Trim())
+                    .Where(p => Regex.IsMatch(p, @"^[A-Za-z0-9]+$"))
+                    .ToList();
+
+                if (slashParts.Count >= 2)
+                {
+                    result.AddRange(slashParts);
+                    continue;
+                }
+            }
+
+            return result
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static bool IsLikelyPromptCancelVariant(VariantRenderItem item)
+        {
+            if (item == null)
+                return false;
+
+            var meaningfulLines = (item.Lines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+
+            if (meaningfulLines.Count == 0)
+                return true;
+
+            return meaningfulLines.Count == 1 &&
+                   string.Equals(meaningfulLines[0], "Ничего не происходит (не выполнены условия для наступления ни одного варианта)", StringComparison.Ordinal);
         }
 
         private static bool ShouldSkipHierarchicalVariant(List<string> lines, List<string> narrativeLines)
@@ -901,6 +1355,15 @@ namespace MMMapEditor
                 node = node.Children[0];
             }
 
+            while (node.Children.Count == 1 &&
+                   node.DirectVariants.Count == 0 &&
+                   node.CommonLines.Count == 0 &&
+                   !string.IsNullOrWhiteSpace(node.Label) &&
+                   string.Equals(node.Children[0]?.Label, node.Label, StringComparison.OrdinalIgnoreCase))
+            {
+                node = node.Children[0];
+            }
+
             return node;
         }
 
@@ -939,6 +1402,18 @@ namespace MMMapEditor
             if (needGapAfterCommon)
                 sb.AppendLine();
 
+            bool canPromoteNoToChoice = renderableChildren.Count > 0 &&
+                                        !HasNodeWithLabel(group.TreeRoot, "N)");
+            int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+            var syntheticChoiceLabels = BuildSyntheticChoiceLabels(group.TreeRoot, directVariants, renderableChildren);
+            var syntheticChildLabels = BuildSyntheticChildLabels(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels);
+
+            foreach (var child in renderableChildren)
+            {
+                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) && string.IsNullOrWhiteSpace(child.Label))
+                    child.Label = syntheticChildLabel;
+            }
+
             int childIndex = 1;
             bool wroteAnyChild = false;
 
@@ -950,16 +1425,14 @@ namespace MMMapEditor
                 wroteAnyChild = true;
             }
 
-            bool canPromoteNoToChoice = renderableChildren.Count > 0 &&
-                                        !HasNodeWithLabel(group.TreeRoot, "N)");
-            int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
-
             foreach (var item in directVariants)
             {
                 if (wroteAnyChild)
                     sb.AppendLine();
 
-                if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(item))
+                if (syntheticChoiceLabels.TryGetValue(item, out string syntheticLabel))
+                    RenderChoiceLeaf(syntheticLabel, item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(item))
                     RenderChoiceLeaf("N)", item, sb, new List<int> { groupNumber, childIndex++ }, 1);
                 else
                     RenderLooseVariant(item, sb, new List<int> { groupNumber, childIndex++ }, 1);
@@ -1051,6 +1524,17 @@ namespace MMMapEditor
             if (needGapAfterCommon)
                 sb.AppendLine();
 
+            bool canPromoteNoToChoice = renderableChildren.Count > 0 && !HasNodeWithLabel(node, "N)");
+            int noChoiceCount = renderableDirectVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+            var syntheticChoiceLabels = BuildSyntheticChoiceLabels(node, renderableDirectVariants, renderableChildren);
+            var syntheticChildLabels = BuildSyntheticChildLabels(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
+
+            foreach (var child in renderableChildren)
+            {
+                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) && string.IsNullOrWhiteSpace(child.Label))
+                    child.Label = syntheticChildLabel;
+            }
+
             int nestedIndex = 1;
             bool wroteAny = false;
 
@@ -1062,15 +1546,14 @@ namespace MMMapEditor
                 wroteAny = true;
             }
 
-            bool canPromoteNoToChoice = renderableChildren.Count > 0 && !HasNodeWithLabel(node, "N)");
-            int noChoiceCount = renderableDirectVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
-
             foreach (var variant in renderableDirectVariants)
             {
                 if (wroteAny)
                     sb.AppendLine();
 
-                if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(variant))
+                if (syntheticChoiceLabels.TryGetValue(variant, out string syntheticLabel))
+                    RenderChoiceLeaf(syntheticLabel, variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(variant))
                     RenderChoiceLeaf("N)", variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
                 else
                     RenderLooseVariant(variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);

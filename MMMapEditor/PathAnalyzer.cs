@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -74,19 +74,6 @@ namespace MMMapEditor
                     processedBackEdges, invalidateReturnRegistersAfterExternalCall,
                     path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses),
                     path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8));
-
-                if (path.BranchPartyCondition != PartyConditionKind.None)
-                {
-                    pathResult.ActivePartyCondition = path.BranchPartyCondition;
-
-                    if (path.BranchPartyCondition == PartyConditionKind.MaleOnly)
-                        pathRegisterTracker.CurrentGenderBranchIsMale = true;
-                    else if (path.BranchPartyCondition == PartyConditionKind.FemaleOnly)
-                        pathRegisterTracker.CurrentGenderBranchIsMale = false;
-                    else
-                        pathRegisterTracker.CurrentGenderBranchIsMale = null;
-                }
-
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -174,6 +161,45 @@ namespace MMMapEditor
                         currentBranchChoices);
                 }
             }
+        }
+
+        private List<BranchChoice> CloneBranchChoices(List<BranchChoice> source)
+        {
+            if (source == null || source.Count == 0)
+                return new List<BranchChoice>();
+
+            return source
+                .Where(choice => choice != null)
+                .Select(choice => new BranchChoice
+                {
+                    Label = choice.Label,
+                    Condition = choice.Condition,
+                    CompareValue = choice.CompareValue,
+                    CompareRegister = choice.CompareRegister,
+                    IsLinear = choice.IsLinear
+                })
+                .ToList();
+        }
+
+        private BranchChoice CreateBranchChoice(AlternativePath path)
+        {
+            if (path == null)
+                return null;
+
+            bool isLinear = !string.IsNullOrWhiteSpace(path.Condition) &&
+                            path.Condition.StartsWith("LINEAR after ", StringComparison.OrdinalIgnoreCase);
+            string technicalLabel = path.IsInputChoiceBranch
+                ? (isLinear ? "InputChoiceLinear" : "InputChoiceBranch")
+                : (isLinear ? "Linear" : "Branch");
+
+            return new BranchChoice
+            {
+                Label = technicalLabel,
+                Condition = path.Condition,
+                CompareValue = path.CompareValue,
+                CompareRegister = path.CompareRegister,
+                IsLinear = isLinear
+            };
         }
 
         private List<TextEntry> BuildPathTexts(PathAnalysisResult pathResult,
@@ -369,11 +395,6 @@ namespace MMMapEditor
             if (currentState.PendingPartyHpOperation != null)
                 merged.PendingPartyHpOperation = currentState.PendingPartyHpOperation.Clone();
 
-            if (currentState.ActivePartyCondition != PartyConditionKind.None)
-                merged.ActivePartyCondition = currentState.ActivePartyCondition;
-            else if (inheritedState.ActivePartyCondition != PartyConditionKind.None)
-                merged.ActivePartyCondition = inheritedState.ActivePartyCondition;
-
             foreach (var effect in currentState.PartyEffects ?? Enumerable.Empty<PartyEffect>())
             {
                 if (effect == null)
@@ -464,7 +485,6 @@ namespace MMMapEditor
             clone.TerminatedByTerminalRet = source.TerminatedByTerminalRet;
             clone.PartyFieldAccesses = source.PartyFieldAccesses?.Select(a => a?.Clone()).Where(a => a != null).ToList() ?? new List<PartyFieldReference>();
             clone.PendingPartyHpOperation = source.PendingPartyHpOperation?.Clone();
-            clone.ActivePartyCondition = source.ActivePartyCondition;
             clone.PartyEffects = source.PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>();
 
             foreach (var alt in source.AlternativePaths)
@@ -479,6 +499,7 @@ namespace MMMapEditor
                     PathNumber = alt.PathNumber,
                     CompareValue = alt.CompareValue,
                     CompareRegister = alt.CompareRegister,
+                    IsInputChoiceBranch = alt.IsInputChoiceBranch,
                     RegisterState = alt.RegisterState?.Clone(),
                     ProbabilityNumerator = alt.ProbabilityNumerator,
                     ProbabilityDenominator = alt.ProbabilityDenominator,
@@ -488,8 +509,7 @@ namespace MMMapEditor
                         : new List<uint>(alt.PendingReturnAddresses),
                     EmulatedMemory8 = alt.EmulatedMemory8 == null
                         ? new Dictionary<ushort, byte>()
-                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8),
-                    BranchPartyCondition = alt.BranchPartyCondition
+                        : new Dictionary<ushort, byte>(alt.EmulatedMemory8)
                 });
             }
 
@@ -525,194 +545,13 @@ namespace MMMapEditor
                 PartiallyDefinedBattles = ClonePartialBattles(source),
                 HasAnyTableLoad = source.HasPartialBattlePattern,
                 LoadedValues = CloneLoadedValues(source),
-                PartyEffects = BuildNormalizedPartyEffects(source),
+                PartyEffects = PartyEffectNormalizer.Normalize(source),
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 BranchChoices = CloneBranchChoices(branchChoices)
             };
-        }
-
-        private List<PartyEffect> BuildNormalizedPartyEffects(PathAnalysisResult source)
-        {
-            var result = new List<PartyEffect>();
-            if (source == null)
-                return result;
-
-            var allPartyEffects = source.PartyEffects?.Where(e => e != null).ToList() ?? new List<PartyEffect>();
-            var stateChangingEffects = allPartyEffects
-                .Where(PartyEffectSemantics.IsStateChanging)
-                .Select(e => e.Clone())
-                .ToList();
-
-            result.AddRange(stateChangingEffects);
-
-            if (source.PendingPartyHpOperation != null)
-                ApplyPartyConditionToPending(source.PendingPartyHpOperation, source.ActivePartyCondition);
-
-            PartyConditionKind inferredCondition = InferPartyCondition(source.PendingPartyHpOperation, allPartyEffects);
-
-            if (IsCompletedHpHalvingPattern(source.PendingPartyHpOperation))
-            {
-                var hpHalved = PartyEffectFactory.CreateHpHalvedEffect(
-                    source.PendingPartyHpOperation,
-                    source.LoopSemantic,
-                    inferredCondition);
-
-                if (hpHalved != null)
-                {
-                    // Нормализованный HpHalved должен подавлять низкоуровневые записи тех же HP-байтов
-                    // из того же loop-derived паттерна, иначе в варианте остаются и реализация, и смысл.
-                    result.RemoveAll(e =>
-                        e != null &&
-                        PartyEffectSemantics.GetEffectiveField(e) == PartyFieldKind.Hp &&
-                        PartyEffectSemantics.GetEffectiveOperation(e) == PartyEffectOperation.Write &&
-                        PartyEffectSemantics.IsLoopDerived(e));
-
-                    result.Add(hpHalved);
-                }
-            }
-
-            return result
-                .Where(e => e != null)
-                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
-                .Select(g => g.First())
-                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
-                .ToList();
-        }
-
-        private PartyConditionKind InferPartyCondition(PendingPartyHpOperation pending, IEnumerable<PartyEffect> effects)
-        {
-            foreach (var effect in effects ?? Enumerable.Empty<PartyEffect>())
-            {
-                if (effect == null || !PartyEffectSemantics.IsGuardLike(effect))
-                    continue;
-
-                if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Gender)
-                    continue;
-
-                var condition = PartyEffectSemantics.GetEffectiveCondition(effect);
-                if (condition != PartyConditionKind.None)
-                    return condition;
-            }
-
-            if (pending?.MaleOnly == true)
-                return PartyConditionKind.MaleOnly;
-
-            if (pending?.FemaleOnly == true)
-                return PartyConditionKind.FemaleOnly;
-
-            return PartyConditionKind.None;
-        }
-
-        private static void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
-        {
-            if (pending == null)
-                return;
-
-            if (condition == PartyConditionKind.MaleOnly)
-            {
-                pending.MaleOnly = true;
-                pending.FemaleOnly = false;
-            }
-            else if (condition == PartyConditionKind.FemaleOnly)
-            {
-                pending.FemaleOnly = true;
-                pending.MaleOnly = false;
-            }
-        }
-
-        private bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
-        {
-            if (pending == null)
-                return false;
-
-            return pending.SawReadHigh &&
-                   pending.SawReadLow &&
-                   pending.SawWriteHigh &&
-                   pending.SawWriteLow &&
-                   pending.SawClc &&
-                   pending.SawShrHigh &&
-                   pending.SawRcrLow;
-        }
-
-        private List<BranchChoice> CloneBranchChoices(IEnumerable<BranchChoice> branchChoices)
-        {
-            return (branchChoices ?? Enumerable.Empty<BranchChoice>())
-                .Where(choice => choice != null)
-                .Select(choice => new BranchChoice
-                {
-                    Label = choice.Label,
-                    Condition = choice.Condition,
-                    CompareValue = choice.CompareValue,
-                    CompareRegister = choice.CompareRegister,
-                    IsLinear = choice.IsLinear
-                })
-                .ToList();
-        }
-
-        private BranchChoice CreateBranchChoice(AlternativePath path)
-        {
-            if (path == null)
-                return null;
-
-            bool isLinear = !string.IsNullOrWhiteSpace(path.Condition) &&
-                path.Condition.StartsWith("LINEAR after ", StringComparison.OrdinalIgnoreCase);
-            string mnemonic = ExtractBranchMnemonic(path.Condition);
-
-            string label = null;
-            if (path.IsInputChoiceBranch && path.CompareValue.HasValue)
-            {
-                bool branchRepresentsEquality =
-                    (!isLinear && (mnemonic == "JE" || mnemonic == "JZ")) ||
-                    (isLinear && (mnemonic == "JNE" || mnemonic == "JNZ"));
-
-                if (branchRepresentsEquality)
-                    label = ConvertChoiceValueToLabel(path.CompareValue.Value);
-            }
-
-            if (string.IsNullOrWhiteSpace(label) && TryExtractSplitAssignedValue(path.Condition, out byte splitValue))
-                label = ConvertChoiceValueToLabel(splitValue);
-
-            return new BranchChoice
-            {
-                Label = label,
-                Condition = path.Condition,
-                CompareValue = path.CompareValue,
-                CompareRegister = path.CompareRegister,
-                IsLinear = isLinear
-            };
-        }
-
-        private string ConvertChoiceValueToLabel(byte value)
-        {
-            if (value == 0x1B)
-                return "ESC";
-
-            if (value >= 0x20 && value <= 0x7E)
-                return ((char)value).ToString();
-
-            return null;
-        }
-
-        private bool TryExtractSplitAssignedValue(string condition, out byte value)
-        {
-            value = 0;
-            if (string.IsNullOrWhiteSpace(condition))
-                return false;
-
-            const string marker = " = 0x";
-            int markerIndex = condition.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
-            if (markerIndex < 0)
-                return false;
-
-            int hexStart = markerIndex + marker.Length;
-            if (hexStart + 2 > condition.Length)
-                return false;
-
-            string hex = condition.Substring(hexStart, 2);
-            return byte.TryParse(hex, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out value);
         }
 
         private List<BattleMonster> CloneBattleMonsters(PathAnalysisResult source)
