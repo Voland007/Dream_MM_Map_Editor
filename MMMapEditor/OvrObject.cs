@@ -82,8 +82,12 @@ namespace MMMapEditor
 
         public List<string> GetPartyEffectDescriptions()
         {
-            return (PartyEffects ?? new List<PartyEffect>())
+            var effects = (PartyEffects ?? new List<PartyEffect>())
                 .Where(effect => effect != null)
+                .ToList();
+
+            return effects
+                .Where(effect => PartyEffectSemantics.ShouldIncludeInNotes(effect, effects))
                 .Select(PartyEffectSemantics.BuildHumanDescription)
                 .Where(text => !string.IsNullOrWhiteSpace(text))
                 .Distinct()

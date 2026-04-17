@@ -771,7 +771,7 @@ namespace MMMapEditor
                     branchInsensitiveUnique[key] = variant;
             }
 
-            var orderedUniqueVariants = branchInsensitiveUnique.Values
+            var orderedUniqueVariants = CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -783,6 +783,139 @@ namespace MMMapEditor
 
             return finalVariants;
         }
+
+        private IEnumerable<PathVariantInfo> CollapseRedundantPartyLoopTextVariants(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var result = new List<PathVariantInfo>();
+
+            foreach (var group in variants
+                .OrderBy(v => v.PathId)
+                .GroupBy(BuildPartyLoopTextCollapseKey))
+            {
+                var groupItems = group.ToList();
+                if (!ShouldCollapsePartyLoopTextGroup(groupItems))
+                {
+                    result.AddRange(groupItems);
+                    continue;
+                }
+
+                result.Add(SelectPreferredPartyLoopTextVariant(groupItems));
+            }
+
+            return result;
+        }
+
+        private bool ShouldCollapsePartyLoopTextGroup(List<PathVariantInfo> variants)
+        {
+            if (variants == null || variants.Count < 2)
+                return false;
+
+            if (variants.Any(v => !HasOnlyTextsAndPartyEffects(v)))
+                return false;
+
+            if (variants.Any(v => v.PartyEffects == null || v.PartyEffects.Count == 0))
+                return false;
+
+            if (variants.All(v => !v.PartyEffects.Any(e => e != null && PartyEffectSemantics.IsLoopDerived(e))))
+                return false;
+
+            bool hasTextVariant = variants.Any(HasText);
+            bool hasEmptyVariant = variants.Any(v => !HasText(v));
+            if (!hasTextVariant || !hasEmptyVariant)
+                return false;
+
+            var nonEmptyTextKeys = variants
+                .Where(HasText)
+                .Select(v => string.Join("|", v.Texts))
+                .Distinct()
+                .ToList();
+
+            return nonEmptyTextKeys.Count == 1;
+        }
+
+        private PathVariantInfo SelectPreferredPartyLoopTextVariant(List<PathVariantInfo> variants)
+        {
+            if (variants == null || variants.Count == 0)
+                return null;
+
+            var preferred = variants.AsEnumerable();
+
+            if (variants.Any(HasStateChangingPartyEffects))
+            {
+                var withText = variants.Where(HasText).ToList();
+                if (withText.Count > 0)
+                    preferred = withText;
+            }
+            else if (variants.All(HasOnlyGuardLikePartyEffects))
+            {
+                var withoutText = variants.Where(v => !HasText(v)).ToList();
+                if (withoutText.Count > 0)
+                    preferred = withoutText;
+            }
+
+            return preferred
+                .OrderByDescending(GetVariantPrecisionScore)
+                .ThenBy(v => v.PathId)
+                .First();
+        }
+
+        private string BuildPartyLoopTextCollapseKey(PathVariantInfo variant)
+        {
+            if (!HasOnlyTextsAndPartyEffects(variant) ||
+                variant?.PartyEffects == null ||
+                variant.PartyEffects.Count == 0)
+            {
+                return $"<NO_PARTY_LOOP_COLLAPSE>|{BuildVariantIdentityKey(variant)}";
+            }
+
+            return $"{BuildPartyEffectsKey(variant)}|{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
+        }
+
+        private bool HasOnlyTextsAndPartyEffects(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            return !variant.MonsterPower.HasValue &&
+                   !variant.MonsterLevel.HasValue &&
+                   !variant.MonsterBatchCount.HasValue &&
+                   !variant.DarkeningLevel.HasValue &&
+                   !variant.RandomEncounterChance.HasValue &&
+                   !variant.CallsRandomEncounter &&
+                   !variant.TeleportTargetX.HasValue &&
+                   !variant.TeleportTargetY.HasValue &&
+                   variant.TeleportTargetXRange == null &&
+                   variant.TeleportTargetYRange == null &&
+                   !variant.BattleMonsterCount.HasValue &&
+                   variant.BattleMonsterCountRange == null &&
+                   !variant.IsBattleMonsterCountIndeterminate &&
+                   (variant.BattleMonsters == null || variant.BattleMonsters.Count == 0) &&
+                   (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
+                   !variant.HasAnyTableLoad &&
+                   (variant.LoadedValues == null || variant.LoadedValues.Count == 0);
+        }
+
+        private bool HasStateChangingPartyEffects(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null &&
+                   variant.PartyEffects.Any(e => e != null && PartyEffectSemantics.IsStateChanging(e));
+        }
+
+        private bool HasOnlyGuardLikePartyEffects(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null &&
+                   variant.PartyEffects.Count > 0 &&
+                   variant.PartyEffects.All(e => e != null && PartyEffectSemantics.IsGuardLike(e));
+        }
+
+        private bool HasText(PathVariantInfo variant)
+        {
+            return variant?.Texts != null && variant.Texts.Count > 0;
+        }
+
         private (int numerator, int denominator) GetEffectivePathProbability(AlternativePath path)
         {
             if (path == null)

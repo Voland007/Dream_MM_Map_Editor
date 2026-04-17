@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -128,6 +128,14 @@ namespace MMMapEditor
             return effect != null && GetEffectiveOperation(effect) != PartyEffectOperation.Compare;
         }
 
+        public static bool ShouldIncludeInNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
+        {
+            if (effect == null)
+                return false;
+
+            return IsStateChanging(effect);
+        }
+
         public static IEnumerable<string> BuildDebugLines(IEnumerable<PartyEffect> effects)
         {
             return effects == null
@@ -239,6 +247,28 @@ namespace MMMapEditor
             return scope == PartyEffectScope.CurrentLoopMember ||
                    scope == PartyEffectScope.PartySubset ||
                    scope == PartyEffectScope.WholeParty;
+        }
+
+        private static bool IsRedundantGuardForNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
+        {
+            if (!IsGuardLike(effect))
+                return false;
+
+            if (GetEffectiveField(effect) != PartyFieldKind.Gender)
+                return false;
+
+            var condition = GetEffectiveCondition(effect);
+            if (condition == PartyConditionKind.None)
+                return false;
+
+            return (allEffects ?? Enumerable.Empty<PartyEffect>())
+                .Where(candidate => candidate != null && !ReferenceEquals(candidate, effect))
+                .Any(candidate =>
+                    GetEffectiveField(candidate) == PartyFieldKind.Hp &&
+                    GetEffectiveOperation(candidate) == PartyEffectOperation.Halve &&
+                    GetEffectiveCondition(candidate) == condition &&
+                    candidate.MemberIndex == effect.MemberIndex &&
+                    IsLoopDerived(candidate) == IsLoopDerived(effect));
         }
 
         private static string FormatValue(PartyEffect effect, PartyValueKnowledge knowledge)

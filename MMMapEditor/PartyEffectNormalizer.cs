@@ -46,13 +46,21 @@ namespace MMMapEditor
                     result.Add(hpHalved);
             }
 
-            // Если есть loop-derived HP-эффект с условием, он относится к части партии, а не ко всей партии.
+            // Р•СЃР»Рё РµСЃС‚СЊ loop-derived СЌС„С„РµРєС‚ СЃ СѓСЃР»РѕРІРёРµРј, РѕРЅ РѕС‚РЅРѕСЃРёС‚СЃСЏ Рє С‡Р°СЃС‚Рё РїР°СЂС‚РёРё, Р° РЅРµ РєРѕ РІСЃРµР№ РїР°СЂС‚РёРё.
             foreach (var effect in result)
             {
                 if (effect == null)
                     continue;
 
                 if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Hp &&
+                    PartyEffectSemantics.IsLoopDerived(effect) &&
+                    PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
+                {
+                    effect.Scope = PartyEffectScope.PartySubset;
+                }
+
+                if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Gender &&
+                    PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.Compare &&
                     PartyEffectSemantics.IsLoopDerived(effect) &&
                     PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
                 {
