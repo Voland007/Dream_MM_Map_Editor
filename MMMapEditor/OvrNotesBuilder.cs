@@ -333,6 +333,34 @@ namespace MMMapEditor
                 defaultMonsterBatchCount,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance));
+            lines.AddRange(GetSpecialNoteLines(variantObject));
+            lines.AddRange(GetBattleLines(variantObject));
+
+            if (lines.Count == 0)
+                lines.Add("Ничего не происходит");
+
+            return lines;
+        }
+
+        private static List<string> BuildVariantLinesForHierarchy(
+            OvrObject variantObject,
+            IEnumerable<string> rawTexts,
+            byte defaultMonsterPower,
+            byte defaultMonsterLevel,
+            byte defaultMonsterBatchCount,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance)
+        {
+            var lines = new List<string>();
+
+            lines.AddRange(DecodeNoteTexts(rawTexts));
+            lines.AddRange(GetMonsterStatLines(
+                variantObject,
+                defaultMonsterPower,
+                defaultMonsterLevel,
+                defaultMonsterBatchCount,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance));
             lines.AddRange(GetBattleLines(variantObject));
             lines.AddRange(GetSpecialNoteLines(variantObject));
 
@@ -446,8 +474,8 @@ namespace MMMapEditor
             {
                 var battleVariantLines = new List<string>();
                 battleVariantLines.AddRange(monsterStatLines);
-                battleVariantLines.AddRange(battleLines);
                 battleVariantLines.AddRange(specialNoteLines);
+                battleVariantLines.AddRange(battleLines);
 
                 if (variantContents.Count == 0)
                 {
@@ -528,7 +556,7 @@ namespace MMMapEditor
             {
                 var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
                 var narrativeLines = DecodeNoteTexts(variant.Texts);
-                var lines = BuildVariantLines(
+                var lines = BuildVariantLinesForHierarchy(
                     variantObject,
                     variant.Texts,
                     defaultMonsterPower,
@@ -614,6 +642,7 @@ namespace MMMapEditor
             {
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
+                PromoteConditionalPartyNotesBeforeBattle(root);
                 group.TreeRoot = SimplifyGenericChoiceTree(CompressVariantTree(root));
             }
 
@@ -1320,6 +1349,48 @@ namespace MMMapEditor
                 ComputeCommonLines(child);
         }
 
+        private static void PromoteConditionalPartyNotesBeforeBattle(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children)
+                PromoteConditionalPartyNotesBeforeBattle(child);
+
+            if (node.Children != null && node.Children.Count > 0)
+                return;
+
+            if (node.CommonLines == null || node.CommonLines.Count == 0)
+                return;
+
+            int battleIndex = FindFirstBattleLineIndex(node.CommonLines);
+            if (battleIndex < 0)
+                return;
+
+            var directVariants = node.DirectVariants ?? new List<VariantRenderItem>();
+            var renderableVariants = directVariants
+                .Where(v => v != null && HasMeaningfulLines(v.Lines))
+                .ToList();
+
+            if (renderableVariants.Count != 1)
+                return;
+
+            var conditionLines = (renderableVariants[0].Lines ?? new List<string>())
+                .Where(IsConditionalPartyStatusLine)
+                .ToList();
+
+            if (conditionLines.Count == 0 || conditionLines.Count != (renderableVariants[0].Lines?.Count ?? 0))
+                return;
+
+            var reorderedCommon = new List<string>();
+            reorderedCommon.AddRange(node.CommonLines.Take(battleIndex));
+            reorderedCommon.AddRange(conditionLines);
+            reorderedCommon.AddRange(node.CommonLines.Skip(battleIndex));
+            node.CommonLines = reorderedCommon;
+
+            renderableVariants[0].Lines = new List<string>();
+        }
+
         private static List<string> GetCommonPrefix(List<List<string>> source)
         {
             var result = new List<string>();
@@ -1337,6 +1408,43 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static int FindFirstBattleLineIndex(List<string> lines)
+        {
+            if (lines == null)
+                return -1;
+
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (IsBattleLine(lines[i]))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private static bool IsBattleLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.TrimStart();
+            return trimmed.StartsWith("Битва ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("Битва с ", StringComparison.Ordinal);
+        }
+
+        private static bool IsConditionalPartyStatusLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return line.TrimStart().StartsWith("CONDITION ", StringComparison.Ordinal);
+        }
+
+        private static bool HasMeaningfulLines(List<string> lines)
+        {
+            return lines != null && lines.Any(line => !string.IsNullOrWhiteSpace(line));
         }
 
         private static VariantTreeNode CompressVariantTree(VariantTreeNode node)
@@ -1679,7 +1787,6 @@ namespace MMMapEditor
 
             return lines;
         }
-
 
         private static List<string> GetSpecialNoteLines(OvrObject obj)
         {

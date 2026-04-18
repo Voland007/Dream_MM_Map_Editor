@@ -2105,6 +2105,36 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
+            var conditionStatusMatches = Regex.Matches(
+                noteText,
+                @"CONDITION (мужчин|женщин) в партии изменяется на (?<statuses>[^\r\n]+)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in conditionStatusMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 170, 130);
+                rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group statusesGroup = match.Groups["statuses"];
+                if (!statusesGroup.Success || statusesGroup.Length == 0)
+                    continue;
+
+                var statusWordMatches = Regex.Matches(
+                    statusesGroup.Value,
+                    @"PARALYZED|UNCONSCIOUS|DEAD",
+                    RegexOptions.IgnoreCase);
+
+                foreach (Match statusMatch in statusWordMatches)
+                {
+                    rt.Select(statusesGroup.Index + statusMatch.Index, statusMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                    rt.SelectionBackColor = Color.FromArgb(100, 20, 20);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                }
+            }
+
             var teleportMatches = Regex.Matches(
                 noteText,
                 @"Телепорт на (?:(случайную)\s+)?клетку \(X=(?:\??\d+|\d+\.\.\d+), Y=(?:\??\d+|\d+\.\.\d+)\)",

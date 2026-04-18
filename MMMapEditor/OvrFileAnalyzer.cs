@@ -194,13 +194,13 @@ namespace MMMapEditor
                             AnalysisDebug.WriteLine($"        {text}");
                         }
 
-                        WriteVariantDebugSummary(variant, ovrObject.X, ovrObject.Y, ovrObject.DirectionByte);
                         if (variant?.PartyEffects != null && variant.PartyEffects.Count > 0)
                         {
                             AnalysisDebug.WriteLine($"        PartyEffects={variant.PartyEffects.Count}");
                             foreach (var effect in variant.PartyEffects)
                                 AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
                         }
+                        WriteVariantDebugSummary(variant, ovrObject.X, ovrObject.Y, ovrObject.DirectionByte);
                     }
                 }
 
@@ -330,13 +330,13 @@ namespace MMMapEditor
                                         $"HasTeleport={variant?.HasTeleportTarget ?? false}, " +
                                         $"PartyEffects={variant?.PartyEffects?.Count ?? 0}");
 
-                                    WriteVariantDebugSummary(variant, cellX, cellY, 0);
                                     if (variant?.PartyEffects != null && variant.PartyEffects.Count > 0)
                                     {
                                         AnalysisDebug.WriteLine($"        PartyEffects={variant.PartyEffects.Count}");
                                         foreach (var effect in variant.PartyEffects)
                                             AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
                                     }
+                                    WriteVariantDebugSummary(variant, cellX, cellY, 0);
                                 }
                             }
                         }
@@ -381,13 +381,13 @@ namespace MMMapEditor
                                 foreach (var text in texts)
                                     AnalysisDebug.WriteLine($"        {text}");
 
-                                WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
                                 if (variant?.PartyEffects != null && variant.PartyEffects.Count > 0)
                                 {
                                     AnalysisDebug.WriteLine($"        PartyEffects={variant.PartyEffects.Count}");
                                     foreach (var effect in variant.PartyEffects)
                                         AnalysisDebug.WriteLine($"          - {PartyEffectSemantics.BuildDebugLine(effect)}");
                                 }
+                                WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
                             }
                         }
 
