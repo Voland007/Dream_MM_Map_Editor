@@ -938,7 +938,8 @@ namespace MMMapEditor
                     branchInsensitiveUnique[key] = variant;
             }
 
-            var orderedUniqueVariants = CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)
+            var orderedUniqueVariants = CollapseGuardOnlyPartyLoopVariants(
+                    CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values))
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -970,6 +971,33 @@ namespace MMMapEditor
                 }
 
                 result.Add(SelectPreferredPartyLoopTextVariant(groupItems));
+            }
+
+            return result;
+        }
+
+        private IEnumerable<PathVariantInfo> CollapseGuardOnlyPartyLoopVariants(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var result = new List<PathVariantInfo>();
+
+            foreach (var group in variants
+                .OrderBy(v => v.PathId)
+                .GroupBy(BuildPartyLoopGuardCollapseKey))
+            {
+                var groupItems = group.ToList();
+                bool hasLoopStateChanging = groupItems.Any(HasLoopDerivedStateChangingPartyEffects);
+                bool hasLoopGuardOnly = groupItems.Any(HasOnlyLoopGuardLikePartyEffects);
+
+                if (!hasLoopStateChanging || !hasLoopGuardOnly)
+                {
+                    result.AddRange(groupItems);
+                    continue;
+                }
+
+                result.AddRange(groupItems.Where(v => !HasOnlyLoopGuardLikePartyEffects(v)));
             }
 
             return result;
@@ -1071,11 +1099,27 @@ namespace MMMapEditor
                    variant.PartyEffects.Any(e => e != null && PartyEffectSemantics.IsStateChanging(e));
         }
 
+        private bool HasLoopDerivedStateChangingPartyEffects(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null &&
+                   variant.PartyEffects.Any(e => e != null &&
+                                                PartyEffectSemantics.IsStateChanging(e) &&
+                                                PartyEffectSemantics.IsLoopDerived(e));
+        }
+
         private bool HasOnlyGuardLikePartyEffects(PathVariantInfo variant)
         {
             return variant?.PartyEffects != null &&
                    variant.PartyEffects.Count > 0 &&
                    variant.PartyEffects.All(e => e != null && PartyEffectSemantics.IsGuardLike(e));
+        }
+
+        private bool HasOnlyLoopGuardLikePartyEffects(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null &&
+                   variant.PartyEffects.Count > 0 &&
+                   variant.PartyEffects.All(e => e != null && PartyEffectSemantics.IsGuardLike(e)) &&
+                   variant.PartyEffects.Any(e => e != null && PartyEffectSemantics.IsLoopDerived(e));
         }
 
         private bool HasText(PathVariantInfo variant)
@@ -1173,10 +1217,45 @@ namespace MMMapEditor
 
                 string semanticKey = PartyEffectSemantics.BuildSemanticKey(e);
                 bool partyWide = semanticKey.Contains($"|{PartyEffectScope.PartySubset}|") ||
-                                 semanticKey.Contains($"|{PartyEffectScope.WholeParty}|");
+                                 semanticKey.Contains($"|{PartyEffectScope.WholeParty}|") ||
+                                 semanticKey.Contains($"|{PartyEffectScope.CurrentLoopMember}|");
                 bool compareOnly = semanticKey.Contains($"|{PartyEffectOperation.Compare}|");
                 return partyWide && !compareOnly;
             });
+        }
+
+        private string BuildPartyLoopGuardCollapseKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string textKey = variant.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+
+            string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(m => m.Index)
+                    .Select(m => $"{m.Index}:{m.MonsterIndex1:X2}:{m.MonsterIndex2:X2}:{m.IsIndeterminate}"))
+                : "<NO_BATTLE>";
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(p => p.BxIndex)
+                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                : "<NO_PARTIAL>";
+
+            string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
+                ? string.Join(";", variant.LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.SourceAddr)
+                    .ThenBy(v => v.RegName)
+                    .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
+                : "<NO_LOADS>";
+
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
         }
 
         private string BuildPartyEffectsKey(PathVariantInfo variant)

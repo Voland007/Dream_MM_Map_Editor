@@ -53,31 +53,7 @@ namespace MMMapEditor
                     effect.Condition = inferredCondition;
                 }
 
-                if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Hp &&
-                    PartyEffectSemantics.IsLoopDerived(effect) &&
-                    PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
-                {
-                    effect.Scope = PartyEffectScope.PartySubset;
-                }
-
-                if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Gender &&
-                    PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.Compare &&
-                    PartyEffectSemantics.IsLoopDerived(effect) &&
-                    PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
-                {
-                    effect.Scope = PartyEffectScope.PartySubset;
-                }
-
-                if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Status &&
-                    PartyEffectSemantics.IsLoopDerived(effect) &&
-                    PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
-                {
-                    effect.Scope = PartyEffectScope.PartySubset;
-
-                    string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
-                    if (!string.IsNullOrWhiteSpace(humanDescription))
-                        effect.Description = humanDescription;
-                }
+                NormalizeLoopDerivedEffect(effect);
             }
 
             result = RemoveRedundantHpWrittenEffects(result);
@@ -226,6 +202,39 @@ namespace MMMapEditor
                 return false;
 
             return true;
+        }
+
+        private static void NormalizeLoopDerivedEffect(PartyEffect effect)
+        {
+            if (effect == null || !PartyEffectSemantics.IsLoopDerived(effect))
+                return;
+
+            PartyEffectScope scope = PartyEffectSemantics.GetEffectiveScope(effect);
+            if (scope == PartyEffectScope.RandomMember || scope == PartyEffectScope.SelectedMember)
+                return;
+
+            PartyEffectOperation operation = PartyEffectSemantics.GetEffectiveOperation(effect);
+            PartyConditionKind condition = PartyEffectSemantics.GetEffectiveCondition(effect);
+
+            if (PartyEffectSemantics.IsStateChanging(effect))
+            {
+                effect.Scope = condition != PartyConditionKind.None
+                    ? PartyEffectScope.PartySubset
+                    : PartyEffectScope.WholeParty;
+            }
+            else
+            {
+                effect.Scope = operation == PartyEffectOperation.Compare
+                    ? PartyEffectScope.CurrentLoopMember
+                    : PartyEffectScope.WholeParty;
+            }
+
+            if (effect.Scope != PartyEffectScope.SingleMember)
+                effect.MemberIndex = null;
+
+            string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
+            if (!string.IsNullOrWhiteSpace(humanDescription))
+                effect.Description = humanDescription;
         }
     }
 }

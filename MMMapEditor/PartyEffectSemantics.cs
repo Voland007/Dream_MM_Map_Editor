@@ -30,13 +30,18 @@ namespace MMMapEditor
                 ? "-"
                 : $"{effect.ImmediateRange.Min}-{effect.ImmediateRange.Max}";
 
+            PartyEffectScope scope = GetEffectiveScope(effect);
+            string memberKey = scope == PartyEffectScope.SingleMember
+                ? effect.MemberIndex?.ToString() ?? "-"
+                : "-";
+
             return string.Join("|",
                 effect.Kind,
                 GetEffectiveField(effect),
                 GetEffectiveOperation(effect),
-                GetEffectiveScope(effect),
+                scope,
                 GetEffectiveCondition(effect),
-                effect.MemberIndex?.ToString() ?? "-",
+                memberKey,
                 IsLoopDerived(effect) ? "Loop" : "Direct",
                 GetEffectiveValueKnowledge(effect),
                 effect.ImmediateValue?.ToString() ?? "-",
@@ -267,7 +272,7 @@ namespace MMMapEditor
             };
         }
 
-        private static PartyEffectScope GetEffectiveScope(PartyEffect effect)
+        public static PartyEffectScope GetEffectiveScope(PartyEffect effect)
         {
             if (effect == null)
                 return PartyEffectScope.Unknown;

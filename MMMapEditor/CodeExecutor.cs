@@ -720,7 +720,7 @@ namespace MMMapEditor
             return normalized;
         }
 
-        private void MarkPartyMemberScanLoop(PathAnalysisResult result, uint instructionAddress, bool debugMode)
+        private void MarkPartyMemberScanLoop(PathAnalysisResult result, uint loopBodyStartAddress, bool debugMode, uint? loopDetectionAddress = null)
         {
             if (result == null)
                 return;
@@ -729,15 +729,68 @@ namespace MMMapEditor
             result.IsInLoop = true;
             result.LoopSemantic = LoopSemanticKind.PartyMemberScan;
 
-            if (result.LoopStartAddress == 0 || instructionAddress < result.LoopStartAddress)
-                result.LoopStartAddress = instructionAddress;
+            if (result.LoopStartAddress == 0 || loopBodyStartAddress < result.LoopStartAddress)
+                result.LoopStartAddress = loopBodyStartAddress;
 
             if (result.PendingPartyHpOperation?.Member != null)
                 result.PendingPartyHpOperation.Member =
                     NormalizeMemberForLoopAggregation(result.PendingPartyHpOperation.Member, result.LoopSemantic);
 
+            PromoteEffectsCapturedBeforeLoopRecognition(result, loopBodyStartAddress, loopDetectionAddress ?? loopBodyStartAddress);
+
             if (debugMode && firstDetection)
                 AnalysisDebug.WriteLine($"    РАСПОЗНАН ЦИКЛ ОБХОДА ПАРТИИ: счётчик сравнивается с [0x{PARTY_COUNT_ADDRESS:X4}]");
+        }
+
+        private void PromoteEffectsCapturedBeforeLoopRecognition(PathAnalysisResult result, uint loopBodyStartAddress, uint loopDetectionAddress)
+        {
+            if (result?.PartyEffects == null || result.PartyEffects.Count == 0)
+                return;
+
+            foreach (var effect in result.PartyEffects.Where(e => ShouldPromoteEffectToLoopCurrentMember(e, loopBodyStartAddress, loopDetectionAddress)))
+            {
+                effect.IsLoopDerived = true;
+
+                if (PartyEffectSemantics.IsStateChanging(effect))
+                {
+                    effect.Scope = PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None
+                        ? PartyEffectScope.PartySubset
+                        : PartyEffectScope.WholeParty;
+                }
+                else
+                {
+                    effect.Scope = PartyEffectScope.CurrentLoopMember;
+                }
+
+                effect.MemberIndex = null;
+
+                string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
+                if (!string.IsNullOrWhiteSpace(humanDescription))
+                    effect.Description = humanDescription;
+            }
+        }
+
+        private static bool ShouldPromoteEffectToLoopCurrentMember(PartyEffect effect, uint loopBodyStartAddress, uint loopDetectionAddress)
+        {
+            if (effect == null || effect.IsLoopDerived)
+                return false;
+
+            if (!effect.MemberIndex.HasValue || effect.InstructionAddress == 0)
+                return false;
+
+            if (effect.Scope == PartyEffectScope.RandomMember || effect.Scope == PartyEffectScope.SelectedMember)
+                return false;
+
+            return effect.InstructionAddress >= loopBodyStartAddress &&
+                   effect.InstructionAddress <= loopDetectionAddress;
+        }
+
+        private static bool IsPendingPartyMemberScanBackEdge(RegisterTracker registerTracker)
+        {
+            return registerTracker != null &&
+                   registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareMemory &&
+                   string.Equals(registerTracker.LastFlagsRegister, "BL", StringComparison.OrdinalIgnoreCase) &&
+                   registerTracker.LastFlagsInstructionAddress.HasValue;
         }
 
         private PartyEffectScope ResolveDirectPartyEffectScope(
@@ -1884,6 +1937,9 @@ namespace MMMapEditor
 
                     if (condJumpTarget < currentAddress && branchTaken.Value)
                     {
+                        if (IsPendingPartyMemberScanBackEdge(registerTracker))
+                            MarkPartyMemberScanLoop(result, condJumpTarget, debugMode, currentAddress);
+
                         var backEdge = (From: currentAddress, To: condJumpTarget);
 
                         if (!processedBackEdges.Add(backEdge))
@@ -1926,6 +1982,9 @@ namespace MMMapEditor
 
                 if (condJumpTarget < currentAddress)
                 {
+                    if (IsPendingPartyMemberScanBackEdge(registerTracker))
+                        MarkPartyMemberScanLoop(result, condJumpTarget, debugMode, currentAddress);
+
                     var backEdge = (From: currentAddress, To: condJumpTarget);
 
                     if (!processedBackEdges.Add(backEdge))
