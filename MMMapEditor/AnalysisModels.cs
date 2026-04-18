@@ -249,6 +249,7 @@ namespace MMMapEditor
         public PartyConditionKind ActivePartyCondition { get; set; } = PartyConditionKind.None;
         public bool IsInLoop { get; set; } = false;
         public uint LoopStartAddress { get; set; } = 0;
+        public uint LoopEndAddress { get; set; } = 0;
         public int LoopIteration { get; set; } = 0;
         public bool IsIndeterminateLoop { get; set; } = false;
         public int LoopIterationCount { get; set; } = 0;

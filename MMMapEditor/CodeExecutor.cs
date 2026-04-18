@@ -732,11 +732,15 @@ namespace MMMapEditor
             if (result.LoopStartAddress == 0 || loopBodyStartAddress < result.LoopStartAddress)
                 result.LoopStartAddress = loopBodyStartAddress;
 
+            uint detectedLoopEnd = loopDetectionAddress ?? loopBodyStartAddress;
+            if (detectedLoopEnd > result.LoopEndAddress)
+                result.LoopEndAddress = detectedLoopEnd;
+
             if (result.PendingPartyHpOperation?.Member != null)
                 result.PendingPartyHpOperation.Member =
                     NormalizeMemberForLoopAggregation(result.PendingPartyHpOperation.Member, result.LoopSemantic);
 
-            PromoteEffectsCapturedBeforeLoopRecognition(result, loopBodyStartAddress, loopDetectionAddress ?? loopBodyStartAddress);
+            PromoteEffectsCapturedBeforeLoopRecognition(result, loopBodyStartAddress, detectedLoopEnd);
 
             if (debugMode && firstDetection)
                 AnalysisDebug.WriteLine($"    РАСПОЗНАН ЦИКЛ ОБХОДА ПАРТИИ: счётчик сравнивается с [0x{PARTY_COUNT_ADDRESS:X4}]");
@@ -2334,11 +2338,15 @@ namespace MMMapEditor
                 registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.Test)
                 return null;
 
-            if (!registerTracker.LastFlagsFromCoordinate)
-                return null;
-
             string flagsReg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
             if (string.IsNullOrWhiteSpace(flagsReg))
+                return null;
+
+            bool allowDeterministicResolution =
+                registerTracker.LastFlagsFromCoordinate ||
+                IsDeterministicFlagsSource(registerTracker, flagsReg);
+
+            if (!allowDeterministicResolution)
                 return null;
 
             bool hasExactValue = registerTracker.TryGetRegisterValue(flagsReg, out _)
@@ -2359,6 +2367,15 @@ namespace MMMapEditor
                 "JA" or "JNBE" => !registerTracker.CarryFlag && !registerTracker.ZeroFlag,
                 _ => (bool?)null
             };
+        }
+
+        private bool IsDeterministicFlagsSource(RegisterTracker registerTracker, string flagsReg)
+        {
+            if (registerTracker == null || string.IsNullOrWhiteSpace(flagsReg))
+                return false;
+
+            ushort? sourceAddress = registerTracker.GetSourceAddress(flagsReg);
+            return sourceAddress.HasValue && _emulatedMemory8.ContainsKey(sourceAddress.Value);
         }
 
         private static void SetArithmeticFlagsForAdd8(RegisterTracker registerTracker, byte left, byte right, byte result)

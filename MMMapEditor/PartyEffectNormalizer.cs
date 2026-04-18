@@ -31,6 +31,7 @@ namespace MMMapEditor
                 .Select(e => e.Clone())
                 .ToList() ?? new List<PartyEffect>();
 
+            PromotePartyScanLoopEffects(source, allPartyEffects);
             result.AddRange(allPartyEffects);
 
             PartyConditionKind inferredCondition = InferPartyCondition(source.PendingPartyHpOperation, allPartyEffects);
@@ -57,6 +58,7 @@ namespace MMMapEditor
             }
 
             result = RemoveRedundantHpWrittenEffects(result);
+            result = RemoveLoopGuardEffects(result);
 
             return result
                 .Where(e => e != null)
@@ -182,6 +184,56 @@ namespace MMMapEditor
 
                     return !normalizedHpEffects.Any(h => MatchesSameTarget(effect, h));
                 })
+                .ToList();
+        }
+
+        private static void PromotePartyScanLoopEffects(PathAnalysisResult source, List<PartyEffect> effects)
+        {
+            if (source == null ||
+                source.LoopSemantic != LoopSemanticKind.PartyMemberScan ||
+                source.LoopStartAddress == 0 ||
+                effects == null ||
+                effects.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var effect in effects.Where(effect => ShouldPromotePartyScanLoopEffect(
+                effect,
+                source.LoopStartAddress,
+                source.LoopEndAddress)))
+            {
+                effect.IsLoopDerived = true;
+                NormalizeLoopDerivedEffect(effect);
+            }
+        }
+
+        private static bool ShouldPromotePartyScanLoopEffect(PartyEffect effect, uint loopStartAddress, uint loopEndAddress)
+        {
+            if (effect == null || effect.IsLoopDerived)
+                return false;
+
+            if (!effect.MemberIndex.HasValue || effect.InstructionAddress == 0)
+                return false;
+
+            if (effect.Scope == PartyEffectScope.RandomMember || effect.Scope == PartyEffectScope.SelectedMember)
+                return false;
+
+            if (effect.InstructionAddress < loopStartAddress)
+                return false;
+
+            return loopEndAddress == 0 || effect.InstructionAddress <= loopEndAddress;
+        }
+
+        private static List<PartyEffect> RemoveLoopGuardEffects(List<PartyEffect> effects)
+        {
+            if (effects == null || effects.Count == 0)
+                return effects ?? new List<PartyEffect>();
+
+            return effects
+                .Where(effect => effect != null &&
+                                 !(PartyEffectSemantics.IsGuardLike(effect) &&
+                                   PartyEffectSemantics.IsLoopDerived(effect)))
                 .ToList();
         }
 

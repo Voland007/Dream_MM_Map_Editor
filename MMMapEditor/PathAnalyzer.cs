@@ -411,6 +411,28 @@ namespace MMMapEditor
 
             if (merged.LoopSemantic == LoopSemanticKind.None)
                 merged.LoopSemantic = currentState.LoopSemantic;
+            else if (currentState.LoopSemantic != LoopSemanticKind.None)
+                merged.LoopSemantic = currentState.LoopSemantic;
+
+            if (currentState.IsInLoop)
+                merged.IsInLoop = true;
+
+            if (currentState.LoopStartAddress != 0 &&
+                (merged.LoopStartAddress == 0 || currentState.LoopStartAddress < merged.LoopStartAddress))
+            {
+                merged.LoopStartAddress = currentState.LoopStartAddress;
+            }
+
+            if (currentState.LoopEndAddress > merged.LoopEndAddress)
+                merged.LoopEndAddress = currentState.LoopEndAddress;
+
+            if (currentState.LoopIterationCount > merged.LoopIterationCount)
+                merged.LoopIterationCount = currentState.LoopIterationCount;
+
+            if (currentState.LoopIteration > merged.LoopIteration)
+                merged.LoopIteration = currentState.LoopIteration;
+
+            merged.IsIndeterminateLoop = merged.IsIndeterminateLoop || currentState.IsIndeterminateLoop;
             merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             return merged;
@@ -598,6 +620,7 @@ namespace MMMapEditor
             clone.IsInLoop = source.IsInLoop;
             clone.LoopSemantic = source.LoopSemantic;
             clone.LoopStartAddress = source.LoopStartAddress;
+            clone.LoopEndAddress = source.LoopEndAddress;
             clone.LoopIteration = source.LoopIteration;
             clone.IsIndeterminateLoop = source.IsIndeterminateLoop;
             clone.LoopIterationCount = source.LoopIterationCount;
@@ -938,8 +961,9 @@ namespace MMMapEditor
                     branchInsensitiveUnique[key] = variant;
             }
 
-            var orderedUniqueVariants = CollapseGuardOnlyPartyLoopVariants(
-                    CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values))
+            var orderedUniqueVariants = CollapsePromptOnlyVariantsShadowedByLoopEffects(
+                    CollapseGuardOnlyPartyLoopVariants(
+                        CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -998,6 +1022,33 @@ namespace MMMapEditor
                 }
 
                 result.AddRange(groupItems.Where(v => !HasOnlyLoopGuardLikePartyEffects(v)));
+            }
+
+            return result;
+        }
+
+        private IEnumerable<PathVariantInfo> CollapsePromptOnlyVariantsShadowedByLoopEffects(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var result = new List<PathVariantInfo>();
+
+            foreach (var group in variants
+                .OrderBy(v => v.PathId)
+                .GroupBy(BuildPartyLoopGuardCollapseKey))
+            {
+                var groupItems = group.ToList();
+                bool hasLoopStateChanging = groupItems.Any(HasLoopDerivedStateChangingPartyEffects);
+                bool hasPromptOnly = groupItems.Any(IsPromptOnlyLeaf);
+
+                if (!hasLoopStateChanging || !hasPromptOnly)
+                {
+                    result.AddRange(groupItems);
+                    continue;
+                }
+
+                result.AddRange(groupItems.Where(v => !IsPromptOnlyLeaf(v)));
             }
 
             return result;
@@ -1206,6 +1257,9 @@ namespace MMMapEditor
         {
             if (variant == null)
                 return false;
+
+            if (IsPureEmptyLeafVariant(variant))
+                return true;
 
             if (variant.PartyEffects == null || variant.PartyEffects.Count == 0)
                 return false;
