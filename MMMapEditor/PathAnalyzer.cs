@@ -488,7 +488,21 @@ namespace MMMapEditor
                 merged.Source = currentMember.Source;
 
             merged.IsPartyLoopMember = merged.IsPartyLoopMember || currentMember.IsPartyLoopMember;
+            merged.SelectionKind = MergeSelectionKind(merged.SelectionKind, currentMember.SelectionKind);
             return merged;
+        }
+
+        private PartyMemberSelectionKind MergeSelectionKind(
+            PartyMemberSelectionKind left,
+            PartyMemberSelectionKind right)
+        {
+            if (left == PartyMemberSelectionKind.Random || right == PartyMemberSelectionKind.Random)
+                return PartyMemberSelectionKind.Random;
+
+            if (left == PartyMemberSelectionKind.Dynamic || right == PartyMemberSelectionKind.Dynamic)
+                return PartyMemberSelectionKind.Dynamic;
+
+            return PartyMemberSelectionKind.Exact;
         }
 
         private PendingPartyByteArithmetic MergePendingPartyByteArithmetic(

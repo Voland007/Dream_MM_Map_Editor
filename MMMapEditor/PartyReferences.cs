@@ -27,6 +27,13 @@ namespace MMMapEditor
         Status = 5
     }
 
+    public enum PartyMemberSelectionKind
+    {
+        Exact = 0,
+        Dynamic = 1,
+        Random = 2
+    }
+
     public sealed class PartyMemberReference
     {
         public int? MemberIndex { get; set; }
@@ -35,6 +42,7 @@ namespace MMMapEditor
         public ushort? StructureAddress { get; set; }
         public string Source { get; set; }
         public bool IsPartyLoopMember { get; set; }
+        public PartyMemberSelectionKind SelectionKind { get; set; } = PartyMemberSelectionKind.Exact;
 
         public PartyMemberReference Clone()
         {
@@ -45,7 +53,8 @@ namespace MMMapEditor
                 PointerTableAddress = PointerTableAddress,
                 StructureAddress = StructureAddress,
                 Source = Source,
-                IsPartyLoopMember = IsPartyLoopMember
+                IsPartyLoopMember = IsPartyLoopMember,
+                SelectionKind = SelectionKind
             };
         }
 
@@ -55,7 +64,7 @@ namespace MMMapEditor
             string ptrText = PointerAddress.HasValue ? $"0x{PointerAddress.Value:X4}" : "?";
             string tableText = PointerTableAddress.HasValue ? $"0x{PointerTableAddress.Value:X4}" : "?";
             string structText = StructureAddress.HasValue ? $"0x{StructureAddress.Value:X4}" : "?";
-            return $"PartyMember(Member={memberText}, Ptr={ptrText}, PtrTable={tableText}, Struct={structText}, Loop={IsPartyLoopMember}, Source={Source ?? "unknown"})";
+            return $"PartyMember(Member={memberText}, Ptr={ptrText}, PtrTable={tableText}, Struct={structText}, Loop={IsPartyLoopMember}, Selection={SelectionKind}, Source={Source ?? "unknown"})";
         }
     }
 

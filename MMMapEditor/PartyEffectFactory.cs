@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -130,6 +130,12 @@ namespace MMMapEditor
                 return PartyEffectScope.WholeParty;
             }
 
+            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
+                return PartyEffectScope.RandomMember;
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
+                return PartyEffectScope.SelectedMember;
+
             if (member?.MemberIndex.HasValue == true)
                 return PartyEffectScope.SingleMember;
 
@@ -151,6 +157,12 @@ namespace MMMapEditor
 
             if (IsLoopTarget(member, loopSemantic))
                 return "HP членов партии уменьшается вдвое";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
+                return "HP случайного члена партии уменьшается вдвое";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
+                return "HP выбранного члена партии уменьшается вдвое";
 
             if (member?.MemberIndex.HasValue == true)
                 return $"HP персонажа #{member.MemberIndex.Value} уменьшается вдвое";
@@ -176,6 +188,12 @@ namespace MMMapEditor
                     : $"У каждого персонажа партии {verb} {amount} HP";
             }
 
+            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
+                return $"У случайного члена партии {verb} {amount} HP";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
+                return $"У выбранного члена партии {verb} {amount} HP";
+
             if (member?.MemberIndex.HasValue == true)
                 return $"У персонажа #{member.MemberIndex.Value} {verb} {amount} HP";
 
@@ -183,6 +201,7 @@ namespace MMMapEditor
                 ? $"HP персонажа увеличивается на {amount}"
                 : $"HP персонажа уменьшается на {amount}";
         }
+
         private static string BuildStatusWriteDescription(PartyMemberReference member, byte? exactValue)
         {
             string subject = BuildStatusSubject(member);
@@ -218,14 +237,13 @@ namespace MMMapEditor
 
         private static string BuildStatusWriteDescriptionFromBits(PartyMemberReference member, byte? exactValue)
         {
-            string subject = BuildStatusSubject(member);
             if (!exactValue.HasValue)
-                return $"{subject}: РЎРѕСЃС‚РѕСЏРЅРёРµ РЅРµРѕРїСЂРµРґРµР»РµРЅРѕ";
+                return BuildStatusChangeDescription(member, "Состояние неопределено");
 
             var statusNames = PartyStatusSemantics.GetTrackedStatusNames(exactValue.Value);
             return statusNames.Count > 0
-                ? $"{subject}: {string.Join(", ", statusNames)}"
-                : $"{subject}: РЎРѕСЃС‚РѕСЏРЅРёРµ РЅРµРѕРїСЂРµРґРµР»РµРЅРѕ";
+                ? BuildStatusChangeDescription(member, string.Join(", ", statusNames))
+                : BuildStatusChangeDescription(member, "Состояние неопределено");
         }
 
         private static string BuildStatusBitDescriptionFromBits(PartyMemberReference member,
@@ -234,26 +252,41 @@ namespace MMMapEditor
             string subject = BuildStatusSubject(member);
             var statusNames = PartyStatusSemantics.GetTrackedStatusNames(mask);
             if (statusNames.Count == 0)
-                return $"{subject}: РЎРѕСЃС‚РѕСЏРЅРёРµ РЅРµРѕРїСЂРµРґРµР»РµРЅРѕ";
+                return BuildStatusChangeDescription(member, "Состояние неопределено");
 
             string action = operation switch
             {
                 PartyEffectOperation.BitSet => null,
-                PartyEffectOperation.BitClear => "clear",
-                PartyEffectOperation.BitToggle => "toggle",
-                _ => "change"
+                PartyEffectOperation.BitClear => "снятие",
+                PartyEffectOperation.BitToggle => "переключение",
+                _ => "изменение"
             };
 
             string statusesText = string.Join(", ", statusNames);
             return string.IsNullOrWhiteSpace(action)
-                ? $"{subject}: {statusesText}"
+                ? BuildStatusChangeDescription(member, statusesText)
                 : $"{subject}: {action} {statusesText}";
+        }
+
+        private static string BuildStatusChangeDescription(PartyMemberReference member, string statusesText)
+        {
+            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
+                return $"CONDITION случайного персонажа в партии изменяется на {statusesText}";
+
+            string subject = BuildStatusSubject(member);
+            return $"{subject}: {statusesText}";
         }
 
         private static string BuildStatusSubject(PartyMemberReference member)
         {
             if (IsLoopTarget(member, LoopSemanticKind.None))
                 return "Члены партии";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
+                return "Случайный член партии";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
+                return "Выбранный член партии";
 
             if (member?.MemberIndex.HasValue == true)
                 return $"Персонаж #{member.MemberIndex.Value}";

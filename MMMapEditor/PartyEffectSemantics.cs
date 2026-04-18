@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2026. All rights reserved.
+﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -97,6 +97,10 @@ namespace MMMapEditor
                     return "HP женщин в партии уменьшается вдвое";
                 if (scope == PartyEffectScope.WholeParty || scope == PartyEffectScope.PartySubset || scope == PartyEffectScope.CurrentLoopMember)
                     return "HP членов партии уменьшается вдвое";
+                if (scope == PartyEffectScope.RandomMember)
+                    return "HP случайного члена партии уменьшается вдвое";
+                if (scope == PartyEffectScope.SelectedMember)
+                    return "HP выбранного члена партии уменьшается вдвое";
                 return "HP персонажа уменьшается вдвое";
             }
 
@@ -122,6 +126,12 @@ namespace MMMapEditor
 
                 if (scope == PartyEffectScope.PartySubset)
                     return $"У части партии {verb} {amount} HP";
+
+                if (scope == PartyEffectScope.RandomMember)
+                    return $"У случайного члена партии {verb} {amount} HP";
+
+                if (scope == PartyEffectScope.SelectedMember)
+                    return $"У выбранного члена партии {verb} {amount} HP";
 
                 if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
                     return $"У персонажа #{effect.MemberIndex.Value} {verb} {amount} HP";
@@ -158,6 +168,12 @@ namespace MMMapEditor
                             return $"CONDITION женщин в партии изменяется на {statusesText}";
 
                         return $"CONDITION части партии изменяется на {statusesText}";
+                    }
+
+                    if (scope == PartyEffectScope.RandomMember &&
+                        (operation == PartyEffectOperation.BitSet || operation == PartyEffectOperation.Write))
+                    {
+                        return $"CONDITION случайного персонажа в партии изменяется на {statusesText}";
                     }
 
                     string statusTarget = BuildStatusTarget(effect, scope, condition);
@@ -226,7 +242,7 @@ namespace MMMapEditor
                     ? PartyFieldKind.Gender
                     : effect.Kind == PartyEffectKind.StatusWritten
                         ? PartyFieldKind.Status
-                    : PartyFieldKind.Unknown;
+                        : PartyFieldKind.Unknown;
         }
 
         public static PartyEffectOperation GetEffectiveOperation(PartyEffect effect)
@@ -429,6 +445,8 @@ namespace MMMapEditor
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
                     ? $"Персонаж #{effect.MemberIndex.Value}"
                     : "Персонаж",
+                PartyEffectScope.RandomMember => "Случайный член партии",
+                PartyEffectScope.SelectedMember => "Выбранный член партии",
                 PartyEffectScope.CurrentLoopMember => "Текущий член партии",
                 PartyEffectScope.PartySubset => condition switch
                 {
@@ -443,13 +461,17 @@ namespace MMMapEditor
 
         private static string BuildSubject(PartyEffect effect, PartyFieldKind field, PartyEffectScope scope, PartyConditionKind condition)
         {
-            string noun = field == PartyFieldKind.Gender ? "пол" : FormatFieldName(field);
-
             return scope switch
             {
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
                     ? $"персонажа #{effect.MemberIndex.Value}"
                     : "персонажа партии",
+                PartyEffectScope.RandomMember => field == PartyFieldKind.Hp
+                    ? "случайного члена партии"
+                    : "у случайного члена партии",
+                PartyEffectScope.SelectedMember => field == PartyFieldKind.Hp
+                    ? "выбранного члена партии"
+                    : "у выбранного члена партии",
                 PartyEffectScope.CurrentLoopMember => "текущего члена партии",
                 PartyEffectScope.PartySubset => condition switch
                 {
@@ -458,7 +480,7 @@ namespace MMMapEditor
                     _ => field == PartyFieldKind.Hp ? "части партии" : "у части партии"
                 },
                 PartyEffectScope.WholeParty => field == PartyFieldKind.Hp ? "членов партии" : "у членов партии",
-                _ => noun == "HP" ? "персонажа" : "персонажа партии"
+                _ => field == PartyFieldKind.Hp ? "персонажа" : "персонажа партии"
             };
         }
 

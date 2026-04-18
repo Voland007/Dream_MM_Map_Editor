@@ -2107,7 +2107,7 @@ namespace MMMapEditor
 
             var conditionStatusMatches = Regex.Matches(
                 noteText,
-                @"CONDITION (мужчин|женщин) в партии изменяется на (?<statuses>[^\r\n]+)",
+                @"CONDITION ((мужчин|женщин) в партии|случайного персонажа в партии) изменяется на (?<statuses>[^\r\n]+)",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in conditionStatusMatches)

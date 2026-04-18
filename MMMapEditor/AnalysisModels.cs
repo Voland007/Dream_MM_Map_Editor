@@ -296,7 +296,9 @@ namespace MMMapEditor
         SingleMember = 1,
         CurrentLoopMember = 2,
         PartySubset = 3,
-        WholeParty = 4
+        WholeParty = 4,
+        SelectedMember = 5,
+        RandomMember = 6
     }
 
     public enum PartyEffectOperation
