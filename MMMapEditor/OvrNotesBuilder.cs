@@ -151,12 +151,10 @@ namespace MMMapEditor
                     foreach (var key in variantContents.Keys.ToList())
                         variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
 
-                    // Для объектов с PathVariants сохраняем все варианты исполнения как есть.
-                    // Иначе разные ветки с одинаковым текстом (например, найденные внутри CALL)
-                    // снова схлопнутся уже на этапе построения заметок.
-                    bool preserveExplicitPathVariants = obj.PathVariants != null && obj.PathVariants.Count > 0;
-                    if (!preserveExplicitPathVariants)
-                        variantContents = DeduplicateVariantContents(variantContents);
+                    bool hasExplicitPathVariants = obj.PathVariants != null && obj.PathVariants.Count > 0;
+                    variantContents = hasExplicitPathVariants
+                        ? DeduplicateDisplayedVariantContents(obj, variantContents)
+                        : DeduplicateVariantContents(variantContents);
 
                     if (variantContents.Count == 0)
                     {
@@ -577,6 +575,11 @@ namespace MMMapEditor
                     NarrativeLines = narrativeLines
                 });
             }
+
+            if (items.Count <= 1)
+                return null;
+
+            items = DeduplicateDisplayedVariantItems(items);
 
             if (items.Count <= 1)
                 return null;
@@ -1837,6 +1840,80 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static Dictionary<int, List<string>> DeduplicateDisplayedVariantContents(
+            OvrObject obj,
+            Dictionary<int, List<string>> variantContents)
+        {
+            var result = new Dictionary<int, List<string>>();
+            var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+
+            if (variantContents == null || variantContents.Count == 0)
+                return result;
+
+            foreach (var kvp in variantContents.OrderBy(v => v.Key))
+            {
+                var lines = (kvp.Value ?? new List<string>())
+                    .Select(l => l?.TrimEnd() ?? string.Empty)
+                    .ToList();
+
+                string displayKey = BuildDisplayedVariantContentKey(obj, kvp.Key, lines);
+                if (seenKeys.Contains(displayKey))
+                    continue;
+
+                seenKeys.Add(displayKey);
+                result[kvp.Key] = lines;
+            }
+
+            return result;
+        }
+
+        private static List<VariantRenderItem> DeduplicateDisplayedVariantItems(List<VariantRenderItem> items)
+        {
+            var result = new List<VariantRenderItem>();
+            var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in items ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                if (item == null)
+                    continue;
+
+                string displayKey = BuildDisplayedVariantItemKey(item);
+                if (seenKeys.Contains(displayKey))
+                    continue;
+
+                seenKeys.Add(displayKey);
+                result.Add(item);
+            }
+
+            return result;
+        }
+
+        private static string BuildDisplayedVariantContentKey(
+            OvrObject obj,
+            int variantKey,
+            List<string> lines)
+        {
+            string probabilityKey = string.Empty;
+            if (obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var variant))
+                probabilityKey = BuildProbabilityLine(variant) ?? string.Empty;
+
+            string linesKey = string.Join("\n", (lines ?? new List<string>()).Select(line => line ?? string.Empty));
+            return probabilityKey + "\n---\n" + linesKey;
+        }
+
+        private static string BuildDisplayedVariantItemKey(VariantRenderItem item)
+        {
+            string probabilityKey = BuildProbabilityLine(item?.Variant) ?? string.Empty;
+            string branchKey = string.Join("|",
+                GetRelevantBranchChoices(item?.Variant)
+                    .Select(choice => NormalizeChoiceLabel(choice?.Label) ?? string.Empty));
+            string linesKey = string.Join("\n",
+                (item?.Lines ?? new List<string>())
+                    .Select(line => line?.TrimEnd() ?? string.Empty));
+
+            return string.Join("\n---\n", probabilityKey, branchKey, linesKey);
         }
 
         private static List<string> NumberLootBlockIfNeeded(List<string> lines)

@@ -194,7 +194,13 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            return IsStateChanging(effect);
+            if (!IsStateChanging(effect))
+                return false;
+
+            if (IsStatusDerivedFromHpLossForNotes(effect, allEffects))
+                return false;
+
+            return true;
         }
 
         public static IEnumerable<string> BuildDebugLines(IEnumerable<PartyEffect> effects)
@@ -333,6 +339,70 @@ namespace MMMapEditor
                     GetEffectiveCondition(candidate) == condition &&
                     candidate.MemberIndex == effect.MemberIndex &&
                     IsLoopDerived(candidate) == IsLoopDerived(effect));
+        }
+
+        private static bool IsStatusDerivedFromHpLossForNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
+        {
+            if (GetEffectiveField(effect) != PartyFieldKind.Status)
+                return false;
+
+            if (!IsLikelyHpLossConsequenceStatus(effect))
+                return false;
+
+            return (allEffects ?? Enumerable.Empty<PartyEffect>())
+                .Where(candidate => candidate != null && !ReferenceEquals(candidate, effect))
+                .Any(candidate =>
+                    IsHpLossEffect(candidate) &&
+                    TargetsSamePartyMembers(effect, candidate) &&
+                    IsLikelyConsequenceByInstructionOrder(effect, candidate));
+        }
+
+        private static bool IsLikelyHpLossConsequenceStatus(PartyEffect effect)
+        {
+            if (effect == null)
+                return false;
+
+            if (effect.ImmediateValue.HasValue)
+            {
+                byte rawValue = (byte)effect.ImmediateValue.Value;
+                return (rawValue & (PartyStatusSemantics.UnconsciousMask | PartyStatusSemantics.DeadMask)) != 0;
+            }
+
+            string description = effect.Description ?? string.Empty;
+            return description.IndexOf("UNCONSCIOUS", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   description.IndexOf("DEAD", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsHpLossEffect(PartyEffect effect)
+        {
+            if (effect == null || GetEffectiveField(effect) != PartyFieldKind.Hp)
+                return false;
+
+            var operation = GetEffectiveOperation(effect);
+            return operation == PartyEffectOperation.Halve ||
+                   operation == PartyEffectOperation.Decrement;
+        }
+
+        private static bool TargetsSamePartyMembers(PartyEffect left, PartyEffect right)
+        {
+            if (left == null || right == null)
+                return false;
+
+            return left.MemberIndex == right.MemberIndex &&
+                   GetEffectiveScope(left) == GetEffectiveScope(right) &&
+                   GetEffectiveCondition(left) == GetEffectiveCondition(right) &&
+                   IsLoopDerived(left) == IsLoopDerived(right);
+        }
+
+        private static bool IsLikelyConsequenceByInstructionOrder(PartyEffect statusEffect, PartyEffect hpEffect)
+        {
+            if (statusEffect == null || hpEffect == null)
+                return false;
+
+            if (statusEffect.InstructionAddress == 0 || hpEffect.InstructionAddress == 0)
+                return true;
+
+            return statusEffect.InstructionAddress >= hpEffect.InstructionAddress;
         }
 
         private static string FormatValue(PartyEffect effect, PartyValueKnowledge knowledge)
