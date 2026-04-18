@@ -191,6 +191,7 @@ namespace MMMapEditor
 
             return exactValue.Value switch
             {
+                PartyStatusSemantics.EradicatedValue => $"{subject}: ERADICATED",
                 PartyStatusSemantics.ParalyzedMask => $"{subject}: PARALYZED",
                 PartyStatusSemantics.UnconsciousMask => $"{subject}: UNCONSCIOUS",
                 PartyStatusSemantics.DeadMask => $"{subject}: DEAD",
@@ -207,6 +208,7 @@ namespace MMMapEditor
 
             return mask switch
             {
+                PartyStatusSemantics.EradicatedValue => $"{subject}: ERADICATED",
                 PartyStatusSemantics.ParalyzedMask => $"{subject}: PARALYZED",
                 PartyStatusSemantics.UnconsciousMask => $"{subject}: UNCONSCIOUS",
                 PartyStatusSemantics.DeadMask => $"{subject}: DEAD",
