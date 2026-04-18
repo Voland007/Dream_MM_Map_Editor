@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-﻿using System;
+using System;
 
 namespace MMMapEditor
 {
@@ -23,7 +23,8 @@ namespace MMMapEditor
         Gender = 1,
         Hp = 2,
         HpLow = 3,
-        HpHigh = 4
+        HpHigh = 4,
+        Status = 5
     }
 
     public sealed class PartyMemberReference
@@ -84,6 +85,113 @@ namespace MMMapEditor
         }
     }
 
+    public sealed class PartyFieldBitTransform
+    {
+        private enum BitState
+        {
+            None = 0,
+            Set = 1,
+            Clear = 2,
+            Toggle = 3
+        }
+
+        public byte SetMask { get; set; }
+        public byte ClearMask { get; set; }
+        public byte ToggleMask { get; set; }
+
+        public bool IsIdentity => SetMask == 0 && ClearMask == 0 && ToggleMask == 0;
+
+        public PartyFieldBitTransform Clone()
+        {
+            return new PartyFieldBitTransform
+            {
+                SetMask = SetMask,
+                ClearMask = ClearMask,
+                ToggleMask = ToggleMask
+            };
+        }
+
+        public void ApplyOperation(PartyEffectOperation operation, byte immediateValue)
+        {
+            byte normalizedMask = operation switch
+            {
+                PartyEffectOperation.BitSet => immediateValue,
+                PartyEffectOperation.BitClear => unchecked((byte)~immediateValue),
+                PartyEffectOperation.BitToggle => immediateValue,
+                _ => 0
+            };
+
+            if (normalizedMask == 0)
+                return;
+
+            for (int bit = 0; bit < 8; bit++)
+            {
+                byte bitMask = (byte)(1 << bit);
+                if ((normalizedMask & bitMask) == 0)
+                    continue;
+
+                SetBitState(bitMask, Compose(GetBitState(bitMask), operation));
+            }
+        }
+
+        public override string ToString()
+        {
+            return $"BitTransform(Set=0x{SetMask:X2}, Clear=0x{ClearMask:X2}, Toggle=0x{ToggleMask:X2})";
+        }
+
+        private BitState GetBitState(byte bitMask)
+        {
+            if ((SetMask & bitMask) != 0)
+                return BitState.Set;
+
+            if ((ClearMask & bitMask) != 0)
+                return BitState.Clear;
+
+            if ((ToggleMask & bitMask) != 0)
+                return BitState.Toggle;
+
+            return BitState.None;
+        }
+
+        private void SetBitState(byte bitMask, BitState state)
+        {
+            SetMask = (byte)(SetMask & ~bitMask);
+            ClearMask = (byte)(ClearMask & ~bitMask);
+            ToggleMask = (byte)(ToggleMask & ~bitMask);
+
+            switch (state)
+            {
+                case BitState.Set:
+                    SetMask = (byte)(SetMask | bitMask);
+                    break;
+                case BitState.Clear:
+                    ClearMask = (byte)(ClearMask | bitMask);
+                    break;
+                case BitState.Toggle:
+                    ToggleMask = (byte)(ToggleMask | bitMask);
+                    break;
+            }
+        }
+
+        private static BitState Compose(BitState current, PartyEffectOperation operation)
+        {
+            return operation switch
+            {
+                PartyEffectOperation.BitSet => BitState.Set,
+                PartyEffectOperation.BitClear => BitState.Clear,
+                PartyEffectOperation.BitToggle => current switch
+                {
+                    BitState.None => BitState.Toggle,
+                    BitState.Set => BitState.Clear,
+                    BitState.Clear => BitState.Set,
+                    BitState.Toggle => BitState.None,
+                    _ => BitState.None
+                },
+                _ => current
+            };
+        }
+    }
+
     public sealed class PartyFieldReference
     {
         public PartyMemberReference Member { get; set; }
@@ -98,6 +206,24 @@ namespace MMMapEditor
         public byte? FieldOffset { get; set; }
         public string Source { get; set; }
         public PartyFieldKind Kind { get; set; } = PartyFieldKind.Unknown;
+        public PartyFieldBitTransform BitTransform { get; set; }
+        public bool HasBitTransform => BitTransform != null && !BitTransform.IsIdentity;
+
+        public void ApplyBitOperation(PartyEffectOperation operation, byte immediateValue)
+        {
+            if (operation != PartyEffectOperation.BitSet &&
+                operation != PartyEffectOperation.BitClear &&
+                operation != PartyEffectOperation.BitToggle)
+            {
+                return;
+            }
+
+            BitTransform ??= new PartyFieldBitTransform();
+            BitTransform.ApplyOperation(operation, immediateValue);
+
+            if (BitTransform.IsIdentity)
+                BitTransform = null;
+        }
 
         public PartyFieldReference Clone()
         {
@@ -113,7 +239,8 @@ namespace MMMapEditor
                 FieldName = FieldName,
                 FieldOffset = FieldOffset,
                 Source = Source,
-                Kind = Kind
+                Kind = Kind,
+                BitTransform = BitTransform?.Clone()
             };
         }
 
@@ -123,7 +250,8 @@ namespace MMMapEditor
             string effectiveText = EffectiveAddress.HasValue ? $"0x{EffectiveAddress.Value:X4}" : "?";
             string nameText = !string.IsNullOrWhiteSpace(FieldName) ? FieldName : Field.ToString();
             string access = IsCompare ? "Compare" : IsRead && IsWrite ? "ReadWrite" : IsRead ? "Read" : IsWrite ? "Write" : "UnknownAccess";
-            return $"PartyField(Member={Member}, Field={nameText}, Kind={Kind}, Offset={offsetText}, Effective={effectiveText}, Access={access}, Source={Source ?? "unknown"})";
+            string transformText = HasBitTransform ? $", Transform={BitTransform}" : string.Empty;
+            return $"PartyField(Member={Member}, Field={nameText}, Kind={Kind}, Offset={offsetText}, Effective={effectiveText}, Access={access}, Source={Source ?? "unknown"}{transformText})";
         }
     }
 

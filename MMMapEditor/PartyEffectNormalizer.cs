@@ -44,6 +44,15 @@ namespace MMMapEditor
                 if (effect == null)
                     continue;
 
+                if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Status &&
+                    PartyEffectSemantics.IsStateChanging(effect) &&
+                    PartyEffectSemantics.IsLoopDerived(effect) &&
+                    PartyEffectSemantics.GetEffectiveCondition(effect) == PartyConditionKind.None &&
+                    inferredCondition != PartyConditionKind.None)
+                {
+                    effect.Condition = inferredCondition;
+                }
+
                 if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Hp &&
                     PartyEffectSemantics.IsLoopDerived(effect) &&
                     PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
@@ -57,6 +66,17 @@ namespace MMMapEditor
                     PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
                 {
                     effect.Scope = PartyEffectScope.PartySubset;
+                }
+
+                if (PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Status &&
+                    PartyEffectSemantics.IsLoopDerived(effect) &&
+                    PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None)
+                {
+                    effect.Scope = PartyEffectScope.PartySubset;
+
+                    string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
+                    if (!string.IsNullOrWhiteSpace(humanDescription))
+                        effect.Description = humanDescription;
                 }
             }
 

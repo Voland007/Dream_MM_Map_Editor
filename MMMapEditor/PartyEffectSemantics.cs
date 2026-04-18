@@ -144,6 +144,36 @@ namespace MMMapEditor
             if (field == PartyFieldKind.Gender && operation == PartyEffectOperation.Compare)
                 return $"Проверяется пол {subject}";
 
+            if (field == PartyFieldKind.Status && effect.ImmediateValue.HasValue)
+            {
+                string statusesText = FormatStatusNames(effect.ImmediateValue.Value);
+                if (!string.IsNullOrWhiteSpace(statusesText))
+                {
+                    if (scope == PartyEffectScope.PartySubset)
+                    {
+                        if (condition == PartyConditionKind.MaleOnly)
+                            return $"CONDITION мужчин в партии изменяется на {statusesText}";
+
+                        if (condition == PartyConditionKind.FemaleOnly)
+                            return $"CONDITION женщин в партии изменяется на {statusesText}";
+
+                        return $"CONDITION части партии изменяется на {statusesText}";
+                    }
+
+                    string statusTarget = BuildStatusTarget(effect, scope, condition);
+                    return operation switch
+                    {
+                        PartyEffectOperation.BitSet => $"{statusTarget}: {statusesText}",
+                        PartyEffectOperation.BitClear => $"{statusTarget}: снятие {statusesText}",
+                        PartyEffectOperation.BitToggle => $"{statusTarget}: переключение {statusesText}",
+                        PartyEffectOperation.Write => $"{statusTarget}: {statusesText}",
+                        _ => !string.IsNullOrWhiteSpace(effect.Description)
+                            ? effect.Description
+                            : $"{statusTarget}: {statusesText}"
+                    };
+                }
+            }
+
             return !string.IsNullOrWhiteSpace(effect.Description)
                 ? effect.Description
                 : $"{FormatFieldName(field)}: {subject}";
@@ -188,6 +218,8 @@ namespace MMMapEditor
                 ? PartyFieldKind.Hp
                 : effect.Kind == PartyEffectKind.GenderWritten || effect.Kind == PartyEffectKind.GenderCompared
                     ? PartyFieldKind.Gender
+                    : effect.Kind == PartyEffectKind.StatusWritten
+                        ? PartyFieldKind.Status
                     : PartyFieldKind.Unknown;
         }
 
@@ -205,6 +237,7 @@ namespace MMMapEditor
                 PartyEffectKind.HpWritten => PartyEffectOperation.Write,
                 PartyEffectKind.GenderWritten => PartyEffectOperation.Write,
                 PartyEffectKind.GenderCompared => PartyEffectOperation.Compare,
+                PartyEffectKind.StatusWritten => PartyEffectOperation.Write,
                 _ => PartyEffectOperation.Unknown
             };
         }
@@ -313,6 +346,31 @@ namespace MMMapEditor
             return knowledge.ToString();
         }
 
+        private static string FormatStatusNames(ushort rawValue)
+        {
+            var statusNames = PartyStatusSemantics.GetTrackedStatusNames((byte)rawValue);
+            return statusNames.Count == 0 ? null : string.Join(", ", statusNames);
+        }
+
+        private static string BuildStatusTarget(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
+        {
+            return scope switch
+            {
+                PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
+                    ? $"Персонаж #{effect.MemberIndex.Value}"
+                    : "Персонаж",
+                PartyEffectScope.CurrentLoopMember => "Текущий член партии",
+                PartyEffectScope.PartySubset => condition switch
+                {
+                    PartyConditionKind.MaleOnly => "Мужчины в партии",
+                    PartyConditionKind.FemaleOnly => "Женщины в партии",
+                    _ => "Часть партии"
+                },
+                PartyEffectScope.WholeParty => "Члены партии",
+                _ => "Персонаж"
+            };
+        }
+
         private static string BuildSubject(PartyEffect effect, PartyFieldKind field, PartyEffectScope scope, PartyConditionKind condition)
         {
             string noun = field == PartyFieldKind.Gender ? "пол" : FormatFieldName(field);
@@ -342,6 +400,7 @@ namespace MMMapEditor
                 PartyFieldKind.HpHigh => "старший байт HP",
                 PartyFieldKind.HpLow => "младший байт HP",
                 PartyFieldKind.Gender => "пол",
+                PartyFieldKind.Status => "status",
                 _ => field.ToString()
             };
         }

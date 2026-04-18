@@ -286,7 +286,8 @@ namespace MMMapEditor
         HpHalved = 1,
         HpWritten = 2,
         GenderWritten = 3,
-        GenderCompared = 4
+        GenderCompared = 4,
+        StatusWritten = 5
     }
 
     public enum PartyEffectScope
@@ -306,7 +307,10 @@ namespace MMMapEditor
         Halve = 3,
         Increment = 4,
         Decrement = 5,
-        Transform = 6
+        Transform = 6,
+        BitSet = 7,
+        BitClear = 8,
+        BitToggle = 9
     }
 
     public enum PartyConditionKind

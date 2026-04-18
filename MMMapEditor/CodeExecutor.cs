@@ -42,6 +42,7 @@ namespace MMMapEditor
         private const int PARTY_GENDER_OFFSET = 0x10;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
         private const int PARTY_HP_HIGH_OFFSET = 0x34;
+        private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
 
@@ -506,6 +507,7 @@ namespace MMMapEditor
                 PARTY_GENDER_OFFSET => PartyFieldKind.Gender,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
                 PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
+                PARTY_STATUS_OFFSET => PartyFieldKind.Status,
                 _ => PartyFieldKind.Unknown
             };
 
@@ -759,7 +761,10 @@ namespace MMMapEditor
             }
         }
 
-        private void RegisterPartyFieldWrite(PathAnalysisResult result, PartyFieldReference fieldRef, RegisterTracker registerTracker, uint instructionAddress, bool debugMode)
+        private void RegisterPartyFieldWrite(PathAnalysisResult result, PartyFieldReference fieldRef,
+            RegisterTracker registerTracker, uint instructionAddress, bool debugMode,
+            byte? exactValue = null, PartyEffectOperation statusOperation = PartyEffectOperation.Unknown,
+            byte? statusMask = null, PartyFieldReference sourceFieldValue = null)
         {
             if (result == null || fieldRef == null)
                 return;
@@ -774,21 +779,21 @@ namespace MMMapEditor
             });
 
             var currentCondition = GetCurrentPartyCondition(registerTracker);
-            PartyEffect effect = null;
+            var effects = new List<PartyEffect>();
             if (fieldRef.Field == PartyFieldKind.Gender)
             {
-                effect = new PartyEffect
+                effects.Add(new PartyEffect
                 {
                     Kind = PartyEffectKind.GenderWritten,
                     MemberIndex = fieldRef.Member?.IsPartyLoopMember == true ? null : fieldRef.Member?.MemberIndex,
                     AppliesToWholePartyLoop = fieldRef.Member?.IsPartyLoopMember == true,
                     InstructionAddress = instructionAddress,
                     Description = fieldRef.Member?.IsPartyLoopMember == true ? "Меняется пол членов партии" : "Меняется пол персонажа"
-                };
+                });
             }
             else if (fieldRef.Field == PartyFieldKind.HpHigh || fieldRef.Field == PartyFieldKind.HpLow)
             {
-                effect = new PartyEffect
+                effects.Add(new PartyEffect
                 {
                     Kind = PartyEffectKind.HpWritten,
                     MemberIndex = fieldRef.Member?.IsPartyLoopMember == true ? null : fieldRef.Member?.MemberIndex,
@@ -802,7 +807,7 @@ namespace MMMapEditor
                                 : PartyConditionKind.None),
                     InstructionAddress = instructionAddress,
                     Description = fieldRef.Member?.IsPartyLoopMember == true ? "Изменяется HP членов партии" : "Изменяется HP персонажа"
-                };
+                });
 
                 var pending = EnsurePendingPartyHpOperation(result, fieldRef, instructionAddress);
                 if (pending != null)
@@ -815,9 +820,164 @@ namespace MMMapEditor
                         pending.SawWriteLow = true;
                 }
             }
+            else if (fieldRef.Field == PartyFieldKind.Status)
+            {
+                if (exactValue.HasValue)
+                {
+                    effects.Add(PartyEffectFactory.CreateStatusWriteEffect(fieldRef.Member, instructionAddress, exactValue.Value));
+                }
+                else if (sourceFieldValue?.Field == PartyFieldKind.Status &&
+                         sourceFieldValue.BitTransform != null &&
+                         !sourceFieldValue.BitTransform.IsIdentity)
+                {
+                    effects.AddRange(BuildStatusEffectsFromBitTransform(fieldRef.Member, sourceFieldValue.BitTransform, instructionAddress));
+                }
+                else if (statusMask.HasValue)
+                {
+                    effects.Add(PartyEffectFactory.CreateStatusBitEffect(fieldRef.Member, statusOperation, statusMask.Value, instructionAddress));
+                }
+                else
+                {
+                    effects.Add(PartyEffectFactory.CreateStatusWriteEffect(fieldRef.Member, instructionAddress));
+                }
 
-            if (effect != null && !result.PartyEffects.Any(e => e.Kind == effect.Kind && e.MemberIndex == effect.MemberIndex && e.AppliesToWholePartyLoop == effect.AppliesToWholePartyLoop && e.Condition == effect.Condition && e.Description == effect.Description))
-                result.PartyEffects.Add(effect);
+                if (fieldRef.Member?.IsPartyLoopMember == true && currentCondition != PartyConditionKind.None)
+                {
+                    foreach (var statusEffect in effects.Where(e => e != null))
+                    {
+                        statusEffect.Condition = currentCondition;
+                        statusEffect.Scope = PartyEffectScope.PartySubset;
+
+                        string humanDescription = PartyEffectSemantics.BuildHumanDescription(statusEffect);
+                        if (!string.IsNullOrWhiteSpace(humanDescription))
+                            statusEffect.Description = humanDescription;
+                    }
+                }
+            }
+
+            foreach (var effect in effects.Where(e => e != null))
+            {
+                string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
+                if (!result.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey))
+                    result.PartyEffects.Add(effect);
+
+                if (debugMode && fieldRef.Field == PartyFieldKind.Status && !string.IsNullOrWhiteSpace(effect.Description))
+                    AnalysisDebug.WriteLine($"        Статус персонажа: {effect.Description}");
+            }
+        }
+
+        private PartyEffectOperation MapImmediateByteTransformOperation(byte groupOperation)
+        {
+            return groupOperation switch
+            {
+                0x01 => PartyEffectOperation.BitSet,
+                0x04 => PartyEffectOperation.BitClear,
+                0x06 => PartyEffectOperation.BitToggle,
+                _ => PartyEffectOperation.Unknown
+            };
+        }
+
+        private byte GetRelevantStatusMask(PartyEffectOperation operation, byte immediateValue)
+        {
+            return operation switch
+            {
+                PartyEffectOperation.BitSet => (byte)(immediateValue & PartyStatusSemantics.TrackedMask),
+                PartyEffectOperation.BitClear => (byte)(unchecked((byte)~immediateValue) & PartyStatusSemantics.TrackedMask),
+                PartyEffectOperation.BitToggle => (byte)(immediateValue & PartyStatusSemantics.TrackedMask),
+                _ => 0
+            };
+        }
+
+        private bool TryApplyImmediateByteTransform(byte oldValue, byte immediateValue,
+            PartyEffectOperation operation, out byte newValue)
+        {
+            newValue = oldValue;
+
+            switch (operation)
+            {
+                case PartyEffectOperation.BitSet:
+                    newValue = (byte)(oldValue | immediateValue);
+                    return true;
+                case PartyEffectOperation.BitClear:
+                    newValue = (byte)(oldValue & immediateValue);
+                    return true;
+                case PartyEffectOperation.BitToggle:
+                    newValue = (byte)(oldValue ^ immediateValue);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private List<PartyEffect> BuildStatusEffectsFromBitTransform(PartyMemberReference member,
+            PartyFieldBitTransform bitTransform, uint instructionAddress)
+        {
+            var effects = new List<PartyEffect>();
+            if (bitTransform == null || bitTransform.IsIdentity)
+                return effects;
+
+            void AddEffect(PartyEffectOperation operation, byte mask)
+            {
+                byte trackedMask = (byte)(mask & PartyStatusSemantics.TrackedMask);
+                if (trackedMask == 0)
+                    return;
+
+                PartyEffect effect = PartyEffectFactory.CreateStatusBitEffect(member, operation, trackedMask, instructionAddress);
+                if (effect != null)
+                    effects.Add(effect);
+            }
+
+            AddEffect(PartyEffectOperation.BitSet, bitTransform.SetMask);
+            AddEffect(PartyEffectOperation.BitClear, bitTransform.ClearMask);
+            AddEffect(PartyEffectOperation.BitToggle, bitTransform.ToggleMask);
+
+            if (effects.Count == 0)
+            {
+                PartyEffect unknownEffect = PartyEffectFactory.CreateStatusWriteEffect(member, instructionAddress);
+                if (unknownEffect != null)
+                    effects.Add(unknownEffect);
+            }
+
+            return effects;
+        }
+
+        private void TrackPartyFieldRegisterImmediateTransform(RegisterTracker registerTracker, string regName,
+            PartyEffectOperation operation, byte immediateValue, uint instructionAddress, bool debugMode)
+        {
+            if (registerTracker == null || string.IsNullOrWhiteSpace(regName))
+                return;
+
+            if (!registerTracker.TryGetPartyFieldValue(regName, out var partyField) ||
+                partyField == null)
+            {
+                return;
+            }
+
+            string fullReg = GetFullRegisterNameForByteRegister(regName);
+            if (string.IsNullOrWhiteSpace(fullReg))
+                return;
+
+            if (registerTracker.TryGetByteRegisterValue(regName, out byte oldValue) &&
+                TryApplyImmediateByteTransform(oldValue, immediateValue, operation, out byte newValue))
+            {
+                registerTracker.TrackPartialRegisterOperation(
+                    fullReg,
+                    regName,
+                    newValue,
+                    instructionAddress,
+                    $"{operation} {regName}, 0x{immediateValue:X2}");
+            }
+            else
+            {
+                registerTracker.ClearConcreteByteRegisterValueKeepSemantic(regName);
+            }
+
+            partyField.ApplyBitOperation(operation, immediateValue);
+            registerTracker.SetPartyFieldValue(regName, partyField);
+            registerTracker.ClearPartyPointerByteValue(regName);
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        Обновили регистр {regName} как байт поля персонажа {partyField.Field} через {operation} 0x{immediateValue:X2}");
         }
 
         private void TrackPartyArithmeticInstruction(X86Instruction insn, RegisterTracker registerTracker, PathAnalysisResult result)
@@ -1171,7 +1331,8 @@ namespace MMMapEditor
                 (result.BattleMonsterEntries != null && result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 || entry.val2 != 0 || entry.isIndeterminate)) ||
                 (result.PartialBattles != null && result.PartialBattles.Count > 0) ||
                 result.HasPartialBattlePattern ||
-                (result.PartialBattleInfo != null && result.PartialBattleInfo.Count > 0);
+                (result.PartialBattleInfo != null && result.PartialBattleInfo.Count > 0) ||
+                (result.PartyEffects != null && result.PartyEffects.Count > 0);
 
             result.CallsRandomEncounter = true;
             result.IsOnlyRandomEncounterJump = !hasOtherEffects;
@@ -1806,10 +1967,14 @@ namespace MMMapEditor
             }
 
             var branchCondition = InferPartyConditionForBranch(registerTracker, mnemonic, branchTaken);
-            clone.CurrentGenderBranchIsMale =
-                branchCondition == PartyConditionKind.MaleOnly ? true :
-                branchCondition == PartyConditionKind.FemaleOnly ? false :
-                (bool?)null;
+            if (branchCondition == PartyConditionKind.MaleOnly)
+            {
+                clone.CurrentGenderBranchIsMale = true;
+            }
+            else if (branchCondition == PartyConditionKind.FemaleOnly)
+            {
+                clone.CurrentGenderBranchIsMale = false;
+            }
 
             return clone;
         }
@@ -2385,13 +2550,37 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"        MOV [moffs8], AL: перенесли байтовую семантику указателя члена партии в [0x{memAddr:X4}] без точного значения");
                 }
             }
-            else if (instructionBytes.Length >= 5 &&
-                     instructionBytes[0] == 0xC6 &&
-                     instructionBytes[1] == 0x06)
+            else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xC6)
             {
-                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
-                byte immValue = instructionBytes[4];
-                ApplyTrackedByteWrite(memAddr, immValue, result, targetX, targetY, insn, debugMode, "MOV byte ptr [disp16], imm8");
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte regField = (byte)((modRm >> 3) & 0x07);
+
+                if (mod != 0x03 && regField == 0)
+                {
+                    bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out int decodedLength, out string eaText);
+                    if (!hasExactMemAddr)
+                        TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out decodedLength, out eaText);
+
+                    if (decodedLength > 0 && instructionBytes.Length > decodedLength)
+                    {
+                        byte immValue = instructionBytes[decodedLength];
+                        PartyFieldReference partyFieldRef = null;
+                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+
+                        if (hasPartyFieldRef)
+                        {
+                            RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode, immValue);
+
+                            if (debugMode)
+                                AnalysisDebug.WriteLine($"        Распознана прямая запись поля персонажа {partyFieldRef.Field} = 0x{immValue:X2} через {eaText}");
+                        }
+                        else if (hasExactMemAddr)
+                        {
+                            ApplyTrackedByteWrite(memAddr, immValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, 0x{immValue:X2}");
+                        }
+                    }
+                }
             }
             else if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x88)
             {
@@ -2458,11 +2647,14 @@ namespace MMMapEditor
 
                     PartyFieldReference partyFieldRef = null;
                     bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+                    PartyFieldReference sourcePartyFieldValue = null;
+                    if (reg < regNames8.Length)
+                        registerTracker.TryGetPartyFieldValue(regNames8[reg], out sourcePartyFieldValue);
                     if (hasExactMemAddr && TryGetReg8ValueFromModRmRegField(modRm, registerTracker, out byte regValue, out string regName))
                     {
                         if (hasPartyFieldRef)
                         {
-                            RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode);
+                            RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode, regValue, sourceFieldValue: sourcePartyFieldValue);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Распознана запись поля персонажа {partyFieldRef.Field} из {regName} через {eaText} (сырую эмулируемую память не обновляем)");
@@ -2477,7 +2669,7 @@ namespace MMMapEditor
                     }
                     else if (hasPartyFieldRef)
                     {
-                        RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode);
+                        RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode, sourceFieldValue: sourcePartyFieldValue);
 
                         if (debugMode)
                         {
@@ -2927,6 +3119,26 @@ namespace MMMapEditor
                     address, $"MOV AL, 0x{immediateValue:X2}");
             }
 
+            if (instructionBytes.Length >= 2 &&
+                (instructionBytes[0] == 0x0C || instructionBytes[0] == 0x24 || instructionBytes[0] == 0x34))
+            {
+                PartyEffectOperation accumulatorOperation = instructionBytes[0] switch
+                {
+                    0x0C => PartyEffectOperation.BitSet,
+                    0x24 => PartyEffectOperation.BitClear,
+                    0x34 => PartyEffectOperation.BitToggle,
+                    _ => PartyEffectOperation.Unknown
+                };
+
+                TrackPartyFieldRegisterImmediateTransform(
+                    registerTracker,
+                    "AL",
+                    accumulatorOperation,
+                    instructionBytes[1],
+                    address,
+                    debugMode);
+            }
+
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xD0)
             {
                 byte modRm = instructionBytes[1];
@@ -3183,6 +3395,64 @@ namespace MMMapEditor
                     {
                         registerTracker.SetFlagsMetadata(regNames8[regIndex], RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         registerTracker.LastCompareImmediate = immediateValue;
+                    }
+                }
+                else if (mode == 0x03)
+                {
+                    string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                    PartyEffectOperation registerOperation = MapImmediateByteTransformOperation(operation);
+                    if (registerOperation != PartyEffectOperation.Unknown && regIndex < regNames8.Length)
+                    {
+                        TrackPartyFieldRegisterImmediateTransform(
+                            registerTracker,
+                            regNames8[regIndex],
+                            registerOperation,
+                            immediateValue,
+                            address,
+                            debugMode);
+                    }
+                }
+                else
+                {
+                    PartyEffectOperation memoryOperation = MapImmediateByteTransformOperation(operation);
+                    if (memoryOperation != PartyEffectOperation.Unknown)
+                    {
+                        bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText);
+                        if (!hasExactMemAddr)
+                            TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out _, out eaText);
+
+                        PartyFieldReference partyFieldRef = null;
+                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+
+                        if (hasPartyFieldRef && partyFieldRef.Field == PartyFieldKind.Status)
+                        {
+                            byte? exactStatusValue = null;
+                            if (hasExactMemAddr &&
+                                TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentStatusValue) &&
+                                TryApplyImmediateByteTransform(currentStatusValue, immediateValue, memoryOperation, out byte transformedStatusValue))
+                            {
+                                exactStatusValue = transformedStatusValue;
+                            }
+
+                            byte relevantMask = GetRelevantStatusMask(memoryOperation, immediateValue);
+                            RegisterPartyFieldWrite(
+                                result,
+                                partyFieldRef,
+                                registerTracker,
+                                address,
+                                debugMode,
+                                exactStatusValue,
+                                memoryOperation,
+                                relevantMask != 0 ? relevantMask : (byte?)null);
+
+                            if (debugMode)
+                            {
+                                string valueText = exactStatusValue.HasValue
+                                    ? $" -> 0x{exactStatusValue.Value:X2}"
+                                    : string.Empty;
+                                AnalysisDebug.WriteLine($"        Распознано изменение статуса персонажа через byte ptr {eaText}, 0x{immediateValue:X2}{valueText}");
+                            }
+                        }
                     }
                 }
             }
@@ -3795,7 +4065,8 @@ namespace MMMapEditor
                                          result.PartialBattles.Count > 0 ||
                                          result.HasPartialBattlePattern ||
                                          result.CallsRandomEncounter ||
-                                         result.HasTeleportTarget;
+                                         result.HasTeleportTarget ||
+                                         (result.PartyEffects != null && result.PartyEffects.Count > 0);
         }
     }
 }
