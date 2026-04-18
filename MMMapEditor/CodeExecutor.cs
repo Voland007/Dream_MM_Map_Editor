@@ -713,9 +713,31 @@ namespace MMMapEditor
             var normalized = member?.Clone() ?? new PartyMemberReference();
             normalized.IsPartyLoopMember = true;
             normalized.MemberIndex = null;
+            normalized.PointerAddress = null;
+            normalized.PointerTableAddress = null;
             normalized.StructureAddress = null;
             normalized.SelectionKind = PartyMemberSelectionKind.Dynamic;
             return normalized;
+        }
+
+        private void MarkPartyMemberScanLoop(PathAnalysisResult result, uint instructionAddress, bool debugMode)
+        {
+            if (result == null)
+                return;
+
+            bool firstDetection = result.LoopSemantic != LoopSemanticKind.PartyMemberScan;
+            result.IsInLoop = true;
+            result.LoopSemantic = LoopSemanticKind.PartyMemberScan;
+
+            if (result.LoopStartAddress == 0 || instructionAddress < result.LoopStartAddress)
+                result.LoopStartAddress = instructionAddress;
+
+            if (result.PendingPartyHpOperation?.Member != null)
+                result.PendingPartyHpOperation.Member =
+                    NormalizeMemberForLoopAggregation(result.PendingPartyHpOperation.Member, result.LoopSemantic);
+
+            if (debugMode && firstDetection)
+                AnalysisDebug.WriteLine($"    РАСПОЗНАН ЦИКЛ ОБХОДА ПАРТИИ: счётчик сравнивается с [0x{PARTY_COUNT_ADDRESS:X4}]");
         }
 
         private PartyEffectScope ResolveDirectPartyEffectScope(
@@ -723,11 +745,6 @@ namespace MMMapEditor
             LoopSemanticKind loopSemantic,
             PartyConditionKind condition)
         {
-            if (IsPartyLoopTarget(member, loopSemantic))
-                return condition != PartyConditionKind.None
-                    ? PartyEffectScope.PartySubset
-                    : PartyEffectScope.WholeParty;
-
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
                 return PartyEffectScope.RandomMember;
 
@@ -736,6 +753,11 @@ namespace MMMapEditor
 
             if (member?.MemberIndex.HasValue == true)
                 return PartyEffectScope.SingleMember;
+
+            if (IsPartyLoopTarget(member, loopSemantic))
+                return condition != PartyConditionKind.None
+                    ? PartyEffectScope.PartySubset
+                    : PartyEffectScope.WholeParty;
 
             return PartyEffectScope.Unknown;
         }
@@ -1236,7 +1258,10 @@ namespace MMMapEditor
             if (operation == PartyEffectOperation.Unknown)
                 return;
 
-            var pending = EnsurePendingPartyHpOperation(result, hpField, (uint)insn.Address);
+            var pendingField = hpField.Clone();
+            pendingField.Member = NormalizeMemberForLoopAggregation(hpField.Member, result.LoopSemantic);
+
+            var pending = EnsurePendingPartyHpOperation(result, pendingField, (uint)insn.Address);
             if (pending == null)
                 return;
 
@@ -3581,6 +3606,31 @@ namespace MMMapEditor
             {
                 if (registerTracker.FlagsKnown)
                     registerTracker.CarryFlag = !registerTracker.CarryFlag;
+            }
+
+            // CMP BL, [partyCount] / CMP [partyCount], BL
+            // Это общий паттерн обхода партии по счётчику слота.
+            if (instructionBytes.Length >= 2 &&
+                (instructionBytes[0] == 0x3A || instructionBytes[0] == 0x38))
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+
+                bool comparesBl =
+                    (instructionBytes[0] == 0x3A && reg == 0x03 && mod != 0x03) ||
+                    (instructionBytes[0] == 0x38 && rm == 0x03 && mod != 0x03);
+
+                if (comparesBl &&
+                    TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _) &&
+                    memAddr == PARTY_COUNT_ADDRESS)
+                {
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("BL", RegisterTracker.FlagsOriginKind.CompareMemory, address);
+                    registerTracker.LastCompareImmediate = null;
+                    MarkPartyMemberScanLoop(result, address, debugMode);
+                }
             }
 
             // CMP AL, imm8 (opcode 3C ib)

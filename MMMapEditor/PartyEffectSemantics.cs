@@ -213,6 +213,9 @@ namespace MMMapEditor
             if (!IsStateChanging(effect))
                 return false;
 
+            if (IsRedundantHpImplementationDetailForNotes(effect, allEffects))
+                return false;
+
             if (IsStatusDerivedFromHpLossForNotes(effect, allEffects))
                 return false;
 
@@ -373,6 +376,19 @@ namespace MMMapEditor
                     IsLikelyConsequenceByInstructionOrder(effect, candidate));
         }
 
+        private static bool IsRedundantHpImplementationDetailForNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
+        {
+            if (GetEffectiveField(effect) != PartyFieldKind.Hp)
+                return false;
+
+            if (GetEffectiveScope(effect) != PartyEffectScope.SingleMember || !effect.MemberIndex.HasValue)
+                return false;
+
+            return (allEffects ?? Enumerable.Empty<PartyEffect>())
+                .Where(candidate => candidate != null && !ReferenceEquals(candidate, effect))
+                .Any(candidate => IsAggregatedHpSummaryForSingleMemberArtifact(effect, candidate));
+        }
+
         private static bool IsLikelyHpLossConsequenceStatus(PartyEffect effect)
         {
             if (effect == null)
@@ -404,10 +420,102 @@ namespace MMMapEditor
             if (left == null || right == null)
                 return false;
 
+            if (MatchesSpecificMemberAgainstLoopAggregate(left, right) ||
+                MatchesSpecificMemberAgainstLoopAggregate(right, left))
+            {
+                return true;
+            }
+
             return left.MemberIndex == right.MemberIndex &&
                    GetEffectiveScope(left) == GetEffectiveScope(right) &&
                    GetEffectiveCondition(left) == GetEffectiveCondition(right) &&
                    IsLoopDerived(left) == IsLoopDerived(right);
+        }
+
+        private static bool IsAggregatedHpSummaryForSingleMemberArtifact(PartyEffect specificEffect, PartyEffect aggregateEffect)
+        {
+            if (specificEffect == null || aggregateEffect == null)
+                return false;
+
+            if (GetEffectiveField(aggregateEffect) != PartyFieldKind.Hp)
+                return false;
+
+            if (!IsPartyWideLoopEffect(aggregateEffect))
+                return false;
+
+            if (!ConditionsCompatibleForAggregate(specificEffect, aggregateEffect))
+                return false;
+
+            var specificOperation = GetEffectiveOperation(specificEffect);
+            var aggregateOperation = GetEffectiveOperation(aggregateEffect);
+
+            if (specificOperation == PartyEffectOperation.Write)
+            {
+                return aggregateOperation != PartyEffectOperation.Write &&
+                       IsLikelyConsequenceByInstructionOrder(specificEffect, aggregateEffect);
+            }
+
+            if (specificOperation != aggregateOperation)
+                return false;
+
+            if (specificEffect.ImmediateValue.HasValue || aggregateEffect.ImmediateValue.HasValue)
+            {
+                if (specificEffect.ImmediateValue != aggregateEffect.ImmediateValue)
+                    return false;
+            }
+
+            if (specificEffect.ImmediateRange != null || aggregateEffect.ImmediateRange != null)
+            {
+                if (specificEffect.ImmediateRange == null || aggregateEffect.ImmediateRange == null)
+                    return false;
+
+                if (specificEffect.ImmediateRange.Min != aggregateEffect.ImmediateRange.Min ||
+                    specificEffect.ImmediateRange.Max != aggregateEffect.ImmediateRange.Max)
+                {
+                    return false;
+                }
+            }
+
+            if (specificEffect.InstructionAddress != 0 &&
+                aggregateEffect.InstructionAddress != 0 &&
+                specificEffect.InstructionAddress != aggregateEffect.InstructionAddress)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool MatchesSpecificMemberAgainstLoopAggregate(PartyEffect specificEffect, PartyEffect aggregateEffect)
+        {
+            if (specificEffect == null || aggregateEffect == null)
+                return false;
+
+            if (GetEffectiveScope(specificEffect) != PartyEffectScope.SingleMember || !specificEffect.MemberIndex.HasValue)
+                return false;
+
+            return IsPartyWideLoopEffect(aggregateEffect) &&
+                   ConditionsCompatibleForAggregate(specificEffect, aggregateEffect);
+        }
+
+        private static bool IsPartyWideLoopEffect(PartyEffect effect)
+        {
+            if (effect == null)
+                return false;
+
+            var scope = GetEffectiveScope(effect);
+            return IsLoopDerived(effect) &&
+                   (scope == PartyEffectScope.WholeParty ||
+                    scope == PartyEffectScope.PartySubset ||
+                    scope == PartyEffectScope.CurrentLoopMember);
+        }
+
+        private static bool ConditionsCompatibleForAggregate(PartyEffect specificEffect, PartyEffect aggregateEffect)
+        {
+            var specificCondition = GetEffectiveCondition(specificEffect);
+            var aggregateCondition = GetEffectiveCondition(aggregateEffect);
+
+            return aggregateCondition == specificCondition;
         }
 
         private static bool IsLikelyConsequenceByInstructionOrder(PartyEffect statusEffect, PartyEffect hpEffect)
