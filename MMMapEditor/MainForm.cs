@@ -1975,6 +1975,9 @@ namespace MMMapEditor
                 // Форматирование для служебных предупреждений
                 FormatServiceWarnings(notesTextBox, noteText);
 
+                // Форматирование для временных технических заметок
+                FormatTemporaryTechnicalNotes(notesTextBox, noteText);
+
                 // Форматирование для loot-блоков
                 FormatLootBlocks(notesTextBox, noteText);
             }
@@ -2167,6 +2170,26 @@ namespace MMMapEditor
                 rt.SelectionColor = Color.FromArgb(255, 80, 80);
                 rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatTemporaryTechnicalNotes(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            var technicalNoteMatches = Regex.Matches(
+                noteText,
+                @"-=\*Техническая\(временная\) заметка:[^\r\n]*\*=-",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in technicalNoteMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(145, 145, 145);
+                rt.SelectionBackColor = Color.Black;
+                rt.SelectionFont = new Font("Segoe UI Light", rt.Font.Size, FontStyle.Italic);
             }
 
             rt.Select(0, 0);

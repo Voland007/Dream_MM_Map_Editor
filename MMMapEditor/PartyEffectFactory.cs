@@ -380,29 +380,33 @@ namespace MMMapEditor
         private static string BuildTechnicalField77ReadDescription(PartyMemberReference member, byte? exactValue)
         {
             string target = BuildTechnicalField77Target(member);
-            return exactValue.HasValue
-                ? $"Читается {PartyTechnicalField77Semantics.FieldLabel} {target} (=0x{exactValue.Value:X2})"
-                : $"Читается {PartyTechnicalField77Semantics.FieldLabel} {target}";
+            string body = exactValue.HasValue
+                ? $"Читается поле +0x77 {target} (=0x{exactValue.Value:X2})"
+                : $"Читается поле +0x77 {target}";
+
+            return $"-=*Техническая(временная) заметка: {body}*=-";
         }
 
         private static string BuildTechnicalField77CompareDescription(PartyMemberReference member, byte compareValue)
         {
             string target = BuildTechnicalField77Target(member);
-            return $"Проверяется {PartyTechnicalField77Semantics.FieldLabel} {target} на значение 0x{compareValue:X2}";
+            return $"-=*Техническая(временная) заметка: Проверяется поле +0x77 {target} на значение 0x{compareValue:X2}*=-";
         }
 
         private static string BuildTechnicalField77BitReadDescription(PartyMemberReference member, byte mask)
         {
             string target = BuildTechnicalField77Target(member);
-            return $"Проверяются биты 0x{mask:X2} {PartyTechnicalField77Semantics.FieldLabel} {target}";
+            return $"-=*Техническая(временная) заметка: Проверяются биты 0x{mask:X2} поля +0x77 {target}*=-";
         }
 
         private static string BuildTechnicalField77WriteDescription(PartyMemberReference member, byte? exactValue)
         {
             string target = BuildTechnicalField77Target(member);
-            return exactValue.HasValue
-                ? $"В {PartyTechnicalField77Semantics.FieldLabel} {target} записывается 0x{exactValue.Value:X2}"
-                : $"Изменяется {PartyTechnicalField77Semantics.FieldLabel} {target}";
+            string body = exactValue.HasValue
+                ? $"В поле +0x77 {target} записывается 0x{exactValue.Value:X2}"
+                : $"Изменяется поле +0x77 {target}";
+
+            return $"-=*Техническая(временная) заметка: {body}*=-";
         }
 
         private static string BuildTechnicalField77BitWriteDescription(PartyMemberReference member,
@@ -417,7 +421,7 @@ namespace MMMapEditor
                 _ => "изменяются"
             };
 
-            return $"В {PartyTechnicalField77Semantics.FieldLabel} {target} {action} биты 0x{mask:X2}";
+            return $"-=*Техническая(временная) заметка: В поле +0x77 {target} {action} биты 0x{mask:X2}*=-";
         }
 
         private static string BuildTechnicalField77Target(PartyMemberReference member)

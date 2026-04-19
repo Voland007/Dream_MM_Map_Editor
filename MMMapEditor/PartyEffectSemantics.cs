@@ -590,36 +590,37 @@ namespace MMMapEditor
                 return null;
 
             string target = BuildTechnicalField77Target(effect, scope, condition);
-            string label = PartyTechnicalField77Semantics.FieldLabel;
             var operation = GetEffectiveOperation(effect);
             var knowledge = GetEffectiveValueKnowledge(effect);
 
-            return operation switch
+            string body = operation switch
             {
                 PartyEffectOperation.Read => effect.ImmediateValue.HasValue
-                    ? $"Читается {label} {target} (=0x{effect.ImmediateValue.Value:X2})"
-                    : $"Читается {label} {target}",
+                    ? $"Читается поле +0x77 {target} (=0x{effect.ImmediateValue.Value:X2})"
+                    : $"Читается поле +0x77 {target}",
                 PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
                     ? knowledge == PartyValueKnowledge.ExactDerived
-                        ? $"Проверяются биты 0x{effect.ImmediateValue.Value:X2} {label} {target}"
-                        : $"Проверяется {label} {target} на значение 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Проверяется {label} {target}",
+                        ? $"Проверяются биты 0x{effect.ImmediateValue.Value:X2} поля +0x77 {target}"
+                        : $"Проверяется поле +0x77 {target} на значение 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Проверяется поле +0x77 {target}",
                 PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
-                    ? $"В {label} {target} устанавливаются биты 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется {label} {target}",
+                    ? $"В поле +0x77 {target} устанавливаются биты 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется поле +0x77 {target}",
                 PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
-                    ? $"В {label} {target} сбрасываются биты 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется {label} {target}",
+                    ? $"В поле +0x77 {target} сбрасываются биты 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется поле +0x77 {target}",
                 PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
-                    ? $"В {label} {target} переключаются биты 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется {label} {target}",
+                    ? $"В поле +0x77 {target} переключаются биты 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется поле +0x77 {target}",
                 PartyEffectOperation.Write => effect.ImmediateValue.HasValue
-                    ? $"В {label} {target} записывается 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется {label} {target}",
+                    ? $"В поле +0x77 {target} записывается 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется поле +0x77 {target}",
                 _ => !string.IsNullOrWhiteSpace(effect.Description)
                     ? effect.Description
-                    : $"{label}: {target}"
+                    : $"поле +0x77: {target}"
             };
+
+            return $"-=*Техническая(временная) заметка: {body}*=-";
         }
 
         private static string BuildTechnicalField77Target(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
