@@ -103,6 +103,7 @@ namespace MMMapEditor
         public FlagsOriginKind LastFlagsOrigin { get; set; }
         public uint? LastFlagsInstructionAddress { get; set; }
         public byte? LastCompareImmediate { get; set; }
+        public ushort? LastComparedMemoryAddress { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
         public List<PartyConditionWindow> ActivePartyConditionWindows { get; set; } = new List<PartyConditionWindow>();
 
@@ -120,6 +121,7 @@ namespace MMMapEditor
             LastFlagsOrigin = FlagsOriginKind.Unknown;
             LastFlagsInstructionAddress = null;
             LastCompareImmediate = null;
+            LastComparedMemoryAddress = null;
             LastFlagsFromCoordinate = false;
         }
 
@@ -1266,6 +1268,7 @@ namespace MMMapEditor
             clone.LastFlagsOrigin = this.LastFlagsOrigin;
             clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             clone.LastCompareImmediate = this.LastCompareImmediate;
+            clone.LastComparedMemoryAddress = this.LastComparedMemoryAddress;
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
             clone.ActivePartyConditionWindows = this.ActivePartyConditionWindows?
                 .Select(window => window?.Clone())

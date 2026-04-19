@@ -39,6 +39,7 @@ namespace MMMapEditor
         private const int MAX_DEPTH = 12;
         private const ushort PARTY_POINTER_TABLE = 0x3CA8;
         private const ushort PARTY_COUNT_ADDRESS = 0x3BC0;
+        private const ushort BATTLE_MONSTER_COUNT_ADDRESS = 0x3C1D;
         private const int PARTY_MEMBER_COUNT = 6;
         private const int PARTY_GENDER_OFFSET = 0x10;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
@@ -105,6 +106,7 @@ namespace MMMapEditor
                 int currentCallDepth = callDepth;
                 int instructionCount = 0;
                 var visitedInThisPath = new HashSet<uint>();
+                var finiteLoopProgressByJumpAddress = new Dictionary<uint, byte>();
 
                 // Для отслеживания косвенных текстов
                 byte? lastAlValue = null;
@@ -136,6 +138,7 @@ namespace MMMapEditor
                             result.IsTerminated = true;
                             return result;
                         }
+
                         visitedInThisPath.Add(currentAddress);
                         result.VisitedAddresses.Add(currentAddress);
 
@@ -217,7 +220,8 @@ namespace MMMapEditor
                         var handlingResult = HandleControlFlowInstructions(insn, br, registerTracker,
                             globallyAnalyzedAddresses, depth, currentCallDepth, pathId, targetX, targetY,
                             processedBackEdges, result, currentAddress, nextAddress, fileLength, debugMode,
-                            invalidateReturnRegistersAfterExternalCall, currentPendingReturnAddresses);
+                            invalidateReturnRegistersAfterExternalCall, currentPendingReturnAddresses,
+                            visitedInThisPath, finiteLoopProgressByJumpAddress);
 
                         if (handlingResult.ShouldReturn)
                             return handlingResult.Result;
@@ -1665,7 +1669,8 @@ namespace MMMapEditor
             int depth, int callDepth, int pathId, byte targetX, byte targetY,
             HashSet<(uint From, uint To)> processedBackEdges,
             PathAnalysisResult result, uint currentAddress, uint nextAddress, long fileLength, bool debugMode,
-            bool invalidateReturnRegistersAfterExternalCall, List<uint> pendingReturnAddresses)
+            bool invalidateReturnRegistersAfterExternalCall, List<uint> pendingReturnAddresses,
+            HashSet<uint> visitedInThisPath, Dictionary<uint, byte> finiteLoopProgressByJumpAddress)
         {
             string mnemonicUpper = insn.Mnemonic?.ToUpper() ?? "";
 
@@ -1719,7 +1724,8 @@ namespace MMMapEditor
             if (IsConditionalJump(insn, out uint condJumpTarget))
             {
                 return HandleConditionalJump(insn, condJumpTarget, nextAddress, fileLength,
-                    debugMode, processedBackEdges, result, currentAddress, registerTracker, pendingReturnAddresses, callDepth);
+                    debugMode, processedBackEdges, result, currentAddress, registerTracker,
+                    pendingReturnAddresses, callDepth, visitedInThisPath, finiteLoopProgressByJumpAddress);
             }
 
             return new ControlFlowResult
@@ -2097,9 +2103,10 @@ namespace MMMapEditor
         /// Обрабатывает условный переход
         /// </summary>
         private ControlFlowResult HandleConditionalJump(X86Instruction insn, uint condJumpTarget,
-    uint nextAddress, long fileLength, bool debugMode,
-    HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress,
-    RegisterTracker registerTracker, List<uint> pendingReturnAddresses, int callDepth)
+            uint nextAddress, long fileLength, bool debugMode,
+            HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress,
+            RegisterTracker registerTracker, List<uint> pendingReturnAddresses, int callDepth,
+            HashSet<uint> visitedInThisPath, Dictionary<uint, byte> finiteLoopProgressByJumpAddress)
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
@@ -2110,6 +2117,18 @@ namespace MMMapEditor
 
                     if (condJumpTarget < currentAddress && branchTaken.Value)
                     {
+                        if (TryAdvanceFiniteBattleCounterLoop(registerTracker, result, currentAddress, condJumpTarget,
+                            visitedInThisPath, finiteLoopProgressByJumpAddress, debugMode))
+                        {
+                            return new ControlFlowResult
+                            {
+                                ShouldReturn = false,
+                                NextAddress = condJumpTarget,
+                                UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                                UpdatedCallDepth = callDepth
+                            };
+                        }
+
                         if (IsPendingPartyMemberScanBackEdge(registerTracker))
                             MarkPartyMemberScanLoop(result, condJumpTarget, debugMode, currentAddress);
 
@@ -2502,6 +2521,7 @@ namespace MMMapEditor
             // Внешние guard-условия вроде MOV AL,[0xCAFE] / OR AL,AL / JNE должны
             // оставаться развилкой, даже если текущее значение известно.
             if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory &&
                 registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.Test)
                 return null;
 
@@ -2511,7 +2531,8 @@ namespace MMMapEditor
 
             bool allowDeterministicResolution =
                 registerTracker.LastFlagsFromCoordinate ||
-                IsDeterministicFlagsSource(registerTracker, flagsReg);
+                IsDeterministicFlagsSource(registerTracker, flagsReg) ||
+                IsDeterministicMemoryCompareSource(registerTracker);
 
             if (!allowDeterministicResolution)
                 return null;
@@ -2543,6 +2564,117 @@ namespace MMMapEditor
 
             ushort? sourceAddress = registerTracker.GetSourceAddress(flagsReg);
             return sourceAddress.HasValue && _emulatedMemory8.ContainsKey(sourceAddress.Value);
+        }
+
+        private bool IsDeterministicMemoryCompareSource(RegisterTracker registerTracker)
+        {
+            if (registerTracker == null ||
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory ||
+                !registerTracker.LastComparedMemoryAddress.HasValue)
+            {
+                return false;
+            }
+
+            ushort memAddr = registerTracker.LastComparedMemoryAddress.Value;
+            return _emulatedMemory8.ContainsKey(memAddr) || memAddr == BATTLE_MONSTER_COUNT_ADDRESS;
+        }
+
+        private bool TryGetExactBattleMonsterCount(PathAnalysisResult result, out byte battleMonsterCount)
+        {
+            if (_emulatedMemory8.TryGetValue(BATTLE_MONSTER_COUNT_ADDRESS, out battleMonsterCount))
+                return true;
+
+            if (result?.BattleMonsterCountRange?.IsExact == true)
+            {
+                battleMonsterCount = result.BattleMonsterCountRange.Min;
+                return true;
+            }
+
+            if (result?.BattleMonsterCount.HasValue == true)
+            {
+                battleMonsterCount = result.BattleMonsterCount.Value;
+                return true;
+            }
+
+            battleMonsterCount = 0;
+            return false;
+        }
+
+        private bool TryAdvanceFiniteBattleCounterLoop(
+            RegisterTracker registerTracker,
+            PathAnalysisResult result,
+            uint jumpAddress,
+            uint loopBodyStartAddress,
+            HashSet<uint> visitedInThisPath,
+            Dictionary<uint, byte> finiteLoopProgressByJumpAddress,
+            bool debugMode)
+        {
+            if (registerTracker == null ||
+                visitedInThisPath == null ||
+                finiteLoopProgressByJumpAddress == null ||
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory ||
+                registerTracker.LastComparedMemoryAddress != BATTLE_MONSTER_COUNT_ADDRESS)
+            {
+                return false;
+            }
+
+            string counterRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(counterRegister) ||
+                !registerTracker.TryGetByteRegisterValue(counterRegister, out byte counterValue) ||
+                !TryGetExactBattleMonsterCount(result, out byte loopLimit) ||
+                loopLimit == 0 ||
+                counterValue >= loopLimit)
+            {
+                return false;
+            }
+
+            if (finiteLoopProgressByJumpAddress.TryGetValue(jumpAddress, out byte previousCounterValue) &&
+                counterValue <= previousCounterValue)
+            {
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine(
+                        $"      Конечный цикл по [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}] не продвинулся: {counterRegister}=0x{counterValue:X2}, предыдущее=0x{previousCounterValue:X2}");
+                }
+
+                return false;
+            }
+
+            finiteLoopProgressByJumpAddress[jumpAddress] = counterValue;
+
+            foreach (var visitedAddress in visitedInThisPath
+                .Where(address => address >= loopBodyStartAddress && address <= jumpAddress)
+                .ToList())
+            {
+                visitedInThisPath.Remove(visitedAddress);
+            }
+
+            result.IsInLoop = true;
+            result.LoopSemantic = result.LoopSemantic == LoopSemanticKind.None
+                ? LoopSemanticKind.PartialBattle
+                : result.LoopSemantic;
+
+            if (result.LoopStartAddress == 0 || loopBodyStartAddress < result.LoopStartAddress)
+                result.LoopStartAddress = loopBodyStartAddress;
+
+            if (jumpAddress > result.LoopEndAddress)
+                result.LoopEndAddress = jumpAddress;
+
+            if (counterValue > result.LoopIteration)
+                result.LoopIteration = counterValue;
+
+            if (loopLimit > result.LoopIterationCount)
+                result.LoopIterationCount = loopLimit;
+
+            result.IsIndeterminateLoop = false;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Конечный цикл по [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}] продолжается: {counterRegister}=0x{counterValue:X2}, limit=0x{loopLimit:X2}, повторно заходим в тело 0x{loopBodyStartAddress:X4}");
+            }
+
+            return true;
         }
 
         private static void SetArithmeticFlagsForAdd8(RegisterTracker registerTracker, byte left, byte right, byte result)
@@ -3861,19 +3993,64 @@ namespace MMMapEditor
                 byte mod = (byte)((modRm >> 6) & 0x03);
                 byte reg = (byte)((modRm >> 3) & 0x07);
                 byte rm = (byte)(modRm & 0x07);
+                bool handledSpecialCompare = false;
+                bool hasExactMemAddress = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _);
 
                 bool comparesBl =
                     (instructionBytes[0] == 0x3A && reg == 0x03 && mod != 0x03) ||
                     (instructionBytes[0] == 0x38 && rm == 0x03 && mod != 0x03);
 
                 if (comparesBl &&
-                    TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _) &&
+                    hasExactMemAddress &&
                     memAddr == PARTY_COUNT_ADDRESS)
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("BL", RegisterTracker.FlagsOriginKind.CompareMemory, address);
                     registerTracker.LastCompareImmediate = null;
+                    registerTracker.LastComparedMemoryAddress = PARTY_COUNT_ADDRESS;
                     MarkPartyMemberScanLoop(result, address, debugMode);
+                    handledSpecialCompare = true;
+                }
+
+                if (!handledSpecialCompare &&
+                    mod != 0x03 &&
+                    reg < 8 &&
+                    hasExactMemAddress &&
+                    TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
+                {
+                    string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                    string regName = regNames8[reg];
+
+                    if (registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
+                    {
+                        if (instructionBytes[0] == 0x3A)
+                        {
+                            byte cmpResult = (byte)(regValue - memValue);
+                            SetArithmeticFlagsForSub8(registerTracker, regValue, memValue, cmpResult,
+                                regName, RegisterTracker.FlagsOriginKind.CompareMemory, address);
+                        }
+                        else
+                        {
+                            byte cmpResult = (byte)(memValue - regValue);
+                            SetArithmeticFlagsForSub8(registerTracker, memValue, regValue, cmpResult,
+                                regName, RegisterTracker.FlagsOriginKind.CompareMemory, address);
+                        }
+                    }
+                    else
+                    {
+                        registerTracker.FlagsKnown = false;
+                        registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.CompareMemory, address);
+                    }
+
+                    registerTracker.LastCompareImmediate = null;
+                    registerTracker.LastComparedMemoryAddress = memAddr;
+
+                    if (memAddr == BATTLE_MONSTER_COUNT_ADDRESS)
+                    {
+                        result.BattleMonsterCount = memValue;
+                        result.BattleMonsterCountRange = new ValueRange8(memValue, memValue);
+                        result.IsBattleMonsterCountIndeterminate = false;
+                    }
                 }
             }
 
@@ -4845,7 +5022,20 @@ namespace MMMapEditor
             if (result == null)
                 return;
 
-            if (memAddr == 0x3C38)
+            if (memAddr == BATTLE_MONSTER_COUNT_ADDRESS)
+            {
+                result.BattleMonsterCount = value;
+                result.BattleMonsterCountRange = new ValueRange8(value, value);
+                result.IsBattleMonsterCountIndeterminate = false;
+                result.HasSignificantCode = true;
+
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine(
+                        $"        Семантика [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}]: точное количество монстров = {value}");
+                }
+            }
+            else if (memAddr == 0x3C38)
             {
                 result.TeleportTargetX = value;
                 result.TeleportTargetXRange = new ValueRange8(value, value);
