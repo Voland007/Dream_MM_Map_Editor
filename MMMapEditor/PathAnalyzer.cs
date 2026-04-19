@@ -708,6 +708,10 @@ namespace MMMapEditor
 
         private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
         {
+            var semanticPartyEffects = (PartyEffectNormalizer.Normalize(source) ?? new List<PartyEffect>())
+                .Where(PartyEffectSemantics.IsSemanticOutcomeEffect)
+                .ToList();
+
             return new PathVariantInfo
             {
                 PathId = pathId,
@@ -735,7 +739,7 @@ namespace MMMapEditor
                 PartiallyDefinedBattles = ClonePartialBattles(source),
                 HasAnyTableLoad = source.HasPartialBattlePattern,
                 LoadedValues = CloneLoadedValues(source),
-                PartyEffects = PartyEffectNormalizer.Normalize(source),
+                PartyEffects = semanticPartyEffects,
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
@@ -823,7 +827,7 @@ namespace MMMapEditor
             if (variant.LoadedValues != null && variant.LoadedValues.Count > 0)
                 return true;
 
-            if (variant.PartyEffects != null && variant.PartyEffects.Count > 0)
+            if (variant.PartyEffects != null && variant.PartyEffects.Any(PartyEffectSemantics.IsSemanticOutcomeEffect))
                 return true;
 
             return false;
@@ -961,9 +965,10 @@ namespace MMMapEditor
                     branchInsensitiveUnique[key] = variant;
             }
 
-            var orderedUniqueVariants = CollapsePromptOnlyVariantsShadowedByLoopEffects(
-                    CollapseGuardOnlyPartyLoopVariants(
-                        CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))
+            var orderedUniqueVariants = CollapseConditionalLoopSubsetOutcomeVariants(
+                    CollapsePromptOnlyVariantsShadowedByLoopEffects(
+                        CollapseGuardOnlyPartyLoopVariants(
+                            CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values))))
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -995,6 +1000,30 @@ namespace MMMapEditor
                 }
 
                 result.Add(SelectPreferredPartyLoopTextVariant(groupItems));
+            }
+
+            return result;
+        }
+
+        private IEnumerable<PathVariantInfo> CollapseConditionalLoopSubsetOutcomeVariants(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var result = new List<PathVariantInfo>();
+
+            foreach (var group in variants
+                .OrderBy(v => v.PathId)
+                .GroupBy(BuildConditionalLoopSubsetCollapseKey))
+            {
+                var groupItems = group.ToList();
+                if (!ShouldCollapseConditionalLoopSubsetGroup(groupItems))
+                {
+                    result.AddRange(groupItems);
+                    continue;
+                }
+
+                result.Add(MergeConditionalLoopSubsetGroup(groupItems));
             }
 
             return result;
@@ -1158,6 +1187,12 @@ namespace MMMapEditor
                                                 PartyEffectSemantics.IsLoopDerived(e));
         }
 
+        private bool HasConditionalLoopSubsetOutcomeEffects(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null &&
+                   variant.PartyEffects.Any(IsConditionalLoopSubsetOutcomeEffect);
+        }
+
         private bool HasOnlyGuardLikePartyEffects(PathVariantInfo variant)
         {
             return variant?.PartyEffects != null &&
@@ -1314,13 +1349,203 @@ namespace MMMapEditor
 
         private string BuildPartyEffectsKey(PathVariantInfo variant)
         {
+            return BuildPartyEffectsKey(variant, effect => true);
+        }
+
+        private string BuildPartyEffectsKey(PathVariantInfo variant, Func<PartyEffect, bool> includePredicate)
+        {
             if (variant?.PartyEffects == null || variant.PartyEffects.Count == 0)
                 return "<NO_PARTY>";
 
             return string.Join(";", variant.PartyEffects
-                .Where(e => e != null)
+                .Where(e => e != null && (includePredicate?.Invoke(e) ?? true))
                 .Select(PartyEffectSemantics.BuildSemanticKey)
                 .OrderBy(x => x));
+        }
+
+        private bool IsConditionalLoopSubsetOutcomeEffect(PartyEffect effect)
+        {
+            return effect != null &&
+                   PartyEffectSemantics.IsStateChanging(effect) &&
+                   PartyEffectSemantics.IsLoopDerived(effect) &&
+                   PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
+                   PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None;
+        }
+
+        private bool ShouldCollapseConditionalLoopSubsetGroup(List<PathVariantInfo> variants)
+        {
+            if (variants == null || variants.Count < 2)
+                return false;
+
+            if (!variants.Any(HasConditionalLoopSubsetOutcomeEffects))
+                return false;
+
+            string distinctFullPartyKeys = string.Join("\n", variants
+                .Select(BuildPartyEffectsKey)
+                .Distinct()
+                .OrderBy(x => x));
+
+            string distinctBasePartyKeys = string.Join("\n", variants
+                .Select(BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes)
+                .Distinct()
+                .OrderBy(x => x));
+
+            if (string.IsNullOrWhiteSpace(distinctFullPartyKeys) ||
+                string.IsNullOrWhiteSpace(distinctBasePartyKeys))
+            {
+                return false;
+            }
+
+            return variants.Select(BuildPartyEffectsKey).Distinct().Count() > 1 &&
+                   variants.Select(BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes).Distinct().Count() == 1;
+        }
+
+        private string BuildConditionalLoopSubsetCollapseKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string textKey = variant.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+
+            string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(m => m.Index)
+                    .Select(m => $"{m.Index}:{m.MonsterIndex1:X2}:{m.MonsterIndex2:X2}:{m.IsIndeterminate}"))
+                : "<NO_BATTLE>";
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(p => p.BxIndex)
+                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                : "<NO_PARTIAL>";
+
+            string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
+                ? string.Join(";", variant.LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.SourceAddr)
+                    .ThenBy(v => v.RegName)
+                    .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
+                : "<NO_LOADS>";
+
+            string partyKey = BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(variant);
+
+            string branchKey = ShouldIgnoreBranchHistoryForIdentity(variant)
+                ? "<IGNORED_BRANCHES>"
+                : (variant.BranchChoices != null && variant.BranchChoices.Count > 0
+                    ? string.Join(";", variant.BranchChoices
+                        .Where(c => c != null)
+                        .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
+                    : "<NO_BRANCHES>");
+
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}";
+        }
+
+        private string BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(PathVariantInfo variant)
+        {
+            return BuildPartyEffectsKey(variant, effect => !IsConditionalLoopSubsetOutcomeEffect(effect));
+        }
+
+        private PathVariantInfo MergeConditionalLoopSubsetGroup(List<PathVariantInfo> variants)
+        {
+            var preferred = variants
+                .OrderByDescending(v => v.PartyEffects?.Count ?? 0)
+                .ThenByDescending(GetVariantPrecisionScore)
+                .ThenBy(v => v.PathId)
+                .First();
+
+            var merged = CloneVariantInfo(preferred);
+            merged.PathId = variants.Min(v => v.PathId);
+            merged.PartyEffects = variants
+                .SelectMany(v => v.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+                .Where(e => e != null)
+                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                .Select(g => g.First().Clone())
+                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+                .ToList();
+
+            return merged;
+        }
+
+        private PathVariantInfo CloneVariantInfo(PathVariantInfo source)
+        {
+            if (source == null)
+                return null;
+
+            return new PathVariantInfo
+            {
+                PathId = source.PathId,
+                IsLeaf = source.IsLeaf,
+                Texts = source.Texts?.ToList() ?? new List<string>(),
+                BranchChoices = source.BranchChoices?
+                    .Where(choice => choice != null)
+                    .Select(choice => new BranchChoice
+                    {
+                        Label = choice.Label,
+                        Condition = choice.Condition,
+                        CompareValue = choice.CompareValue,
+                        CompareRegister = choice.CompareRegister,
+                        IsLinear = choice.IsLinear
+                    })
+                    .ToList() ?? new List<BranchChoice>(),
+                MonsterPower = source.MonsterPower,
+                MonsterLevel = source.MonsterLevel,
+                MonsterBatchCount = source.MonsterBatchCount,
+                DarkeningLevel = source.DarkeningLevel,
+                RandomEncounterChance = source.RandomEncounterChance,
+                CallsRandomEncounter = source.CallsRandomEncounter,
+                IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
+                TeleportTargetX = source.TeleportTargetX,
+                TeleportTargetY = source.TeleportTargetY,
+                TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
+                TeleportTargetYRange = source.TeleportTargetYRange == null ? null : new ValueRange8(source.TeleportTargetYRange.Min, source.TeleportTargetYRange.Max),
+                BattleMonsterCount = source.BattleMonsterCount,
+                BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
+                IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                BattleMonsters = source.BattleMonsters?
+                    .Select(m => new BattleMonster
+                    {
+                        Index = m.Index,
+                        MonsterIndex1 = m.MonsterIndex1,
+                        MonsterIndex2 = m.MonsterIndex2,
+                        IsIndeterminate = m.IsIndeterminate
+                    })
+                    .ToList() ?? new List<BattleMonster>(),
+                PartiallyDefinedBattles = source.PartiallyDefinedBattles?
+                    .Select(p => new PartiallyDefinedBattle
+                    {
+                        BxIndex = p.BxIndex,
+                        RangeStart1 = p.RangeStart1,
+                        RangeEnd1 = p.RangeEnd1,
+                        RangeStart2 = p.RangeStart2,
+                        RangeEnd2 = p.RangeEnd2
+                    })
+                    .ToList() ?? new List<PartiallyDefinedBattle>(),
+                HasAnyTableLoad = source.HasAnyTableLoad,
+                LoadedValues = source.LoadedValues?
+                    .Select(v => new OvrObject.LoadedValueInfo
+                    {
+                        BxIndex = v.BxIndex,
+                        RegName = v.RegName,
+                        Value = v.Value,
+                        SourceAddr = v.SourceAddr,
+                        IsFirstTable = v.IsFirstTable,
+                        IsSaved = v.IsSaved
+                    })
+                    .ToList() ?? new List<OvrObject.LoadedValueInfo>(),
+                PartyEffects = source.PartyEffects?
+                    .Where(e => e != null)
+                    .Select(e => e.Clone())
+                    .ToList() ?? new List<PartyEffect>(),
+                ProbabilityNumerator = source.ProbabilityNumerator,
+                ProbabilityDenominator = source.ProbabilityDenominator,
+                TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
+                TerminatedByTerminalRet = source.TerminatedByTerminalRet,
+                HasBranchSpecificContribution = source.HasBranchSpecificContribution
+            };
         }
 
         private int GetVariantPrecisionScore(PathVariantInfo variant)

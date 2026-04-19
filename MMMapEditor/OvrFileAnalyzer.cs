@@ -851,7 +851,7 @@ namespace MMMapEditor
         private List<PartyEffect> BuildNormalizedPartyEffects(PathAnalysisResult source)
         {
             return PartyEffectNormalizer.Normalize(source)
-                .Where(e => e != null && PartyEffectSemantics.IsStateChanging(e))
+                .Where(PartyEffectSemantics.IsSemanticOutcomeEffect)
                 .ToList();
         }
 

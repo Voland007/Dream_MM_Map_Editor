@@ -62,6 +62,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MMMapEditor
 {
@@ -103,7 +104,7 @@ namespace MMMapEditor
         public uint? LastFlagsInstructionAddress { get; set; }
         public byte? LastCompareImmediate { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
-        public bool? CurrentGenderBranchIsMale { get; set; }
+        public List<PartyConditionWindow> ActivePartyConditionWindows { get; set; } = new List<PartyConditionWindow>();
 
         public void SetFlagsMetadata(string register, FlagsOriginKind origin, uint? instructionAddress = null, bool? fromCoordinate = null)
         {
@@ -1038,7 +1039,7 @@ namespace MMMapEditor
             SignFlag = false;
             OverflowFlag = false;
             FlagsKnown = false;
-            CurrentGenderBranchIsMale = null;
+            ActivePartyConditionWindows.Clear();
         }
 
         public void TrackPartialRegisterOperation(string fullReg, string partialReg,
@@ -1266,7 +1267,10 @@ namespace MMMapEditor
             clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             clone.LastCompareImmediate = this.LastCompareImmediate;
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
-            clone.CurrentGenderBranchIsMale = this.CurrentGenderBranchIsMale;
+            clone.ActivePartyConditionWindows = this.ActivePartyConditionWindows?
+                .Select(window => window?.Clone())
+                .Where(window => window != null)
+                .ToList() ?? new List<PartyConditionWindow>();
             return clone;
         }
     }

@@ -288,7 +288,10 @@ namespace MMMapEditor
         HpWritten = 2,
         GenderWritten = 3,
         GenderCompared = 4,
-        StatusWritten = 5
+        StatusWritten = 5,
+        TechnicalFieldRead = 6,
+        TechnicalFieldWritten = 7,
+        TechnicalFieldCompared = 8
     }
 
     public enum PartyEffectScope
@@ -313,7 +316,8 @@ namespace MMMapEditor
         Transform = 6,
         BitSet = 7,
         BitClear = 8,
-        BitToggle = 9
+        BitToggle = 9,
+        Read = 10
     }
 
     public enum PartyConditionKind
@@ -321,6 +325,36 @@ namespace MMMapEditor
         None = 0,
         MaleOnly = 1,
         FemaleOnly = 2
+    }
+
+    public class PartyConditionWindow
+    {
+        public PartyConditionKind Condition { get; set; } = PartyConditionKind.None;
+        public uint StartAddress { get; set; }
+        public uint EndAddress { get; set; }
+        public PartyMemberReference TargetMember { get; set; }
+
+        public bool IsActiveAt(uint address)
+        {
+            if (Condition == PartyConditionKind.None)
+                return false;
+
+            if (address < StartAddress)
+                return false;
+
+            return EndAddress == 0 || address < EndAddress;
+        }
+
+        public PartyConditionWindow Clone()
+        {
+            return new PartyConditionWindow
+            {
+                Condition = Condition,
+                StartAddress = StartAddress,
+                EndAddress = EndAddress,
+                TargetMember = TargetMember?.Clone()
+            };
+        }
     }
 
     public enum PartyValueKnowledge
@@ -340,6 +374,7 @@ namespace MMMapEditor
         public PartyEffectScope Scope { get; set; } = PartyEffectScope.Unknown;
         public PartyConditionKind Condition { get; set; } = PartyConditionKind.None;
         public int? MemberIndex { get; set; }
+        public int? ObservedMemberIndex { get; set; }
         public bool IsLoopDerived { get; set; }
         public bool AppliesToWholePartyLoop
         {
@@ -399,6 +434,7 @@ namespace MMMapEditor
                 Scope = Scope,
                 Condition = Condition,
                 MemberIndex = MemberIndex,
+                ObservedMemberIndex = ObservedMemberIndex,
                 IsLoopDerived = IsLoopDerived,
                 ValueKnowledge = ValueKnowledge,
                 ImmediateValue = ImmediateValue,

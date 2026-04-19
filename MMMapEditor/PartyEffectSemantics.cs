@@ -67,6 +67,8 @@ namespace MMMapEditor
 
             if (effect.MemberIndex.HasValue)
                 parts.Add($"Member=#{effect.MemberIndex.Value}");
+            else if (effect.ObservedMemberIndex.HasValue)
+                parts.Add($"ObservedMember=#{effect.ObservedMemberIndex.Value}");
 
             if (IsLoopDerived(effect))
                 parts.Add("LoopDerived=True");
@@ -93,6 +95,9 @@ namespace MMMapEditor
             var operation = GetEffectiveOperation(effect);
             var scope = GetEffectiveScope(effect);
             var condition = GetEffectiveCondition(effect);
+
+            if (field == PartyFieldKind.Technical77)
+                return BuildTechnicalField77Description(effect, scope, condition);
 
             if (field == PartyFieldKind.Hp && operation == PartyEffectOperation.Halve)
             {
@@ -202,18 +207,39 @@ namespace MMMapEditor
 
         public static bool IsGuardLike(PartyEffect effect)
         {
-            return effect != null && GetEffectiveOperation(effect) == PartyEffectOperation.Compare;
+            return effect != null &&
+                   GetEffectiveOperation(effect) == PartyEffectOperation.Compare &&
+                   GetEffectiveField(effect) != PartyFieldKind.Technical77;
         }
 
         public static bool IsStateChanging(PartyEffect effect)
         {
-            return effect != null && GetEffectiveOperation(effect) != PartyEffectOperation.Compare;
+            if (effect == null)
+                return false;
+
+            PartyEffectOperation operation = GetEffectiveOperation(effect);
+            return operation != PartyEffectOperation.Compare &&
+                   operation != PartyEffectOperation.Read;
+        }
+
+        public static bool IsSemanticOutcomeEffect(PartyEffect effect)
+        {
+            if (effect == null)
+                return false;
+
+            if (GetEffectiveField(effect) == PartyFieldKind.Technical77)
+                return true;
+
+            return IsStateChanging(effect);
         }
 
         public static bool ShouldIncludeInNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
         {
             if (effect == null)
                 return false;
+
+            if (GetEffectiveField(effect) == PartyFieldKind.Technical77)
+                return true;
 
             if (!IsStateChanging(effect))
                 return false;
@@ -250,6 +276,10 @@ namespace MMMapEditor
                     ? PartyFieldKind.Gender
                     : effect.Kind == PartyEffectKind.StatusWritten
                         ? PartyFieldKind.Status
+                        : effect.Kind == PartyEffectKind.TechnicalFieldRead ||
+                          effect.Kind == PartyEffectKind.TechnicalFieldWritten ||
+                          effect.Kind == PartyEffectKind.TechnicalFieldCompared
+                            ? PartyFieldKind.Technical77
                         : PartyFieldKind.Unknown;
         }
 
@@ -268,6 +298,9 @@ namespace MMMapEditor
                 PartyEffectKind.GenderWritten => PartyEffectOperation.Write,
                 PartyEffectKind.GenderCompared => PartyEffectOperation.Compare,
                 PartyEffectKind.StatusWritten => PartyEffectOperation.Write,
+                PartyEffectKind.TechnicalFieldRead => PartyEffectOperation.Read,
+                PartyEffectKind.TechnicalFieldWritten => PartyEffectOperation.Write,
+                PartyEffectKind.TechnicalFieldCompared => PartyEffectOperation.Compare,
                 _ => PartyEffectOperation.Unknown
             };
         }
@@ -551,6 +584,69 @@ namespace MMMapEditor
             return statusNames.Count == 0 ? null : string.Join(", ", statusNames);
         }
 
+        private static string BuildTechnicalField77Description(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
+        {
+            if (effect == null)
+                return null;
+
+            string target = BuildTechnicalField77Target(effect, scope, condition);
+            string label = PartyTechnicalField77Semantics.FieldLabel;
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            return operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? $"Читается {label} {target} (=0x{effect.ImmediateValue.Value:X2})"
+                    : $"Читается {label} {target}",
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? $"Проверяются биты 0x{effect.ImmediateValue.Value:X2} {label} {target}"
+                        : $"Проверяется {label} {target} на значение 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Проверяется {label} {target}",
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? $"В {label} {target} устанавливаются биты 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется {label} {target}",
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? $"В {label} {target} сбрасываются биты 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется {label} {target}",
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? $"В {label} {target} переключаются биты 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется {label} {target}",
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? $"В {label} {target} записывается 0x{effect.ImmediateValue.Value:X2}"
+                    : $"Изменяется {label} {target}",
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : $"{label}: {target}"
+            };
+        }
+
+        private static string BuildTechnicalField77Target(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
+        {
+            return scope switch
+            {
+                PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
+                    ? $"у персонажа #{effect.MemberIndex.Value}"
+                    : effect.ObservedMemberIndex.HasValue
+                        ? $"у персонажа #{effect.ObservedMemberIndex.Value}"
+                        : "у персонажа",
+                PartyEffectScope.RandomMember => "у случайного члена партии",
+                PartyEffectScope.SelectedMember => "у выбранного члена партии",
+                PartyEffectScope.CurrentLoopMember => "у текущего члена партии",
+                PartyEffectScope.PartySubset => condition switch
+                {
+                    PartyConditionKind.MaleOnly => "у мужчин в партии",
+                    PartyConditionKind.FemaleOnly => "у женщин в партии",
+                    _ => "у части партии"
+                },
+                PartyEffectScope.WholeParty => "у каждого члена партии",
+                _ => effect.ObservedMemberIndex.HasValue
+                    ? $"у персонажа #{effect.ObservedMemberIndex.Value}"
+                    : "у персонажа"
+            };
+        }
+
         private static string BuildStatusTarget(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
         {
             return scope switch
@@ -606,6 +702,7 @@ namespace MMMapEditor
                 PartyFieldKind.HpLow => "младший байт HP",
                 PartyFieldKind.Gender => "пол",
                 PartyFieldKind.Status => "status",
+                PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
                 _ => field.ToString()
             };
         }

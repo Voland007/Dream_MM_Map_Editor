@@ -44,6 +44,7 @@ namespace MMMapEditor
         private const int PARTY_HP_LOW_OFFSET = 0x33;
         private const int PARTY_HP_HIGH_OFFSET = 0x34;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
+        private const int PARTY_TECHNICAL_77_OFFSET = PartyTechnicalField77Semantics.FieldOffset;
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
 
@@ -619,6 +620,7 @@ namespace MMMapEditor
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
                 PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
+                PARTY_TECHNICAL_77_OFFSET => PartyFieldKind.Technical77,
                 _ => PartyFieldKind.Unknown
             };
 
@@ -630,22 +632,88 @@ namespace MMMapEditor
                 Member = member?.Clone(),
                 Field = field,
                 Offset = offset,
-                EffectiveAddress = effectiveAddress
+                EffectiveAddress = effectiveAddress,
+                FieldOffset = (byte)offset,
+                FieldName = field == PartyFieldKind.Technical77
+                    ? PartyTechnicalField77Semantics.FieldLabel
+                    : null
             };
 
             return true;
         }
 
-
-        private PartyConditionKind GetCurrentPartyCondition(RegisterTracker registerTracker)
+        private PartyConditionKind GetCurrentPartyCondition(RegisterTracker registerTracker, uint instructionAddress,
+            PartyMemberReference member = null, LoopSemanticKind loopSemantic = LoopSemanticKind.None)
         {
-            if (registerTracker?.CurrentGenderBranchIsMale == true)
-                return PartyConditionKind.MaleOnly;
+            if (registerTracker?.ActivePartyConditionWindows == null || registerTracker.ActivePartyConditionWindows.Count == 0)
+                return PartyConditionKind.None;
 
-            if (registerTracker?.CurrentGenderBranchIsMale == false)
-                return PartyConditionKind.FemaleOnly;
+            foreach (var window in registerTracker.ActivePartyConditionWindows
+                         .Where(window => window != null && window.IsActiveAt(instructionAddress))
+                         .OrderByDescending(window => window.StartAddress))
+            {
+                if (MatchesPartyConditionTarget(window, member, loopSemantic))
+                    return window.Condition;
+            }
 
             return PartyConditionKind.None;
+        }
+
+        private bool MatchesPartyConditionTarget(PartyConditionWindow window, PartyMemberReference member, LoopSemanticKind loopSemantic)
+        {
+            if (window?.TargetMember == null)
+                return true;
+
+            if (window.TargetMember.IsPartyLoopMember)
+                return IsPartyLoopTarget(member, loopSemantic);
+
+            if (window.TargetMember.SelectionKind == PartyMemberSelectionKind.Random)
+                return member?.SelectionKind == PartyMemberSelectionKind.Random;
+
+            if (window.TargetMember.SelectionKind == PartyMemberSelectionKind.Dynamic &&
+                !window.TargetMember.MemberIndex.HasValue)
+            {
+                return member?.SelectionKind == PartyMemberSelectionKind.Dynamic ||
+                       IsPartyLoopTarget(member, loopSemantic);
+            }
+
+            if (window.TargetMember.MemberIndex.HasValue)
+                return member?.MemberIndex == window.TargetMember.MemberIndex;
+
+            if (window.TargetMember.PointerTableAddress.HasValue && member?.PointerTableAddress.HasValue == true)
+                return window.TargetMember.PointerTableAddress.Value == member.PointerTableAddress.Value;
+
+            if (window.TargetMember.StructureAddress.HasValue && member?.StructureAddress.HasValue == true)
+                return window.TargetMember.StructureAddress.Value == member.StructureAddress.Value;
+
+            return true;
+        }
+
+        private PartyConditionWindow TryBuildBranchConditionWindow(RegisterTracker registerTracker, string mnemonic,
+            bool branchTaken, uint nextAddress, uint branchTarget)
+        {
+            var branchCondition = InferPartyConditionForBranch(registerTracker, mnemonic, branchTaken);
+            if (branchCondition == PartyConditionKind.None)
+                return null;
+
+            if (branchTarget <= nextAddress || branchTaken)
+                return null;
+
+            PartyMemberReference targetMember = null;
+            if (registerTracker != null &&
+                string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase) &&
+                registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField))
+            {
+                targetMember = comparedPartyField?.Member?.Clone();
+            }
+
+            return new PartyConditionWindow
+            {
+                Condition = branchCondition,
+                StartAddress = nextAddress,
+                EndAddress = branchTarget,
+                TargetMember = targetMember
+            };
         }
 
         private void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
@@ -832,6 +900,8 @@ namespace MMMapEditor
             effect.Scope = scope;
             effect.Condition = condition;
             effect.IsLoopDerived = IsPartyLoopTarget(member, loopSemantic);
+            if (!effect.ObservedMemberIndex.HasValue && member?.MemberIndex.HasValue == true)
+                effect.ObservedMemberIndex = member.MemberIndex;
             effect.MemberIndex = scope == PartyEffectScope.SingleMember
                 ? member?.MemberIndex
                 : null;
@@ -986,7 +1056,8 @@ namespace MMMapEditor
             return PartyConditionKind.None;
         }
 
-        private void RegisterPartyFieldRead(PathAnalysisResult result, PartyFieldReference fieldRef, RegisterTracker registerTracker, uint instructionAddress = 0)
+        private void RegisterPartyFieldRead(PathAnalysisResult result, PartyFieldReference fieldRef,
+            RegisterTracker registerTracker, uint instructionAddress = 0, byte? exactValue = null)
         {
             if (result == null || fieldRef == null)
                 return;
@@ -1000,7 +1071,7 @@ namespace MMMapEditor
                 IsRead = true
             });
 
-            var currentCondition = GetCurrentPartyCondition(registerTracker);
+            var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
 
             if (fieldRef.Field == PartyFieldKind.HpHigh || fieldRef.Field == PartyFieldKind.HpLow)
             {
@@ -1020,12 +1091,21 @@ namespace MMMapEditor
                     ApplyPartyConditionToPending(pending, currentCondition);
                 }
             }
+            else if (fieldRef.Field == PartyFieldKind.Technical77)
+            {
+                AddResolvedPartyEffect(
+                    result,
+                    PartyEffectFactory.CreateTechnicalField77ReadEffect(fieldRef.Member, instructionAddress, exactValue),
+                    fieldRef.Member,
+                    currentCondition,
+                    debugPrefix: "Техническое поле персонажа");
+            }
         }
 
         private void RegisterPartyFieldWrite(PathAnalysisResult result, PartyFieldReference fieldRef,
             RegisterTracker registerTracker, uint instructionAddress, bool debugMode,
-            byte? exactValue = null, PartyEffectOperation statusOperation = PartyEffectOperation.Unknown,
-            byte? statusMask = null, PartyFieldReference sourceFieldValue = null)
+            byte? exactValue = null, PartyEffectOperation bitOperation = PartyEffectOperation.Unknown,
+            byte? bitMask = null, PartyFieldReference sourceFieldValue = null)
         {
             if (result == null || fieldRef == null)
                 return;
@@ -1039,7 +1119,7 @@ namespace MMMapEditor
                 IsWrite = true
             });
 
-            var currentCondition = GetCurrentPartyCondition(registerTracker);
+            var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var effects = new List<PartyEffect>();
             if (fieldRef.Field == PartyFieldKind.Gender)
             {
@@ -1095,34 +1175,92 @@ namespace MMMapEditor
                 {
                     effects.AddRange(BuildStatusEffectsFromBitTransform(fieldRef.Member, sourceFieldValue.BitTransform, instructionAddress));
                 }
-                else if (statusMask.HasValue)
+                else if (bitMask.HasValue)
                 {
-                    effects.Add(PartyEffectFactory.CreateStatusBitEffect(fieldRef.Member, statusOperation, statusMask.Value, instructionAddress));
+                    effects.Add(PartyEffectFactory.CreateStatusBitEffect(fieldRef.Member, bitOperation, bitMask.Value, instructionAddress));
                 }
                 else
                 {
                     effects.Add(PartyEffectFactory.CreateStatusWriteEffect(fieldRef.Member, instructionAddress));
                 }
-
-                foreach (var statusEffect in effects.Where(e => e != null))
+            }
+            else if (fieldRef.Field == PartyFieldKind.Technical77)
+            {
+                if (sourceFieldValue?.Field == PartyFieldKind.Technical77 &&
+                    sourceFieldValue.BitTransform != null &&
+                    !sourceFieldValue.BitTransform.IsIdentity)
                 {
-                    ApplyResolvedPartyEffectTarget(statusEffect, fieldRef.Member, result.LoopSemantic, currentCondition);
-
-                    string humanDescription = PartyEffectSemantics.BuildHumanDescription(statusEffect);
-                    if (!string.IsNullOrWhiteSpace(humanDescription))
-                        statusEffect.Description = humanDescription;
+                    effects.AddRange(BuildTechnicalField77EffectsFromBitTransform(fieldRef.Member, sourceFieldValue.BitTransform, instructionAddress));
+                }
+                else if (bitMask.HasValue &&
+                         (bitOperation == PartyEffectOperation.BitSet ||
+                          bitOperation == PartyEffectOperation.BitClear ||
+                          bitOperation == PartyEffectOperation.BitToggle))
+                {
+                    effects.Add(PartyEffectFactory.CreateTechnicalField77BitEffect(fieldRef.Member, bitOperation, bitMask.Value, instructionAddress));
+                }
+                else
+                {
+                    effects.Add(PartyEffectFactory.CreateTechnicalField77WriteEffect(fieldRef.Member, instructionAddress, exactValue));
                 }
             }
 
             foreach (var effect in effects.Where(e => e != null))
             {
-                string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
-                if (!result.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey))
-                    result.PartyEffects.Add(effect);
+                string debugPrefix = fieldRef.Field switch
+                {
+                    PartyFieldKind.Status => "Статус персонажа",
+                    PartyFieldKind.Technical77 => "Техническое поле персонажа",
+                    _ => null
+                };
 
-                if (debugMode && fieldRef.Field == PartyFieldKind.Status && !string.IsNullOrWhiteSpace(effect.Description))
-                    AnalysisDebug.WriteLine($"        Статус персонажа: {effect.Description}");
+                AddResolvedPartyEffect(result, effect, fieldRef.Member, currentCondition, debugPrefix, debugMode);
             }
+        }
+
+        private void AddResolvedPartyEffect(PathAnalysisResult result, PartyEffect effect,
+            PartyMemberReference member, PartyConditionKind currentCondition, string debugPrefix = null, bool debugMode = false)
+        {
+            if (result == null || effect == null)
+                return;
+
+            ApplyResolvedPartyEffectTarget(effect, member, result.LoopSemantic, currentCondition);
+
+            string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
+            if (!string.IsNullOrWhiteSpace(humanDescription))
+                effect.Description = humanDescription;
+
+            string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
+            if (!result.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey))
+                result.PartyEffects.Add(effect);
+
+            if (debugMode && !string.IsNullOrWhiteSpace(debugPrefix) && !string.IsNullOrWhiteSpace(effect.Description))
+                AnalysisDebug.WriteLine($"        {debugPrefix}: {effect.Description}");
+        }
+
+        private void RegisterTechnicalField77CompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
+            RegisterTracker registerTracker, uint instructionAddress, byte compareValue, bool isBitMask, bool debugMode)
+        {
+            if (result == null || fieldRef?.Field != PartyFieldKind.Technical77)
+                return;
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = fieldRef.Member?.Clone(),
+                Field = fieldRef.Field,
+                Offset = fieldRef.Offset,
+                EffectiveAddress = fieldRef.EffectiveAddress,
+                IsRead = true,
+                IsCompare = true
+            });
+
+            AddResolvedPartyEffect(
+                result,
+                PartyEffectFactory.CreateTechnicalField77CompareEffect(fieldRef.Member, instructionAddress, compareValue, isBitMask),
+                fieldRef.Member,
+                GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic),
+                debugPrefix: "Техническое поле персонажа",
+                debugMode: debugMode);
         }
 
         private PartyEffectOperation MapImmediateByteTransformOperation(byte groupOperation)
@@ -1200,7 +1338,38 @@ namespace MMMapEditor
             return effects;
         }
 
-        private void TrackPartyFieldRegisterImmediateTransform(RegisterTracker registerTracker, string regName,
+        private List<PartyEffect> BuildTechnicalField77EffectsFromBitTransform(PartyMemberReference member,
+            PartyFieldBitTransform bitTransform, uint instructionAddress)
+        {
+            var effects = new List<PartyEffect>();
+            if (bitTransform == null || bitTransform.IsIdentity)
+                return effects;
+
+            void AddEffect(PartyEffectOperation operation, byte mask)
+            {
+                if (mask == 0)
+                    return;
+
+                PartyEffect effect = PartyEffectFactory.CreateTechnicalField77BitEffect(member, operation, mask, instructionAddress);
+                if (effect != null)
+                    effects.Add(effect);
+            }
+
+            AddEffect(PartyEffectOperation.BitSet, bitTransform.SetMask);
+            AddEffect(PartyEffectOperation.BitClear, bitTransform.ClearMask);
+            AddEffect(PartyEffectOperation.BitToggle, bitTransform.ToggleMask);
+
+            if (effects.Count == 0)
+            {
+                PartyEffect unknownEffect = PartyEffectFactory.CreateTechnicalField77WriteEffect(member, instructionAddress);
+                if (unknownEffect != null)
+                    effects.Add(unknownEffect);
+            }
+
+            return effects;
+        }
+
+        private void TrackPartyFieldRegisterImmediateTransform(PathAnalysisResult result, RegisterTracker registerTracker, string regName,
             PartyEffectOperation operation, byte immediateValue, uint instructionAddress, bool debugMode)
         {
             if (registerTracker == null || string.IsNullOrWhiteSpace(regName))
@@ -2029,7 +2198,7 @@ namespace MMMapEditor
                     Condition = $"{insn.Mnemonic} {insn.Operand}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, nextAddress, condJumpTarget),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
                     IsInputChoiceBranch = isInputChoiceBranch,
@@ -2059,7 +2228,7 @@ namespace MMMapEditor
                     Condition = $"LINEAR after {insn.Mnemonic}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, nextAddress, condJumpTarget),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
                     IsInputChoiceBranch = isInputChoiceBranch,
@@ -2234,7 +2403,8 @@ namespace MMMapEditor
             }
         }
 
-        private RegisterTracker CloneRegisterStateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        private RegisterTracker CloneRegisterStateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
+            uint nextAddress, uint branchTarget)
         {
             var clone = registerTracker?.Clone() ?? new RegisterTracker();
 
@@ -2244,14 +2414,11 @@ namespace MMMapEditor
                 clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
             }
 
-            var branchCondition = InferPartyConditionForBranch(registerTracker, mnemonic, branchTaken);
-            if (branchCondition == PartyConditionKind.MaleOnly)
+            var conditionWindow = TryBuildBranchConditionWindow(registerTracker, mnemonic, branchTaken, nextAddress, branchTarget);
+            if (conditionWindow != null)
             {
-                clone.CurrentGenderBranchIsMale = true;
-            }
-            else if (branchCondition == PartyConditionKind.FemaleOnly)
-            {
-                clone.CurrentGenderBranchIsMale = false;
+                clone.ActivePartyConditionWindows ??= new List<PartyConditionWindow>();
+                clone.ActivePartyConditionWindows.Add(conditionWindow);
             }
 
             return clone;
@@ -3226,7 +3393,7 @@ namespace MMMapEditor
                                 {
                                     registerTracker.SetPartyFieldValue(regName, partyFieldRef);
                                     registerTracker.ClearPartyPointerByteValue(regName);
-                                    RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address);
+                                    RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address, value);
                                 }
                                 else if (hasPointerByteSemantic8A)
                                 {
@@ -3495,6 +3662,7 @@ namespace MMMapEditor
                 };
 
                 TrackPartyFieldRegisterImmediateTransform(
+                    result,
                     registerTracker,
                     "AL",
                     accumulatorOperation,
@@ -3715,8 +3883,12 @@ namespace MMMapEditor
                 byte immediateValue = instructionBytes[1];
 
                 bool hasKnownAlForCompare = registerTracker.TryGetByteRegisterValue("AL", out byte alValue);
-                bool hasPartyGenderCompare = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
-                    comparedPartyField?.Field == PartyFieldKind.Gender;
+                bool hasComparedPartyField = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
+                    comparedPartyField != null;
+                bool hasPartyGenderCompare = hasComparedPartyField &&
+                    comparedPartyField.Field == PartyFieldKind.Gender;
+                bool hasTechnicalFieldCompare = hasComparedPartyField &&
+                    comparedPartyField.Field == PartyFieldKind.Technical77;
 
                 if (hasKnownAlForCompare)
                 {
@@ -3729,7 +3901,7 @@ namespace MMMapEditor
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                 }
-                else if (hasPartyGenderCompare)
+                else if (hasPartyGenderCompare || hasTechnicalFieldCompare)
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
@@ -3770,6 +3942,18 @@ namespace MMMapEditor
                             result.PartyEffects.Add(compareEffect);
                     }
                 }
+
+                if (hasTechnicalFieldCompare)
+                {
+                    RegisterTechnicalField77CompareEffect(
+                        result,
+                        comparedPartyField,
+                        registerTracker,
+                        address,
+                        immediateValue,
+                        isBitMask: false,
+                        debugMode);
+                }
             }
 
             // OR AL, AL / TEST AL, AL (точное выставление флагов для проверок на ноль)
@@ -3783,6 +3967,46 @@ namespace MMMapEditor
                     registerTracker.OverflowFlag = false;
                     registerTracker.FlagsKnown = true;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
+            }
+
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xA8)
+            {
+                byte immediateValue = instructionBytes[1];
+                bool hasTechnicalFieldCompare = registerTracker.TryGetPartyFieldValue("AL", out var testedPartyField) &&
+                    testedPartyField?.Field == PartyFieldKind.Technical77;
+
+                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                {
+                    byte testResult = (byte)(alValue & immediateValue);
+                    registerTracker.ZeroFlag = testResult == 0;
+                    registerTracker.SignFlag = (testResult & 0x80) != 0;
+                    registerTracker.CarryFlag = false;
+                    registerTracker.OverflowFlag = false;
+                    registerTracker.FlagsKnown = true;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
+                else if (registerTracker.TryGetRegisterRange("AL", out var _))
+                {
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
+                else if (hasTechnicalFieldCompare)
+                {
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
+
+                if (hasTechnicalFieldCompare)
+                {
+                    RegisterTechnicalField77CompareEffect(
+                        result,
+                        testedPartyField,
+                        registerTracker,
+                        address,
+                        immediateValue,
+                        isBitMask: true,
+                        debugMode);
                 }
             }
 
@@ -3810,16 +4034,40 @@ namespace MMMapEditor
                 if (mode == 0x03 && operation == 0x07)
                 {
                     string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-                    if (regIndex < regNames8.Length && registerTracker.TryGetByteRegisterValue(regNames8[regIndex], out byte regValue))
+                    string regName = regIndex < regNames8.Length ? regNames8[regIndex] : null;
+                    PartyFieldReference comparedPartyField = null;
+                    bool hasTechnicalFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
+                        registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
+                        comparedPartyField?.Field == PartyFieldKind.Technical77;
+
+                    if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
                     {
                         byte cmpResult = (byte)(regValue - immediateValue);
-                        SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult, regNames8[regIndex], RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult, regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         registerTracker.LastCompareImmediate = immediateValue;
                     }
-                    else if (regIndex < regNames8.Length && registerTracker.TryGetRegisterRange(regNames8[regIndex], out var _))
+                    else if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetRegisterRange(regName, out var _))
                     {
-                        registerTracker.SetFlagsMetadata(regNames8[regIndex], RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         registerTracker.LastCompareImmediate = immediateValue;
+                    }
+                    else if (hasTechnicalFieldCompare)
+                    {
+                        registerTracker.FlagsKnown = false;
+                        registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        registerTracker.LastCompareImmediate = immediateValue;
+                    }
+
+                    if (hasTechnicalFieldCompare)
+                    {
+                        RegisterTechnicalField77CompareEffect(
+                            result,
+                            comparedPartyField,
+                            registerTracker,
+                            address,
+                            immediateValue,
+                            isBitMask: false,
+                            debugMode);
                     }
                 }
                 else if (mode == 0x03)
@@ -3829,6 +4077,7 @@ namespace MMMapEditor
                     if (registerOperation != PartyEffectOperation.Unknown && regIndex < regNames8.Length)
                     {
                         TrackPartyFieldRegisterImmediateTransform(
+                            result,
                             registerTracker,
                             regNames8[regIndex],
                             registerOperation,
@@ -3839,6 +4088,43 @@ namespace MMMapEditor
                 }
                 else
                 {
+                    if (operation == 0x07)
+                    {
+                        bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _);
+                        PartyFieldReference comparedFieldRef = null;
+                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(
+                            instructionBytes,
+                            registerTracker,
+                            hasExactMemAddr ? memAddr : (ushort?)null,
+                            out comparedFieldRef);
+
+                        if (hasExactMemAddr &&
+                            TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
+                        {
+                            byte cmpResult = (byte)(memValue - immediateValue);
+                            SetArithmeticFlagsForSub8(registerTracker, memValue, immediateValue, cmpResult, null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        }
+                        else if (hasPartyFieldRef && comparedFieldRef?.Field == PartyFieldKind.Technical77)
+                        {
+                            registerTracker.FlagsKnown = false;
+                            registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        }
+
+                        registerTracker.LastCompareImmediate = immediateValue;
+
+                        if (hasPartyFieldRef && comparedFieldRef?.Field == PartyFieldKind.Technical77)
+                        {
+                            RegisterTechnicalField77CompareEffect(
+                                result,
+                                comparedFieldRef,
+                                registerTracker,
+                                address,
+                                immediateValue,
+                                isBitMask: false,
+                                debugMode);
+                        }
+                    }
+
                     PartyEffectOperation memoryOperation = MapImmediateByteTransformOperation(operation);
                     if (memoryOperation != PartyEffectOperation.Unknown)
                     {
@@ -3849,34 +4135,139 @@ namespace MMMapEditor
                         PartyFieldReference partyFieldRef = null;
                         bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
 
-                        if (hasPartyFieldRef && partyFieldRef.Field == PartyFieldKind.Status)
+                        if (hasPartyFieldRef && (partyFieldRef.Field == PartyFieldKind.Status || partyFieldRef.Field == PartyFieldKind.Technical77))
                         {
-                            byte? exactStatusValue = null;
+                            byte? exactByteValue = null;
+                            byte? currentByteValue = null;
                             if (hasExactMemAddr &&
-                                TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentStatusValue) &&
-                                TryApplyImmediateByteTransform(currentStatusValue, immediateValue, memoryOperation, out byte transformedStatusValue))
+                                TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte resolvedByteValue))
                             {
-                                exactStatusValue = transformedStatusValue;
+                                currentByteValue = resolvedByteValue;
+                                if (TryApplyImmediateByteTransform(resolvedByteValue, immediateValue, memoryOperation, out byte transformedStatusValue))
+                                    exactByteValue = transformedStatusValue;
                             }
 
-                            byte relevantMask = GetRelevantStatusMask(memoryOperation, immediateValue);
+                            byte relevantMask = partyFieldRef.Field == PartyFieldKind.Status
+                                ? GetRelevantStatusMask(memoryOperation, immediateValue)
+                                : PartyTechnicalField77Semantics.GetRelevantMask(memoryOperation, immediateValue);
+
+                            if (partyFieldRef.Field == PartyFieldKind.Technical77)
+                                RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address, currentByteValue);
+
                             RegisterPartyFieldWrite(
                                 result,
                                 partyFieldRef,
                                 registerTracker,
                                 address,
                                 debugMode,
-                                exactStatusValue,
+                                exactByteValue,
                                 memoryOperation,
                                 relevantMask != 0 ? relevantMask : (byte?)null);
 
                             if (debugMode)
                             {
-                                string valueText = exactStatusValue.HasValue
-                                    ? $" -> 0x{exactStatusValue.Value:X2}"
+                                string valueText = exactByteValue.HasValue
+                                    ? $" -> 0x{exactByteValue.Value:X2}"
                                     : string.Empty;
-                                AnalysisDebug.WriteLine($"        Распознано изменение статуса персонажа через byte ptr {eaText}, 0x{immediateValue:X2}{valueText}");
+                                string fieldText = partyFieldRef.Field == PartyFieldKind.Status
+                                    ? "статуса персонажа"
+                                    : PartyTechnicalField77Semantics.FieldLabel;
+                                AnalysisDebug.WriteLine($"        Распознано изменение {fieldText} через byte ptr {eaText}, 0x{immediateValue:X2}{valueText}");
                             }
+                        }
+                    }
+                }
+            }
+
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xF6)
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte operation = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+                byte immediateValue = instructionBytes[2];
+
+                if (operation == 0x00)
+                {
+                    if (mod == 0x03)
+                    {
+                        string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                        string regName = rm < regNames8.Length ? regNames8[rm] : null;
+                        PartyFieldReference comparedPartyField = null;
+                        bool hasTechnicalFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
+                            registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
+                            comparedPartyField?.Field == PartyFieldKind.Technical77;
+
+                        if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
+                        {
+                            byte testResult = (byte)(regValue & immediateValue);
+                            registerTracker.ZeroFlag = testResult == 0;
+                            registerTracker.SignFlag = (testResult & 0x80) != 0;
+                            registerTracker.CarryFlag = false;
+                            registerTracker.OverflowFlag = false;
+                            registerTracker.FlagsKnown = true;
+                            registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
+                        }
+                        else if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetRegisterRange(regName, out var _))
+                        {
+                            registerTracker.FlagsKnown = false;
+                            registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
+                        }
+                        else if (hasTechnicalFieldCompare)
+                        {
+                            registerTracker.FlagsKnown = false;
+                            registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
+                        }
+
+                        if (hasTechnicalFieldCompare)
+                        {
+                            RegisterTechnicalField77CompareEffect(
+                                result,
+                                comparedPartyField,
+                                registerTracker,
+                                address,
+                                immediateValue,
+                                isBitMask: true,
+                                debugMode);
+                        }
+                    }
+                    else
+                    {
+                        bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _);
+                        PartyFieldReference testedFieldRef = null;
+                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(
+                            instructionBytes,
+                            registerTracker,
+                            hasExactMemAddr ? memAddr : (ushort?)null,
+                            out testedFieldRef);
+
+                        if (hasExactMemAddr &&
+                            TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
+                        {
+                            byte testResult = (byte)(memValue & immediateValue);
+                            registerTracker.ZeroFlag = testResult == 0;
+                            registerTracker.SignFlag = (testResult & 0x80) != 0;
+                            registerTracker.CarryFlag = false;
+                            registerTracker.OverflowFlag = false;
+                            registerTracker.FlagsKnown = true;
+                            registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
+                        }
+                        else if (hasPartyFieldRef && testedFieldRef?.Field == PartyFieldKind.Technical77)
+                        {
+                            registerTracker.FlagsKnown = false;
+                            registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
+                        }
+
+                        if (hasPartyFieldRef && testedFieldRef?.Field == PartyFieldKind.Technical77)
+                        {
+                            RegisterTechnicalField77CompareEffect(
+                                result,
+                                testedFieldRef,
+                                registerTracker,
+                                address,
+                                immediateValue,
+                                isBitMask: true,
+                                debugMode);
                         }
                     }
                 }

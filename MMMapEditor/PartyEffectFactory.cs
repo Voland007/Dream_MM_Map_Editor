@@ -120,6 +120,88 @@ namespace MMMapEditor
             };
         }
 
+        public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
+            uint instructionAddress, byte? exactValue = null)
+        {
+            return new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldRead,
+                Field = PartyFieldKind.Technical77,
+                Operation = PartyEffectOperation.Read,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
+                InstructionAddress = instructionAddress,
+                Description = BuildTechnicalField77ReadDescription(member, exactValue)
+            };
+        }
+
+        public static PartyEffect CreateTechnicalField77CompareEffect(PartyMemberReference member,
+            uint instructionAddress, byte compareValue, bool isBitMask)
+        {
+            return new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldCompared,
+                Field = PartyFieldKind.Technical77,
+                Operation = PartyEffectOperation.Compare,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = isBitMask ? PartyValueKnowledge.ExactDerived : PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = compareValue,
+                InstructionAddress = instructionAddress,
+                Description = isBitMask
+                    ? BuildTechnicalField77BitReadDescription(member, compareValue)
+                    : BuildTechnicalField77CompareDescription(member, compareValue)
+            };
+        }
+
+        public static PartyEffect CreateTechnicalField77WriteEffect(PartyMemberReference member,
+            uint instructionAddress, byte? exactValue = null)
+        {
+            return new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldWritten,
+                Field = PartyFieldKind.Technical77,
+                Operation = PartyEffectOperation.Write,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
+                InstructionAddress = instructionAddress,
+                Description = BuildTechnicalField77WriteDescription(member, exactValue)
+            };
+        }
+
+        public static PartyEffect CreateTechnicalField77BitEffect(PartyMemberReference member,
+            PartyEffectOperation operation, byte mask, uint instructionAddress)
+        {
+            if ((operation != PartyEffectOperation.BitSet &&
+                 operation != PartyEffectOperation.BitClear &&
+                 operation != PartyEffectOperation.BitToggle) ||
+                mask == 0)
+            {
+                return null;
+            }
+
+            return new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldWritten,
+                Field = PartyFieldKind.Technical77,
+                Operation = operation,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = mask,
+                InstructionAddress = instructionAddress,
+                Description = BuildTechnicalField77BitWriteDescription(member, operation, mask)
+            };
+        }
+
         private static PartyEffectScope ResolveScope(PartyMemberReference member, LoopSemanticKind loopSemantic, PartyConditionKind condition)
         {
             if (IsLoopTarget(member, loopSemantic))
@@ -293,6 +375,66 @@ namespace MMMapEditor
                 return $"Персонаж #{member.MemberIndex.Value}";
 
             return "Персонаж";
+        }
+
+        private static string BuildTechnicalField77ReadDescription(PartyMemberReference member, byte? exactValue)
+        {
+            string target = BuildTechnicalField77Target(member);
+            return exactValue.HasValue
+                ? $"Читается {PartyTechnicalField77Semantics.FieldLabel} {target} (=0x{exactValue.Value:X2})"
+                : $"Читается {PartyTechnicalField77Semantics.FieldLabel} {target}";
+        }
+
+        private static string BuildTechnicalField77CompareDescription(PartyMemberReference member, byte compareValue)
+        {
+            string target = BuildTechnicalField77Target(member);
+            return $"Проверяется {PartyTechnicalField77Semantics.FieldLabel} {target} на значение 0x{compareValue:X2}";
+        }
+
+        private static string BuildTechnicalField77BitReadDescription(PartyMemberReference member, byte mask)
+        {
+            string target = BuildTechnicalField77Target(member);
+            return $"Проверяются биты 0x{mask:X2} {PartyTechnicalField77Semantics.FieldLabel} {target}";
+        }
+
+        private static string BuildTechnicalField77WriteDescription(PartyMemberReference member, byte? exactValue)
+        {
+            string target = BuildTechnicalField77Target(member);
+            return exactValue.HasValue
+                ? $"В {PartyTechnicalField77Semantics.FieldLabel} {target} записывается 0x{exactValue.Value:X2}"
+                : $"Изменяется {PartyTechnicalField77Semantics.FieldLabel} {target}";
+        }
+
+        private static string BuildTechnicalField77BitWriteDescription(PartyMemberReference member,
+            PartyEffectOperation operation, byte mask)
+        {
+            string target = BuildTechnicalField77Target(member);
+            string action = operation switch
+            {
+                PartyEffectOperation.BitSet => "устанавливаются",
+                PartyEffectOperation.BitClear => "сбрасываются",
+                PartyEffectOperation.BitToggle => "переключаются",
+                _ => "изменяются"
+            };
+
+            return $"В {PartyTechnicalField77Semantics.FieldLabel} {target} {action} биты 0x{mask:X2}";
+        }
+
+        private static string BuildTechnicalField77Target(PartyMemberReference member)
+        {
+            if (IsLoopTarget(member, LoopSemanticKind.None))
+                return "у членов партии";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
+                return "у случайного члена партии";
+
+            if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
+                return "у выбранного члена партии";
+
+            if (member?.MemberIndex.HasValue == true)
+                return $"у персонажа #{member.MemberIndex.Value}";
+
+            return "у персонажа";
         }
     }
 }

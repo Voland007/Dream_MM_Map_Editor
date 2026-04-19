@@ -24,7 +24,8 @@ namespace MMMapEditor
         Hp = 2,
         HpLow = 3,
         HpHigh = 4,
-        Status = 5
+        Status = 5,
+        Technical77 = 6
     }
 
     public enum PartyMemberSelectionKind
