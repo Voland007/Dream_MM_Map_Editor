@@ -210,6 +210,7 @@ namespace MMMapEditor
 
             return exactValue.Value switch
             {
+                PartyStatusSemantics.GoodValue => $"{subject}: GOOD",
                 PartyStatusSemantics.EradicatedValue => $"{subject}: ERADICATED",
                 PartyStatusSemantics.ParalyzedMask => $"{subject}: PARALYZED",
                 PartyStatusSemantics.UnconsciousMask => $"{subject}: UNCONSCIOUS",
@@ -240,7 +241,7 @@ namespace MMMapEditor
             if (!exactValue.HasValue)
                 return BuildStatusChangeDescription(member, "Состояние неопределено");
 
-            var statusNames = PartyStatusSemantics.GetTrackedStatusNames(exactValue.Value);
+            var statusNames = PartyStatusSemantics.GetStatusNamesForExactValue(exactValue.Value);
             return statusNames.Count > 0
                 ? BuildStatusChangeDescription(member, string.Join(", ", statusNames))
                 : BuildStatusChangeDescription(member, "Состояние неопределено");

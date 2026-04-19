@@ -2123,7 +2123,7 @@ namespace MMMapEditor
 
                 var statusWordMatches = Regex.Matches(
                     statusesGroup.Value,
-                    @"PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
+                    @"GOOD|PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
                     RegexOptions.IgnoreCase);
 
                 foreach (Match statusMatch in statusWordMatches)

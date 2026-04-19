@@ -20,11 +20,23 @@ namespace MMMapEditor
     public static class PartyStatusSemantics
     {
         public const int FieldOffset = 0x3F;
+        public const byte GoodValue = 0x00;
         public const byte EradicatedValue = 0xFF;
         public const byte ParalyzedMask = 0x20;
         public const byte UnconsciousMask = 0x40;
         public const byte DeadMask = 0x80;
         public const byte TrackedMask = ParalyzedMask | UnconsciousMask | DeadMask;
+
+        public static List<string> GetStatusNamesForExactValue(byte value)
+        {
+            if (value == GoodValue)
+                return new List<string> { "GOOD" };
+
+            if (value == EradicatedValue)
+                return new List<string> { "ERADICATED" };
+
+            return GetTrackedStatusNames(value);
+        }
 
         public static List<string> GetTrackedStatusNames(byte value)
         {
@@ -47,7 +59,7 @@ namespace MMMapEditor
 
         public static bool HasTrackedStatuses(byte value)
         {
-            return value == EradicatedValue || (value & TrackedMask) != 0;
+            return value == GoodValue || value == EradicatedValue || (value & TrackedMask) != 0;
         }
     }
 }

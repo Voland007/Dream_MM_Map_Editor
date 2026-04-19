@@ -547,7 +547,7 @@ namespace MMMapEditor
 
         private static string FormatStatusNames(ushort rawValue)
         {
-            var statusNames = PartyStatusSemantics.GetTrackedStatusNames((byte)rawValue);
+            var statusNames = PartyStatusSemantics.GetStatusNamesForExactValue((byte)rawValue);
             return statusNames.Count == 0 ? null : string.Join(", ", statusNames);
         }
 
