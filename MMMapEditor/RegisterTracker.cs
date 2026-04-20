@@ -1239,26 +1239,6 @@ namespace MMMapEditor
             string fullRegUpper = fullReg?.ToUpperInvariant();
             string partialRegUpper = partialReg?.ToUpperInvariant();
 
-            bool keepExistingTableSource = false;
-
-            if (!string.IsNullOrWhiteSpace(partialRegUpper) &&
-                registerSources2.TryGetValue(partialRegUpper, out var partialExisting) &&
-                partialExisting.fromTable)
-            {
-                keepExistingTableSource = true;
-            }
-
-            if (!keepExistingTableSource &&
-                !string.IsNullOrWhiteSpace(fullRegUpper) &&
-                registerSources2.TryGetValue(fullRegUpper, out var fullExisting) &&
-                fullExisting.fromTable)
-            {
-                keepExistingTableSource = true;
-            }
-
-            if (keepExistingTableSource)
-                return;
-
             string tableType = sourceTable;
             if (tableType == null && fromTable)
                 tableType = ResolveKnownTableType(sourceAddr);

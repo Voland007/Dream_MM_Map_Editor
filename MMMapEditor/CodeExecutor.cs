@@ -135,7 +135,15 @@ namespace MMMapEditor
                                 result.LoopStartAddress = currentAddress;
                             }
 
+                            if (result.PartialBattleInfo.Count > 0)
+                            {
+                                AnalyzePartialBattleRanges(br, result, isFinalPass: true);
+                            }
+
+                            result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
+                            result.ExitCallDepth = currentCallDepth;
                             result.IsTerminated = true;
+                            FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
                             return result;
                         }
 
@@ -3027,10 +3035,12 @@ namespace MMMapEditor
                 registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareMemory &&
                 registerTracker.LastComparedMemoryAddress == BATTLE_MONSTER_COUNT_ADDRESS;
 
+            bool hasObservedSequentialBattleProgress = HasObservedSequentialBattleProgress(result, registerTracker);
+
             bool comparesAgainstImmediateBattleLimit =
                 registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate &&
                 registerTracker.LastCompareImmediate.HasValue &&
-                result.BattleMonsterEntries.Count > 0;
+                hasObservedSequentialBattleProgress;
 
             if (!comparesAgainstBattleMonsterCount && !comparesAgainstImmediateBattleLimit)
                 return false;
@@ -3111,6 +3121,27 @@ namespace MMMapEditor
             }
 
             return true;
+        }
+
+        private static bool HasObservedSequentialBattleProgress(PathAnalysisResult result, RegisterTracker registerTracker)
+        {
+            if (result == null || registerTracker == null)
+                return false;
+
+            string counterRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (!string.Equals(counterRegister, "BL", StringComparison.OrdinalIgnoreCase) ||
+                !registerTracker.TryGetByteRegisterValue(counterRegister, out byte counterValue) ||
+                counterValue == 0)
+            {
+                return false;
+            }
+
+            int expectedLastBx = counterValue - 1;
+
+            if (result.BattleMonsterEntries.ContainsKey(expectedLastBx))
+                return true;
+
+            return result.PartialBattleInfo.Any(info => info.BxIndex == expectedLastBx);
         }
 
         private static void SetArithmeticFlagsForAdd8(RegisterTracker registerTracker, byte left, byte right, byte result)
