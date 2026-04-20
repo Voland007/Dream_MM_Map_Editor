@@ -1565,6 +1565,111 @@ namespace MMMapEditor
             }
         }
 
+        private void FormatRainbowPartyGenderNotes(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText))
+                return;
+
+            ApplyRainbowBackgroundToExactText(rt, noteText, "Меняется пол у женщин в партии");
+            ApplyRainbowBackgroundToExactText(rt, noteText, "Меняется пол у мужчин в партии");
+        }
+
+        private void ApplyRainbowBackgroundToExactText(RichTextBox rt, string noteText, string targetText)
+        {
+            int searchStart = 0;
+
+            while (searchStart < noteText.Length)
+            {
+                int matchIndex = noteText.IndexOf(targetText, searchStart, StringComparison.Ordinal);
+                if (matchIndex < 0)
+                    break;
+
+                ApplyRainbowBackgroundStyle(rt, matchIndex, targetText);
+                searchStart = matchIndex + targetText.Length;
+            }
+        }
+
+        private void ApplyRainbowBackgroundStyle(RichTextBox rt, int startIndex, string text)
+        {
+            Color[] rainbowStops = new Color[]
+            {
+                Color.FromArgb(230, 60, 60),
+                Color.FromArgb(255, 140, 0),
+                Color.FromArgb(255, 215, 0),
+                Color.FromArgb(70, 190, 110),
+                Color.FromArgb(70, 150, 255),
+                Color.FromArgb(75, 0, 130),
+                Color.FromArgb(180, 70, 220)
+            };
+
+            int coloredCharacterCount = 0;
+            foreach (char ch in text)
+            {
+                if (!char.IsWhiteSpace(ch))
+                    coloredCharacterCount++;
+            }
+
+            if (coloredCharacterCount == 0)
+                return;
+
+            int coloredCharacterIndex = 0;
+            Color currentBackgroundColor = rainbowStops[0];
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (!char.IsWhiteSpace(text[i]))
+                {
+                    double progress = coloredCharacterCount == 1
+                        ? 1.0
+                        : (double)coloredCharacterIndex / (coloredCharacterCount - 1);
+
+                    currentBackgroundColor = InterpolateRainbowColor(rainbowStops, progress);
+                    coloredCharacterIndex++;
+                }
+
+                rt.Select(startIndex + i, 1);
+                rt.SelectionBackColor = currentBackgroundColor;
+                rt.SelectionColor = GetReadableTextColor(currentBackgroundColor);
+            }
+        }
+
+        private Color InterpolateRainbowColor(Color[] rainbowStops, double progress)
+        {
+            if (rainbowStops == null || rainbowStops.Length == 0)
+                return Color.Black;
+
+            if (rainbowStops.Length == 1)
+                return rainbowStops[0];
+
+            if (progress <= 0)
+                return rainbowStops[0];
+
+            if (progress >= 1)
+                return rainbowStops[rainbowStops.Length - 1];
+
+            double scaledProgress = progress * (rainbowStops.Length - 1);
+            int leftIndex = (int)Math.Floor(scaledProgress);
+            int rightIndex = Math.Min(leftIndex + 1, rainbowStops.Length - 1);
+            double segmentProgress = scaledProgress - leftIndex;
+
+            Color leftColor = rainbowStops[leftIndex];
+            Color rightColor = rainbowStops[rightIndex];
+
+            return Color.FromArgb(
+                (int)Math.Round(leftColor.R + ((rightColor.R - leftColor.R) * segmentProgress)),
+                (int)Math.Round(leftColor.G + ((rightColor.G - leftColor.G) * segmentProgress)),
+                (int)Math.Round(leftColor.B + ((rightColor.B - leftColor.B) * segmentProgress)));
+        }
+
+        private Color GetReadableTextColor(Color backgroundColor)
+        {
+            double brightness = (backgroundColor.R * 0.299) +
+                (backgroundColor.G * 0.587) +
+                (backgroundColor.B * 0.114);
+
+            return brightness >= 150 ? Color.Black : Color.White;
+        }
+
         // Теперь форматируем силу, уровень, затемнённость и шанс случайной встречи
         private void FormatMapLevelMetaParameters(RichTextBox rt, string noteText)
         {
@@ -1980,6 +2085,9 @@ namespace MMMapEditor
 
                 // Форматирование для loot-блоков
                 FormatLootBlocks(notesTextBox, noteText);
+
+                // Радужный фон для заметок о смене пола в партии
+                FormatRainbowPartyGenderNotes(notesTextBox, noteText);
             }
         }
 
