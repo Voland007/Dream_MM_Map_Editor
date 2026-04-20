@@ -2080,6 +2080,11 @@ namespace MMMapEditor
             if (lines == null || lines.Count == 0)
                 return lines;
 
+            // Для неявных контейнеров анализатор может сначала распознать содержимое,
+            // а строку контейнера добавить только позже. Перед нумерацией поднимаем
+            // такой контейнер к началу contiguous loot-блока.
+            lines = NormalizeLootBlockOrder(lines);
+
             var result = new List<string>();
             int i = 0;
 
@@ -2141,6 +2146,62 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static List<string> NormalizeLootBlockOrder(List<string> lines)
+        {
+            if (lines == null || lines.Count < 2)
+                return lines;
+
+            var result = new List<string>(lines);
+
+            for (int i = 1; i < result.Count; i++)
+            {
+                if (!IsContainerLootIntroLine(result[i]))
+                    continue;
+
+                if (IsContainerLootIntroLine(result[i - 1]))
+                    continue;
+
+                int blockStart = FindPrecedingLootPayloadStart(result, i);
+                if (blockStart < 0 || blockStart >= i)
+                    continue;
+
+                string containerLine = result[i];
+                result.RemoveAt(i);
+                result.Insert(blockStart, containerLine);
+            }
+
+            return result;
+        }
+
+        private static int FindPrecedingLootPayloadStart(List<string> lines, int containerIndex)
+        {
+            if (lines == null || containerIndex <= 0 || containerIndex > lines.Count - 1)
+                return -1;
+
+            int start = containerIndex;
+
+            for (int i = containerIndex - 1; i >= 0; i--)
+            {
+                if (!IsLootPayloadLine(lines[i]))
+                    break;
+
+                start = i;
+            }
+
+            return start == containerIndex ? -1 : start;
+        }
+
+        private static bool IsLootPayloadLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return IsProbabilityLootHeader(line)
+                || IsProbabilityLootItemLine(line)
+                || IsExplicitLootValueLine(line)
+                || IsPlainLootItemLine(line);
         }
 
         private static bool IsExplicitLootValueLine(string line)
