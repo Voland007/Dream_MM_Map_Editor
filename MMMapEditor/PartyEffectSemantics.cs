@@ -174,21 +174,35 @@ namespace MMMapEditor
                 string statusesText = FormatStatusNames(effect.ImmediateValue.Value);
                 if (!string.IsNullOrWhiteSpace(statusesText))
                 {
+                    string conditionStatusesText = BuildStatusChangeText(operation, statusesText);
+
                     if (scope == PartyEffectScope.PartySubset)
                     {
                         if (condition == PartyConditionKind.MaleOnly)
-                            return $"CONDITION мужчин в партии изменяется на {statusesText}";
+                            return $"CONDITION мужчин в партии изменяется на {conditionStatusesText}";
 
                         if (condition == PartyConditionKind.FemaleOnly)
-                            return $"CONDITION женщин в партии изменяется на {statusesText}";
+                            return $"CONDITION женщин в партии изменяется на {conditionStatusesText}";
 
-                        return $"CONDITION части партии изменяется на {statusesText}";
+                        return $"CONDITION части партии изменяется на {conditionStatusesText}";
                     }
 
                     if (scope == PartyEffectScope.RandomMember &&
-                        (operation == PartyEffectOperation.BitSet || operation == PartyEffectOperation.Write))
+                        (operation == PartyEffectOperation.BitSet ||
+                         operation == PartyEffectOperation.BitClear ||
+                         operation == PartyEffectOperation.BitToggle ||
+                         operation == PartyEffectOperation.Write))
                     {
-                        return $"CONDITION случайного персонажа в партии изменяется на {statusesText}";
+                        return $"CONDITION случайного персонажа в партии изменяется на {conditionStatusesText}";
+                    }
+
+                    if (scope == PartyEffectScope.WholeParty &&
+                        (operation == PartyEffectOperation.BitSet ||
+                         operation == PartyEffectOperation.BitClear ||
+                         operation == PartyEffectOperation.BitToggle ||
+                         operation == PartyEffectOperation.Write))
+                    {
+                        return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
                     }
 
                     string statusTarget = BuildStatusTarget(effect, scope, condition);
@@ -686,6 +700,19 @@ namespace MMMapEditor
         {
             var statusNames = PartyStatusSemantics.GetStatusNamesForExactValue((byte)rawValue);
             return statusNames.Count == 0 ? null : string.Join(", ", statusNames);
+        }
+
+        private static string BuildStatusChangeText(PartyEffectOperation operation, string statusesText)
+        {
+            if (string.IsNullOrWhiteSpace(statusesText))
+                return statusesText;
+
+            return operation switch
+            {
+                PartyEffectOperation.BitClear => $"снятие {statusesText}",
+                PartyEffectOperation.BitToggle => $"переключение {statusesText}",
+                _ => statusesText
+            };
         }
 
         private static string BuildTechnicalField77Description(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)

@@ -338,27 +338,37 @@ namespace MMMapEditor
             if (statusNames.Count == 0)
                 return BuildStatusChangeDescription(member, "Состояние неопределено");
 
-            string action = operation switch
-            {
-                PartyEffectOperation.BitSet => null,
-                PartyEffectOperation.BitClear => "снятие",
-                PartyEffectOperation.BitToggle => "переключение",
-                _ => "изменение"
-            };
-
             string statusesText = string.Join(", ", statusNames);
-            return string.IsNullOrWhiteSpace(action)
-                ? BuildStatusChangeDescription(member, statusesText)
-                : $"{subject}: {action} {statusesText}";
+            string changeText = BuildStatusChangeText(operation, statusesText);
+
+            return IsLoopTarget(member, LoopSemanticKind.None) || member?.SelectionKind == PartyMemberSelectionKind.Random
+                ? BuildStatusChangeDescription(member, changeText)
+                : $"{subject}: {changeText}";
         }
 
         private static string BuildStatusChangeDescription(PartyMemberReference member, string statusesText)
         {
+            if (IsLoopTarget(member, LoopSemanticKind.None))
+                return $"CONDITION всех персонажей в партии изменяется на {statusesText}";
+
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
                 return $"CONDITION случайного персонажа в партии изменяется на {statusesText}";
 
             string subject = BuildStatusSubject(member);
             return $"{subject}: {statusesText}";
+        }
+
+        private static string BuildStatusChangeText(PartyEffectOperation operation, string statusesText)
+        {
+            if (string.IsNullOrWhiteSpace(statusesText))
+                return statusesText;
+
+            return operation switch
+            {
+                PartyEffectOperation.BitClear => $"снятие {statusesText}",
+                PartyEffectOperation.BitToggle => $"переключение {statusesText}",
+                _ => statusesText
+            };
         }
 
         private static string BuildStatusSubject(PartyMemberReference member)

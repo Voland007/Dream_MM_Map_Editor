@@ -2218,7 +2218,7 @@ namespace MMMapEditor
 
             var conditionStatusMatches = Regex.Matches(
                 noteText,
-                @"CONDITION ((мужчин|женщин) в партии|случайного персонажа в партии) изменяется на (?<statuses>[^\r\n]+)",
+                @"CONDITION [^\r\n]+? изменяется на (?<statuses>[^\r\n]+)",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in conditionStatusMatches)
@@ -2234,7 +2234,7 @@ namespace MMMapEditor
 
                 var statusWordMatches = Regex.Matches(
                     statusesGroup.Value,
-                    @"GOOD|PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
+                    @"GOOD|DISEASED|PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
                     RegexOptions.IgnoreCase);
 
                 foreach (Match statusMatch in statusWordMatches)
