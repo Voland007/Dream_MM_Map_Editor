@@ -2891,22 +2891,51 @@ namespace MMMapEditor
         {
             if (registerTracker == null ||
                 visitedInThisPath == null ||
-                finiteLoopProgressByJumpAddress == null ||
-                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory ||
-                registerTracker.LastComparedMemoryAddress != BATTLE_MONSTER_COUNT_ADDRESS)
+                finiteLoopProgressByJumpAddress == null)
             {
                 return false;
             }
 
+            bool comparesAgainstBattleMonsterCount =
+                registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareMemory &&
+                registerTracker.LastComparedMemoryAddress == BATTLE_MONSTER_COUNT_ADDRESS;
+
+            bool comparesAgainstImmediateBattleLimit =
+                registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastCompareImmediate.HasValue &&
+                result.BattleMonsterEntries.Count > 0;
+
+            if (!comparesAgainstBattleMonsterCount && !comparesAgainstImmediateBattleLimit)
+                return false;
+
             string counterRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
             if (string.IsNullOrWhiteSpace(counterRegister) ||
-                !registerTracker.TryGetByteRegisterValue(counterRegister, out byte counterValue) ||
-                !TryGetExactBattleMonsterCount(result, out byte loopLimit) ||
-                loopLimit == 0 ||
-                counterValue >= loopLimit)
+                !registerTracker.TryGetByteRegisterValue(counterRegister, out byte counterValue))
             {
                 return false;
             }
+
+            byte loopLimit;
+            string limitSourceText;
+
+            if (comparesAgainstBattleMonsterCount)
+            {
+                if (!TryGetExactBattleMonsterCount(result, out loopLimit))
+                    return false;
+
+                limitSourceText = $"[0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}]";
+            }
+            else
+            {
+                if (!string.Equals(counterRegister, "BL", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                loopLimit = registerTracker.LastCompareImmediate.Value;
+                limitSourceText = $"imm8 0x{loopLimit:X2}";
+            }
+
+            if (loopLimit == 0 || counterValue >= loopLimit)
+                return false;
 
             if (finiteLoopProgressByJumpAddress.TryGetValue(jumpAddress, out byte previousCounterValue) &&
                 counterValue <= previousCounterValue)
@@ -2914,7 +2943,7 @@ namespace MMMapEditor
                 if (debugMode)
                 {
                     AnalysisDebug.WriteLine(
-                        $"      Конечный цикл по [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}] не продвинулся: {counterRegister}=0x{counterValue:X2}, предыдущее=0x{previousCounterValue:X2}");
+                        $"      Конечный цикл по {limitSourceText} не продвинулся: {counterRegister}=0x{counterValue:X2}, предыдущее=0x{previousCounterValue:X2}");
                 }
 
                 return false;
@@ -2951,7 +2980,7 @@ namespace MMMapEditor
             if (debugMode)
             {
                 AnalysisDebug.WriteLine(
-                    $"      Конечный цикл по [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}] продолжается: {counterRegister}=0x{counterValue:X2}, limit=0x{loopLimit:X2}, повторно заходим в тело 0x{loopBodyStartAddress:X4}");
+                    $"      Конечный цикл по {limitSourceText} продолжается: {counterRegister}=0x{counterValue:X2}, limit=0x{loopLimit:X2}, повторно заходим в тело 0x{loopBodyStartAddress:X4}");
             }
 
             return true;
@@ -4906,32 +4935,24 @@ namespace MMMapEditor
 
                     try
                     {
-                        long fileOffset1 = table1Addr - _config.TextBaseAddr;
-                        long fileOffset2 = table2Addr - _config.TextBaseAddr;
+                        readSuccess1 = TryReadOverlayByte(br, table1Addr, out iterVal1);
 
-                        long originalPos = br.BaseStream.Position;
-
-                        if (fileOffset1 >= 0 && fileOffset1 < br.BaseStream.Length)
+                        ushort iterWord2 = 0;
+                        if (TryReadOverlayByte(br, table2Addr, out byte lowByte2) &&
+                            TryReadOverlayByte(br, unchecked((ushort)(table2Addr + 1)), out byte highByte2))
                         {
-                            br.BaseStream.Position = fileOffset1;
-                            iterVal1 = br.ReadByte();
-                            readSuccess1 = true;
-                        }
-
-                        if (fileOffset2 >= 0 && fileOffset2 + 1 < br.BaseStream.Length)
-                        {
-                            br.BaseStream.Position = fileOffset2;
-                            byte lowByte = br.ReadByte();
-                            byte highByte = br.ReadByte();
-                            iterVal2 = lowByte;
+                            iterWord2 = (ushort)(lowByte2 | (highByte2 << 8));
+                            iterVal2 = lowByte2;
                             readSuccess2 = true;
-
-                            AnalysisDebug.WriteLine($"        ЧТЕНИЕ ИЗ ТАБЛИЦЫ ДЛЯ ИТЕРАЦИИ {iteration}:");
-                            AnalysisDebug.WriteLine($"          [{table1Addr:X4}] = 0x{iterVal1:X2}");
-                            AnalysisDebug.WriteLine($"          [{table2Addr:X4}] = 0x{iterVal2:X2} (младший байт из 0x{highByte:X2}{lowByte:X2})");
                         }
 
-                        br.BaseStream.Position = originalPos;
+                        AnalysisDebug.WriteLine($"        ЧТЕНИЕ ИЗ ТАБЛИЦЫ ДЛЯ ИТЕРАЦИИ {iteration}:");
+                        AnalysisDebug.WriteLine(readSuccess1
+                            ? $"          [{table1Addr:X4}] = 0x{iterVal1:X2}"
+                            : $"          [{table1Addr:X4}] = <read failed>");
+                        AnalysisDebug.WriteLine(readSuccess2
+                            ? $"          [{table2Addr:X4}] = 0x{iterVal2:X2} (младший байт из 0x{iterWord2:X4})"
+                            : $"          [{table2Addr:X4}] = <read failed>");
                     }
                     catch (Exception ex)
                     {
@@ -5254,28 +5275,13 @@ namespace MMMapEditor
         {
             value = 0;
 
-            if (br == null)
-                return false;
-
-            long? fileOffset = null;
-
-            long textBaseOffset = memAddr - _config.TextBaseAddr;
-            if (textBaseOffset >= 0 && textBaseOffset < br.BaseStream.Length)
-                fileOffset = textBaseOffset;
-            else if (memAddr >= 0xC972)
-            {
-                long overlayMappedOffset = (long)_config.StartAddress + (memAddr - 0xC972);
-                if (overlayMappedOffset >= 0 && overlayMappedOffset < br.BaseStream.Length)
-                    fileOffset = overlayMappedOffset;
-            }
-
-            if (!fileOffset.HasValue)
+            if (br == null || !TryMapOverlayAddressToFileOffset(br, memAddr, out long fileOffset))
                 return false;
 
             long originalPos = br.BaseStream.Position;
             try
             {
-                br.BaseStream.Position = fileOffset.Value;
+                br.BaseStream.Position = fileOffset;
                 value = br.ReadByte();
                 return true;
             }
