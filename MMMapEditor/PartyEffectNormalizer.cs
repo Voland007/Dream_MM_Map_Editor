@@ -49,6 +49,7 @@ namespace MMMapEditor
                     PartyEffectSemantics.IsStateChanging(effect) &&
                     PartyEffectSemantics.IsLoopDerived(effect) &&
                     PartyEffectSemantics.GetEffectiveCondition(effect) == PartyConditionKind.None &&
+                    !PartyEffectSemantics.HasEffectiveGuardPredicates(effect) &&
                     inferredCondition != PartyConditionKind.None)
                 {
                     effect.Condition = inferredCondition;
@@ -249,6 +250,9 @@ namespace MMMapEditor
                 PartyEffectSemantics.GetEffectiveCondition(normalized))
                 return false;
 
+            if (!PartyEffectSemantics.HaveEquivalentGuardPredicates(candidate, normalized))
+                return false;
+
             if (PartyEffectSemantics.IsLoopDerived(candidate) !=
                 PartyEffectSemantics.IsLoopDerived(normalized))
                 return false;
@@ -261,6 +265,9 @@ namespace MMMapEditor
             if (effect == null || !PartyEffectSemantics.IsLoopDerived(effect))
                 return;
 
+            effect.GuardPredicates =
+                PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(effect.GuardPredicates);
+
             PartyEffectScope scope = PartyEffectSemantics.GetEffectiveScope(effect);
             if (scope == PartyEffectScope.RandomMember || scope == PartyEffectScope.SelectedMember)
                 return;
@@ -270,7 +277,7 @@ namespace MMMapEditor
 
             if (PartyEffectSemantics.IsStateChanging(effect))
             {
-                effect.Scope = condition != PartyConditionKind.None
+                effect.Scope = condition != PartyConditionKind.None || PartyEffectSemantics.HasEffectiveGuardPredicates(effect)
                     ? PartyEffectScope.PartySubset
                     : PartyEffectScope.WholeParty;
             }

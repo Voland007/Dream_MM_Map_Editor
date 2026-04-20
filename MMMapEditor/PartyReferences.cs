@@ -14,6 +14,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MMMapEditor
 {
@@ -270,6 +272,7 @@ namespace MMMapEditor
         public PartyMemberReference Member { get; set; }
         public bool MaleOnly { get; set; }
         public bool FemaleOnly { get; set; }
+        public List<PartyPredicate> GuardPredicates { get; set; } = new List<PartyPredicate>();
         public bool SawReadHigh { get; set; }
         public bool SawReadLow { get; set; }
         public bool SawWriteHigh { get; set; }
@@ -288,6 +291,10 @@ namespace MMMapEditor
                 Member = Member?.Clone(),
                 MaleOnly = MaleOnly,
                 FemaleOnly = FemaleOnly,
+                GuardPredicates = GuardPredicates?
+                    .Select(predicate => predicate?.Clone())
+                    .Where(predicate => predicate != null)
+                    .ToList() ?? new List<PartyPredicate>(),
                 SawReadHigh = SawReadHigh,
                 SawReadLow = SawReadLow,
                 SawWriteHigh = SawWriteHigh,

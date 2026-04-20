@@ -106,6 +106,7 @@ namespace MMMapEditor
         public ushort? LastComparedMemoryAddress { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
         public List<PartyConditionWindow> ActivePartyConditionWindows { get; set; } = new List<PartyConditionWindow>();
+        public List<PartyPredicateWindow> ActivePartyPredicateWindows { get; set; } = new List<PartyPredicateWindow>();
 
         public void SetFlagsMetadata(string register, FlagsOriginKind origin, uint? instructionAddress = null, bool? fromCoordinate = null)
         {
@@ -1042,6 +1043,7 @@ namespace MMMapEditor
             OverflowFlag = false;
             FlagsKnown = false;
             ActivePartyConditionWindows.Clear();
+            ActivePartyPredicateWindows.Clear();
         }
 
         public void TrackPartialRegisterOperation(string fullReg, string partialReg,
@@ -1274,6 +1276,10 @@ namespace MMMapEditor
                 .Select(window => window?.Clone())
                 .Where(window => window != null)
                 .ToList() ?? new List<PartyConditionWindow>();
+            clone.ActivePartyPredicateWindows = this.ActivePartyPredicateWindows?
+                .Select(window => window?.Clone())
+                .Where(window => window != null)
+                .ToList() ?? new List<PartyPredicateWindow>();
             return clone;
         }
     }

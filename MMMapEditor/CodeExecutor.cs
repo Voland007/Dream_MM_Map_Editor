@@ -649,18 +649,43 @@ namespace MMMapEditor
         private PartyConditionKind GetCurrentPartyCondition(RegisterTracker registerTracker, uint instructionAddress,
             PartyMemberReference member = null, LoopSemanticKind loopSemantic = LoopSemanticKind.None)
         {
-            if (registerTracker?.ActivePartyConditionWindows == null || registerTracker.ActivePartyConditionWindows.Count == 0)
-                return PartyConditionKind.None;
-
-            foreach (var window in registerTracker.ActivePartyConditionWindows
-                         .Where(window => window != null && window.IsActiveAt(instructionAddress))
-                         .OrderByDescending(window => window.StartAddress))
+            if (registerTracker?.ActivePartyConditionWindows != null)
             {
-                if (MatchesPartyConditionTarget(window, member, loopSemantic))
-                    return window.Condition;
+                foreach (var window in registerTracker.ActivePartyConditionWindows
+                             .Where(window => window != null && window.IsActiveAt(instructionAddress))
+                             .OrderByDescending(window => window.StartAddress))
+                {
+                    if (MatchesPartyConditionTarget(window, member, loopSemantic))
+                        return window.Condition;
+                }
+            }
+
+            foreach (var predicate in GetCurrentPartyPredicates(registerTracker, instructionAddress, member, loopSemantic))
+            {
+                PartyConditionKind legacyCondition = InferPartyConditionForPredicate(predicate);
+                if (legacyCondition != PartyConditionKind.None)
+                    return legacyCondition;
             }
 
             return PartyConditionKind.None;
+        }
+
+        private List<PartyPredicate> GetCurrentPartyPredicates(RegisterTracker registerTracker, uint instructionAddress,
+            PartyMemberReference member = null, LoopSemanticKind loopSemantic = LoopSemanticKind.None)
+        {
+            if (registerTracker?.ActivePartyPredicateWindows == null || registerTracker.ActivePartyPredicateWindows.Count == 0)
+                return new List<PartyPredicate>();
+
+            return registerTracker.ActivePartyPredicateWindows
+                .Where(window => window != null &&
+                                 window.IsActiveAt(instructionAddress) &&
+                                 MatchesPartyPredicateTarget(window, member, loopSemantic))
+                .OrderByDescending(window => window.StartAddress)
+                .Select(window => NormalizePartyPredicateForLoopAggregation(window.Predicate, loopSemantic))
+                .Where(predicate => predicate != null)
+                .GroupBy(BuildPartyPredicateKey)
+                .Select(group => group.First())
+                .ToList();
         }
 
         private bool MatchesPartyConditionTarget(PartyConditionWindow window, PartyMemberReference member, LoopSemanticKind loopSemantic)
@@ -693,31 +718,121 @@ namespace MMMapEditor
             return true;
         }
 
-        private PartyConditionWindow TryBuildBranchConditionWindow(RegisterTracker registerTracker, string mnemonic,
-            bool branchTaken, uint nextAddress, uint branchTarget)
+        private bool MatchesPartyPredicateTarget(PartyPredicateWindow window, PartyMemberReference member, LoopSemanticKind loopSemantic)
         {
-            var branchCondition = InferPartyConditionForBranch(registerTracker, mnemonic, branchTaken);
+            if (window?.Predicate?.TargetMember == null)
+                return true;
+
+            return MatchesPartyConditionTarget(
+                new PartyConditionWindow { TargetMember = window.Predicate.TargetMember },
+                member,
+                loopSemantic);
+        }
+
+        private PartyConditionWindow TryBuildBranchConditionWindow(BinaryReader br, RegisterTracker registerTracker,
+            string mnemonic, bool branchTaken, uint instructionAddress, uint nextAddress, uint branchTarget)
+        {
+            var branchPredicate = InferPartyPredicateForBranch(registerTracker, mnemonic, branchTaken, instructionAddress);
+            var branchCondition = InferPartyConditionForPredicate(branchPredicate);
             if (branchCondition == PartyConditionKind.None)
                 return null;
 
-            if (branchTarget <= nextAddress || branchTaken)
+            if (!TryGetBranchWindowBounds(br, branchTaken, nextAddress, branchTarget, out uint startAddress, out uint endAddress))
                 return null;
-
-            PartyMemberReference targetMember = null;
-            if (registerTracker != null &&
-                string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase) &&
-                registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField))
-            {
-                targetMember = comparedPartyField?.Member?.Clone();
-            }
 
             return new PartyConditionWindow
             {
                 Condition = branchCondition,
-                StartAddress = nextAddress,
-                EndAddress = branchTarget,
-                TargetMember = targetMember
+                StartAddress = startAddress,
+                EndAddress = endAddress,
+                TargetMember = branchPredicate?.TargetMember?.Clone()
             };
+        }
+
+        private PartyPredicateWindow TryBuildBranchPredicateWindow(BinaryReader br, RegisterTracker registerTracker,
+            string mnemonic, bool branchTaken, uint instructionAddress, uint nextAddress, uint branchTarget)
+        {
+            var branchPredicate = InferPartyPredicateForBranch(registerTracker, mnemonic, branchTaken, instructionAddress);
+            if (branchPredicate == null)
+                return null;
+
+            if (!TryGetBranchWindowBounds(br, branchTaken, nextAddress, branchTarget, out uint startAddress, out uint endAddress))
+                return null;
+
+            return new PartyPredicateWindow
+            {
+                Predicate = branchPredicate,
+                StartAddress = startAddress,
+                EndAddress = endAddress
+            };
+        }
+
+        private bool TryGetBranchWindowBounds(BinaryReader br, bool branchTaken, uint nextAddress, uint branchTarget,
+            out uint startAddress, out uint endAddress)
+        {
+            startAddress = 0;
+            endAddress = 0;
+
+            if (branchTarget <= nextAddress)
+                return false;
+
+            if (!branchTaken)
+            {
+                startAddress = nextAddress;
+                endAddress = branchTarget;
+                return true;
+            }
+
+            return TryInferForwardJumpBranchWindow(br, nextAddress, branchTarget, out startAddress, out endAddress);
+        }
+
+        private bool TryInferForwardJumpBranchWindow(BinaryReader br, uint fallthroughStart, uint branchTarget,
+            out uint startAddress, out uint endAddress)
+        {
+            startAddress = 0;
+            endAddress = 0;
+
+            if (br == null || branchTarget <= fallthroughStart)
+                return false;
+
+            X86Instruction lastInstruction = null;
+            uint cursor = fallthroughStart;
+            while (cursor < branchTarget)
+            {
+                if (!TryDisassembleNext(br, cursor, out var instruction) || instruction == null)
+                    return false;
+
+                uint instructionEnd = (uint)(instruction.Address + instruction.Bytes.Length);
+                if (instructionEnd > branchTarget)
+                    return false;
+
+                lastInstruction = instruction;
+                cursor = instructionEnd;
+            }
+
+            if (cursor != branchTarget || lastInstruction == null)
+                return false;
+
+            if (!TryGetUnconditionalForwardJumpTarget(lastInstruction, out uint joinAddress) || joinAddress <= branchTarget)
+                return false;
+
+            startAddress = branchTarget;
+            endAddress = joinAddress;
+            return true;
+        }
+
+        private bool TryGetUnconditionalForwardJumpTarget(X86Instruction instruction, out uint targetAddress)
+        {
+            targetAddress = 0;
+            if (instruction == null)
+                return false;
+
+            string mnemonic = instruction.Mnemonic?.ToUpperInvariant();
+            if (mnemonic != "JMP")
+                return false;
+
+            targetAddress = GetInstructionTargetAddress(instruction, long.MaxValue);
+            return targetAddress != 0;
         }
 
         private void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
@@ -735,6 +850,21 @@ namespace MMMapEditor
                 pending.FemaleOnly = true;
                 pending.MaleOnly = false;
             }
+        }
+
+        private void ApplyPartyPredicatesToPending(PendingPartyHpOperation pending, IEnumerable<PartyPredicate> predicates)
+        {
+            if (pending == null)
+                return;
+
+            pending.GuardPredicates = (pending.GuardPredicates ?? new List<PartyPredicate>())
+                .Concat(predicates ?? Enumerable.Empty<PartyPredicate>())
+                .Where(predicate => predicate != null)
+                .Select(predicate => predicate.Clone())
+                .GroupBy(BuildPartyPredicateKey)
+                .Select(group => group.First())
+                .OrderBy(BuildPartyPredicateKey)
+                .ToList();
         }
 
         private PendingPartyHpOperation EnsurePendingPartyHpOperation(PathAnalysisResult result,
@@ -782,14 +912,7 @@ namespace MMMapEditor
             if (!IsPartyLoopTarget(member, loopSemantic))
                 return member?.Clone();
 
-            var normalized = member?.Clone() ?? new PartyMemberReference();
-            normalized.IsPartyLoopMember = true;
-            normalized.MemberIndex = null;
-            normalized.PointerAddress = null;
-            normalized.PointerTableAddress = null;
-            normalized.StructureAddress = null;
-            normalized.SelectionKind = PartyMemberSelectionKind.Dynamic;
-            return normalized;
+            return PartyEffectSemantics.NormalizeLoopTargetMember(member);
         }
 
         private void MarkPartyMemberScanLoop(PathAnalysisResult result, uint loopBodyStartAddress, bool debugMode, uint? loopDetectionAddress = null)
@@ -812,6 +935,14 @@ namespace MMMapEditor
                 result.PendingPartyHpOperation.Member =
                     NormalizeMemberForLoopAggregation(result.PendingPartyHpOperation.Member, result.LoopSemantic);
 
+            if (result.PendingPartyHpOperation?.GuardPredicates != null &&
+                result.PendingPartyHpOperation.GuardPredicates.Count > 0)
+            {
+                result.PendingPartyHpOperation.GuardPredicates =
+                    PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(
+                        result.PendingPartyHpOperation.GuardPredicates);
+            }
+
             PromoteEffectsCapturedBeforeLoopRecognition(result, loopBodyStartAddress, detectedLoopEnd);
 
             if (debugMode && firstDetection)
@@ -826,10 +957,12 @@ namespace MMMapEditor
             foreach (var effect in result.PartyEffects.Where(e => ShouldPromoteEffectToLoopCurrentMember(e, loopBodyStartAddress, loopDetectionAddress)))
             {
                 effect.IsLoopDerived = true;
+                effect.GuardPredicates = PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(effect.GuardPredicates);
 
                 if (PartyEffectSemantics.IsStateChanging(effect))
                 {
-                    effect.Scope = PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None
+                    effect.Scope = PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None ||
+                                   PartyEffectSemantics.HasEffectiveGuardPredicates(effect)
                         ? PartyEffectScope.PartySubset
                         : PartyEffectScope.WholeParty;
                 }
@@ -1028,36 +1161,138 @@ namespace MMMapEditor
             return true;
         }
 
-        private PartyConditionKind InferPartyConditionForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        private PartyPredicate InferPartyPredicateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
+            uint instructionAddress)
         {
             if (registerTracker == null)
-                return PartyConditionKind.None;
+                return null;
 
-            if (!string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase))
-                return PartyConditionKind.None;
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
+                return null;
 
-            if (registerTracker.LastCompareImmediate != 1)
-                return PartyConditionKind.None;
+            string comparedRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(comparedRegister) || !registerTracker.LastCompareImmediate.HasValue)
+                return null;
 
-            if (!registerTracker.TryGetPartyFieldValue("AL", out var comparedField) || comparedField?.Field != PartyFieldKind.Gender)
-                return PartyConditionKind.None;
+            if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out var comparedField) || comparedField == null)
+                return null;
 
+            var comparison = ResolvePredicateComparisonForBranch(mnemonic, branchTaken);
+            if (comparison == PartyPredicateComparison.Unknown)
+                return null;
+
+            return new PartyPredicate
+            {
+                Field = comparedField.Field,
+                Comparison = comparison,
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = registerTracker.LastCompareImmediate.Value,
+                InstructionAddress = instructionAddress,
+                TargetMember = comparedField.Member?.Clone(),
+                Description = BuildPartyPredicateDescription(comparedField.Field, comparison, registerTracker.LastCompareImmediate.Value)
+            };
+        }
+
+        private PartyPredicateComparison ResolvePredicateComparisonForBranch(string mnemonic, bool branchTaken)
+        {
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
-            bool equalityBranch =
-                (branchTaken && (jump == "JE" || jump == "JZ")) ||
-                (!branchTaken && (jump == "JNE" || jump == "JNZ"));
+            return jump switch
+            {
+                "JE" or "JZ" => branchTaken ? PartyPredicateComparison.Equal : PartyPredicateComparison.NotEqual,
+                "JNE" or "JNZ" => branchTaken ? PartyPredicateComparison.NotEqual : PartyPredicateComparison.Equal,
+                "JB" or "JC" or "JNAE" => branchTaken ? PartyPredicateComparison.LessThan : PartyPredicateComparison.GreaterOrEqual,
+                "JBE" or "JNA" => branchTaken ? PartyPredicateComparison.LessOrEqual : PartyPredicateComparison.GreaterThan,
+                "JA" or "JNBE" => branchTaken ? PartyPredicateComparison.GreaterThan : PartyPredicateComparison.LessOrEqual,
+                "JAE" or "JNB" or "JNC" => branchTaken ? PartyPredicateComparison.GreaterOrEqual : PartyPredicateComparison.LessThan,
+                _ => PartyPredicateComparison.Unknown
+            };
+        }
 
-            bool inequalityBranch =
-                (branchTaken && (jump == "JNE" || jump == "JNZ")) ||
-                (!branchTaken && (jump == "JE" || jump == "JZ"));
+        private PartyConditionKind InferPartyConditionForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        {
+            return InferPartyConditionForPredicate(
+                InferPartyPredicateForBranch(registerTracker, mnemonic, branchTaken, registerTracker?.LastFlagsInstructionAddress ?? 0));
+        }
 
-            if (equalityBranch)
-                return PartyConditionKind.MaleOnly;
+        private PartyConditionKind InferPartyConditionForPredicate(PartyPredicate predicate)
+        {
+            if (predicate?.Field != PartyFieldKind.Gender || !predicate.ImmediateValue.HasValue)
+                return PartyConditionKind.None;
 
-            if (inequalityBranch)
-                return PartyConditionKind.FemaleOnly;
+            ushort immediateValue = predicate.ImmediateValue.Value;
+            return predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal when immediateValue == 1 => PartyConditionKind.MaleOnly,
+                PartyPredicateComparison.NotEqual when immediateValue == 1 => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.Equal when immediateValue == 2 => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.NotEqual when immediateValue == 2 => PartyConditionKind.MaleOnly,
+                _ => PartyConditionKind.None
+            };
+        }
 
-            return PartyConditionKind.None;
+        private string BuildPartyPredicateDescription(PartyFieldKind field, PartyPredicateComparison comparison, ushort value)
+        {
+            string fieldText = field switch
+            {
+                PartyFieldKind.Gender => "Gender",
+                PartyFieldKind.Hp => "HP",
+                PartyFieldKind.HpLow => "HP low",
+                PartyFieldKind.HpHigh => "HP high",
+                PartyFieldKind.Status => "Status",
+                PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
+                _ => field.ToString()
+            };
+
+            string comparisonText = comparison switch
+            {
+                PartyPredicateComparison.Equal => "==",
+                PartyPredicateComparison.NotEqual => "!=",
+                PartyPredicateComparison.LessThan => "<",
+                PartyPredicateComparison.LessOrEqual => "<=",
+                PartyPredicateComparison.GreaterThan => ">",
+                PartyPredicateComparison.GreaterOrEqual => ">=",
+                _ => "?"
+            };
+
+            return $"{fieldText} {comparisonText} 0x{value:X2}";
+        }
+
+        private string BuildPartyPredicateKey(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return "<NULL_PREDICATE>";
+
+            string range = predicate.ImmediateRange == null
+                ? "-"
+                : $"{predicate.ImmediateRange.Min}-{predicate.ImmediateRange.Max}";
+
+            string targetKey = predicate.TargetMember == null
+                ? "-"
+                : string.Join(":",
+                    predicate.TargetMember.SelectionKind,
+                    predicate.TargetMember.IsPartyLoopMember ? "Loop" : "Direct",
+                    predicate.TargetMember.MemberIndex?.ToString() ?? "-",
+                    predicate.TargetMember.PointerTableAddress?.ToString("X4") ?? "-",
+                    predicate.TargetMember.StructureAddress?.ToString("X4") ?? "-");
+
+            return string.Join("|",
+                predicate.Field,
+                predicate.Comparison,
+                predicate.ValueKnowledge,
+                predicate.ImmediateValue?.ToString() ?? "-",
+                range,
+                targetKey);
+        }
+
+        private PartyPredicate NormalizePartyPredicateForLoopAggregation(PartyPredicate predicate, LoopSemanticKind loopSemantic)
+        {
+            if (predicate == null)
+                return null;
+
+            if (predicate.TargetMember == null || !IsPartyLoopTarget(predicate.TargetMember, loopSemantic))
+                return predicate.Clone();
+
+            return PartyEffectSemantics.NormalizePredicateForLoopAggregation(predicate);
         }
 
         private void RegisterPartyFieldRead(PathAnalysisResult result, PartyFieldReference fieldRef,
@@ -1076,6 +1311,7 @@ namespace MMMapEditor
             });
 
             var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
+            var currentPredicates = GetCurrentPartyPredicates(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
 
             if (fieldRef.Field == PartyFieldKind.HpHigh || fieldRef.Field == PartyFieldKind.HpLow)
             {
@@ -1093,6 +1329,7 @@ namespace MMMapEditor
                         pending.SawReadLow = true;
 
                     ApplyPartyConditionToPending(pending, currentCondition);
+                    ApplyPartyPredicatesToPending(pending, currentPredicates);
                 }
             }
             else if (fieldRef.Field == PartyFieldKind.Technical77)
@@ -1101,6 +1338,7 @@ namespace MMMapEditor
                     result,
                     PartyEffectFactory.CreateTechnicalField77ReadEffect(fieldRef.Member, instructionAddress, exactValue),
                     fieldRef.Member,
+                    registerTracker,
                     currentCondition,
                     debugPrefix: "Техническое поле персонажа");
             }
@@ -1124,12 +1362,17 @@ namespace MMMapEditor
             });
 
             var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
+            var currentPredicates = GetCurrentPartyPredicates(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var effects = new List<PartyEffect>();
             if (fieldRef.Field == PartyFieldKind.Gender)
             {
                 var effect = new PartyEffect
                 {
                     Kind = PartyEffectKind.GenderWritten,
+                    Field = PartyFieldKind.Gender,
+                    Operation = PartyEffectOperation.Write,
+                    ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                    ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
                     InstructionAddress = instructionAddress
                 };
                 ApplyResolvedPartyEffectTarget(effect, fieldRef.Member, result.LoopSemantic, currentCondition);
@@ -1160,6 +1403,7 @@ namespace MMMapEditor
                 if (pending != null)
                 {
                     ApplyPartyConditionToPending(pending, currentCondition);
+                    ApplyPartyPredicatesToPending(pending, currentPredicates);
 
                     if (fieldRef.Field == PartyFieldKind.HpHigh)
                         pending.SawWriteHigh = true;
@@ -1218,17 +1462,25 @@ namespace MMMapEditor
                     _ => null
                 };
 
-                AddResolvedPartyEffect(result, effect, fieldRef.Member, currentCondition, debugPrefix, debugMode);
+                AddResolvedPartyEffect(result, effect, fieldRef.Member, registerTracker, currentCondition, debugPrefix, debugMode);
             }
         }
 
         private void AddResolvedPartyEffect(PathAnalysisResult result, PartyEffect effect,
-            PartyMemberReference member, PartyConditionKind currentCondition, string debugPrefix = null, bool debugMode = false)
+            PartyMemberReference member, RegisterTracker registerTracker, PartyConditionKind currentCondition,
+            string debugPrefix = null, bool debugMode = false)
         {
             if (result == null || effect == null)
                 return;
 
             ApplyResolvedPartyEffectTarget(effect, member, result.LoopSemantic, currentCondition);
+            effect.GuardPredicates = GetMergedGuardPredicates(
+                effect.GuardPredicates,
+                GetCurrentPartyPredicates(
+                    registerTracker,
+                    effect.InstructionAddress,
+                    member,
+                    result.LoopSemantic));
 
             string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
             if (!string.IsNullOrWhiteSpace(humanDescription))
@@ -1262,9 +1514,23 @@ namespace MMMapEditor
                 result,
                 PartyEffectFactory.CreateTechnicalField77CompareEffect(fieldRef.Member, instructionAddress, compareValue, isBitMask),
                 fieldRef.Member,
+                registerTracker,
                 GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic),
                 debugPrefix: "Техническое поле персонажа",
                 debugMode: debugMode);
+        }
+
+        private List<PartyPredicate> GetMergedGuardPredicates(IEnumerable<PartyPredicate> existing,
+            IEnumerable<PartyPredicate> inferred)
+        {
+            return (existing ?? Enumerable.Empty<PartyPredicate>())
+                .Concat(inferred ?? Enumerable.Empty<PartyPredicate>())
+                .Where(predicate => predicate != null)
+                .Select(predicate => predicate.Clone())
+                .GroupBy(BuildPartyPredicateKey)
+                .Select(group => group.First())
+                .OrderBy(BuildPartyPredicateKey)
+                .ToList();
         }
 
         private PartyEffectOperation MapImmediateByteTransformOperation(byte groupOperation)
@@ -1723,7 +1989,7 @@ namespace MMMapEditor
 
             if (IsConditionalJump(insn, out uint condJumpTarget))
             {
-                return HandleConditionalJump(insn, condJumpTarget, nextAddress, fileLength,
+                return HandleConditionalJump(insn, br, condJumpTarget, nextAddress, fileLength,
                     debugMode, processedBackEdges, result, currentAddress, registerTracker,
                     pendingReturnAddresses, callDepth, visitedInThisPath, finiteLoopProgressByJumpAddress);
             }
@@ -2064,7 +2330,8 @@ namespace MMMapEditor
                             EmulatedPartyPointerBytes = altPath.EmulatedPartyPointerBytes == null
                                 ? new Dictionary<ushort, PartyPointerByteReference>()
                                 : altPath.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                            BranchPartyCondition = altPath.BranchPartyCondition
+                            BranchPartyCondition = altPath.BranchPartyCondition,
+                            BranchPartyPredicate = altPath.BranchPartyPredicate?.Clone()
                         });
                     }
                 }
@@ -2102,7 +2369,7 @@ namespace MMMapEditor
         /// <summary>
         /// Обрабатывает условный переход
         /// </summary>
-        private ControlFlowResult HandleConditionalJump(X86Instruction insn, uint condJumpTarget,
+        private ControlFlowResult HandleConditionalJump(X86Instruction insn, BinaryReader br, uint condJumpTarget,
             uint nextAddress, long fileLength, bool debugMode,
             HashSet<(uint From, uint To)> processedBackEdges, PathAnalysisResult result, uint currentAddress,
             RegisterTracker registerTracker, List<uint> pendingReturnAddresses, int callDepth,
@@ -2217,7 +2484,8 @@ namespace MMMapEditor
                     Condition = $"{insn.Mnemonic} {insn.Operand}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, nextAddress, condJumpTarget),
+                    RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: true,
+                        (uint)insn.Address, nextAddress, condJumpTarget),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
                     IsInputChoiceBranch = isInputChoiceBranch,
@@ -2228,7 +2496,8 @@ namespace MMMapEditor
                     EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                     EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true)
+                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                    BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, (uint)insn.Address)
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
@@ -2247,7 +2516,8 @@ namespace MMMapEditor
                     Condition = $"LINEAR after {insn.Mnemonic}",
                     Analyzed = false,
                     PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = CloneRegisterStateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, nextAddress, condJumpTarget),
+                    RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: false,
+                        (uint)insn.Address, nextAddress, condJumpTarget),
                     CompareRegister = registerTracker.LastFlagsRegister,
                     CompareValue = registerTracker.LastCompareImmediate,
                     IsInputChoiceBranch = isInputChoiceBranch,
@@ -2258,7 +2528,8 @@ namespace MMMapEditor
                     EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                     EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false)
+                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                    BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, (uint)insn.Address)
                 };
 
                 if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
@@ -2422,8 +2693,8 @@ namespace MMMapEditor
             }
         }
 
-        private RegisterTracker CloneRegisterStateForBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
-            uint nextAddress, uint branchTarget)
+        private RegisterTracker CloneRegisterStateForBranch(BinaryReader br, RegisterTracker registerTracker, string mnemonic,
+            bool branchTaken, uint instructionAddress, uint nextAddress, uint branchTarget)
         {
             var clone = registerTracker?.Clone() ?? new RegisterTracker();
 
@@ -2433,11 +2704,20 @@ namespace MMMapEditor
                 clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
             }
 
-            var conditionWindow = TryBuildBranchConditionWindow(registerTracker, mnemonic, branchTaken, nextAddress, branchTarget);
+            var conditionWindow = TryBuildBranchConditionWindow(br, registerTracker, mnemonic, branchTaken,
+                instructionAddress, nextAddress, branchTarget);
             if (conditionWindow != null)
             {
                 clone.ActivePartyConditionWindows ??= new List<PartyConditionWindow>();
                 clone.ActivePartyConditionWindows.Add(conditionWindow);
+            }
+
+            var predicateWindow = TryBuildBranchPredicateWindow(br, registerTracker, mnemonic, branchTaken,
+                instructionAddress, nextAddress, branchTarget);
+            if (predicateWindow != null)
+            {
+                clone.ActivePartyPredicateWindows ??= new List<PartyPredicateWindow>();
+                clone.ActivePartyPredicateWindows.Add(predicateWindow);
             }
 
             return clone;
@@ -4098,25 +4378,27 @@ namespace MMMapEditor
                         IsCompare = true
                     });
 
-                    if (immediateValue == 1)
+                    if (immediateValue == 1 || immediateValue == 2)
                     {
                         var compareEffect = new PartyEffect
                         {
                             Kind = PartyEffectKind.GenderCompared,
+                            Field = PartyFieldKind.Gender,
+                            Operation = PartyEffectOperation.Compare,
+                            ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                            ImmediateValue = immediateValue,
                             InstructionAddress = address
                         };
-                        ApplyResolvedPartyEffectTarget(compareEffect, comparedPartyField.Member, result.LoopSemantic, PartyConditionKind.MaleOnly);
-                        compareEffect.Description = compareEffect.Scope switch
-                        {
-                            PartyEffectScope.PartySubset or PartyEffectScope.WholeParty or PartyEffectScope.CurrentLoopMember =>
-                                "Проверяется, есть ли мужчина в партии",
-                            PartyEffectScope.RandomMember => "Проверяется, является ли случайно выбранный член партии мужчиной",
-                            PartyEffectScope.SelectedMember => "Проверяется, является ли выбранный член партии мужчиной",
-                            _ => "Проверяется, является ли персонаж мужчиной"
-                        };
+                        PartyConditionKind compareCondition = immediateValue == 1
+                            ? PartyConditionKind.MaleOnly
+                            : PartyConditionKind.FemaleOnly;
 
-                        if (!result.PartyEffects.Any(e => e.Kind == compareEffect.Kind && e.MemberIndex == compareEffect.MemberIndex && e.AppliesToWholePartyLoop == compareEffect.AppliesToWholePartyLoop && e.MaleOnly == compareEffect.MaleOnly && e.Description == compareEffect.Description))
-                            result.PartyEffects.Add(compareEffect);
+                        AddResolvedPartyEffect(
+                            result,
+                            compareEffect,
+                            comparedPartyField.Member,
+                            registerTracker,
+                            compareCondition);
                     }
                 }
 

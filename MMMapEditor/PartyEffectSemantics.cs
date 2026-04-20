@@ -41,6 +41,7 @@ namespace MMMapEditor
                 GetEffectiveOperation(effect),
                 scope,
                 GetEffectiveCondition(effect),
+                BuildGuardPredicatesKey(effect),
                 memberKey,
                 IsLoopDerived(effect) ? "Loop" : "Direct",
                 GetEffectiveValueKnowledge(effect),
@@ -64,6 +65,10 @@ namespace MMMapEditor
             var condition = GetEffectiveCondition(effect);
             if (condition != PartyConditionKind.None)
                 parts.Add($"Condition={condition}");
+
+            string guardKey = BuildGuardPredicatesKey(effect);
+            if (guardKey != "<NO_GUARDS>")
+                parts.Add($"Guards={guardKey}");
 
             if (effect.MemberIndex.HasValue)
                 parts.Add($"Member=#{effect.MemberIndex.Value}");
@@ -315,7 +320,7 @@ namespace MMMapEditor
 
             if (effect.AppliesToWholePartyLoop)
             {
-                return GetEffectiveCondition(effect) != PartyConditionKind.None
+                return GetEffectiveCondition(effect) != PartyConditionKind.None || HasEffectiveGuardPredicates(effect)
                     ? PartyEffectScope.PartySubset
                     : PartyEffectScope.WholeParty;
             }
@@ -341,6 +346,88 @@ namespace MMMapEditor
                 return PartyConditionKind.FemaleOnly;
 
             return PartyConditionKind.None;
+        }
+
+        public static IReadOnlyList<PartyPredicate> GetEffectiveGuardPredicates(PartyEffect effect)
+        {
+            return effect?.GuardPredicates?
+                .Where(predicate => predicate != null)
+                .ToList() ?? (IReadOnlyList<PartyPredicate>)Array.Empty<PartyPredicate>();
+        }
+
+        public static bool HasEffectiveGuardPredicates(PartyEffect effect)
+        {
+            return GetEffectiveGuardPredicates(effect).Count > 0;
+        }
+
+        public static bool HaveEquivalentGuardPredicates(PartyEffect left, PartyEffect right)
+        {
+            return string.Equals(BuildGuardPredicatesKey(left), BuildGuardPredicatesKey(right), StringComparison.Ordinal);
+        }
+
+        public static PartyMemberReference NormalizeLoopTargetMember(PartyMemberReference member)
+        {
+            var normalized = member?.Clone() ?? new PartyMemberReference();
+            normalized.IsPartyLoopMember = true;
+            normalized.MemberIndex = null;
+            normalized.PointerAddress = null;
+            normalized.PointerTableAddress = null;
+            normalized.StructureAddress = null;
+            normalized.SelectionKind = PartyMemberSelectionKind.Dynamic;
+            return normalized;
+        }
+
+        public static PartyPredicate NormalizePredicateForLoopAggregation(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return null;
+
+            var normalized = predicate.Clone();
+            if (normalized.TargetMember != null)
+                normalized.TargetMember = NormalizeLoopTargetMember(normalized.TargetMember);
+
+            return normalized;
+        }
+
+        public static List<PartyPredicate> NormalizeGuardPredicatesForLoopAggregation(IEnumerable<PartyPredicate> predicates)
+        {
+            return predicates?
+                .Where(predicate => predicate != null)
+                .Select(NormalizePredicateForLoopAggregation)
+                .Where(predicate => predicate != null)
+                .GroupBy(BuildPredicateKey)
+                .Select(group => group.First())
+                .OrderBy(BuildPredicateKey)
+                .ToList() ?? new List<PartyPredicate>();
+        }
+
+        public static string BuildGuardPredicatesKey(PartyEffect effect)
+        {
+            var predicates = GetEffectiveGuardPredicates(effect);
+            if (predicates.Count == 0)
+                return "<NO_GUARDS>";
+
+            return string.Join("&", predicates
+                .Select(BuildPredicateKey)
+                .OrderBy(key => key));
+        }
+
+        public static string BuildPredicateKey(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return "<NULL_PREDICATE>";
+
+            string range = predicate.ImmediateRange == null
+                ? "-"
+                : $"{predicate.ImmediateRange.Min}-{predicate.ImmediateRange.Max}";
+
+            return string.Join("|",
+                predicate.Field,
+                predicate.Comparison,
+                predicate.ValueKnowledge,
+                predicate.ImmediateValue?.ToString() ?? "-",
+                range,
+                BuildPredicateTargetKey(predicate.TargetMember));
         }
 
         private static PartyValueKnowledge GetEffectiveValueKnowledge(PartyEffect effect)
@@ -553,7 +640,24 @@ namespace MMMapEditor
             var specificCondition = GetEffectiveCondition(specificEffect);
             var aggregateCondition = GetEffectiveCondition(aggregateEffect);
 
-            return aggregateCondition == specificCondition;
+            return aggregateCondition == specificCondition &&
+                   HaveEquivalentGuardPredicates(specificEffect, aggregateEffect);
+        }
+
+        private static string BuildPredicateTargetKey(PartyMemberReference member)
+        {
+            if (member == null)
+                return "-";
+
+            if (member.IsPartyLoopMember)
+                return $"{PartyMemberSelectionKind.Dynamic}:Loop:-:-:-";
+
+            return string.Join(":",
+                member.SelectionKind,
+                member.IsPartyLoopMember ? "Loop" : "Direct",
+                member.MemberIndex?.ToString() ?? "-",
+                member.PointerTableAddress?.ToString("X4") ?? "-",
+                member.StructureAddress?.ToString("X4") ?? "-");
         }
 
         private static bool IsLikelyConsequenceByInstructionOrder(PartyEffect statusEffect, PartyEffect hpEffect)

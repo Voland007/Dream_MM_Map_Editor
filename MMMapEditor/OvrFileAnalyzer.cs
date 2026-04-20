@@ -182,13 +182,13 @@ namespace MMMapEditor
                 if (debugMode)
                 {
                     AnalysisDebug.WriteLine($"\n    ИТОГО для клетки ({ovrObject.X},{ovrObject.Y}):");
-                    AnalysisDebug.WriteLine($"      Всего путей: {ovrObject.PathVariants.Count}");
+                    AnalysisDebug.WriteLine($"      Канонических outcomes: {ovrObject.PathVariants.Count}");
                     foreach (var kvp in ovrObject.PathVariants.OrderBy(k => k.Key))
                     {
                         var variant = kvp.Value;
                         var texts = variant?.Texts ?? new List<string>();
 
-                        AnalysisDebug.WriteLine($"      Path {kvp.Key}: {texts.Count} текстов");
+                        AnalysisDebug.WriteLine($"      Outcome {kvp.Key}: {texts.Count} текстов");
                         foreach (var text in texts)
                         {
                             AnalysisDebug.WriteLine($"        {text}");
@@ -370,14 +370,14 @@ namespace MMMapEditor
                         if (debugMode)
                         {
                             AnalysisDebug.WriteLine($"\n    ИТОГО для макро-клетки ({obj.X},{obj.Y}):");
-                            AnalysisDebug.WriteLine($"      Всего путей: {obj.PathVariants.Count}");
+                            AnalysisDebug.WriteLine($"      Канонических outcomes: {obj.PathVariants.Count}");
 
                             foreach (var kvp in obj.PathVariants.OrderBy(k => k.Key))
                             {
                                 var variant = kvp.Value;
                                 var texts = variant?.Texts ?? new List<string>();
 
-                                AnalysisDebug.WriteLine($"      Path {kvp.Key}: {texts.Count} текстов");
+                                AnalysisDebug.WriteLine($"      Outcome {kvp.Key}: {texts.Count} текстов");
                                 foreach (var text in texts)
                                     AnalysisDebug.WriteLine($"        {text}");
 
@@ -469,7 +469,36 @@ namespace MMMapEditor
                     inheritedState: mainPathResult);
             }
 
-            return _pathAnalyzer.BuildFinalPathVariants(allResults);
+            var rawLeafVariants = allResults
+                .Where(variant => variant != null && variant.IsLeaf)
+                .OrderBy(variant => variant.PathId)
+                .ToList();
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine($"\nСырые leaf-paths до канонизации: {rawLeafVariants.Count}");
+                foreach (var rawVariant in rawLeafVariants)
+                {
+                    var texts = rawVariant.Texts ?? new List<string>();
+                    AnalysisDebug.WriteLine($"  RawPath {rawVariant.PathId}: {texts.Count} текстов");
+                    foreach (var text in texts)
+                        AnalysisDebug.WriteLine($"    {text}");
+
+                    if (rawVariant.PartyEffects != null && rawVariant.PartyEffects.Count > 0)
+                    {
+                        AnalysisDebug.WriteLine($"    PartyEffects={rawVariant.PartyEffects.Count}");
+                        foreach (var effect in rawVariant.PartyEffects)
+                            AnalysisDebug.WriteLine($"      - {PartyEffectSemantics.BuildDebugLine(effect)}");
+                    }
+                }
+            }
+
+            var finalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults);
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
+
+            return finalVariants;
         }
 
         private void PopulateObjectPathData(OvrObject obj, Dictionary<int, PathVariantInfo> finalVariants)
@@ -596,14 +625,14 @@ namespace MMMapEditor
                         ApplyResolvedVariantInfoToObject(obj);
 
                         AnalysisDebug.WriteLine($"    Создан объект default-path для клетки ({obj.X},{obj.Y})");
-                        AnalysisDebug.WriteLine($"    Всего путей: {obj.PathVariants.Count}");
+                        AnalysisDebug.WriteLine($"    Канонических outcomes: {obj.PathVariants.Count}");
 
                         foreach (var kvp in obj.PathVariants.OrderBy(k => k.Key))
                         {
                             var variant = kvp.Value;
                             var texts = variant?.Texts ?? new List<string>();
 
-                            AnalysisDebug.WriteLine($"      Path {kvp.Key}: {texts.Count} текстов");
+                            AnalysisDebug.WriteLine($"      Outcome {kvp.Key}: {texts.Count} текстов");
                             foreach (var text in texts)
                             {
                                 AnalysisDebug.WriteLine($"        {text}");

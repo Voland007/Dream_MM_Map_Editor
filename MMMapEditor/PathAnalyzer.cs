@@ -456,6 +456,14 @@ namespace MMMapEditor
 
             merged.MaleOnly = inheritedPending.MaleOnly || currentPending.MaleOnly;
             merged.FemaleOnly = inheritedPending.FemaleOnly || currentPending.FemaleOnly;
+            merged.GuardPredicates = (inheritedPending.GuardPredicates ?? new List<PartyPredicate>())
+                .Concat(currentPending.GuardPredicates ?? Enumerable.Empty<PartyPredicate>())
+                .Where(predicate => predicate != null)
+                .Select(predicate => predicate.Clone())
+                .GroupBy(PartyEffectSemantics.BuildPredicateKey)
+                .Select(group => group.First())
+                .OrderBy(PartyEffectSemantics.BuildPredicateKey)
+                .ToList();
             if ((inheritedPending.MaleOnly && currentPending.FemaleOnly) ||
                 (inheritedPending.FemaleOnly && currentPending.MaleOnly))
             {
@@ -699,7 +707,9 @@ namespace MMMapEditor
                         : alt.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     EmulatedPartyPointerBytes = alt.EmulatedPartyPointerBytes == null
                         ? new Dictionary<ushort, PartyPointerByteReference>()
-                        : alt.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone())
+                        : alt.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    BranchPartyCondition = alt.BranchPartyCondition,
+                    BranchPartyPredicate = alt.BranchPartyPredicate?.Clone()
                 });
             }
 
@@ -966,9 +976,10 @@ namespace MMMapEditor
             }
 
             var orderedUniqueVariants = CollapseConditionalLoopSubsetOutcomeVariants(
+                    CollapseShadowedConditionalLoopSubsetCoverageVariants(
                     CollapsePromptOnlyVariantsShadowedByLoopEffects(
                         CollapseGuardOnlyPartyLoopVariants(
-                            CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values))))
+                            CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))))
                 .OrderBy(v => v.PathId)
                 .ToList();
 
@@ -1024,6 +1035,45 @@ namespace MMMapEditor
                 }
 
                 result.Add(MergeConditionalLoopSubsetGroup(groupItems));
+            }
+
+            return result;
+        }
+
+        private IEnumerable<PathVariantInfo> CollapseShadowedConditionalLoopSubsetCoverageVariants(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var result = new List<PathVariantInfo>();
+
+            foreach (var group in variants
+                .OrderBy(v => v.PathId)
+                .GroupBy(BuildConditionalLoopSubsetCoverageShadowKey))
+            {
+                var groupItems = group.ToList();
+                if (groupItems.Count < 2 || !groupItems.Any(HasConditionalLoopSubsetOutcomeEffects))
+                {
+                    result.AddRange(groupItems);
+                    continue;
+                }
+
+                var keyedItems = groupItems
+                    .Select(variant => new
+                    {
+                        Variant = variant,
+                        EffectKeys = BuildConditionalLoopSubsetEffectKeySet(variant)
+                    })
+                    .ToList();
+
+                var survivors = keyedItems
+                    .Where(current => !keyedItems.Any(other =>
+                        !ReferenceEquals(other, current) &&
+                        StrictlyContainsConditionalLoopSubsetEffects(other.EffectKeys, current.EffectKeys)))
+                    .Select(item => item.Variant)
+                    .ToList();
+
+                result.AddRange(survivors.Count > 0 ? survivors : groupItems);
             }
 
             return result;
@@ -1369,7 +1419,8 @@ namespace MMMapEditor
                    PartyEffectSemantics.IsStateChanging(effect) &&
                    PartyEffectSemantics.IsLoopDerived(effect) &&
                    PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
-                   PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None;
+                   (PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None ||
+                    PartyEffectSemantics.HasEffectiveGuardPredicates(effect));
         }
 
         private bool ShouldCollapseConditionalLoopSubsetGroup(List<PathVariantInfo> variants)
@@ -1432,6 +1483,7 @@ namespace MMMapEditor
                 : "<NO_LOADS>";
 
             string partyKey = BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(variant);
+            string partitionFamilyKey = BuildConditionalLoopSubsetPartitionFamilyKey(variant);
 
             string branchKey = ShouldIgnoreBranchHistoryForIdentity(variant)
                 ? "<IGNORED_BRANCHES>"
@@ -1441,12 +1493,99 @@ namespace MMMapEditor
                         .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
                     : "<NO_BRANCHES>");
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}";
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{partitionFamilyKey}||{branchKey}";
+        }
+
+        private string BuildConditionalLoopSubsetCoverageShadowKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string textKey = variant.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+
+            string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(m => m.Index)
+                    .Select(m => $"{m.Index}:{m.MonsterIndex1:X2}:{m.MonsterIndex2:X2}:{m.IsIndeterminate}"))
+                : "<NO_BATTLE>";
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(p => p.BxIndex)
+                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                : "<NO_PARTIAL>";
+
+            string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
+                ? string.Join(";", variant.LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.SourceAddr)
+                    .ThenBy(v => v.RegName)
+                    .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
+                : "<NO_LOADS>";
+
+            string partyKey = BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(variant);
+            string partitionFamilyKey = BuildConditionalLoopSubsetPartitionFamilyKey(variant);
+
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{partitionFamilyKey}";
         }
 
         private string BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(PathVariantInfo variant)
         {
             return BuildPartyEffectsKey(variant, effect => !IsConditionalLoopSubsetOutcomeEffect(effect));
+        }
+
+        private string BuildConditionalLoopSubsetPartitionFamilyKey(PathVariantInfo variant)
+        {
+            if (variant?.PartyEffects == null || variant.PartyEffects.Count == 0)
+                return "<NO_PARTITIONS>";
+
+            var families = variant.PartyEffects
+                .Where(IsConditionalLoopSubsetOutcomeEffect)
+                .Select(BuildConditionalLoopSubsetEffectFamilyKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct()
+                .OrderBy(key => key)
+                .ToList();
+
+            return families.Count == 0
+                ? "<NO_PARTITIONS>"
+                : string.Join(";", families);
+        }
+
+        private string BuildConditionalLoopSubsetEffectFamilyKey(PartyEffect effect)
+        {
+            if (effect == null)
+                return null;
+
+            return string.Join("|",
+                PartyEffectSemantics.GetEffectiveField(effect),
+                PartyEffectSemantics.GetEffectiveOperation(effect),
+                PartyEffectSemantics.GetEffectiveScope(effect),
+                PartyEffectSemantics.IsLoopDerived(effect) ? "Loop" : "Direct");
+        }
+
+        private HashSet<string> BuildConditionalLoopSubsetEffectKeySet(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects?
+                .Where(IsConditionalLoopSubsetOutcomeEffect)
+                .Select(PartyEffectSemantics.BuildSemanticKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private bool StrictlyContainsConditionalLoopSubsetEffects(HashSet<string> left, HashSet<string> right)
+        {
+            if (left == null || right == null)
+                return false;
+
+            if (left.Count <= right.Count)
+                return false;
+
+            return right.All(left.Contains);
         }
 
         private PathVariantInfo MergeConditionalLoopSubsetGroup(List<PathVariantInfo> variants)
@@ -1466,6 +1605,14 @@ namespace MMMapEditor
                 .Select(g => g.First().Clone())
                 .OrderBy(PartyEffectSemantics.BuildSemanticKey)
                 .ToList();
+
+            foreach (var effect in merged.PartyEffects.Where(effect =>
+                         effect != null &&
+                         PartyEffectSemantics.IsLoopDerived(effect) &&
+                         PartyEffectSemantics.GetEffectiveScope(effect) != PartyEffectScope.SingleMember))
+            {
+                effect.ObservedMemberIndex = null;
+            }
 
             return merged;
         }

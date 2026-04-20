@@ -15,6 +15,7 @@
 
 using Gee.External.Capstone.X86;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MMMapEditor
 {
@@ -98,6 +99,7 @@ namespace MMMapEditor
         public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
         public Dictionary<ushort, PartyPointerByteReference> EmulatedPartyPointerBytes { get; set; } = new Dictionary<ushort, PartyPointerByteReference>();
         public PartyConditionKind BranchPartyCondition { get; set; } = PartyConditionKind.None;
+        public PartyPredicate BranchPartyPredicate { get; set; }
     }
 
     public class MemoryAccess
@@ -357,6 +359,72 @@ namespace MMMapEditor
         }
     }
 
+    public enum PartyPredicateComparison
+    {
+        Unknown = 0,
+        Equal = 1,
+        NotEqual = 2,
+        LessThan = 3,
+        LessOrEqual = 4,
+        GreaterThan = 5,
+        GreaterOrEqual = 6
+    }
+
+    public class PartyPredicate
+    {
+        public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
+        public PartyPredicateComparison Comparison { get; set; } = PartyPredicateComparison.Unknown;
+        public PartyValueKnowledge ValueKnowledge { get; set; } = PartyValueKnowledge.Unknown;
+        public ushort? ImmediateValue { get; set; }
+        public ValueRange8 ImmediateRange { get; set; }
+        public uint InstructionAddress { get; set; }
+        public PartyMemberReference TargetMember { get; set; }
+        public string Description { get; set; }
+
+        public PartyPredicate Clone()
+        {
+            return new PartyPredicate
+            {
+                Field = Field,
+                Comparison = Comparison,
+                ValueKnowledge = ValueKnowledge,
+                ImmediateValue = ImmediateValue,
+                ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
+                InstructionAddress = InstructionAddress,
+                TargetMember = TargetMember?.Clone(),
+                Description = Description
+            };
+        }
+    }
+
+    public class PartyPredicateWindow
+    {
+        public PartyPredicate Predicate { get; set; }
+        public uint StartAddress { get; set; }
+        public uint EndAddress { get; set; }
+
+        public bool IsActiveAt(uint address)
+        {
+            if (Predicate == null)
+                return false;
+
+            if (address < StartAddress)
+                return false;
+
+            return EndAddress == 0 || address < EndAddress;
+        }
+
+        public PartyPredicateWindow Clone()
+        {
+            return new PartyPredicateWindow
+            {
+                Predicate = Predicate?.Clone(),
+                StartAddress = StartAddress,
+                EndAddress = EndAddress
+            };
+        }
+    }
+
     public enum PartyValueKnowledge
     {
         Unknown = 0,
@@ -373,6 +441,7 @@ namespace MMMapEditor
         public PartyEffectOperation Operation { get; set; } = PartyEffectOperation.Unknown;
         public PartyEffectScope Scope { get; set; } = PartyEffectScope.Unknown;
         public PartyConditionKind Condition { get; set; } = PartyConditionKind.None;
+        public List<PartyPredicate> GuardPredicates { get; set; } = new List<PartyPredicate>();
         public int? MemberIndex { get; set; }
         public int? ObservedMemberIndex { get; set; }
         public bool IsLoopDerived { get; set; }
@@ -433,6 +502,8 @@ namespace MMMapEditor
                 Operation = Operation,
                 Scope = Scope,
                 Condition = Condition,
+                GuardPredicates = GuardPredicates?.Select(predicate => predicate?.Clone()).Where(predicate => predicate != null).ToList()
+                    ?? new List<PartyPredicate>(),
                 MemberIndex = MemberIndex,
                 ObservedMemberIndex = ObservedMemberIndex,
                 IsLoopDerived = IsLoopDerived,

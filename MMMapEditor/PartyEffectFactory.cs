@@ -14,6 +14,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace MMMapEditor
 {
@@ -44,6 +46,10 @@ namespace MMMapEditor
                 Operation = PartyEffectOperation.Halve,
                 Scope = ResolveScope(pending.Member, loopSemantic, condition),
                 Condition = condition,
+                GuardPredicates = pending.GuardPredicates?
+                    .Select(predicate => predicate?.Clone())
+                    .Where(predicate => predicate != null)
+                    .ToList() ?? new List<PartyPredicate>(),
                 MemberIndex = IsLoopTarget(pending.Member, loopSemantic) ? null : pending.Member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
                 ValueKnowledge = PartyValueKnowledge.Structural,
@@ -68,6 +74,10 @@ namespace MMMapEditor
                 Operation = operation,
                 Scope = ResolveScope(pending.Member, loopSemantic, condition),
                 Condition = condition,
+                GuardPredicates = pending.GuardPredicates?
+                    .Select(predicate => predicate?.Clone())
+                    .Where(predicate => predicate != null)
+                    .ToList() ?? new List<PartyPredicate>(),
                 MemberIndex = IsLoopTarget(pending.Member, loopSemantic) ? null : pending.Member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
                 ValueKnowledge = PartyValueKnowledge.ExactImmediate,
