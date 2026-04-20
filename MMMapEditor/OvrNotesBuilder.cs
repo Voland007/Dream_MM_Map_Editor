@@ -1375,6 +1375,9 @@ namespace MMMapEditor
                 .Where(v => v != null && HasMeaningfulLines(v.Lines))
                 .ToList();
 
+            if (TryHoistSharedPartyNotesBeforeBattle(node, renderableVariants, battleIndex))
+                return;
+
             if (renderableVariants.Count != 1)
                 return;
 
@@ -1392,6 +1395,162 @@ namespace MMMapEditor
             node.CommonLines = reorderedCommon;
 
             renderableVariants[0].Lines = new List<string>();
+        }
+
+        private static bool TryHoistSharedPartyNotesBeforeBattle(
+            VariantTreeNode node,
+            List<VariantRenderItem> renderableVariants,
+            int battleIndex)
+        {
+            if (node == null || renderableVariants == null || renderableVariants.Count < 2)
+                return false;
+
+            if (renderableVariants.Any(variant => !ContainsOnlyPartyEffectLines(variant)))
+                return false;
+
+            var sharedPartyLines = GetSharedPartyEffectLines(renderableVariants);
+            if (sharedPartyLines.Count == 0)
+                return false;
+
+            string battleLine = node.CommonLines[battleIndex];
+            var reorderedCommon = new List<string>();
+            reorderedCommon.AddRange(node.CommonLines.Take(battleIndex));
+            reorderedCommon.AddRange(sharedPartyLines);
+            node.CommonLines = reorderedCommon;
+
+            foreach (var variant in renderableVariants)
+            {
+                var remainingLines = RemoveLineOccurrences(variant.Lines, sharedPartyLines);
+                remainingLines.Add(battleLine);
+                variant.Lines = remainingLines;
+            }
+
+            return true;
+        }
+
+        private static bool ContainsOnlyPartyEffectLines(VariantRenderItem item)
+        {
+            if (item?.Lines == null || item.Lines.Count == 0)
+                return false;
+
+            var partyEffectLines = GetVariantPartyEffectLines(item);
+            if (partyEffectLines.Count == 0)
+                return false;
+
+            var availableCounts = BuildLineCounts(partyEffectLines);
+            foreach (var line in item.Lines)
+            {
+                string key = line ?? string.Empty;
+                if (!availableCounts.TryGetValue(key, out int remaining) || remaining <= 0)
+                    return false;
+
+                if (remaining == 1)
+                    availableCounts.Remove(key);
+                else
+                    availableCounts[key] = remaining - 1;
+            }
+
+            return true;
+        }
+
+        private static List<string> GetVariantPartyEffectLines(VariantRenderItem item)
+        {
+            var effects = (item?.Variant?.PartyEffects ?? new List<PartyEffect>())
+                .Where(effect => effect != null)
+                .ToList();
+
+            return effects
+                .Where(effect => PartyEffectSemantics.ShouldIncludeInNotes(effect, effects))
+                .Select(PartyEffectSemantics.BuildHumanDescription)
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Distinct()
+                .ToList();
+        }
+
+        private static List<string> GetSharedPartyEffectLines(List<VariantRenderItem> variants)
+        {
+            if (variants == null || variants.Count == 0)
+                return new List<string>();
+
+            var orderedSource = variants
+                .Where(variant => variant?.Lines != null)
+                .OrderBy(variant => variant.Lines.Count)
+                .Select(variant => variant.Lines)
+                .FirstOrDefault();
+
+            if (orderedSource == null || orderedSource.Count == 0)
+                return new List<string>();
+
+            var commonCounts = BuildLineCounts(orderedSource);
+            foreach (var variant in variants)
+            {
+                var variantCounts = BuildLineCounts(variant?.Lines);
+                foreach (var key in commonCounts.Keys.ToList())
+                {
+                    int variantCount = variantCounts.TryGetValue(key, out int count) ? count : 0;
+                    int mergedCount = Math.Min(commonCounts[key], variantCount);
+                    if (mergedCount <= 0)
+                        commonCounts.Remove(key);
+                    else
+                        commonCounts[key] = mergedCount;
+                }
+            }
+
+            var result = new List<string>();
+            foreach (var line in orderedSource)
+            {
+                string key = line ?? string.Empty;
+                if (!commonCounts.TryGetValue(key, out int remaining) || remaining <= 0)
+                    continue;
+
+                result.Add(line);
+                if (remaining == 1)
+                    commonCounts.Remove(key);
+                else
+                    commonCounts[key] = remaining - 1;
+            }
+
+            return result;
+        }
+
+        private static List<string> RemoveLineOccurrences(IEnumerable<string> source, IEnumerable<string> linesToRemove)
+        {
+            var result = new List<string>();
+            var pendingCounts = BuildLineCounts(linesToRemove);
+
+            foreach (var line in source ?? Enumerable.Empty<string>())
+            {
+                string key = line ?? string.Empty;
+                if (pendingCounts.TryGetValue(key, out int remaining) && remaining > 0)
+                {
+                    if (remaining == 1)
+                        pendingCounts.Remove(key);
+                    else
+                        pendingCounts[key] = remaining - 1;
+
+                    continue;
+                }
+
+                result.Add(line);
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, int> BuildLineCounts(IEnumerable<string> lines)
+        {
+            var result = new Dictionary<string, int>(StringComparer.Ordinal);
+
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+            {
+                string key = line ?? string.Empty;
+                if (result.TryGetValue(key, out int count))
+                    result[key] = count + 1;
+                else
+                    result[key] = 1;
+            }
+
+            return result;
         }
 
         private static List<string> GetCommonPrefix(List<List<string>> source)
