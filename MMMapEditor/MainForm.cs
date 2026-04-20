@@ -2234,7 +2234,7 @@ namespace MMMapEditor
 
                 var statusWordMatches = Regex.Matches(
                     statusesGroup.Value,
-                    @"GOOD|DISEASED|PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
+                    @"GOOD|DISEASED|POISONED|PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
                     RegexOptions.IgnoreCase);
 
                 foreach (Match statusMatch in statusWordMatches)
