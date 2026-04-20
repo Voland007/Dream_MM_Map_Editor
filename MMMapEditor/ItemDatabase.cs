@@ -34,6 +34,9 @@ namespace MMMapEditor
 
     public static class ItemDatabase
     {
+        private const int ItemEntrySize = 24;
+        private const int ItemNameFieldLength = 14;
+
         private static List<ItemInfo> _items = null;
         private static Dictionary<int, ItemInfo> _itemsById = null;
 
@@ -471,13 +474,12 @@ namespace MMMapEditor
                 allBytes[i] = Convert.ToByte(hexBytes[i], 16);
             }
 
-            const int entrySize = 24; // 16 байт имени + 8 байт характеристик
             int itemId = 0;
 
-            for (int index = 0; index + entrySize <= allBytes.Length; index += entrySize)
+            for (int index = 0; index + ItemEntrySize <= allBytes.Length; index += ItemEntrySize)
             {
-                byte[] entry = new byte[entrySize];
-                Array.Copy(allBytes, index, entry, 0, entrySize);
+                byte[] entry = new byte[ItemEntrySize];
+                Array.Copy(allBytes, index, entry, 0, ItemEntrySize);
 
                 var item = ParseItemEntry(entry, itemId);
                 _items.Add(item);
@@ -496,7 +498,10 @@ namespace MMMapEditor
             };
 
             int nameLength = 0;
-            for (int i = 0; i < 16; i++)
+            // У записей предметов поле имени занимает 14 байт.
+            // Следующие байты уже содержат характеристики и иногда выглядят как ASCII-мусор
+            // (например, хвосты вроде "F", "Z", "b"), поэтому не читаем их как часть имени.
+            for (int i = 0; i < ItemNameFieldLength; i++)
             {
                 if (data[i] == 0)
                     break;
@@ -514,6 +519,9 @@ namespace MMMapEditor
         {
             if (string.IsNullOrWhiteSpace(name))
                 return name;
+
+            if (name.Length > ItemNameFieldLength)
+                name = name.Substring(0, ItemNameFieldLength);
 
             var sb = new StringBuilder(name.Length);
             bool lastWasSpace = false;
