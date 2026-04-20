@@ -22,10 +22,11 @@ namespace MMMapEditor
         public const int FieldOffset = 0x3F;
         public const byte GoodValue = 0x00;
         public const byte EradicatedValue = 0xFF;
+        public const byte DiseasedMask = 0x08;
         public const byte ParalyzedMask = 0x20;
         public const byte UnconsciousMask = 0x40;
         public const byte DeadMask = 0x80;
-        public const byte TrackedMask = ParalyzedMask | UnconsciousMask | DeadMask;
+        public const byte TrackedMask = DiseasedMask | ParalyzedMask | UnconsciousMask | DeadMask;
 
         public static List<string> GetStatusNamesForExactValue(byte value)
         {
@@ -44,6 +45,9 @@ namespace MMMapEditor
                 return new List<string> { "ERADICATED" };
 
             var result = new List<string>();
+
+            if ((value & DiseasedMask) != 0)
+                result.Add("DISEASED");
 
             if ((value & ParalyzedMask) != 0)
                 result.Add("PARALYZED");

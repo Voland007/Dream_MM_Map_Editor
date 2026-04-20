@@ -300,15 +300,10 @@ namespace MMMapEditor
             if (!exactValue.HasValue)
                 return $"{subject}: Состояние неопределено";
 
-            return exactValue.Value switch
-            {
-                PartyStatusSemantics.GoodValue => $"{subject}: GOOD",
-                PartyStatusSemantics.EradicatedValue => $"{subject}: ERADICATED",
-                PartyStatusSemantics.ParalyzedMask => $"{subject}: PARALYZED",
-                PartyStatusSemantics.UnconsciousMask => $"{subject}: UNCONSCIOUS",
-                PartyStatusSemantics.DeadMask => $"{subject}: DEAD",
-                _ => $"{subject}: Состояние неопределено"
-            };
+            var statusNames = PartyStatusSemantics.GetStatusNamesForExactValue(exactValue.Value);
+            return statusNames.Count > 0
+                ? $"{subject}: {string.Join(", ", statusNames)}"
+                : $"{subject}: Состояние неопределено";
         }
 
         private static string BuildStatusBitDescription(PartyMemberReference member,
@@ -318,14 +313,10 @@ namespace MMMapEditor
             if (mask == 0 || operation != PartyEffectOperation.BitSet)
                 return $"{subject}: Состояние неопределено";
 
-            return mask switch
-            {
-                PartyStatusSemantics.EradicatedValue => $"{subject}: ERADICATED",
-                PartyStatusSemantics.ParalyzedMask => $"{subject}: PARALYZED",
-                PartyStatusSemantics.UnconsciousMask => $"{subject}: UNCONSCIOUS",
-                PartyStatusSemantics.DeadMask => $"{subject}: DEAD",
-                _ => $"{subject}: Состояние неопределено"
-            };
+            var statusNames = PartyStatusSemantics.GetTrackedStatusNames(mask);
+            return statusNames.Count > 0
+                ? $"{subject}: {string.Join(", ", statusNames)}"
+                : $"{subject}: Состояние неопределено";
         }
 
         private static string BuildStatusWriteDescriptionFromBits(PartyMemberReference member, byte? exactValue)

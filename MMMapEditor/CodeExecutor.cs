@@ -1639,6 +1639,59 @@ namespace MMMapEditor
             return effects;
         }
 
+        private void TrackPartyFieldRegisterMemoryTransform(RegisterTracker registerTracker, string regName,
+            PartyEffectOperation operation, byte? sourceValue, uint instructionAddress, string mnemonic,
+            string sourceDescription, bool debugMode)
+        {
+            if (registerTracker == null || string.IsNullOrWhiteSpace(regName))
+                return;
+
+            string fullReg = GetFullRegisterNameForByteRegister(regName);
+            if (string.IsNullOrWhiteSpace(fullReg))
+                return;
+
+            string instructionText = string.IsNullOrWhiteSpace(sourceDescription)
+                ? $"{mnemonic} {regName}"
+                : $"{mnemonic} {regName}, {sourceDescription}";
+
+            if (sourceValue.HasValue &&
+                registerTracker.TryGetByteRegisterValue(regName, out byte oldValue) &&
+                TryApplyImmediateByteTransform(oldValue, sourceValue.Value, operation, out byte newValue))
+            {
+                registerTracker.TrackPartialRegisterOperation(
+                    fullReg,
+                    regName,
+                    newValue,
+                    instructionAddress,
+                    instructionText);
+            }
+            else
+            {
+                registerTracker.ClearConcreteByteRegisterValueKeepSemantic(regName);
+            }
+
+            if (registerTracker.TryGetPartyFieldValue(regName, out var partyField) &&
+                partyField != null)
+            {
+                if (sourceValue.HasValue)
+                    partyField.ApplyBitOperation(operation, sourceValue.Value);
+                else
+                    partyField.BitTransform = null;
+
+                registerTracker.SetPartyFieldValue(regName, partyField);
+            }
+
+            registerTracker.ClearPartyPointerByteValue(regName);
+
+            if (debugMode)
+            {
+                string valueText = sourceValue.HasValue
+                    ? $"0x{sourceValue.Value:X2}"
+                    : "неизвестное значение";
+                AnalysisDebug.WriteLine($"        Обновили регистр {regName} через {mnemonic} с байтом {valueText} из {sourceDescription}");
+            }
+        }
+
         private void TrackPartyFieldRegisterImmediateTransform(PathAnalysisResult result, RegisterTracker registerTracker, string regName,
             PartyEffectOperation operation, byte immediateValue, uint instructionAddress, bool debugMode)
         {
@@ -4110,6 +4163,58 @@ namespace MMMapEditor
                     instructionBytes[1],
                     address,
                     debugMode);
+            }
+
+            if (instructionBytes.Length >= 2 &&
+                (instructionBytes[0] == 0x0A || instructionBytes[0] == 0x22 || instructionBytes[0] == 0x32))
+            {
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                if (mod != 0x03 && reg < regNames8.Length)
+                {
+                    PartyEffectOperation registerOperation = instructionBytes[0] switch
+                    {
+                        0x0A => PartyEffectOperation.BitSet,
+                        0x22 => PartyEffectOperation.BitClear,
+                        0x32 => PartyEffectOperation.BitToggle,
+                        _ => PartyEffectOperation.Unknown
+                    };
+
+                    if (registerOperation != PartyEffectOperation.Unknown)
+                    {
+                        bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText);
+                        if (!hasExactMemAddr)
+                            TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out _, out eaText);
+
+                        byte? sourceValue = null;
+                        if (hasExactMemAddr &&
+                            TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte resolvedByteValue))
+                        {
+                            sourceValue = resolvedByteValue;
+                        }
+
+                        string mnemonic = registerOperation switch
+                        {
+                            PartyEffectOperation.BitSet => "OR",
+                            PartyEffectOperation.BitClear => "AND",
+                            PartyEffectOperation.BitToggle => "XOR",
+                            _ => "LOGIC"
+                        };
+
+                        TrackPartyFieldRegisterMemoryTransform(
+                            registerTracker,
+                            regNames8[reg],
+                            registerOperation,
+                            sourceValue,
+                            address,
+                            mnemonic,
+                            string.IsNullOrWhiteSpace(eaText) ? "r/m8" : eaText,
+                            debugMode);
+                    }
+                }
             }
 
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xD0)
