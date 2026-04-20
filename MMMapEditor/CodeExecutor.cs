@@ -4944,7 +4944,15 @@ namespace MMMapEditor
             AnalysisDebug.WriteLine($"    Состояние цикла: IsInLoop={result.IsInLoop}, LoopStartAddress=0x{result.LoopStartAddress:X4}, LoopIterationCount={result.LoopIterationCount}");
 
             // Группируем записи по BX индексу (индекс в массиве, куда сохраняются значения)
-            var groupedByBx = result.PartialBattleInfo.GroupBy(p => p.BxIndex).OrderBy(g => g.Key);
+            var groupedByBx = result.PartialBattleInfo
+                .GroupBy(p => p.BxIndex)
+                .OrderBy(g => g.Key)
+                .ToList();
+
+            if (TryAnalyzeDiscreteBattleTemplates(br, result, groupedByBx))
+            {
+                return;
+            }
 
             foreach (var group in groupedByBx)
             {
@@ -5120,6 +5128,105 @@ namespace MMMapEditor
                     }
                 }
             }
+        }
+
+        private bool TryAnalyzeDiscreteBattleTemplates(BinaryReader br, PathAnalysisResult result,
+            List<IGrouping<int, PartialBattleInfo>> groupedByBx)
+        {
+            if (br == null || groupedByBx == null || groupedByBx.Count == 0)
+                return false;
+
+            var pairedGroups = groupedByBx
+                .Select(group => new
+                {
+                    SaveBxIndex = group.Key,
+                    Entry58 = group.FirstOrDefault(entry => entry.DestAddr == 0x3C58),
+                    Entry29 = group.FirstOrDefault(entry => entry.DestAddr == 0x3C29)
+                })
+                .Where(group => group.Entry58 != null && group.Entry29 != null)
+                .ToList();
+
+            if (pairedGroups.Count == 0)
+                return false;
+
+            bool isCaPattern = pairedGroups.All(group =>
+                string.Equals(group.Entry58.SourceTable, "CA7F", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(group.Entry29.SourceTable, "CA84", StringComparison.OrdinalIgnoreCase));
+
+            if (!isCaPattern)
+                return false;
+
+            const ushort firstTableBase = 0xCA7F;
+            const ushort secondTableBase = 0xCA84;
+            const int optionCount = 5;
+
+            var exactOptions = new List<DiscreteBattleOption>();
+            for (int optionIndex = 0; optionIndex < optionCount; optionIndex++)
+            {
+                ushort firstAddr = (ushort)(firstTableBase + optionIndex);
+                ushort secondAddr = (ushort)(secondTableBase + optionIndex);
+
+                bool readSuccess1 = TryReadOverlayByte(br, firstAddr, out byte val1);
+                bool readSuccess2 = TryReadOverlayByte(br, secondAddr, out byte val2);
+
+                AnalysisDebug.WriteLine(readSuccess1 && readSuccess2
+                    ? $"        ДИСКРЕТНЫЙ ШАБЛОН CA7F/CA84: option {optionIndex + 1} -> [{firstAddr:X4}] = 0x{val1:X2}, [{secondAddr:X4}] = 0x{val2:X2}"
+                    : $"        ДИСКРЕТНЫЙ ШАБЛОН CA7F/CA84: option {optionIndex + 1} -> read failed");
+
+                if (!readSuccess1 || !readSuccess2)
+                    continue;
+
+                exactOptions.Add(new DiscreteBattleOption
+                {
+                    Val1 = val1,
+                    Val2 = val2
+                });
+            }
+
+            exactOptions = exactOptions
+                .GroupBy(option => $"{option.Val1:X2}:{option.Val2:X2}")
+                .Select(group => group.First())
+                .OrderBy(option => option.Val1)
+                .ThenBy(option => option.Val2)
+                .ToList();
+
+            if (exactOptions.Count == 0)
+            {
+                AnalysisDebug.WriteLine("        -> Не удалось прочитать ни одного варианта из таблиц CA7F/CA84");
+                return false;
+            }
+
+            int repeatCount = 1;
+            if (TryGetExactBattleMonsterCount(result, out byte exactBattleMonsterCount) &&
+                exactBattleMonsterCount > 0)
+            {
+                repeatCount = exactBattleMonsterCount;
+            }
+            else if (pairedGroups.Count > 0)
+            {
+                int minBx = pairedGroups.Min(group => group.SaveBxIndex);
+                int maxBx = pairedGroups.Max(group => group.SaveBxIndex);
+                repeatCount = Math.Max(1, maxBx - minBx + 1);
+            }
+
+            int baseBxIndex = pairedGroups.Min(group => group.SaveBxIndex);
+            var discreteBattle = new PartiallyDefinedBattle
+            {
+                BxIndex = baseBxIndex,
+                RepeatCount = repeatCount,
+                ExactOptions = exactOptions
+            };
+
+            string identityKey = discreteBattle.GetIdentityKey();
+            if (result.PartialBattles.Any(battle => battle.GetIdentityKey() == identityKey))
+            {
+                AnalysisDebug.WriteLine("        -> ДИСКРЕТНАЯ БИТВА CA7F/CA84 уже создана, повторно не добавляем");
+                return true;
+            }
+
+            result.PartialBattles.Add(discreteBattle);
+            AnalysisDebug.WriteLine($"        -> СОЗДАНА ДИСКРЕТНАЯ БИТВА CA7F/CA84: BX={baseBxIndex}, repeatCount={repeatCount}, options={exactOptions.Count}");
+            return true;
         }
 
 

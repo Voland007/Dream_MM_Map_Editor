@@ -505,6 +505,10 @@ namespace MMMapEditor
                     tableType = "CDA9";
                 else if (sourceAddr >= 0xCDB1 && sourceAddr <= 0xCDB8)
                     tableType = "CDB1";
+                else if (sourceAddr >= 0xCA7F && sourceAddr <= 0xCA83)
+                    tableType = "CA7F";
+                else if (sourceAddr >= 0xCA84 && sourceAddr <= 0xCA88)
+                    tableType = "CA84";
                 else
                     tableType = "UNKNOWN";
             }

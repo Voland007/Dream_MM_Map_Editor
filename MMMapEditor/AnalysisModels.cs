@@ -524,6 +524,6 @@ namespace MMMapEditor
         public byte SrcRegValue { get; set; }      // Значение в регистре
         public bool IsFromTable { get; set; }      // Загружено ли из таблицы
         public ushort? SourceTableAddr { get; set; } // Адрес в таблице-источнике
-        public string SourceTable { get; set; }    // Тип таблицы ("CDA9", "CDB1", "CDBD", "CDB5")
+        public string SourceTable { get; set; }    // Тип таблицы ("CDA9", "CDB1", "CDBD", "CDB5", "CA7F", "CA84")
     }
 }

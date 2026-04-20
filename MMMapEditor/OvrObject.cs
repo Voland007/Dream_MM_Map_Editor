@@ -302,22 +302,26 @@ namespace MMMapEditor
 
         public void AddPartiallyDefinedBattle(int bxIndex, byte rangeStart1, byte rangeEnd1, byte rangeStart2, byte rangeEnd2)
         {
-            // Проверяем, не существует ли уже такая запись
-            if (!PartiallyDefinedBattles.Any(p => p.BxIndex == bxIndex &&
-                                                   p.RangeStart1 == rangeStart1 &&
-                                                   p.RangeEnd1 == rangeEnd1 &&
-                                                   p.RangeStart2 == rangeStart2 &&
-                                                   p.RangeEnd2 == rangeEnd2))
+            AddPartiallyDefinedBattle(new PartiallyDefinedBattle
             {
-                PartiallyDefinedBattles.Add(new PartiallyDefinedBattle
-                {
-                    BxIndex = bxIndex,
-                    RangeStart1 = rangeStart1,
-                    RangeEnd1 = rangeEnd1,
-                    RangeStart2 = rangeStart2,
-                    RangeEnd2 = rangeEnd2
-                });
-            }
+                BxIndex = bxIndex,
+                RangeStart1 = rangeStart1,
+                RangeEnd1 = rangeEnd1,
+                RangeStart2 = rangeStart2,
+                RangeEnd2 = rangeEnd2
+            });
+        }
+
+        public void AddPartiallyDefinedBattle(PartiallyDefinedBattle battle)
+        {
+            if (battle == null)
+                return;
+
+            string battleKey = battle.GetIdentityKey();
+            if (PartiallyDefinedBattles.Any(p => p.GetIdentityKey() == battleKey))
+                return;
+
+            PartiallyDefinedBattles.Add(battle.Clone());
         }
 
         public List<PartiallyDefinedBattle> GetPartiallyDefinedBattles()
@@ -622,7 +626,9 @@ namespace MMMapEditor
                         if (monsters.Count == 1)
                         {
                             string cleanName = CleanMonsterNameForDisplay(monsters[0].MonsterName);
-                            string desc = $"Частично определённая битва: {cleanName}";
+                            string desc = battle.RepeatCount > 1
+                                ? $"Частично определённая битва: {cleanName} x{battle.RepeatCount}"
+                                : $"Частично определённая битва: {cleanName}";
 
                             if (!addedDescriptions.Contains(desc))
                             {
@@ -632,13 +638,18 @@ namespace MMMapEditor
                         }
                         else if (monsters.Count > 0)
                         {
-                            string result = $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов):";
+                            string result = battle.RepeatCount > 1
+                                ? $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов группы x{battle.RepeatCount}):"
+                                : $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов):";
 
                             int displayCount = Math.Min(monsters.Count, 10);
                             for (int i = 0; i < displayCount; i++)
                             {
                                 string cleanName = CleanMonsterNameForDisplay(monsters[i].MonsterName);
-                                result += $"\n  • Вариант {i + 1}: {cleanName}";
+                                string variantText = battle.RepeatCount > 1
+                                    ? $"{cleanName} x{battle.RepeatCount}"
+                                    : cleanName;
+                                result += $"\n  • Вариант {i + 1}: {variantText}";
                             }
 
                             if (monsters.Count > displayCount)
@@ -654,7 +665,10 @@ namespace MMMapEditor
                         }
                         else
                         {
-                            string desc = $"Частично определённая битва (BX={battle.BxIndex}, диапазоны: [{battle.RangeStart1:X2}-{battle.RangeEnd1:X2}] + [{battle.RangeStart2:X2}-{battle.RangeEnd2:X2}])";
+                            string repeatSuffix = battle.RepeatCount > 1
+                                ? $", группа x{battle.RepeatCount}"
+                                : string.Empty;
+                            string desc = $"Частично определённая битва (BX={battle.BxIndex}, диапазоны: [{battle.RangeStart1:X2}-{battle.RangeEnd1:X2}] + [{battle.RangeStart2:X2}-{battle.RangeEnd2:X2}]{repeatSuffix})";
                             if (!addedDescriptions.Contains(desc))
                             {
                                 descriptions.Add(desc);
@@ -952,12 +966,7 @@ namespace MMMapEditor
             {
                 foreach (var partial in PartiallyDefinedBattles.OrderBy(p => p.BxIndex))
                 {
-                    obj.AddPartiallyDefinedBattle(
-                        partial.BxIndex,
-                        partial.RangeStart1,
-                        partial.RangeEnd1,
-                        partial.RangeStart2,
-                        partial.RangeEnd2);
+                    obj.AddPartiallyDefinedBattle(partial);
                 }
             }
 
@@ -1069,9 +1078,28 @@ namespace MMMapEditor
 
     #region Классы для частично определённых битв
 
+    public class DiscreteBattleOption
+    {
+        public byte Val1 { get; set; }
+        public byte Val2 { get; set; }
+
+        public int MonsterId => Val1 + 16 * Val2 - 17;
+        public string MonsterName => MonsterDatabase.GetMonsterName(MonsterId);
+
+        public DiscreteBattleOption Clone()
+        {
+            return new DiscreteBattleOption
+            {
+                Val1 = Val1,
+                Val2 = Val2
+            };
+        }
+    }
+
     /// <summary>
-    /// Представляет частично определённую битву, где значения берутся из диапазонов
-    /// CDA9-CDB0 (первый байт) и CDB1-CDB8 (второй байт)
+    /// Представляет частично определённую битву:
+    /// либо диапазонную (CDA9/CDB1),
+    /// либо дискретный набор точных пар (например, CA7F/CA84).
     /// </summary>
     public class PartiallyDefinedBattle
     {
@@ -1101,11 +1129,59 @@ namespace MMMapEditor
         public byte RangeEnd2 { get; set; }
 
         /// <summary>
+        /// Точное количество повторений одной и той же выбранной группы монстров.
+        /// Для обычных частичных битв равно 1.
+        /// </summary>
+        public int RepeatCount { get; set; } = 1;
+
+        /// <summary>
+        /// Дискретный набор точных пар val1/val2, если варианты задаются таблицей,
+        /// а не декартовым произведением диапазонов.
+        /// </summary>
+        public List<DiscreteBattleOption> ExactOptions { get; set; } = new List<DiscreteBattleOption>();
+
+        public bool HasExactOptions => ExactOptions != null && ExactOptions.Count > 0;
+
+        /// <summary>
         /// Генерирует список возможных монстров из диапазона
         /// </summary>
         public List<PossibleMonster> GetPossibleMonsters()
         {
             var result = new List<PossibleMonster>();
+
+            if (HasExactOptions)
+            {
+                AnalysisDebug.WriteLine($"      GetPossibleMonsters: дискретные варианты ({ExactOptions.Count})");
+
+                foreach (var option in ExactOptions
+                    .Where(option => option != null)
+                    .GroupBy(option => $"{option.Val1:X2}:{option.Val2:X2}")
+                    .Select(group => group.First())
+                    .OrderBy(option => option.Val1)
+                    .ThenBy(option => option.Val2))
+                {
+                    int monsterId = option.MonsterId;
+                    if (monsterId < 0 || monsterId >= 256)
+                        continue;
+
+                    string monsterName = option.MonsterName;
+                    if (string.IsNullOrEmpty(monsterName))
+                        continue;
+
+                    result.Add(new PossibleMonster
+                    {
+                        Val1 = option.Val1,
+                        Val2 = option.Val2,
+                        MonsterId = monsterId,
+                        MonsterName = monsterName
+                    });
+
+                    AnalysisDebug.WriteLine($"        точная пара {option.Val1:X2}/{option.Val2:X2} -> {monsterName} (ID={monsterId})");
+                }
+
+                AnalysisDebug.WriteLine($"      Найдено монстров: {result.Count}");
+                return result;
+            }
 
             AnalysisDebug.WriteLine($"      GetPossibleMonsters: диапазоны [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]");
 
@@ -1190,15 +1266,55 @@ namespace MMMapEditor
         /// <summary>
         /// Количество возможных комбинаций
         /// </summary>
-        public int PossibleCombinations => (RangeEnd1 - RangeStart1 + 1) * (RangeEnd2 - RangeStart2 + 1);
+        public int PossibleCombinations => HasExactOptions
+            ? ExactOptions
+                .Where(option => option != null)
+                .GroupBy(option => $"{option.Val1:X2}:{option.Val2:X2}")
+                .Count()
+            : (RangeEnd1 - RangeStart1 + 1) * (RangeEnd2 - RangeStart2 + 1);
+
+        public string GetIdentityKey()
+        {
+            string exactOptionsKey = HasExactOptions
+                ? string.Join(",",
+                    ExactOptions
+                        .Where(option => option != null)
+                        .OrderBy(option => option.Val1)
+                        .ThenBy(option => option.Val2)
+                        .Select(option => $"{option.Val1:X2}:{option.Val2:X2}"))
+                : "<NO_EXACT_OPTIONS>";
+
+            return $"{BxIndex}:{RangeStart1:X2}-{RangeEnd1:X2}:{RangeStart2:X2}-{RangeEnd2:X2}:R{Math.Max(1, RepeatCount)}:{exactOptionsKey}";
+        }
+
+        public PartiallyDefinedBattle Clone()
+        {
+            return new PartiallyDefinedBattle
+            {
+                BxIndex = BxIndex,
+                RangeStart1 = RangeStart1,
+                RangeEnd1 = RangeEnd1,
+                RangeStart2 = RangeStart2,
+                RangeEnd2 = RangeEnd2,
+                RepeatCount = RepeatCount,
+                ExactOptions = ExactOptions?
+                    .Where(option => option != null)
+                    .Select(option => option.Clone())
+                    .ToList() ?? new List<DiscreteBattleOption>()
+            };
+        }
 
         public override string ToString()
         {
             var monsters = GetPossibleMonsters();
             if (monsters.Count == 1)
-                return $"Частично определён: {monsters[0].MonsterName}";
+                return RepeatCount > 1
+                    ? $"Частично определён: {monsters[0].MonsterName} x{RepeatCount}"
+                    : $"Частично определён: {monsters[0].MonsterName}";
             else if (monsters.Count > 0)
-                return $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}])";
+                return HasExactOptions
+                    ? $"Частично определён: {monsters.Count} точных вариант(ов){(RepeatCount > 1 ? $" группы x{RepeatCount}" : string.Empty)}"
+                    : $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}])";
             else
                 return $"Частично определён: пустой диапазон";
         }

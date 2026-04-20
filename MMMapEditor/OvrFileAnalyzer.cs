@@ -849,14 +849,7 @@ namespace MMMapEditor
                     .ToList(),
                 PartiallyDefinedBattles = source.PartialBattles
                     .OrderBy(p => p.BxIndex)
-                    .Select(p => new PartiallyDefinedBattle
-                    {
-                        BxIndex = p.BxIndex,
-                        RangeStart1 = p.RangeStart1,
-                        RangeEnd1 = p.RangeEnd1,
-                        RangeStart2 = p.RangeStart2,
-                        RangeEnd2 = p.RangeEnd2
-                    })
+                    .Select(p => p.Clone())
                     .ToList(),
                 HasAnyTableLoad = source.HasPartialBattlePattern,
                 LoadedValues = source.PartialBattleInfo
@@ -937,8 +930,11 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine("        PartiallyDefinedBattles:");
                 foreach (var partial in variant.PartiallyDefinedBattles.OrderBy(p => p.BxIndex))
                 {
+                    string exactOptions = partial.HasExactOptions
+                        ? string.Join(", ", partial.ExactOptions.Select(option => $"{option.Val1:X2}/{option.Val2:X2}"))
+                        : "<range>";
                     AnalysisDebug.WriteLine(
-                        $"          BX={partial.BxIndex}: [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}]");
+                        $"          BX={partial.BxIndex}: [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}], repeatCount={partial.RepeatCount}, exactOptions={exactOptions}");
                 }
             }
 
@@ -997,12 +993,7 @@ namespace MMMapEditor
 
             foreach (var partial in variant.PartiallyDefinedBattles)
             {
-                target.AddPartiallyDefinedBattle(
-                    partial.BxIndex,
-                    partial.RangeStart1,
-                    partial.RangeEnd1,
-                    partial.RangeStart2,
-                    partial.RangeEnd2);
+                target.AddPartiallyDefinedBattle(partial);
             }
 
             foreach (var loadedValue in variant.LoadedValues)
@@ -1161,13 +1152,7 @@ namespace MMMapEditor
 
             foreach (var partial in partialBattles)
             {
-                obj.AddPartiallyDefinedBattle(
-                    partial.BxIndex,
-                    partial.RangeStart1,
-                    partial.RangeEnd1,
-                    partial.RangeStart2,
-                    partial.RangeEnd2
-                );
+                obj.AddPartiallyDefinedBattle(partial);
             }
 
             return obj;
@@ -1208,13 +1193,7 @@ namespace MMMapEditor
 
             foreach (var partial in result.PartialBattles)
             {
-                obj.AddPartiallyDefinedBattle(
-                    partial.BxIndex,
-                    partial.RangeStart1,
-                    partial.RangeEnd1,
-                    partial.RangeStart2,
-                    partial.RangeEnd2
-                );
+                obj.AddPartiallyDefinedBattle(partial);
             }
 
             obj.HasAnyTableLoad = result.HasPartialBattlePattern;

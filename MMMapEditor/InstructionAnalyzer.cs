@@ -1131,6 +1131,28 @@ namespace MMMapEditor
                 return;
             }
 
+            // ========== ТАБЛИЦЫ ДИСКРЕТНЫХ ШАБЛОНОВ БИТВ (CA7F+ И CA84+) ==========
+
+            // Загрузка из таблицы CA7F+ (MOV AL, [BX+CA7F]) - первый индекс монстра
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x8A &&
+                     instructionBytes[1] == 0x87 &&
+                     instructionBytes[2] == 0x7F && instructionBytes[3] == 0xCA)
+            {
+                ProcessLoadFromTableCA7F(instructionBytes, registerTracker, address, br);
+                return;
+            }
+
+            // Загрузка из таблицы CA84+ (MOV BP, [BX+CA84]) - второй индекс монстра в младшем байте
+            else if (instructionBytes.Length >= 4 &&
+                     instructionBytes[0] == 0x8B &&
+                     instructionBytes[1] == 0xAF &&
+                     instructionBytes[2] == 0x84 && instructionBytes[3] == 0xCA)
+            {
+                ProcessLoadFromTableCA84(instructionBytes, registerTracker, address, br);
+                return;
+            }
+
             // ========== КОПИРОВАНИЕ МЕЖДУ РЕГИСТРАМИ ==========
 
             // Копирование BP в CX (MOV CX, BP)
@@ -1449,6 +1471,98 @@ namespace MMMapEditor
         }
 
         /// <summary>
+        /// Загрузка из таблицы CA7F+ (MOV AL, [BX+CA7F]) - первый индекс монстра
+        /// для случайно выбираемого шаблона группы.
+        /// </summary>
+        private void ProcessLoadFromTableCA7F(byte[] bytes, RegisterTracker tracker,
+            uint address, BinaryReader br)
+        {
+            if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
+            {
+                ushort sourceAddr = (ushort)(0xCA7F + bxValue);
+                byte actualValue = 0;
+                bool readSuccess = false;
+
+                try
+                {
+                    if (TryMapOverlayAddressToFileOffset(br, sourceAddr, out long fileOffset))
+                    {
+                        readSuccess = TryReadOverlayByte(br, sourceAddr, out actualValue);
+                        if (readSuccess)
+                            AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X2}");
+                    }
+                    else
+                    {
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: адрес не сопоставлен с файлом");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                }
+
+                tracker.SetRegisterValueWithSource(
+                    "AL",
+                    readSuccess ? actualValue : (byte)0,
+                    sourceAddr,
+                    bxValue,
+                    true,
+                    address,
+                    $"MOV AL, [BX+CA7F] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
+                    "CA7F"
+                );
+
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CA7F+: AL = [BX+CA7F] (BX={bxValue}, addr={sourceAddr:X4})");
+            }
+        }
+
+        /// <summary>
+        /// Загрузка из таблицы CA84+ (MOV BP, [BX+CA84]) - второй индекс монстра
+        /// хранится в младшем байте и позже маскируется через AND BP,0xFF.
+        /// </summary>
+        private void ProcessLoadFromTableCA84(byte[] bytes, RegisterTracker tracker,
+            uint address, BinaryReader br)
+        {
+            if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
+            {
+                ushort sourceAddr = (ushort)(0xCA84 + bxValue);
+                ushort actualValue = 0;
+                bool readSuccess = false;
+
+                try
+                {
+                    if (TryMapOverlayAddressToFileOffset(br, sourceAddr, out long fileOffset))
+                    {
+                        readSuccess = TryReadOverlayWord(br, sourceAddr, out actualValue);
+                        if (readSuccess)
+                            AnalysisDebug.WriteLine($"    ФАКТИЧЕСКОЕ ЗНАЧЕНИЕ ИЗ [{sourceAddr:X4}] (offset 0x{fileOffset:X}): 0x{actualValue:X4}");
+                    }
+                    else
+                    {
+                        AnalysisDebug.WriteLine($"    НЕВОЗМОЖНО ПРОЧИТАТЬ [{sourceAddr:X4}]: адрес не сопоставлен с файлом");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AnalysisDebug.WriteLine($"    ОШИБКА ЧТЕНИЯ ИЗ [{sourceAddr:X4}]: {ex.Message}");
+                }
+
+                tracker.SetRegisterValueWithSource(
+                    "BP",
+                    readSuccess ? actualValue : (ushort)0,
+                    sourceAddr,
+                    bxValue,
+                    true,
+                    address,
+                    $"MOV BP, [BX+CA84] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
+                    "CA84"
+                );
+
+                AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CA84+: BP = [BX+CA84] (BX={bxValue}, addr={sourceAddr:X4})");
+            }
+        }
+
+        /// <summary>
         /// Копирование BP в CX (MOV CX, BP)
         /// </summary>
         private void ProcessCopyBPtoCX(byte[] bytes, RegisterTracker tracker, uint address)
@@ -1612,7 +1726,9 @@ namespace MMMapEditor
 
                             case "CDA9":
                             case "CDB1":
-                                // Из таблиц CDA9/CDB1 - частично определённая битва
+                            case "CA7F":
+                            case "CA84":
+                                // Из таблиц частично/дискретно определённой битвы
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = saveIndex,
@@ -1710,7 +1826,9 @@ namespace MMMapEditor
 
                             case "CDB1":
                             case "CDA9":
-                                // Из таблиц CDB1/CDA9 - частично определённая битва
+                            case "CA7F":
+                            case "CA84":
+                                // Из таблиц частично/дискретно определённой битвы
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = saveIndex,
@@ -1808,7 +1926,9 @@ namespace MMMapEditor
 
                             case "CDA9":
                             case "CDB1":
-                                // Из таблиц CDA9/CDB1 - частично определённая битва
+                            case "CA7F":
+                            case "CA84":
+                                // Из таблиц частично/дискретно определённой битвы
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = saveIndex,
@@ -1906,7 +2026,9 @@ namespace MMMapEditor
 
                             case "CDB1":
                             case "CDA9":
-                                // Из таблиц CDB1/CDA9 - частично определённая битва
+                            case "CA7F":
+                            case "CA84":
+                                // Из таблиц частично/дискретно определённой битвы
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = saveIndex,
@@ -2004,7 +2126,9 @@ namespace MMMapEditor
 
                             case "CDA9":
                             case "CDB1":
-                                // Из таблиц CDA9/CDB1 - частично определённая битва
+                            case "CA7F":
+                            case "CA84":
+                                // Из таблиц частично/дискретно определённой битвы
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = saveIndex,
@@ -2102,7 +2226,9 @@ namespace MMMapEditor
 
                             case "CDB1":
                             case "CDA9":
-                                // Из таблиц CDB1/CDA9 - частично определённая битва
+                            case "CA7F":
+                            case "CA84":
+                                // Из таблиц частично/дискретно определённой битвы
                                 result.PartialBattleInfo.Add(new PartialBattleInfo
                                 {
                                     BxIndex = saveIndex,
@@ -2198,7 +2324,9 @@ namespace MMMapEditor
 
                         case "CDA9":
                         case "CDB1":
-                            // Из таблиц CDA9/CDB1 - частично определённая битва
+                        case "CA7F":
+                        case "CA84":
+                            // Из таблиц частично/дискретно определённой битвы
                             result.PartialBattleInfo.Add(new PartialBattleInfo
                             {
                                 BxIndex = saveIndex,
@@ -2293,7 +2421,9 @@ namespace MMMapEditor
 
                         case "CDB1":
                         case "CDA9":
-                            // Из таблиц CDB1/CDA9 - частично определённая битва
+                        case "CA7F":
+                        case "CA84":
+                            // Из таблиц частично/дискретно определённой битвы
                             result.PartialBattleInfo.Add(new PartialBattleInfo
                             {
                                 BxIndex = saveIndex,

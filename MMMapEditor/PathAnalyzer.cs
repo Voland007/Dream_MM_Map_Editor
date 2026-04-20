@@ -330,21 +330,10 @@ namespace MMMapEditor
 
             foreach (var partial in currentState.PartialBattles)
             {
-                if (!merged.PartialBattles.Any(p =>
-                    p.BxIndex == partial.BxIndex &&
-                    p.RangeStart1 == partial.RangeStart1 &&
-                    p.RangeEnd1 == partial.RangeEnd1 &&
-                    p.RangeStart2 == partial.RangeStart2 &&
-                    p.RangeEnd2 == partial.RangeEnd2))
+                string partialKey = partial.GetIdentityKey();
+                if (!merged.PartialBattles.Any(p => p.GetIdentityKey() == partialKey))
                 {
-                    merged.PartialBattles.Add(new PartiallyDefinedBattle
-                    {
-                        BxIndex = partial.BxIndex,
-                        RangeStart1 = partial.RangeStart1,
-                        RangeEnd1 = partial.RangeEnd1,
-                        RangeStart2 = partial.RangeStart2,
-                        RangeEnd2 = partial.RangeEnd2
-                    });
+                    merged.PartialBattles.Add(partial.Clone());
                 }
             }
 
@@ -640,14 +629,7 @@ namespace MMMapEditor
 
             foreach (var partial in source.PartialBattles)
             {
-                clone.PartialBattles.Add(new PartiallyDefinedBattle
-                {
-                    BxIndex = partial.BxIndex,
-                    RangeStart1 = partial.RangeStart1,
-                    RangeEnd1 = partial.RangeEnd1,
-                    RangeStart2 = partial.RangeStart2,
-                    RangeEnd2 = partial.RangeEnd2
-                });
+                clone.PartialBattles.Add(partial.Clone());
             }
 
             foreach (var info in source.PartialBattleInfo)
@@ -777,15 +759,13 @@ namespace MMMapEditor
         {
             return source.PartialBattles
                 .OrderBy(p => p.BxIndex)
-                .Select(p => new PartiallyDefinedBattle
-                {
-                    BxIndex = p.BxIndex,
-                    RangeStart1 = p.RangeStart1,
-                    RangeEnd1 = p.RangeEnd1,
-                    RangeStart2 = p.RangeStart2,
-                    RangeEnd2 = p.RangeEnd2
-                })
+                .Select(p => p.Clone())
                 .ToList();
+        }
+
+        private string BuildPartialBattleKey(PartiallyDefinedBattle battle)
+        {
+            return battle?.GetIdentityKey() ?? "<NULL_PARTIAL>";
         }
 
         private List<OvrObject.LoadedValueInfo> CloneLoadedValues(PathAnalysisResult source)
@@ -1311,7 +1291,7 @@ namespace MMMapEditor
             string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
                 ? string.Join(";", variant.PartiallyDefinedBattles
                     .OrderBy(p => p.BxIndex)
-                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                    .Select(BuildPartialBattleKey))
                 : "<NO_PARTIAL>";
 
             string partyKey = BuildPartyEffectsKey(variant);
@@ -1383,7 +1363,7 @@ namespace MMMapEditor
             string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
                 ? string.Join(";", variant.PartiallyDefinedBattles
                     .OrderBy(p => p.BxIndex)
-                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                    .Select(BuildPartialBattleKey))
                 : "<NO_PARTIAL>";
 
             string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
@@ -1471,7 +1451,7 @@ namespace MMMapEditor
             string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
                 ? string.Join(";", variant.PartiallyDefinedBattles
                     .OrderBy(p => p.BxIndex)
-                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                    .Select(BuildPartialBattleKey))
                 : "<NO_PARTIAL>";
 
             string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
@@ -1516,7 +1496,7 @@ namespace MMMapEditor
             string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
                 ? string.Join(";", variant.PartiallyDefinedBattles
                     .OrderBy(p => p.BxIndex)
-                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                    .Select(BuildPartialBattleKey))
                 : "<NO_PARTIAL>";
 
             string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
@@ -1662,14 +1642,7 @@ namespace MMMapEditor
                     })
                     .ToList() ?? new List<BattleMonster>(),
                 PartiallyDefinedBattles = source.PartiallyDefinedBattles?
-                    .Select(p => new PartiallyDefinedBattle
-                    {
-                        BxIndex = p.BxIndex,
-                        RangeStart1 = p.RangeStart1,
-                        RangeEnd1 = p.RangeEnd1,
-                        RangeStart2 = p.RangeStart2,
-                        RangeEnd2 = p.RangeEnd2
-                    })
+                    .Select(p => p.Clone())
                     .ToList() ?? new List<PartiallyDefinedBattle>(),
                 HasAnyTableLoad = source.HasAnyTableLoad,
                 LoadedValues = source.LoadedValues?
@@ -1740,7 +1713,7 @@ namespace MMMapEditor
             string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
                 ? string.Join(";", variant.PartiallyDefinedBattles
                     .OrderBy(p => p.BxIndex)
-                    .Select(p => $"{p.BxIndex}:{p.RangeStart1:X2}-{p.RangeEnd1:X2}:{p.RangeStart2:X2}-{p.RangeEnd2:X2}"))
+                    .Select(BuildPartialBattleKey))
                 : "<NO_PARTIAL>";
 
             string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
