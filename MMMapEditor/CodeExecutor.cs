@@ -237,7 +237,7 @@ namespace MMMapEditor
                 // Финальный анализ частичных битв
                 if (result.PartialBattleInfo.Count > 0)
                 {
-                    AnalyzePartialBattleRanges(br, result);
+                    AnalyzePartialBattleRanges(br, result, isFinalPass: true);
                 }
 
                 result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
@@ -265,6 +265,35 @@ namespace MMMapEditor
                 ? value
                 : (byte?)null;
         }
+
+        private void PropagateExternalCallInfluenceOnRegisterCopy(
+            RegisterTracker registerTracker,
+            string srcReg,
+            string dstReg,
+            bool debugMode)
+        {
+            if (registerTracker == null ||
+                string.IsNullOrWhiteSpace(srcReg) ||
+                string.IsNullOrWhiteSpace(dstReg))
+            {
+                return;
+            }
+
+            bool sourceDependsOnExternalCall =
+                registerTracker.HasPendingExternalCallResult(srcReg) ||
+                registerTracker.IsRegisterExternallyDerived(srcReg);
+
+            if (!sourceDependsOnExternalCall)
+                return;
+
+            registerTracker.MaterializePendingExternalCallResult(srcReg);
+            registerTracker.MarkRegisterAsExternallyDerived(srcReg);
+            registerTracker.MarkRegisterAsExternallyDerived(dstReg);
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        Копирование зависимости от внешнего CALL: {dstReg} <- {srcReg}");
+        }
+
         private bool TryGetEmulatedPartyPointer(ushort address, out PartyMemberReference member)
         {
             member = null;
@@ -2341,12 +2370,21 @@ namespace MMMapEditor
                 }
 
                 foreach (var partial in subroutineResult.PartialBattles)
-                    if (!result.PartialBattles.Any(p => p.BxIndex == partial.BxIndex))
-                        result.PartialBattles.Add(partial);
+                if (!result.PartialBattles.Any(p => p.GetIdentityKey() == partial.GetIdentityKey()))
+                    result.PartialBattles.Add(partial);
 
                 foreach (var info in subroutineResult.PartialBattleInfo)
-                    if (!result.PartialBattleInfo.Any(i => i.BxIndex == info.BxIndex && i.DestAddr == info.DestAddr))
-                        result.PartialBattleInfo.Add(info);
+                if (!result.PartialBattleInfo.Any(i =>
+                    i.BxIndex == info.BxIndex &&
+                    i.DestAddr == info.DestAddr &&
+                    i.SrcReg == info.SrcReg &&
+                    i.SrcRegValue == info.SrcRegValue &&
+                    i.IsFromTable == info.IsFromTable &&
+                    i.SourceTableAddr == info.SourceTableAddr &&
+                    i.SourceTableBaseAddr == info.SourceTableBaseAddr &&
+                    i.SourceTable == info.SourceTable &&
+                    i.SourceIndexExternallyDerived == info.SourceIndexExternallyDerived))
+                    result.PartialBattleInfo.Add(info);
 
                 result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
 
@@ -2930,6 +2968,42 @@ namespace MMMapEditor
             }
 
             battleMonsterCount = 0;
+            return false;
+        }
+
+        private bool TryShiftTrackedSemanticByteRange(ushort memAddr, int delta, PathAnalysisResult result, bool debugMode)
+        {
+            if (result == null || delta == 0)
+                return false;
+
+            if (memAddr == BATTLE_MONSTER_COUNT_ADDRESS &&
+                !result.IsBattleMonsterCountIndeterminate)
+            {
+                ValueRange8 sourceRange = result.BattleMonsterCountRange;
+                if (sourceRange == null && result.BattleMonsterCount.HasValue)
+                    sourceRange = new ValueRange8(result.BattleMonsterCount.Value, result.BattleMonsterCount.Value);
+
+                if (sourceRange != null)
+                {
+                    int newMin = Math.Clamp(sourceRange.Min + delta, 0, 0xFF);
+                    int newMax = Math.Clamp(sourceRange.Max + delta, 0, 0xFF);
+
+                    result.BattleMonsterCountRange = new ValueRange8((byte)newMin, (byte)newMax);
+                    result.BattleMonsterCount = newMin == newMax ? (byte)newMin : (byte?)null;
+                    result.IsBattleMonsterCountIndeterminate = false;
+                    result.HasSignificantCode = true;
+
+                    if (debugMode)
+                    {
+                        string operation = delta > 0 ? "INC" : "DEC";
+                        AnalysisDebug.WriteLine(
+                            $"        {operation} [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}]: диапазон количества монстров {sourceRange.Min}-{sourceRange.Max} -> {newMin}-{newMax}");
+                    }
+
+                    return true;
+                }
+            }
+
             return false;
         }
 
@@ -3656,6 +3730,9 @@ namespace MMMapEditor
                     string operation = delta > 0 ? "INC" : "DEC";
                     ApplyTrackedByteWrite(memAddr, newValue, result, targetX, targetY, insn, debugMode, $"{operation} byte ptr [disp16]");
                 }
+                else if (TryShiftTrackedSemanticByteRange(memAddr, delta, result, debugMode))
+                {
+                }
                 else if (debugMode)
                 {
                     AnalysisDebug.WriteLine($"        Не удалось определить текущее значение для {(delta > 0 ? "INC" : "DEC")} [0x{memAddr:X4}]");
@@ -3800,6 +3877,7 @@ namespace MMMapEditor
                                 address,
                                 $"MOV {dstReg}, {regNames8[rm]}"
                             );
+                            PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, regNames8[rm], dstReg, debugMode);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames8[rm]} = 0x{srcValue:X2}");
@@ -3823,6 +3901,7 @@ namespace MMMapEditor
                             if (!string.IsNullOrEmpty(fullReg))
                                 registerTracker.ClearPartyMemberBase(fullReg);
                             registerTracker.SetRegisterRange(dstReg, copiedRange8A.Min, copiedRange8A.Max, copiedDistribution8A);
+                            PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, srcReg, dstReg, debugMode);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование диапазона {dstReg} <- {srcReg} = {copiedRange8A.Min:X2}..{copiedRange8A.Max:X2}");
@@ -3836,6 +3915,8 @@ namespace MMMapEditor
 
                             if (semanticPointerByte8A != null)
                                 registerTracker.SetPartyPointerByteValue(dstReg, semanticPointerByte8A);
+
+                            PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, srcReg, dstReg, debugMode);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование семантики {dstReg} <- {regNames8[rm]} без точного значения байта");
@@ -3871,6 +3952,11 @@ namespace MMMapEditor
                         {
                             string regName = regNames8[reg];
                             string fullReg = GetFullRegisterNameForByteRegister(regName);
+                            ushort indexedTableBx = 0;
+                            bool isIndexedTableLoad = hasExactMemAddr &&
+                                TryGetOverlayTableSourceFromBxIndexedOperand(instructionBytes, registerTracker, memAddr, out indexedTableBx);
+                            bool indexedTableUsesExternalIndex = isIndexedTableLoad &&
+                                (registerTracker.HasPendingExternalCallResult("BX") || registerTracker.IsRegisterExternallyDerived("BX"));
 
                             if (!string.IsNullOrEmpty(fullReg))
                             {
@@ -3880,7 +3966,10 @@ namespace MMMapEditor
                                     value,
                                     memAddr,
                                     address,
-                                    $"MOV {regName}, byte ptr {eaText}"
+                                    $"MOV {regName}, byte ptr {eaText}",
+                                    isIndexedTableLoad,
+                                    isIndexedTableLoad ? indexedTableBx : (ushort)0,
+                                    sourceIndexExternallyDerived: indexedTableUsesExternalIndex
                                 );
 
                                 if (hasPartyFieldRef)
@@ -3962,6 +4051,7 @@ namespace MMMapEditor
                     {
                         string dstReg = regNames16[reg];
                         registerTracker.SetRegisterValue(dstReg, srcValue, address, $"MOV {dstReg}, {regNames16[rm]}");
+                        PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, regNames16[rm], dstReg, debugMode);
                         if (registerTracker.TryGetPartyMemberBase(regNames16[rm], out var copiedPartyMember))
                             registerTracker.SetPartyMemberBase(dstReg, copiedPartyMember);
                         else
@@ -3969,6 +4059,17 @@ namespace MMMapEditor
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames16[rm]} = 0x{srcValue:X4}");
+                    }
+                    else if (reg < regNames16.Length && rm < regNames16.Length &&
+                        registerTracker.TryGetRegisterRange(regNames16[rm], out var copiedRange16))
+                    {
+                        string dstReg = regNames16[reg];
+                        registerTracker.TryGetRegisterDistribution(regNames16[rm], out var copiedDistribution16);
+                        registerTracker.SetRegisterRange(dstReg, copiedRange16.Min, copiedRange16.Max, copiedDistribution16);
+                        PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, regNames16[rm], dstReg, debugMode);
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        Копирование диапазона {dstReg} <- {regNames16[rm]} = {copiedRange16.Min:X2}..{copiedRange16.Max:X2}");
                     }
                     else if (reg < regNames16.Length && rm < regNames16.Length &&
                         registerTracker.TryGetPartyMemberBase(regNames16[rm], out var copiedPartyMember))
@@ -3995,7 +4096,30 @@ namespace MMMapEditor
                         if (hasExactMemAddr &&
                             TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out ushort value))
                         {
-                            registerTracker.SetRegisterValue(regName, value, address, $"MOV {regName}, word ptr {eaText}");
+                            bool isIndexedTableLoad = TryGetOverlayTableSourceFromBxIndexedOperand(
+                                instructionBytes,
+                                registerTracker,
+                                memAddr,
+                                out ushort indexedTableBx);
+                            bool indexedTableUsesExternalIndex = isIndexedTableLoad &&
+                                (registerTracker.HasPendingExternalCallResult("BX") || registerTracker.IsRegisterExternallyDerived("BX"));
+
+                            if (isIndexedTableLoad)
+                            {
+                                registerTracker.SetRegisterValueWithSource(
+                                    regName,
+                                    value,
+                                    memAddr,
+                                    indexedTableBx,
+                                    fromTable: true,
+                                    address,
+                                    $"MOV {regName}, word ptr {eaText}",
+                                    sourceIndexExternallyDerived: indexedTableUsesExternalIndex);
+                            }
+                            else
+                            {
+                                registerTracker.SetRegisterValue(regName, value, address, $"MOV {regName}, word ptr {eaText}");
+                            }
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Загрузили {regName} из {(IsTrackedWordInEmulatedMemory(memAddr) ? "эмулируемой памяти" : "файла")} {eaText} -> [0x{memAddr:X4}] = 0x{value:X4}");
@@ -4933,7 +5057,7 @@ namespace MMMapEditor
         /// <summary>
         /// Анализирует диапазоны для частичных битв
         /// </summary>
-        private void AnalyzePartialBattleRanges(BinaryReader br, PathAnalysisResult result)
+        private void AnalyzePartialBattleRanges(BinaryReader br, PathAnalysisResult result, bool isFinalPass = false)
         {
             if (!result.HasPartialBattlePattern || result.PartialBattleInfo.Count == 0)
             {
@@ -4943,18 +5067,23 @@ namespace MMMapEditor
             AnalysisDebug.WriteLine($"    АНАЛИЗ ЧАСТИЧНЫХ БИТВ: найдено {result.PartialBattleInfo.Count} записей");
             AnalysisDebug.WriteLine($"    Состояние цикла: IsInLoop={result.IsInLoop}, LoopStartAddress=0x{result.LoopStartAddress:X4}, LoopIterationCount={result.LoopIterationCount}");
 
-            // Группируем записи по BX индексу (индекс в массиве, куда сохраняются значения)
             var groupedByBx = result.PartialBattleInfo
                 .GroupBy(p => p.BxIndex)
                 .OrderBy(g => g.Key)
                 .ToList();
 
-            if (TryAnalyzeDiscreteBattleTemplates(br, result, groupedByBx))
-            {
-                return;
-            }
+            var promotedFullBattleIndices = PromoteSequentialTableCopiesToFullyDefinedBattles(result, groupedByBx, isFinalPass);
+            var partialCandidateGroups = groupedByBx
+                .Where(group => !promotedFullBattleIndices.Contains(group.Key))
+                .ToList();
 
-            foreach (var group in groupedByBx)
+            if (partialCandidateGroups.Count == 0)
+                return;
+
+            if (TryAnalyzeUnifiedPartialBattleTemplates(br, result, partialCandidateGroups, isFinalPass))
+                return;
+
+            foreach (var group in partialCandidateGroups)
             {
                 int saveBxIndex = group.Key;
                 var entries = group.ToList();
@@ -4971,207 +5100,411 @@ namespace MMMapEditor
                     continue;
                 }
 
-                // ПРОВЕРКА: не были ли эти значения уже определены как конкретные?
-                bool alreadyDefined = false;
-
-                // Проверяем, есть ли уже полностью определённая битва для этого BX индекса
-                if (result.BattleMonsterEntries.ContainsKey(saveBxIndex))
+                if (ShouldSkipObservedPartialBattle(group))
                 {
-                    var existing = result.BattleMonsterEntries[saveBxIndex];
-                    // Если оба значения не нулевые, значит битва уже полностью определена
-                    if (existing.val1 != 0 || existing.val2 != 0)
-                    {
-                        AnalysisDebug.WriteLine($"        -> БИТВА УЖЕ ПОЛНОСТЬЮ ОПРЕДЕЛЕНА: val1={existing.val1:X2}, val2={existing.val2:X2}, пропускаем создание частичной");
-                        alreadyDefined = true;
-                    }
+                    AnalysisDebug.WriteLine("        -> ПАРА ПОХОЖА НА ПОСЛЕДОВАТЕЛЬНОЕ КОПИРОВАНИЕ ПОЛНОЙ БИТВЫ, наблюдаемую частичную битву не создаём");
+                    continue;
                 }
 
-                if (alreadyDefined)
+                if (IsFullyDefinedBattleEntry(result, saveBxIndex))
+                {
+                    AnalysisDebug.WriteLine($"        -> БИТВА УЖЕ ПОЛНОСТЬЮ ОПРЕДЕЛЕНА ДЛЯ BX={saveBxIndex}, пропускаем частичный вариант");
+                    continue;
+                }
+
+                var partialBattle = new PartiallyDefinedBattle
+                {
+                    BxIndex = saveBxIndex,
+                    RepeatCount = GetPartialBattleRepeatCount(result),
+                    ExactOptions = new List<DiscreteBattleOption>
+                    {
+                        new DiscreteBattleOption
+                        {
+                            Val1 = entry58.SrcRegValue,
+                            Val2 = entry29.SrcRegValue
+                        }
+                    }
+                };
+
+                string identityKey = partialBattle.GetIdentityKey();
+                if (result.PartialBattles.Any(p => p.GetIdentityKey() == identityKey))
+                {
+                    AnalysisDebug.WriteLine($"        -> НАБЛЮДАЕМАЯ ЧАСТИЧНАЯ БИТВА ДЛЯ BX={saveBxIndex} УЖЕ СУЩЕСТВУЕТ, пропускаем");
+                    continue;
+                }
+
+                result.PartialBattles.Add(partialBattle);
+                AnalysisDebug.WriteLine($"        -> СОЗДАНА НАБЛЮДАЕМАЯ ЧАСТИЧНАЯ БИТВА: BX={saveBxIndex}, val1=0x{entry58.SrcRegValue:X2}, val2=0x{entry29.SrcRegValue:X2}");
+            }
+        }
+
+        private sealed class PartialBattleTemplateObservation
+        {
+            public int SaveBxIndex { get; set; }
+            public PartialBattleInfo Entry58 { get; set; } = null!;
+            public PartialBattleInfo Entry29 { get; set; } = null!;
+            public ushort FirstBaseAddr { get; set; }
+            public ushort SecondBaseAddr { get; set; }
+            public int FirstOffset { get; set; }
+            public int SecondOffset { get; set; }
+        }
+
+        private PartialBattleTemplateObservation? CreatePartialBattleTemplateObservation(IGrouping<int, PartialBattleInfo> group)
+        {
+            if (group == null)
+                return null;
+
+            var entry58 = group.FirstOrDefault(entry => entry.DestAddr == 0x3C58);
+            var entry29 = group.FirstOrDefault(entry => entry.DestAddr == 0x3C29);
+
+            if (entry58 == null || entry29 == null)
+                return null;
+
+            if (!entry58.SourceTableBaseAddr.HasValue || !entry29.SourceTableBaseAddr.HasValue)
+                return null;
+
+            return new PartialBattleTemplateObservation
+            {
+                SaveBxIndex = group.Key,
+                Entry58 = entry58,
+                Entry29 = entry29,
+                FirstBaseAddr = entry58.SourceTableBaseAddr.Value,
+                SecondBaseAddr = entry29.SourceTableBaseAddr.Value,
+                FirstOffset = entry58.SourceTableAddr.HasValue ? entry58.SourceTableAddr.Value - entry58.SourceTableBaseAddr.Value : 0,
+                SecondOffset = entry29.SourceTableAddr.HasValue ? entry29.SourceTableAddr.Value - entry29.SourceTableBaseAddr.Value : 0
+            };
+        }
+
+        private static bool IsKnownPartialBattleTemplateSource(string? sourceTable)
+        {
+            return string.Equals(sourceTable, "CDA9", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(sourceTable, "CDB1", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(sourceTable, "CA7F", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(sourceTable, "CA84", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasAlignedSourceOffsets(PartialBattleTemplateObservation? observation)
+        {
+            if (observation == null)
+                return false;
+
+            if (observation.FirstOffset < 0 || observation.SecondOffset < 0)
+                return false;
+
+            return observation.FirstOffset == observation.SecondOffset;
+        }
+
+        private static bool IsTemplateSelectionExternallyDerived(PartialBattleTemplateObservation? observation)
+        {
+            if (observation == null)
+                return false;
+
+            return observation.Entry58?.SourceIndexExternallyDerived == true ||
+                   observation.Entry29?.SourceIndexExternallyDerived == true;
+        }
+
+        private bool CanParticipateInUnifiedPartialBattleInference(PartialBattleTemplateObservation? observation)
+        {
+            if (observation == null)
+                return false;
+
+            if (IsTemplateSelectionExternallyDerived(observation))
+                return true;
+
+            if (IsKnownPartialBattleTemplateSource(observation.Entry58?.SourceTable) ||
+                IsKnownPartialBattleTemplateSource(observation.Entry29?.SourceTable))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private HashSet<int> PromoteSequentialTableCopiesToFullyDefinedBattles(
+            PathAnalysisResult result,
+            List<IGrouping<int, PartialBattleInfo>> groupedByBx,
+            bool isFinalPass)
+        {
+            var promoted = new HashSet<int>();
+
+            if (result == null || groupedByBx == null || groupedByBx.Count == 0)
+                return promoted;
+
+            bool hasSequentialContext = result.IsInLoop || isFinalPass;
+            if (!hasSequentialContext)
+                return promoted;
+
+            foreach (var group in groupedByBx)
+            {
+                var observation = CreatePartialBattleTemplateObservation(group);
+                if (observation == null || !HasAlignedSourceOffsets(observation))
+                    continue;
+
+                if (IsKnownPartialBattleTemplateSource(observation.Entry58?.SourceTable) ||
+                    IsTemplateSelectionExternallyDerived(observation) ||
+                    IsKnownPartialBattleTemplateSource(observation.Entry29?.SourceTable))
                 {
                     continue;
                 }
 
-                // Определяем количество итераций цикла
-                int iterationCount = 1;
-
-                if (result.IsInLoop && result.LoopStartAddress != 0)
+                if (IsFullyDefinedBattleEntry(result, observation.SaveBxIndex))
                 {
-                    if (result.LoopIterationCount > 0)
-                    {
-                        iterationCount = result.LoopIterationCount;
-                        AnalysisDebug.WriteLine($"        Обнаружен цикл с {iterationCount} итерациями");
-                    }
-                    else
-                    {
-                        // Используем максимальный BX индекс для определения количества итераций
-                        int maxSaveBx = groupedByBx.Max(g => g.Key);
-                        if (maxSaveBx > 0)
-                        {
-                            // Количество итераций = максимальный BX индекс + 1
-                            iterationCount = maxSaveBx + 1;
-                            AnalysisDebug.WriteLine($"        Количество итераций определено по BX сохранения: {iterationCount}");
-                        }
-                        else
-                        {
-                            // Если не можем определить, используем значение по умолчанию
-                            iterationCount = 8;
-                            AnalysisDebug.WriteLine($"        Количество итераций неизвестно, предполагаем {iterationCount}");
-                        }
-                    }
+                    promoted.Add(observation.SaveBxIndex);
+                    AnalysisDebug.WriteLine($"        -> BX={observation.SaveBxIndex} уже определён как полная битва, частичный анализ пропускаем");
+                    continue;
                 }
 
-                // СОЗДАЁМ ЧАСТИЧНЫЕ БИТВЫ ТОЛЬКО ДЛЯ ИТЕРАЦИЙ, КОТОРЫЕ ЕЩЁ НЕ ОПРЕДЕЛЕНЫ
-                for (int iteration = 0; iteration < iterationCount; iteration++)
-                {
-                    int currentBxIndex = saveBxIndex + iteration;
+                result.BattleMonsterEntries[observation.SaveBxIndex] =
+                    (observation.Entry58.SrcRegValue, observation.Entry29.SrcRegValue, false);
+                promoted.Add(observation.SaveBxIndex);
 
-                    // Проверяем, не определена ли уже битва для этого индекса
-                    if (result.BattleMonsterEntries.ContainsKey(currentBxIndex))
-                    {
-                        var existing = result.BattleMonsterEntries[currentBxIndex];
-                        if (existing.val1 != 0 || existing.val2 != 0)
-                        {
-                            AnalysisDebug.WriteLine($"        -> БИТВА ДЛЯ BX={currentBxIndex} УЖЕ ОПРЕДЕЛЕНА, пропускаем");
-                            continue;
-                        }
-                    }
-
-                    int loadBx = iteration;
-
-                    ushort table1Addr = (ushort)(0xCDA9 + loadBx);
-                    ushort table2Addr = (ushort)(0xCDB1 + loadBx);
-
-                    byte iterVal1 = 0;
-                    byte iterVal2 = 0;
-                    bool readSuccess1 = false;
-                    bool readSuccess2 = false;
-
-                    try
-                    {
-                        readSuccess1 = TryReadOverlayByte(br, table1Addr, out iterVal1);
-
-                        ushort iterWord2 = 0;
-                        if (TryReadOverlayByte(br, table2Addr, out byte lowByte2) &&
-                            TryReadOverlayByte(br, unchecked((ushort)(table2Addr + 1)), out byte highByte2))
-                        {
-                            iterWord2 = (ushort)(lowByte2 | (highByte2 << 8));
-                            iterVal2 = lowByte2;
-                            readSuccess2 = true;
-                        }
-
-                        AnalysisDebug.WriteLine($"        ЧТЕНИЕ ИЗ ТАБЛИЦЫ ДЛЯ ИТЕРАЦИИ {iteration}:");
-                        AnalysisDebug.WriteLine(readSuccess1
-                            ? $"          [{table1Addr:X4}] = 0x{iterVal1:X2}"
-                            : $"          [{table1Addr:X4}] = <read failed>");
-                        AnalysisDebug.WriteLine(readSuccess2
-                            ? $"          [{table2Addr:X4}] = 0x{iterVal2:X2} (младший байт из 0x{iterWord2:X4})"
-                            : $"          [{table2Addr:X4}] = <read failed>");
-                    }
-                    catch (Exception ex)
-                    {
-                        AnalysisDebug.WriteLine($"        ОШИБКА ЧТЕНИЯ ИЗ ТАБЛИЦЫ: {ex.Message}");
-                    }
-
-                    if (!readSuccess1 || !readSuccess2)
-                    {
-                        AnalysisDebug.WriteLine($"        НЕ УДАЛОСЬ ПРОЧИТАТЬ ЗНАЧЕНИЯ ДЛЯ ИТЕРАЦИИ {iteration}, пропускаем");
-                        continue;
-                    }
-
-                    byte rangeStart1 = iterVal1;
-                    byte rangeEnd1 = iterVal1;
-                    byte rangeStart2 = iterVal2;
-                    byte rangeEnd2 = iterVal2;
-
-                    if (rangeStart1 > rangeEnd1 || rangeStart2 > rangeEnd2)
-                    {
-                        AnalysisDebug.WriteLine($"        -> НЕКОРРЕКТНЫЕ ДИАПАЗОНЫ ДЛЯ ИТЕРАЦИИ {iteration}: [{rangeStart1:X2}-{rangeEnd1:X2}] [{rangeStart2:X2}-{rangeEnd2:X2}]");
-                        continue;
-                    }
-
-                    // Проверяем, не совпадают ли эти значения с уже определёнными конкретными значениями
-                    bool matchesExisting = false;
-                    if (result.BattleMonsterEntries.ContainsKey(currentBxIndex))
-                    {
-                        var existing = result.BattleMonsterEntries[currentBxIndex];
-                        if (existing.val1 == rangeStart1 && existing.val2 == rangeStart2)
-                        {
-                            matchesExisting = true;
-                        }
-                    }
-
-                    if (matchesExisting)
-                    {
-                        AnalysisDebug.WriteLine($"        -> ЗНАЧЕНИЯ СОВПАДАЮТ С УЖЕ ОПРЕДЕЛЁННОЙ БИТВОЙ, пропускаем");
-                        continue;
-                    }
-
-                    var partialBattle = new PartiallyDefinedBattle
-                    {
-                        BxIndex = currentBxIndex,
-                        RangeStart1 = rangeStart1,
-                        RangeEnd1 = rangeEnd1,
-                        RangeStart2 = rangeStart2,
-                        RangeEnd2 = rangeEnd2
-                    };
-
-                    // Добавляем только если такой частичной битвы ещё нет
-                    if (!result.PartialBattles.Any(p => p.BxIndex == partialBattle.BxIndex))
-                    {
-                        result.PartialBattles.Add(partialBattle);
-                        int combinations = (rangeEnd1 - rangeStart1 + 1) * (rangeEnd2 - rangeStart2 + 1);
-                        AnalysisDebug.WriteLine($"        -> СОЗДАНА ЧАСТИЧНАЯ БИТВА: BX(сохранения)={currentBxIndex}, BX(загрузки)={loadBx}, {combinations} комбинация (итерация {iteration})");
-                    }
-                    else
-                    {
-                        AnalysisDebug.WriteLine($"        -> ЧАСТИЧНАЯ БИТВА ДЛЯ BX={currentBxIndex} УЖЕ СУЩЕСТВУЕТ, пропускаем");
-                    }
-                }
+                AnalysisDebug.WriteLine(
+                    $"        -> ПЕРЕВЕДЕНО В ПОЛНУЮ БИТВУ: BX={observation.SaveBxIndex}, " +
+                    $"val1=0x{observation.Entry58.SrcRegValue:X2}, val2=0x{observation.Entry29.SrcRegValue:X2}, " +
+                    $"source=[{observation.FirstBaseAddr:X4}/{observation.SecondBaseAddr:X4}], offsets={observation.FirstOffset}/{observation.SecondOffset}");
             }
+
+            return promoted;
         }
 
-        private bool TryAnalyzeDiscreteBattleTemplates(BinaryReader br, PathAnalysisResult result,
-            List<IGrouping<int, PartialBattleInfo>> groupedByBx)
+        private bool ShouldSkipObservedPartialBattle(IGrouping<int, PartialBattleInfo> group)
+        {
+            var observation = CreatePartialBattleTemplateObservation(group);
+            if (observation == null)
+                return false;
+
+            if (IsKnownPartialBattleTemplateSource(observation.Entry58?.SourceTable) ||
+                IsKnownPartialBattleTemplateSource(observation.Entry29?.SourceTable))
+            {
+                return false;
+            }
+
+            if (IsTemplateSelectionExternallyDerived(observation))
+                return false;
+
+            return HasAlignedSourceOffsets(observation);
+        }
+
+        private bool ShouldDeferUnknownTemplateInference(
+            PathAnalysisResult result,
+            List<PartialBattleTemplateObservation> templateObservations,
+            bool isFinalPass)
+        {
+            if (isFinalPass || result == null || templateObservations == null || templateObservations.Count != 1)
+                return false;
+
+            if (result.IsInLoop)
+                return false;
+
+            var sample = templateObservations[0];
+            if (IsKnownPartialBattleTemplateSource(sample.Entry58?.SourceTable) ||
+                IsKnownPartialBattleTemplateSource(sample.Entry29?.SourceTable))
+            {
+                return false;
+            }
+
+            if (IsTemplateSelectionExternallyDerived(sample))
+                return false;
+
+            return HasAlignedSourceOffsets(sample);
+        }
+
+        private bool TryAnalyzeUnifiedPartialBattleTemplates(
+            BinaryReader br,
+            PathAnalysisResult result,
+            List<IGrouping<int, PartialBattleInfo>> groupedByBx,
+            bool isFinalPass = false)
         {
             if (br == null || groupedByBx == null || groupedByBx.Count == 0)
                 return false;
 
-            var pairedGroups = groupedByBx
-                .Select(group => new
-                {
-                    SaveBxIndex = group.Key,
-                    Entry58 = group.FirstOrDefault(entry => entry.DestAddr == 0x3C58),
-                    Entry29 = group.FirstOrDefault(entry => entry.DestAddr == 0x3C29)
-                })
-                .Where(group => group.Entry58 != null && group.Entry29 != null)
+            var observations = groupedByBx
+                .Select(CreatePartialBattleTemplateObservation)
+                .OfType<PartialBattleTemplateObservation>()
+                .Where(observation =>
+                    !IsFullyDefinedBattleEntry(result, observation.SaveBxIndex) &&
+                    CanParticipateInUnifiedPartialBattleInference(observation))
                 .ToList();
 
-            if (pairedGroups.Count == 0)
+            if (observations.Count == 0)
                 return false;
 
-            bool isCaPattern = pairedGroups.All(group =>
-                string.Equals(group.Entry58.SourceTable, "CA7F", StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(group.Entry29.SourceTable, "CA84", StringComparison.OrdinalIgnoreCase));
+            bool handledAny = false;
 
-            if (!isCaPattern)
+            foreach (var templateGroup in observations
+                .GroupBy(observation => $"{observation.FirstBaseAddr:X4}:{observation.SecondBaseAddr:X4}")
+                .OrderBy(group => group.Key))
+            {
+                var templateObservations = templateGroup
+                    .OrderBy(observation => observation.SaveBxIndex)
+                    .ToList();
+
+                if (templateObservations.Count == 0)
+                    continue;
+
+                ushort firstBaseAddr = templateObservations[0].FirstBaseAddr;
+                ushort secondBaseAddr = templateObservations[0].SecondBaseAddr;
+
+                if (ShouldDeferUnknownTemplateInference(result, templateObservations, isFinalPass))
+                {
+                    AnalysisDebug.WriteLine($"        -> ОТКЛАДЫВАЕМ ИНТЕРПРЕТАЦИЮ UNKNOWN-шаблона [{firstBaseAddr:X4}/{secondBaseAddr:X4}] до завершения анализа пути");
+                    continue;
+                }
+
+                handledAny = true;
+
+                int optionCount = DeterminePartialBattleOptionCount(result, templateObservations, groupedByBx);
+                int startOffset = 0;
+
+                var exactOptions = ReadPartialBattleExactOptions(br, firstBaseAddr, secondBaseAddr, startOffset, optionCount);
+                if (exactOptions.Count == 0)
+                {
+                    exactOptions = templateObservations
+                        .Select(observation => new DiscreteBattleOption
+                        {
+                            Val1 = observation.Entry58.SrcRegValue,
+                            Val2 = observation.Entry29.SrcRegValue
+                        })
+                        .ToList();
+                }
+
+                exactOptions = exactOptions
+                    .Where(option => option != null)
+                    .GroupBy(option => $"{option.Val1:X2}:{option.Val2:X2}")
+                    .Select(group => group.First())
+                    .OrderBy(option => option.Val1)
+                    .ThenBy(option => option.Val2)
+                    .ToList();
+
+                if (exactOptions.Count == 0)
+                    continue;
+
+                var battle = new PartiallyDefinedBattle
+                {
+                    BxIndex = templateObservations.Min(observation => observation.SaveBxIndex),
+                    RepeatCount = GetPartialBattleRepeatCount(result),
+                    ExactOptions = exactOptions
+                };
+
+                string identityKey = battle.GetIdentityKey();
+                if (result.PartialBattles.Any(existing => existing.GetIdentityKey() == identityKey))
+                {
+                    AnalysisDebug.WriteLine($"        -> ЧАСТИЧНАЯ БИТВА ДЛЯ ШАБЛОНА [{firstBaseAddr:X4}/{secondBaseAddr:X4}] уже существует");
+                    continue;
+                }
+
+                result.PartialBattles.Add(battle);
+                AnalysisDebug.WriteLine($"        -> СОЗДАН УНИФИЦИРОВАННЫЙ ШАБЛОН ЧАСТИЧНОЙ БИТВЫ [{firstBaseAddr:X4}/{secondBaseAddr:X4}]: BX={battle.BxIndex}, options={exactOptions.Count}, repeatCount={battle.RepeatCount}");
+            }
+
+            return handledAny;
+        }
+
+        private bool IsFullyDefinedBattleEntry(PathAnalysisResult result, int bxIndex)
+        {
+            if (result == null || !result.BattleMonsterEntries.TryGetValue(bxIndex, out var entry))
                 return false;
 
-            const ushort firstTableBase = 0xCA7F;
-            const ushort secondTableBase = 0xCA84;
-            const int optionCount = 5;
+            return entry.val1 != 0 || entry.val2 != 0;
+        }
 
+        private int GetPartialBattleRepeatCount(PathAnalysisResult result)
+        {
+            if (TryGetExactBattleMonsterCount(result, out byte exactBattleMonsterCount) &&
+                exactBattleMonsterCount > 0)
+            {
+                AnalysisDebug.WriteLine($"    Точное количество монстров для частичной битвы: {exactBattleMonsterCount}");
+                return exactBattleMonsterCount;
+            }
+
+            return 1;
+        }
+
+        private int DeterminePartialBattleIterationCount(
+            PathAnalysisResult result,
+            List<IGrouping<int, PartialBattleInfo>> groupedByBx)
+        {
+            if (result == null || groupedByBx == null || groupedByBx.Count == 0)
+                return 1;
+
+            if (!result.IsInLoop || result.LoopStartAddress == 0)
+                return 1;
+
+            if (result.LoopIterationCount > 0)
+                return result.LoopIterationCount;
+
+            int maxSaveBx = groupedByBx.Max(group => group.Key);
+            return maxSaveBx > 0 ? maxSaveBx + 1 : 1;
+        }
+
+        private int DeterminePartialBattleOptionCount(
+            PathAnalysisResult result,
+            List<PartialBattleTemplateObservation> observations,
+            List<IGrouping<int, PartialBattleInfo>> groupedByBx)
+        {
+            if (observations == null || observations.Count == 0)
+                return 1;
+
+            var offsets = observations
+                .Select(observation => observation.FirstOffset)
+                .Where(offset => offset >= 0)
+                .Distinct()
+                .OrderBy(offset => offset)
+                .ToList();
+
+            if (offsets.Count > 1)
+            {
+                bool sequential = true;
+                for (int i = 1; i < offsets.Count; i++)
+                {
+                    if (offsets[i] != offsets[i - 1] + 1)
+                    {
+                        sequential = false;
+                        break;
+                    }
+                }
+
+                if (sequential)
+                    return offsets[offsets.Count - 1] - offsets[0] + 1;
+
+                return offsets.Count;
+            }
+
+            var sample = observations[0];
+            int tableGap = sample.SecondBaseAddr - sample.FirstBaseAddr;
+            if (tableGap > 1 && tableGap <= 32)
+                return tableGap;
+
+            int iterationCount = DeterminePartialBattleIterationCount(result, groupedByBx);
+            if (iterationCount > 1)
+                return iterationCount;
+
+            return 1;
+        }
+
+        private List<DiscreteBattleOption> ReadPartialBattleExactOptions(
+            BinaryReader br,
+            ushort firstBaseAddr,
+            ushort secondBaseAddr,
+            int startOffset,
+            int optionCount)
+        {
             var exactOptions = new List<DiscreteBattleOption>();
+
+            if (br == null || optionCount <= 0)
+                return exactOptions;
+
             for (int optionIndex = 0; optionIndex < optionCount; optionIndex++)
             {
-                ushort firstAddr = (ushort)(firstTableBase + optionIndex);
-                ushort secondAddr = (ushort)(secondTableBase + optionIndex);
+                ushort firstAddr = (ushort)(firstBaseAddr + startOffset + optionIndex);
+                ushort secondAddr = (ushort)(secondBaseAddr + startOffset + optionIndex);
 
                 bool readSuccess1 = TryReadOverlayByte(br, firstAddr, out byte val1);
                 bool readSuccess2 = TryReadOverlayByte(br, secondAddr, out byte val2);
 
                 AnalysisDebug.WriteLine(readSuccess1 && readSuccess2
-                    ? $"        ДИСКРЕТНЫЙ ШАБЛОН CA7F/CA84: option {optionIndex + 1} -> [{firstAddr:X4}] = 0x{val1:X2}, [{secondAddr:X4}] = 0x{val2:X2}"
-                    : $"        ДИСКРЕТНЫЙ ШАБЛОН CA7F/CA84: option {optionIndex + 1} -> read failed");
+                    ? $"        ШАБЛОН [{firstBaseAddr:X4}/{secondBaseAddr:X4}] option {optionIndex + 1} -> [{firstAddr:X4}] = 0x{val1:X2}, [{secondAddr:X4}] = 0x{val2:X2}"
+                    : $"        ШАБЛОН [{firstBaseAddr:X4}/{secondBaseAddr:X4}] option {optionIndex + 1} -> read failed");
 
                 if (!readSuccess1 || !readSuccess2)
                     continue;
@@ -5183,50 +5516,7 @@ namespace MMMapEditor
                 });
             }
 
-            exactOptions = exactOptions
-                .GroupBy(option => $"{option.Val1:X2}:{option.Val2:X2}")
-                .Select(group => group.First())
-                .OrderBy(option => option.Val1)
-                .ThenBy(option => option.Val2)
-                .ToList();
-
-            if (exactOptions.Count == 0)
-            {
-                AnalysisDebug.WriteLine("        -> Не удалось прочитать ни одного варианта из таблиц CA7F/CA84");
-                return false;
-            }
-
-            int repeatCount = 1;
-            if (TryGetExactBattleMonsterCount(result, out byte exactBattleMonsterCount) &&
-                exactBattleMonsterCount > 0)
-            {
-                repeatCount = exactBattleMonsterCount;
-            }
-            else if (pairedGroups.Count > 0)
-            {
-                int minBx = pairedGroups.Min(group => group.SaveBxIndex);
-                int maxBx = pairedGroups.Max(group => group.SaveBxIndex);
-                repeatCount = Math.Max(1, maxBx - minBx + 1);
-            }
-
-            int baseBxIndex = pairedGroups.Min(group => group.SaveBxIndex);
-            var discreteBattle = new PartiallyDefinedBattle
-            {
-                BxIndex = baseBxIndex,
-                RepeatCount = repeatCount,
-                ExactOptions = exactOptions
-            };
-
-            string identityKey = discreteBattle.GetIdentityKey();
-            if (result.PartialBattles.Any(battle => battle.GetIdentityKey() == identityKey))
-            {
-                AnalysisDebug.WriteLine("        -> ДИСКРЕТНАЯ БИТВА CA7F/CA84 уже создана, повторно не добавляем");
-                return true;
-            }
-
-            result.PartialBattles.Add(discreteBattle);
-            AnalysisDebug.WriteLine($"        -> СОЗДАНА ДИСКРЕТНАЯ БИТВА CA7F/CA84: BX={baseBxIndex}, repeatCount={repeatCount}, options={exactOptions.Count}");
-            return true;
+            return exactOptions;
         }
 
 
@@ -5240,6 +5530,28 @@ namespace MMMapEditor
                 "DL" or "DH" => "DX",
                 _ => string.Empty
             };
+        }
+
+        private bool TryGetOverlayTableSourceFromBxIndexedOperand(
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            ushort memAddr,
+            out ushort originalBx)
+        {
+            originalBx = 0;
+
+            if (instructionBytes == null || instructionBytes.Length < 2 || memAddr < 0xC000)
+                return false;
+
+            byte modRm = instructionBytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte rm = (byte)(modRm & 0x07);
+
+            // Табличные паттерны битв используют адреса вида [BX+disp8/disp16].
+            if (mod == 0x03 || mod == 0x00 || rm != 0x07)
+                return false;
+
+            return registerTracker.TryGetRegisterValue("BX", out originalBx);
         }
 
         private bool TryDecode16BitEffectiveAddress(

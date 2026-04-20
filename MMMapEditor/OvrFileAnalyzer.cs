@@ -862,7 +862,7 @@ namespace MMMapEditor
                         RegName = info.SrcReg,
                         Value = info.SrcRegValue,
                         SourceAddr = info.SourceTableAddr ?? 0,
-                        IsFirstTable = info.IsFromTable,
+                        IsFirstTable = info.DestAddr == 0x3C58,
                         IsSaved = false
                     })
                     .ToList(),
@@ -935,6 +935,18 @@ namespace MMMapEditor
                         : "<range>";
                     AnalysisDebug.WriteLine(
                         $"          BX={partial.BxIndex}: [{partial.RangeStart1:X2}-{partial.RangeEnd1:X2}] + [{partial.RangeStart2:X2}-{partial.RangeEnd2:X2}], repeatCount={partial.RepeatCount}, exactOptions={exactOptions}");
+                }
+            }
+
+            if (variant.LoadedValues != null && variant.LoadedValues.Count > 0)
+            {
+                AnalysisDebug.WriteLine("        LoadedValues:");
+                foreach (var loadedValue in variant.LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.IsFirstTable ? 0 : 1)
+                    .ThenBy(v => v.SourceAddr))
+                {
+                    AnalysisDebug.WriteLine($"          BX={loadedValue.BxIndex}: {loadedValue}");
                 }
             }
 

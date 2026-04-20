@@ -2113,6 +2113,7 @@ namespace MMMapEditor
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(180, 230, 255); // Светло-голубой
+                rt.SelectionBackColor = rt.BackColor;
 
                 // Выделяем номер варианта жирным
                 int colonIndex = match.Value.IndexOf(':');
@@ -2120,6 +2121,17 @@ namespace MMMapEditor
                 {
                     rt.Select(match.Index, colonIndex + 1);
                     rt.SelectionColor = Color.FromArgb(100, 200, 255);
+                    rt.SelectionBackColor = rt.BackColor;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                // Слегка подсвечиваем голубым фон количества монстров в конце строки
+                var countMatch = Regex.Match(match.Value, @"x(\d+|\d+-\d+|\? \(Random count\))$");
+                if (countMatch.Success)
+                {
+                    rt.Select(match.Index + countMatch.Index, countMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(210, 240, 255);
+                    rt.SelectionBackColor = Color.FromArgb(35, 70, 105);
                     rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
                 }
 

@@ -1340,6 +1340,7 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
+                bool sourceIndexExternallyDerived = tracker.HasPendingExternalCallResult("BX") || tracker.IsRegisterExternallyDerived("BX");
                 ushort sourceAddr = (ushort)(0xCDA9 + bxValue);
                 byte actualValue = 0;
                 bool readSuccess = false;
@@ -1370,7 +1371,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV AL, [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
-                    "CDA9"
+                    "CDA9",
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDA9+: AL = [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1385,6 +1387,7 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
+                bool sourceIndexExternallyDerived = tracker.HasPendingExternalCallResult("BX") || tracker.IsRegisterExternallyDerived("BX");
                 ushort sourceAddr = (ushort)(0xCDB1 + bxValue);
                 ushort actualValue = 0;
                 bool readSuccess = false;
@@ -1415,7 +1418,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV BP, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
-                    "CDB1"
+                    "CDB1",
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
                 );
 
                 // УДАЛЕНО: автоматическая установка AL из младшего байта.
@@ -1433,6 +1437,7 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
+                bool sourceIndexExternallyDerived = tracker.HasPendingExternalCallResult("BX") || tracker.IsRegisterExternallyDerived("BX");
                 ushort sourceAddr = (ushort)(0xCDB1 + bxValue);
                 byte actualValue = 0;
                 bool readSuccess = false;
@@ -1463,7 +1468,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV AL, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
-                    "CDB1"
+                    "CDB1",
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+ (младший байт): AL = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1479,6 +1485,7 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
+                bool sourceIndexExternallyDerived = tracker.HasPendingExternalCallResult("BX") || tracker.IsRegisterExternallyDerived("BX");
                 ushort sourceAddr = (ushort)(0xCA7F + bxValue);
                 byte actualValue = 0;
                 bool readSuccess = false;
@@ -1509,7 +1516,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV AL, [BX+CA7F] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
-                    "CA7F"
+                    "CA7F",
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CA7F+: AL = [BX+CA7F] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1525,6 +1533,7 @@ namespace MMMapEditor
         {
             if (tracker.TryGetRegisterValue("BX", out ushort bxValue))
             {
+                bool sourceIndexExternallyDerived = tracker.HasPendingExternalCallResult("BX") || tracker.IsRegisterExternallyDerived("BX");
                 ushort sourceAddr = (ushort)(0xCA84 + bxValue);
                 ushort actualValue = 0;
                 bool readSuccess = false;
@@ -1555,7 +1564,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV BP, [BX+CA84] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
-                    "CA84"
+                    "CA84",
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CA84+: BP = [BX+CA84] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1572,6 +1582,7 @@ namespace MMMapEditor
                 ushort? sourceAddr = tracker.GetSourceAddress("BP");
                 ushort? originalBx = tracker.GetOriginalBx("BP");
                 string sourceTable = tracker.GetSourceTable("BP");
+                bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("BP");
                 tracker.TryGetRegisterValue("BP", out ushort bpValue);
 
                 tracker.SetRegisterValueWithSource(
@@ -1582,7 +1593,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV CX, BP (копирование из таблицы, val={bpValue:X4})",
-                    sourceTable
+                    sourceTable,
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
                 );
 
                 // Обновляем частичные регистры
@@ -1674,6 +1686,44 @@ namespace MMMapEditor
             }
         }
 
+        private static ushort? ComputeSourceTableBaseAddress(ushort? sourceAddr, ushort? originalBx)
+        {
+            if (!sourceAddr.HasValue)
+                return null;
+
+            int baseAddress = sourceAddr.Value - (originalBx ?? 0);
+            if (baseAddress < 0 || baseAddress > ushort.MaxValue)
+                return null;
+
+            return (ushort)baseAddress;
+        }
+
+        private void RecordPartialBattleSave(
+            PathAnalysisResult result,
+            int saveIndex,
+            ushort destAddr,
+            string srcReg,
+            byte srcRegValue,
+            ushort? sourceAddr,
+            ushort? originalBx,
+            string sourceTable,
+            bool sourceIndexExternallyDerived)
+        {
+            result.PartialBattleInfo.Add(new PartialBattleInfo
+            {
+                BxIndex = saveIndex,
+                DestAddr = destAddr,
+                SrcReg = srcReg,
+                SrcRegValue = srcRegValue,
+                IsFromTable = true,
+                SourceTableAddr = sourceAddr,
+                SourceTableBaseAddr = ComputeSourceTableBaseAddress(sourceAddr, originalBx),
+                SourceTable = sourceTable,
+                SourceIndexExternallyDerived = sourceIndexExternallyDerived
+            });
+            result.HasPartialBattlePattern = true;
+        }
+
         /// <summary>
         /// Сохранение в [BX+3C58] из AL
         /// </summary>
@@ -1690,6 +1740,7 @@ namespace MMMapEditor
                     ushort? sourceAddr = tracker.GetSourceAddress("AL");
                     ushort? originalBx = tracker.GetOriginalBx("AL");
                     string sourceTable = tracker.GetSourceTable("AL");
+                    bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("AL");
 
                     if (isFromTable)
                     {
@@ -1728,33 +1779,9 @@ namespace MMMapEditor
                             case "CDB1":
                             case "CA7F":
                             case "CA84":
-                                // Из таблиц частично/дискретно определённой битвы
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = saveIndex,
-                                    DestAddr = 0x3C58,
-                                    SrcReg = "AL",
-                                    SrcRegValue = alValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = sourceTable
-                                });
-                                result.HasPartialBattlePattern = true;
-                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
-                                break;
-
                             default:
-                                // Из неизвестной таблицы - считаем полностью определённой
-                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                                {
-                                    var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
-                                }
-                                else
-                                {
-                                    result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
-                                }
-                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = AL (BX={bxValue}, val1={alValue:X2})");
+                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
                                 break;
                         }
                     }
@@ -1791,6 +1818,7 @@ namespace MMMapEditor
                     ushort? sourceAddr = tracker.GetSourceAddress("CL") ?? tracker.GetSourceAddress("CX");
                     ushort? originalBx = tracker.GetOriginalBx("CL") ?? tracker.GetOriginalBx("CX");
                     string sourceTable = tracker.GetSourceTable("CL") ?? tracker.GetSourceTable("CX");
+                    bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("CL") || tracker.GetSourceIndexExternallyDerived("CX");
 
                     if (isFromTable)
                     {
@@ -1828,33 +1856,9 @@ namespace MMMapEditor
                             case "CDA9":
                             case "CA7F":
                             case "CA84":
-                                // Из таблиц частично/дискретно определённой битвы
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = saveIndex,
-                                    DestAddr = 0x3C29,
-                                    SrcReg = "CL",
-                                    SrcRegValue = clValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = sourceTable
-                                });
-                                result.HasPartialBattlePattern = true;
-                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
-                                break;
-
                             default:
-                                // Из неизвестной таблицы - считаем полностью определённой
-                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                                {
-                                    var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, clValue, false);
-                                }
-                                else
-                                {
-                                    result.BattleMonsterEntries[saveIndex] = (0, clValue, false);
-                                }
-                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = CL (BX={bxValue}, val2={clValue:X2})");
+                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "CL", clValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
                                 break;
                         }
                     }
@@ -1891,6 +1895,7 @@ namespace MMMapEditor
                     ushort? sourceAddr = tracker.GetSourceAddress("DL") ?? tracker.GetSourceAddress("DX");
                     ushort? originalBx = tracker.GetOriginalBx("DL") ?? tracker.GetOriginalBx("DX");
                     string sourceTable = tracker.GetSourceTable("DL") ?? tracker.GetSourceTable("DX");
+                    bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("DL") || tracker.GetSourceIndexExternallyDerived("DX");
 
                     if (isFromTable)
                     {
@@ -1928,33 +1933,9 @@ namespace MMMapEditor
                             case "CDB1":
                             case "CA7F":
                             case "CA84":
-                                // Из таблиц частично/дискретно определённой битвы
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = saveIndex,
-                                    DestAddr = 0x3C58,
-                                    SrcReg = "DL",
-                                    SrcRegValue = dlValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = sourceTable
-                                });
-                                result.HasPartialBattlePattern = true;
-                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
-                                break;
-
                             default:
-                                // Из неизвестной таблицы - считаем полностью определённой
-                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                                {
-                                    var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (dlValue, existing.val2, false);
-                                }
-                                else
-                                {
-                                    result.BattleMonsterEntries[saveIndex] = (dlValue, 0, false);
-                                }
-                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = DL (BX={bxValue}, val1={dlValue:X2})");
+                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "DL", dlValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                                 break;
                         }
                     }
@@ -1991,6 +1972,7 @@ namespace MMMapEditor
                     ushort? sourceAddr = tracker.GetSourceAddress("DL") ?? tracker.GetSourceAddress("DX");
                     ushort? originalBx = tracker.GetOriginalBx("DL") ?? tracker.GetOriginalBx("DX");
                     string sourceTable = tracker.GetSourceTable("DL") ?? tracker.GetSourceTable("DX");
+                    bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("DL") || tracker.GetSourceIndexExternallyDerived("DX");
 
                     if (isFromTable)
                     {
@@ -2028,33 +2010,9 @@ namespace MMMapEditor
                             case "CDA9":
                             case "CA7F":
                             case "CA84":
-                                // Из таблиц частично/дискретно определённой битвы
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = saveIndex,
-                                    DestAddr = 0x3C29,
-                                    SrcReg = "DL",
-                                    SrcRegValue = dlValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = sourceTable
-                                });
-                                result.HasPartialBattlePattern = true;
-                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
-                                break;
-
                             default:
-                                // Из неизвестной таблицы - считаем полностью определённой
-                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                                {
-                                    var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, dlValue, false);
-                                }
-                                else
-                                {
-                                    result.BattleMonsterEntries[saveIndex] = (0, dlValue, false);
-                                }
-                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = DL (BX={bxValue}, val2={dlValue:X2})");
+                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "DL", dlValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                                 break;
                         }
                     }
@@ -2091,6 +2049,7 @@ namespace MMMapEditor
                     ushort? sourceAddr = tracker.GetSourceAddress("BL") ?? tracker.GetSourceAddress("BX");
                     ushort? originalBx = tracker.GetOriginalBx("BL") ?? tracker.GetOriginalBx("BX");
                     string sourceTable = tracker.GetSourceTable("BL") ?? tracker.GetSourceTable("BX");
+                    bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("BL") || tracker.GetSourceIndexExternallyDerived("BX");
 
                     if (isFromTable)
                     {
@@ -2128,33 +2087,9 @@ namespace MMMapEditor
                             case "CDB1":
                             case "CA7F":
                             case "CA84":
-                                // Из таблиц частично/дискретно определённой битвы
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = saveIndex,
-                                    DestAddr = 0x3C58,
-                                    SrcReg = "BL",
-                                    SrcRegValue = blValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = sourceTable
-                                });
-                                result.HasPartialBattlePattern = true;
-                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
-                                break;
-
                             default:
-                                // Из неизвестной таблицы - считаем полностью определённой
-                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                                {
-                                    var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (blValue, existing.val2, false);
-                                }
-                                else
-                                {
-                                    result.BattleMonsterEntries[saveIndex] = (blValue, 0, false);
-                                }
-                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C58] = BL (BX={bxValue}, val1={blValue:X2})");
+                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "BL", blValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                                 break;
                         }
                     }
@@ -2191,6 +2126,7 @@ namespace MMMapEditor
                     ushort? sourceAddr = tracker.GetSourceAddress("BL") ?? tracker.GetSourceAddress("BX");
                     ushort? originalBx = tracker.GetOriginalBx("BL") ?? tracker.GetOriginalBx("BX");
                     string sourceTable = tracker.GetSourceTable("BL") ?? tracker.GetSourceTable("BX");
+                    bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("BL") || tracker.GetSourceIndexExternallyDerived("BX");
 
                     if (isFromTable)
                     {
@@ -2228,33 +2164,9 @@ namespace MMMapEditor
                             case "CDA9":
                             case "CA7F":
                             case "CA84":
-                                // Из таблиц частично/дискретно определённой битвы
-                                result.PartialBattleInfo.Add(new PartialBattleInfo
-                                {
-                                    BxIndex = saveIndex,
-                                    DestAddr = 0x3C29,
-                                    SrcReg = "BL",
-                                    SrcRegValue = blValue,
-                                    IsFromTable = true,
-                                    SourceTableAddr = sourceAddr,
-                                    SourceTable = sourceTable
-                                });
-                                result.HasPartialBattlePattern = true;
-                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable}): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
-                                break;
-
                             default:
-                                // Из неизвестной таблицы - считаем полностью определённой
-                                if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                                {
-                                    var existing = result.BattleMonsterEntries[saveIndex];
-                                    result.BattleMonsterEntries[saveIndex] = (existing.val1, blValue, false);
-                                }
-                                else
-                                {
-                                    result.BattleMonsterEntries[saveIndex] = (0, blValue, false);
-                                }
-                                AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (UNKNOWN): [BX+3C29] = BL (BX={bxValue}, val2={blValue:X2})");
+                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "BL", blValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                                 break;
                         }
                     }
@@ -2289,6 +2201,7 @@ namespace MMMapEditor
                 ushort? sourceAddr = tracker.GetSourceAddress("AL");
                 ushort? originalBx = tracker.GetOriginalBx("AL");
                 string sourceTable = tracker.GetSourceTable("AL");
+                bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("AL");
 
                 if (isFromTable)
                 {
@@ -2326,33 +2239,9 @@ namespace MMMapEditor
                         case "CDB1":
                         case "CA7F":
                         case "CA84":
-                            // Из таблиц частично/дискретно определённой битвы
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
-                            {
-                                BxIndex = saveIndex,
-                                DestAddr = 0x3C58,
-                                SrcReg = "AL",
-                                SrcRegValue = alValue,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr,
-                                SourceTable = sourceTable
-                            });
-                            result.HasPartialBattlePattern = true;
-                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
-                            break;
-
                         default:
-                            // Из неизвестной таблицы - считаем полностью определённой
-                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                            {
-                                var existing = result.BattleMonsterEntries[saveIndex];
-                                result.BattleMonsterEntries[saveIndex] = (alValue, existing.val2, false);
-                            }
-                            else
-                            {
-                                result.BattleMonsterEntries[saveIndex] = (alValue, 0, false);
-                            }
-                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C58] = AL (val1={alValue:X2})");
+                            RecordPartialBattleSave(result, saveIndex, 0x3C58, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable ?? "UNKNOWN"}+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
                             break;
                     }
                 }
@@ -2386,6 +2275,7 @@ namespace MMMapEditor
                 ushort? sourceAddr = tracker.GetSourceAddress("AL");
                 ushort? originalBx = tracker.GetOriginalBx("AL");
                 string sourceTable = tracker.GetSourceTable("AL");
+                bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("AL");
 
                 if (isFromTable)
                 {
@@ -2423,33 +2313,9 @@ namespace MMMapEditor
                         case "CDA9":
                         case "CA7F":
                         case "CA84":
-                            // Из таблиц частично/дискретно определённой битвы
-                            result.PartialBattleInfo.Add(new PartialBattleInfo
-                            {
-                                BxIndex = saveIndex,
-                                DestAddr = 0x3C29,
-                                SrcReg = "AL",
-                                SrcRegValue = alValue,
-                                IsFromTable = true,
-                                SourceTableAddr = sourceAddr,
-                                SourceTable = sourceTable
-                            });
-                            result.HasPartialBattlePattern = true;
-                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable}+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
-                            break;
-
                         default:
-                            // Из неизвестной таблицы - считаем полностью определённой
-                            if (result.BattleMonsterEntries.ContainsKey(saveIndex))
-                            {
-                                var existing = result.BattleMonsterEntries[saveIndex];
-                                result.BattleMonsterEntries[saveIndex] = (existing.val1, alValue, false);
-                            }
-                            else
-                            {
-                                result.BattleMonsterEntries[saveIndex] = (0, alValue, false);
-                            }
-                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, UNKNOWN): [3C29] = AL (val2={alValue:X2})");
+                            RecordPartialBattleSave(result, saveIndex, 0x3C29, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable ?? "UNKNOWN"}+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
                             break;
                     }
                 }

@@ -449,6 +449,38 @@ namespace MMMapEditor
             return $"{value:0.##}%";
         }
 
+        private string GetPartialBattleCountDisplay(int? fallbackCount = null)
+        {
+            if (BattleMonsterCount.HasValue && !IsBattleMonsterCountIndeterminate)
+                return BattleMonsterCount.Value.ToString();
+
+            if (BattleMonsterCountRange != null && !IsBattleMonsterCountIndeterminate)
+            {
+                return BattleMonsterCountRange.IsExact
+                    ? BattleMonsterCountRange.Min.ToString()
+                    : $"{BattleMonsterCountRange.Min}-{BattleMonsterCountRange.Max}";
+            }
+
+            if (fallbackCount.HasValue && fallbackCount.Value > 1)
+                return fallbackCount.Value.ToString();
+
+            return null;
+        }
+
+        private static int? GetSharedPartialBattleRepeatCount(IEnumerable<PartiallyDefinedBattle> battles)
+        {
+            if (battles == null)
+                return null;
+
+            var repeatCounts = battles
+                .Where(battle => battle != null && battle.RepeatCount > 1)
+                .Select(battle => battle.RepeatCount)
+                .Distinct()
+                .ToList();
+
+            return repeatCounts.Count == 1 ? repeatCounts[0] : (int?)null;
+        }
+
         /// <summary>
         /// Полное описание битвы (все типы)
         /// </summary>
@@ -584,22 +616,33 @@ namespace MMMapEditor
 
                     if (monsters.Count > 0)
                     {
+                        int? sharedRepeatCount = GetSharedPartialBattleRepeatCount(PartiallyDefinedBattles);
+                        string countDisplay = sharedRepeatCount.HasValue
+                            ? sharedRepeatCount.Value.ToString()
+                            : GetPartialBattleCountDisplay(PartiallyDefinedBattles.Count);
                         string result;
 
                         if (monsters.Count == 1)
                         {
                             string cleanName = CleanMonsterNameForDisplay(monsters[0].MonsterName);
-                            result = $"Частично определённая битва: {cleanName}";
+                            result = !string.IsNullOrEmpty(countDisplay)
+                                ? $"Частично определённая битва: {cleanName} x{countDisplay}"
+                                : $"Частично определённая битва: {cleanName}";
                         }
                         else
                         {
-                            result = $"Частично определённая битва. {monsters.Count} вариант(ов):";
+                            result = !string.IsNullOrEmpty(countDisplay)
+                                ? $"Частично определённая битва. {monsters.Count} вариант(ов), группы по x{countDisplay}:"
+                                : $"Частично определённая битва. {monsters.Count} вариант(ов):";
 
                             // Показываем все варианты (их обычно 8)
                             for (int i = 0; i < monsters.Count; i++)
                             {
                                 string cleanName = CleanMonsterNameForDisplay(monsters[i].MonsterName);
-                                result += $"\n  • Вариант {i + 1}: {cleanName}";
+                                string variantText = !string.IsNullOrEmpty(countDisplay)
+                                    ? $"{cleanName} x{countDisplay}"
+                                    : cleanName;
+                                result += $"\n  • Вариант {i + 1}: {variantText}";
                             }
                         }
 
@@ -622,12 +665,15 @@ namespace MMMapEditor
                         addedDescriptions.Add(battleKey);
 
                         var monsters = battle.GetPossibleMonsters();
+                        string countDisplay = battle.RepeatCount > 1
+                            ? battle.RepeatCount.ToString()
+                            : (PartiallyDefinedBattles.Count == 1 ? GetPartialBattleCountDisplay() : null);
 
                         if (monsters.Count == 1)
                         {
                             string cleanName = CleanMonsterNameForDisplay(monsters[0].MonsterName);
-                            string desc = battle.RepeatCount > 1
-                                ? $"Частично определённая битва: {cleanName} x{battle.RepeatCount}"
+                            string desc = !string.IsNullOrEmpty(countDisplay)
+                                ? $"Частично определённая битва: {cleanName} x{countDisplay}"
                                 : $"Частично определённая битва: {cleanName}";
 
                             if (!addedDescriptions.Contains(desc))
@@ -638,16 +684,21 @@ namespace MMMapEditor
                         }
                         else if (monsters.Count > 0)
                         {
-                            string result = battle.RepeatCount > 1
-                                ? $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов группы x{battle.RepeatCount}):"
-                                : $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов):";
+                            bool showBxInHeader = PartiallyDefinedBattles.Count > 1;
+                            string result = showBxInHeader
+                                ? (!string.IsNullOrEmpty(countDisplay)
+                                    ? $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов, группы по x{countDisplay}):"
+                                    : $"Частично определённая битва (BX={battle.BxIndex}, {monsters.Count} вариантов):")
+                                : (!string.IsNullOrEmpty(countDisplay)
+                                    ? $"Частично определённая битва. {monsters.Count} вариант(ов), группы по x{countDisplay}:"
+                                    : $"Частично определённая битва. {monsters.Count} вариант(ов):");
 
                             int displayCount = Math.Min(monsters.Count, 10);
                             for (int i = 0; i < displayCount; i++)
                             {
                                 string cleanName = CleanMonsterNameForDisplay(monsters[i].MonsterName);
-                                string variantText = battle.RepeatCount > 1
-                                    ? $"{cleanName} x{battle.RepeatCount}"
+                                string variantText = !string.IsNullOrEmpty(countDisplay)
+                                    ? $"{cleanName} x{countDisplay}"
                                     : cleanName;
                                 result += $"\n  • Вариант {i + 1}: {variantText}";
                             }
@@ -665,8 +716,8 @@ namespace MMMapEditor
                         }
                         else
                         {
-                            string repeatSuffix = battle.RepeatCount > 1
-                                ? $", группа x{battle.RepeatCount}"
+                            string repeatSuffix = !string.IsNullOrEmpty(countDisplay)
+                                ? $", группа x{countDisplay}"
                                 : string.Empty;
                             string desc = $"Частично определённая битва (BX={battle.BxIndex}, диапазоны: [{battle.RangeStart1:X2}-{battle.RangeEnd1:X2}] + [{battle.RangeStart2:X2}-{battle.RangeEnd2:X2}]{repeatSuffix})";
                             if (!addedDescriptions.Contains(desc))
@@ -675,79 +726,6 @@ namespace MMMapEditor
                                 addedDescriptions.Add(desc);
                             }
                         }
-                    }
-                }
-            }
-
-            // ===== ИНФОРМАЦИЯ О ЗАГРУЗКЕ ИЗ ТАБЛИЦ =====
-            if (HasAnyTableLoad && _loadedValues.Count > 0 && PartiallyDefinedBattles.Count == 0)
-            {
-                var grouped = GetGroupedLoadedValues();
-
-                foreach (var group in grouped.OrderBy(g => g.Key))
-                {
-                    int bxIndex = group.Key;
-                    var values = group.Value;
-
-                    string loadKey = $"Load_{bxIndex}";
-                    if (addedDescriptions.Contains(loadKey))
-                        continue;
-
-                    addedDescriptions.Add(loadKey);
-
-                    bool hasFirstTable = values.Any(v => v.IsFirstTable);
-                    bool hasSecondTable = values.Any(v => !v.IsFirstTable);
-
-                    string desc = "";
-
-                    if (hasFirstTable && !hasSecondTable)
-                    {
-                        desc = $"Неполная загрузка из таблиц (BX={bxIndex}):\n";
-                        desc += $"  • Загружено из CDA9+ → сохранено в 3C58+\n";
-                        desc += $"  • Загрузка из CDB1+ не найдена\n";
-
-                        foreach (var val in DistinctBy(values.Where(v => v.IsFirstTable), v => v.SourceAddr))
-                        {
-                            string status = val.IsSaved ? "сохранено" : "загружено (не сохранено)";
-                            desc += $"    {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
-                        }
-                    }
-                    else if (!hasFirstTable && hasSecondTable)
-                    {
-                        desc = $"Неполная загрузка из таблиц (BX={bxIndex}):\n";
-                        desc += $"  • Загружено из CDB1+ → сохранено в 3C29+\n";
-                        desc += $"  • Загрузка из CDA9+ не найдена\n";
-
-                        foreach (var val in DistinctBy(values.Where(v => !v.IsFirstTable), v => v.SourceAddr))
-                        {
-                            string status = val.IsSaved ? "сохранено" : "загружено (не сохранено)";
-                            desc += $"    {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
-                        }
-                    }
-                    else if (hasFirstTable && hasSecondTable)
-                    {
-                        desc = $"Неполная загрузка из обеих таблиц (BX={bxIndex}):\n";
-
-                        var firstVals = DistinctBy(values.Where(v => v.IsFirstTable), v => v.SourceAddr).ToList();
-                        var secondVals = DistinctBy(values.Where(v => !v.IsFirstTable), v => v.SourceAddr).ToList();
-
-                        foreach (var val in firstVals)
-                        {
-                            string status = val.IsSaved ? "сохранено" : "не сохранено";
-                            desc += $"  • {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
-                        }
-
-                        foreach (var val in secondVals)
-                        {
-                            string status = val.IsSaved ? "сохранено" : "не сохранено";
-                            desc += $"  • {val.RegName} = 0x{val.Value:X2} из [{val.SourceAddr:X4}] ({status})\n";
-                        }
-                    }
-
-                    if (!string.IsNullOrEmpty(desc) && !addedDescriptions.Contains(desc))
-                    {
-                        descriptions.Add(desc.TrimEnd('\n'));
-                        addedDescriptions.Add(desc);
                     }
                 }
             }
@@ -1129,8 +1107,9 @@ namespace MMMapEditor
         public byte RangeEnd2 { get; set; }
 
         /// <summary>
-        /// Точное количество повторений одной и той же выбранной группы монстров.
-        /// Для обычных частичных битв равно 1.
+        /// Точное количество монстров в итоговой группе, если оно известно.
+        /// Для дискретных шаблонов это число повторений выбранного варианта,
+        /// для диапазонных шаблонов используется как отображаемый размер группы.
         /// </summary>
         public int RepeatCount { get; set; } = 1;
 
@@ -1314,7 +1293,7 @@ namespace MMMapEditor
             else if (monsters.Count > 0)
                 return HasExactOptions
                     ? $"Частично определён: {monsters.Count} точных вариант(ов){(RepeatCount > 1 ? $" группы x{RepeatCount}" : string.Empty)}"
-                    : $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}])";
+                    : $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]){(RepeatCount > 1 ? $" группы x{RepeatCount}" : string.Empty)}";
             else
                 return $"Частично определён: пустой диапазон";
         }

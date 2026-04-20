@@ -346,7 +346,9 @@ namespace MMMapEditor
                     i.SrcRegValue == info.SrcRegValue &&
                     i.IsFromTable == info.IsFromTable &&
                     i.SourceTableAddr == info.SourceTableAddr &&
-                    i.SourceTable == info.SourceTable))
+                    i.SourceTableBaseAddr == info.SourceTableBaseAddr &&
+                    i.SourceTable == info.SourceTable &&
+                    i.SourceIndexExternallyDerived == info.SourceIndexExternallyDerived))
                 {
                     merged.PartialBattleInfo.Add(new PartialBattleInfo
                     {
@@ -356,7 +358,9 @@ namespace MMMapEditor
                         SrcRegValue = info.SrcRegValue,
                         IsFromTable = info.IsFromTable,
                         SourceTableAddr = info.SourceTableAddr,
-                        SourceTable = info.SourceTable
+                        SourceTableBaseAddr = info.SourceTableBaseAddr,
+                        SourceTable = info.SourceTable,
+                        SourceIndexExternallyDerived = info.SourceIndexExternallyDerived
                     });
                 }
             }
@@ -642,7 +646,9 @@ namespace MMMapEditor
                     SrcRegValue = info.SrcRegValue,
                     IsFromTable = info.IsFromTable,
                     SourceTableAddr = info.SourceTableAddr,
-                    SourceTable = info.SourceTable
+                    SourceTableBaseAddr = info.SourceTableBaseAddr,
+                    SourceTable = info.SourceTable,
+                    SourceIndexExternallyDerived = info.SourceIndexExternallyDerived
                 });
             }
 
@@ -780,7 +786,7 @@ namespace MMMapEditor
                     RegName = info.SrcReg,
                     Value = info.SrcRegValue,
                     SourceAddr = info.SourceTableAddr ?? 0,
-                    IsFirstTable = info.IsFromTable,
+                    IsFirstTable = info.DestAddr == 0x3C58,
                     IsSaved = false
                 })
                 .ToList();

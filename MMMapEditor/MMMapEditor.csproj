@@ -32,6 +32,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="bin\**\*.cs" />
+    <Compile Remove="obj\**\*.cs" />
+    <EmbeddedResource Remove="bin\**\*" />
+    <EmbeddedResource Remove="obj\**\*" />
+    <None Remove="bin\**\*" />
+    <None Remove="obj\**\*" />
+    <Content Remove="bin\**\*" />
+    <Content Remove="obj\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Update="Properties\Resources.Designer.cs">
       <DesignTime>True</DesignTime>
       <AutoGen>True</AutoGen>
