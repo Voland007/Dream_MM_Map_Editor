@@ -16,7 +16,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Gee.External.Capstone;
@@ -31,6 +30,8 @@ namespace MMMapEditor
         private readonly InstructionAnalyzer _instructionAnalyzer;
         private readonly CodeExecutor _codeExecutor;
         private readonly PathAnalyzer _pathAnalyzer;
+        private readonly Dictionary<string, ObjectVariantAnalysisCacheEntry> _objectVariantAnalysisCache
+            = new Dictionary<string, ObjectVariantAnalysisCacheEntry>(StringComparer.Ordinal);
 
         public OvrFileAnalyzer(OvrFileConfig config)
         {
@@ -174,7 +175,8 @@ namespace MMMapEditor
                     ovrObject.Y,
                     predefinedAlternativePaths: null,
                     reachableAddresses: tableReachableAddresses,
-                    initializeRegisters: tracker => SetInitialRegistersFromCoordinates(tracker, ovrObject.X, ovrObject.Y, patchAddress));
+                    initializeRegisters: tracker => SetInitialRegistersFromCoordinates(tracker, ovrObject.X, ovrObject.Y, patchAddress),
+                    analysisCacheScopeKey: "table");
 
                 PopulateObjectPathData(ovrObject, finalVariants);
                 ApplyResolvedVariantInfoToObject(ovrObject);
@@ -282,6 +284,7 @@ namespace MMMapEditor
                                 tracker.SetRegisterValue("BL", cellX, macroStartAddress, $"Macro init BL = X ({cellX})");
                                 tracker.SetRegisterValue("BH", 0, macroStartAddress, "Macro init BH = 0");
                                 tracker.SetRegisterValue("BX", (ushort)cellX, macroStartAddress, $"Macro init BX = X ({cellX})");
+                                tracker.MarkRegisterAsCoordinateSeed("BX");
 
                                 // В macro-mode нельзя слепо подставлять AL=Y/AH=0 для YCoord.
                                 // Иначе ранние guard-проверки по AL начинают ошибочно схлопываться
@@ -292,8 +295,10 @@ namespace MMMapEditor
                                     ushort packed = (ushort)(((cellY & 0x0F) << 4) | (cellX & 0x0F));
                                     tracker.SetRegisterValue("AX", packed, macroStartAddress, $"Macro init AX = packed XY 0x{packed:X2}");
                                     tracker.SetRegisterValue("AL", packed, macroStartAddress, $"Macro init AL = packed XY 0x{packed:X2}");
+                                    tracker.MarkRegisterAsCoordinateSeed("AX");
                                 }
-                            });
+                            },
+                            analysisCacheScopeKey: BuildMacroAnalysisCacheScopeKey(comparison));
 
                         bool debugMode = AnalysisDebug.IsEnabledFor(cellX, cellY);
 
@@ -411,6 +416,22 @@ namespace MMMapEditor
         {
             public Dictionary<int, PathVariantInfo> CanonicalVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
             public List<PathVariantInfo> RawLeafVariants { get; set; } = new List<PathVariantInfo>();
+            public HashSet<uint> VisitedAddresses { get; set; } = new HashSet<uint>();
+            public bool UsesInitialCoordinates { get; set; }
+        }
+
+        private sealed class ObjectVariantAnalysisCacheEntry
+        {
+            public byte SampleX { get; set; }
+            public byte SampleY { get; set; }
+            public string SampleSignature { get; set; } = string.Empty;
+            public string SampleVisitedKey { get; set; } = string.Empty;
+            public bool SampleUsesInitialCoordinates { get; set; }
+            public Dictionary<int, PathVariantInfo> SampleVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
+            public HashSet<uint> SampleVisitedAddresses { get; set; } = new HashSet<uint>();
+            public bool IsCoordinateIndependentVerified { get; set; }
+            public Dictionary<int, PathVariantInfo> ReusableVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
+            public HashSet<uint> ReusableVisitedAddresses { get; set; } = new HashSet<uint>();
         }
 
         private sealed class RepeatedEventStateInfo
@@ -432,7 +453,8 @@ namespace MMMapEditor
         {
             public ushort Address { get; set; }
             public int Delta { get; set; }
-            public Dictionary<ushort, byte> StateTemplateWithoutAddress { get; set; } = new Dictionary<ushort, byte>();
+            public string StateTemplateWithoutAddressKey { get; set; } = string.Empty;
+            public string TargetVariantKey { get; set; } = string.Empty;
             public StateValueConstraintInfo ConstraintInfo { get; set; } = new StateValueConstraintInfo();
             public PathVariantInfo TargetVariant { get; set; }
         }
@@ -440,19 +462,34 @@ namespace MMMapEditor
         private sealed class RepeatedEventStableStatePattern
         {
             public string StateKey { get; set; } = string.Empty;
+            public string TargetVariantKey { get; set; } = string.Empty;
             public PathVariantInfo TargetVariant { get; set; }
         }
 
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
             byte targetX, byte targetY, List<AlternativePath> predefinedAlternativePaths,
-            HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null)
+            HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null,
+            string analysisCacheScopeKey = null)
         {
+            if (TryGetCachedObjectVariants(
+                    analysisCacheScopeKey,
+                    startAddress,
+                    reachableAddresses,
+                    out var cachedVariants))
+            {
+                return cachedVariants;
+            }
+
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
             var scheduledStates = new SortedDictionary<int, Dictionary<string, RepeatedEventStateInfo>>();
             var progressionPatterns = new List<RepeatedEventProgressionPattern>();
+            var progressionPatternKeys = new HashSet<string>(StringComparer.Ordinal);
             var stableStatePatterns = new List<RepeatedEventStableStatePattern>();
+            var stableStatePatternKeys = new HashSet<string>(StringComparer.Ordinal);
             bool analysisTruncated = false;
             bool usedRepeatedEventAcceleration = false;
+            bool usesInitialCoordinates = false;
+            var totalVisitedAddresses = new HashSet<uint>();
             ScheduleRepeatedEventState(
                 scheduledStates,
                 1,
@@ -519,6 +556,9 @@ namespace MMMapEditor
                         collectedVariants.Add(variant);
                     }
 
+                    usesInitialCoordinates |= passResult.UsesInitialCoordinates;
+                    totalVisitedAddresses.UnionWith(passResult.VisitedAddresses ?? Enumerable.Empty<uint>());
+
                     foreach (var rawLeaf in passResult.RawLeafVariants)
                     {
                         var repeatedEventRelevantAddresses = BuildRepeatedEventRelevantAddresses(rawLeaf);
@@ -548,6 +588,7 @@ namespace MMMapEditor
 
                         RegisterRepeatedEventProgressionPattern(
                             progressionPatterns,
+                            progressionPatternKeys,
                             br,
                             currentState,
                             carryOverState,
@@ -601,7 +642,8 @@ namespace MMMapEditor
                             currentState,
                             carryOverState,
                             canonicalVariant,
-                            stableStatePatterns))
+                            stableStatePatterns,
+                            stableStatePatternKeys))
                         {
                             usedRepeatedEventAcceleration = true;
                             continue;
@@ -693,8 +735,19 @@ namespace MMMapEditor
                     break;
             }
 
-            finalVariants ??= _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
+            if (finalVariants == null)
+            {
+                finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
+            }
             ApplyOccurrenceDescriptions(finalVariants.Values, maxAnalyzedOccurrence, analysisTruncated, usedRepeatedEventAcceleration);
+            RegisterCachedObjectVariants(
+                analysisCacheScopeKey,
+                startAddress,
+                targetX,
+                targetY,
+                finalVariants,
+                totalVisitedAddresses,
+                usesInitialCoordinates);
 
             if (debugMode)
                 AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
@@ -718,6 +771,7 @@ namespace MMMapEditor
             var effectivePersistentStateAddresses = persistentStateAddresses == null
                 ? new HashSet<ushort>((initialEmulatedMemory8 ?? new Dictionary<ushort, byte>()).Keys)
                 : new HashSet<ushort>(persistentStateAddresses);
+            var localVisitedAddresses = new HashSet<uint>();
 
             var processedBackEdges = new HashSet<(uint From, uint To)>();
             var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(
@@ -736,6 +790,7 @@ namespace MMMapEditor
                     ? null
                     : new Dictionary<ushort, byte>(initialEmulatedMemory8),
                 persistentStateAddresses: effectivePersistentStateAddresses);
+            localVisitedAddresses.UnionWith(mainPathResult.VisitedAddresses ?? Enumerable.Empty<uint>());
 
             if (reachableAddresses != null)
             {
@@ -784,10 +839,13 @@ namespace MMMapEditor
                     br,
                     targetX, targetY, allResults, null, processedBackEdges,
                     invalidateReturnRegistersAfterExternalCall: true,
-                    reachableAddresses: reachableAddresses,
+                    reachableAddresses: localVisitedAddresses,
                     inheritedState: mainPathResult,
                     persistentStateAddresses: effectivePersistentStateAddresses);
             }
+
+            if (reachableAddresses != null)
+                reachableAddresses.UnionWith(localVisitedAddresses);
 
             var rawLeafVariants = allResults
                 .Where(variant => variant != null && variant.IsLeaf)
@@ -816,7 +874,11 @@ namespace MMMapEditor
             return new SingleOccurrenceAnalysisResult
             {
                 CanonicalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults),
-                RawLeafVariants = rawLeafVariants
+                RawLeafVariants = rawLeafVariants,
+                VisitedAddresses = localVisitedAddresses,
+                UsesInitialCoordinates =
+                    mainPathResult.UsesInitialCoordinates ||
+                    allResults.Any(variant => variant?.UsesInitialCoordinates ?? false)
             };
         }
 
@@ -866,6 +928,7 @@ namespace MMMapEditor
 
         private void RegisterRepeatedEventProgressionPattern(
             List<RepeatedEventProgressionPattern> progressionPatterns,
+            HashSet<string> progressionPatternKeys,
             BinaryReader br,
             Dictionary<ushort, byte> currentState,
             Dictionary<ushort, byte> carryOverState,
@@ -873,6 +936,7 @@ namespace MMMapEditor
             PathVariantInfo canonicalVariant)
         {
             if (progressionPatterns == null ||
+                progressionPatternKeys == null ||
                 br == null ||
                 currentState == null ||
                 carryOverState == null ||
@@ -911,11 +975,24 @@ namespace MMMapEditor
             if (delta == 0)
                 return;
 
+            string stateTemplateKey = BuildMemoryStateKeyExcludingAddress(carryOverState, address);
+            string targetVariantKey = BuildRepeatedEventVariantTargetKey(canonicalVariant);
+            string patternKey = string.Join("|",
+                address.ToString("X4"),
+                delta.ToString(),
+                stateTemplateKey,
+                BuildConstraintOnlyToken(constraintInfo),
+                targetVariantKey);
+
+            if (!progressionPatternKeys.Add(patternKey))
+                return;
+
             progressionPatterns.Add(new RepeatedEventProgressionPattern
             {
                 Address = address,
                 Delta = delta,
-                StateTemplateWithoutAddress = BuildStateWithoutAddress(carryOverState, address),
+                StateTemplateWithoutAddressKey = stateTemplateKey,
+                TargetVariantKey = targetVariantKey,
                 ConstraintInfo = constraintInfo.Clone(),
                 TargetVariant = canonicalVariant
             });
@@ -928,7 +1005,8 @@ namespace MMMapEditor
             Dictionary<ushort, byte> currentState,
             Dictionary<ushort, byte> carryOverState,
             PathVariantInfo canonicalVariant,
-            List<RepeatedEventStableStatePattern> stableStatePatterns)
+            List<RepeatedEventStableStatePattern> stableStatePatterns,
+            HashSet<string> stableStatePatternKeys)
         {
             if (passResult == null ||
                 occurrence <= 0 ||
@@ -946,34 +1024,38 @@ namespace MMMapEditor
                 return false;
 
             AddOccurrenceCoverage(canonicalVariant, occurrence + 1, occurrence + 1, isOpenEnded: true);
-            RegisterRepeatedEventStableStatePattern(stableStatePatterns, carryOverState, new Dictionary<ushort, StateValueConstraintInfo>(), canonicalVariant);
+            RegisterRepeatedEventStableStatePattern(
+                stableStatePatterns,
+                stableStatePatternKeys,
+                carryOverState,
+                new Dictionary<ushort, StateValueConstraintInfo>(),
+                canonicalVariant);
             return true;
         }
 
         private void RegisterRepeatedEventStableStatePattern(
             List<RepeatedEventStableStatePattern> stableStatePatterns,
+            HashSet<string> stableStatePatternKeys,
             Dictionary<ushort, byte> state,
             Dictionary<ushort, StateValueConstraintInfo> constraints,
             PathVariantInfo canonicalVariant)
         {
-            if (stableStatePatterns == null || canonicalVariant == null)
+            if (stableStatePatterns == null || stableStatePatternKeys == null || canonicalVariant == null)
                 return;
 
             string stateKey = BuildMemoryStateKey(state, constraints);
             if (string.IsNullOrWhiteSpace(stateKey))
                 return;
 
-            if (stableStatePatterns.Any(pattern =>
-                    pattern != null &&
-                    string.Equals(pattern.StateKey, stateKey, StringComparison.Ordinal) &&
-                    ReferenceEquals(pattern.TargetVariant, canonicalVariant)))
-            {
+            string targetVariantKey = BuildRepeatedEventVariantTargetKey(canonicalVariant);
+            string patternKey = $"{stateKey}||{targetVariantKey}";
+            if (!stableStatePatternKeys.Add(patternKey))
                 return;
-            }
 
             stableStatePatterns.Add(new RepeatedEventStableStatePattern
             {
                 StateKey = stateKey,
+                TargetVariantKey = targetVariantKey,
                 TargetVariant = canonicalVariant
             });
         }
@@ -1027,6 +1109,7 @@ namespace MMMapEditor
             if (progressionPatterns == null || progressionPatterns.Count == 0 || carryOverState == null)
                 return false;
 
+            var stateTemplateKeyCache = new Dictionary<ushort, string>();
             foreach (var pattern in progressionPatterns.AsEnumerable().Reverse())
             {
                 if (pattern == null ||
@@ -1040,12 +1123,14 @@ namespace MMMapEditor
                 if (!carryOverState.TryGetValue(pattern.Address, out byte currentValue))
                     continue;
 
-                if (!AreStatesEqual(
-                        BuildStateWithoutAddress(carryOverState, pattern.Address),
-                        pattern.StateTemplateWithoutAddress))
+                if (!stateTemplateKeyCache.TryGetValue(pattern.Address, out string currentStateTemplateKey))
                 {
-                    continue;
+                    currentStateTemplateKey = BuildMemoryStateKeyExcludingAddress(carryOverState, pattern.Address);
+                    stateTemplateKeyCache[pattern.Address] = currentStateTemplateKey;
                 }
+
+                if (!string.Equals(currentStateTemplateKey, pattern.StateTemplateWithoutAddressKey, StringComparison.Ordinal))
+                    continue;
 
                 if (!TryBuildRepeatedEventPlanFromConstraint(
                         occurrence + 1,
@@ -1492,6 +1577,25 @@ namespace MMMapEditor
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         }
 
+        private string BuildMemoryStateKeyExcludingAddress(
+            Dictionary<ushort, byte> state,
+            ushort excludedAddress)
+        {
+            if (state == null || state.Count == 0)
+                return "<EMPTY>";
+
+            var remainingAddresses = state.Keys
+                .Where(address => address != excludedAddress)
+                .OrderBy(address => address)
+                .ToList();
+
+            if (remainingAddresses.Count == 0)
+                return "<EMPTY>";
+
+            return string.Join(";",
+                remainingAddresses.Select(address => $"{address:X4}={state[address]:X2}"));
+        }
+
         private bool AreStatesEqual(
             Dictionary<ushort, byte> left,
             Dictionary<ushort, byte> right)
@@ -1758,6 +1862,265 @@ namespace MMMapEditor
             return $"{statKey}||{battleKey}||{partialKey}||{loadKey}||{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
         }
 
+        private string BuildRepeatedEventVariantTargetKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string textKey = variant.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+
+            string partyKey = variant.PartyEffects != null && variant.PartyEffects.Count > 0
+                ? string.Join(";", variant.PartyEffects
+                    .Where(effect => effect != null)
+                    .Select(PartyEffectSemantics.BuildSemanticKey)
+                    .OrderBy(key => key))
+                : "<NO_PARTY>";
+
+            string branchKey = variant.BranchChoices != null && variant.BranchChoices.Count > 0
+                ? string.Join(";", variant.BranchChoices
+                    .Where(choice => choice != null)
+                    .Select(choice => $"{choice.Label}|{choice.Condition}|{choice.CompareRegister}|{choice.CompareValue?.ToString() ?? string.Empty}|{choice.IsLinear}"))
+                : "<NO_BRANCHES>";
+
+            return $"{textKey}||{BuildOccurrenceInsensitiveLoopFallbackKey(variant)}||{partyKey}||{branchKey}";
+        }
+
+        private bool TryGetCachedObjectVariants(
+            string analysisCacheScopeKey,
+            uint startAddress,
+            HashSet<uint> reachableAddresses,
+            out Dictionary<int, PathVariantInfo> cachedVariants)
+        {
+            cachedVariants = null;
+            if (string.IsNullOrWhiteSpace(analysisCacheScopeKey))
+                return false;
+
+            string cacheKey = $"{analysisCacheScopeKey}|{startAddress:X4}";
+            if (!_objectVariantAnalysisCache.TryGetValue(cacheKey, out var entry) ||
+                entry == null ||
+                !entry.IsCoordinateIndependentVerified ||
+                entry.ReusableVariants == null ||
+                entry.ReusableVariants.Count == 0)
+            {
+                return false;
+            }
+
+            if (reachableAddresses != null)
+                reachableAddresses.UnionWith(entry.ReusableVisitedAddresses ?? Enumerable.Empty<uint>());
+
+            cachedVariants = CloneFinalVariants(entry.ReusableVariants);
+            return true;
+        }
+
+        private void RegisterCachedObjectVariants(
+            string analysisCacheScopeKey,
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            Dictionary<int, PathVariantInfo> finalVariants,
+            HashSet<uint> visitedAddresses,
+            bool usesInitialCoordinates)
+        {
+            if (string.IsNullOrWhiteSpace(analysisCacheScopeKey) ||
+                finalVariants == null ||
+                finalVariants.Count == 0)
+            {
+                return;
+            }
+
+            string cacheKey = $"{analysisCacheScopeKey}|{startAddress:X4}";
+            string signature = BuildFinalVariantsCacheSignature(finalVariants);
+            string visitedKey = BuildVisitedAddressesKey(visitedAddresses);
+
+            if (!_objectVariantAnalysisCache.TryGetValue(cacheKey, out var entry) || entry == null)
+            {
+                _objectVariantAnalysisCache[cacheKey] = new ObjectVariantAnalysisCacheEntry
+                {
+                    SampleX = targetX,
+                    SampleY = targetY,
+                    SampleSignature = signature,
+                    SampleVisitedKey = visitedKey,
+                    SampleUsesInitialCoordinates = usesInitialCoordinates,
+                    SampleVariants = CloneFinalVariants(finalVariants),
+                    SampleVisitedAddresses = new HashSet<uint>(visitedAddresses ?? Enumerable.Empty<uint>())
+                };
+                return;
+            }
+
+            if (entry.IsCoordinateIndependentVerified)
+                return;
+
+            if (entry.SampleUsesInitialCoordinates || usesInitialCoordinates)
+                return;
+
+            if (entry.SampleX == targetX && entry.SampleY == targetY)
+                return;
+
+            if (!string.Equals(entry.SampleSignature, signature, StringComparison.Ordinal))
+                return;
+
+            if (!string.Equals(entry.SampleVisitedKey, visitedKey, StringComparison.Ordinal))
+                return;
+
+            entry.IsCoordinateIndependentVerified = true;
+            entry.ReusableVariants = CloneFinalVariants(finalVariants);
+            entry.ReusableVisitedAddresses = new HashSet<uint>(
+                (entry.SampleVisitedAddresses ?? Enumerable.Empty<uint>())
+                    .Concat(visitedAddresses ?? Enumerable.Empty<uint>()));
+        }
+
+        private string BuildFinalVariantsCacheSignature(Dictionary<int, PathVariantInfo> finalVariants)
+        {
+            if (finalVariants == null || finalVariants.Count == 0)
+                return "<NO_VARIANTS>";
+
+            return string.Join("##", finalVariants
+                .OrderBy(kvp => kvp.Key)
+                .Select(kvp =>
+                {
+                    var variant = kvp.Value;
+                    string occurrenceKey = variant?.GetOccurrenceDescription() ?? string.Empty;
+                    return $"{kvp.Key}:{BuildRepeatedEventVariantTargetKey(variant)}:{occurrenceKey}";
+                }));
+        }
+
+        private string BuildMacroAnalysisCacheScopeKey(CoordinateComparison comparison)
+        {
+            if (comparison == null)
+                return "macro:<NULL>";
+
+            string branchDescriptor = comparison.IsLinear
+                ? $"linear:{comparison.LinearStart:X2}-{comparison.LinearEnd:X2}"
+                : $"value:{comparison.Value:X2}";
+
+            return string.Join("|", new[]
+            {
+                "macro",
+                comparison.CoordType.ToString(),
+                $"cmp:{comparison.CompareAddress:X4}",
+                $"jmp:{comparison.JumpTarget:X4}",
+                $"src:{comparison.MemAddr:X4}",
+                $"kind:{comparison.JumpType ?? "<NULL>"}",
+                branchDescriptor
+            });
+        }
+
+        private Dictionary<int, PathVariantInfo> CloneFinalVariants(Dictionary<int, PathVariantInfo> source)
+        {
+            if (source == null)
+                return new Dictionary<int, PathVariantInfo>();
+
+            return source.ToDictionary(kvp => kvp.Key, kvp => CloneVariantInfo(kvp.Value));
+        }
+
+        private string BuildVisitedAddressesKey(IEnumerable<uint> visitedAddresses)
+        {
+            var ordered = (visitedAddresses ?? Enumerable.Empty<uint>())
+                .Distinct()
+                .OrderBy(address => address)
+                .ToList();
+
+            if (ordered.Count == 0)
+                return "<NO_VISITS>";
+
+            return string.Join("|", ordered.Select(address => address.ToString("X4")));
+        }
+
+        private PathVariantInfo CloneVariantInfo(PathVariantInfo source)
+        {
+            if (source == null)
+                return null;
+
+            return new PathVariantInfo
+            {
+                PathId = source.PathId,
+                IsLeaf = source.IsLeaf,
+                Texts = source.Texts?.ToList() ?? new List<string>(),
+                BranchChoices = source.BranchChoices?
+                    .Where(choice => choice != null)
+                    .Select(choice => new BranchChoice
+                    {
+                        Label = choice.Label,
+                        Condition = choice.Condition,
+                        CompareValue = choice.CompareValue,
+                        CompareRegister = choice.CompareRegister,
+                        IsLinear = choice.IsLinear
+                    })
+                    .ToList() ?? new List<BranchChoice>(),
+                MonsterPower = source.MonsterPower,
+                MonsterLevel = source.MonsterLevel,
+                MonsterBatchCount = source.MonsterBatchCount,
+                DarkeningLevel = source.DarkeningLevel,
+                RandomEncounterChance = source.RandomEncounterChance,
+                CallsRandomEncounter = source.CallsRandomEncounter,
+                IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
+                TeleportTargetX = source.TeleportTargetX,
+                TeleportTargetY = source.TeleportTargetY,
+                TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
+                TeleportTargetYRange = source.TeleportTargetYRange == null ? null : new ValueRange8(source.TeleportTargetYRange.Min, source.TeleportTargetYRange.Max),
+                BattleMonsterCount = source.BattleMonsterCount,
+                BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
+                IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                BattleMonsters = source.BattleMonsters?
+                    .Select(m => new BattleMonster
+                    {
+                        Index = m.Index,
+                        MonsterIndex1 = m.MonsterIndex1,
+                        MonsterIndex2 = m.MonsterIndex2,
+                        IsIndeterminate = m.IsIndeterminate
+                    })
+                    .ToList() ?? new List<BattleMonster>(),
+                PartiallyDefinedBattles = source.PartiallyDefinedBattles?
+                    .Select(p => p.Clone())
+                    .ToList() ?? new List<PartiallyDefinedBattle>(),
+                HasAnyTableLoad = source.HasAnyTableLoad,
+                LoadedValues = source.LoadedValues?
+                    .Select(v => new OvrObject.LoadedValueInfo
+                    {
+                        BxIndex = v.BxIndex,
+                        RegName = v.RegName,
+                        Value = v.Value,
+                        SourceAddr = v.SourceAddr,
+                        IsFirstTable = v.IsFirstTable,
+                        IsSaved = v.IsSaved
+                    })
+                    .ToList() ?? new List<OvrObject.LoadedValueInfo>(),
+                PartyEffects = source.PartyEffects?
+                    .Where(e => e != null)
+                    .Select(e => e.Clone())
+                    .ToList() ?? new List<PartyEffect>(),
+                ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
+                    ? new Dictionary<ushort, byte>()
+                    : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
+                PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
+                    ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
+                    : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
+                StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
+                UsesInitialCoordinates = source.UsesInitialCoordinates,
+                OccurrenceIndices = source.OccurrenceIndices?
+                    .Where(index => index > 0)
+                    .Distinct()
+                    .OrderBy(index => index)
+                    .ToList() ?? new List<int>(),
+                OccurrenceRanges = source.OccurrenceRanges?
+                    .Where(range => range != null && range.Start > 0)
+                    .Select(range => range.Clone())
+                    .ToList() ?? new List<OccurrenceRangeInfo>(),
+                OccurrenceDescription = source.OccurrenceDescription,
+                ProbabilityNumerator = source.ProbabilityNumerator,
+                ProbabilityDenominator = source.ProbabilityDenominator,
+                TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
+                TerminatedByTerminalRet = source.TerminatedByTerminalRet,
+                HasBranchSpecificContribution = source.HasBranchSpecificContribution
+            };
+        }
+
         private string BuildOccurrenceDescription(
             List<OccurrenceRangeInfo> occurrenceRanges,
             int maxAnalyzedOccurrence,
@@ -1947,7 +2310,8 @@ namespace MMMapEditor
                             predefinedAlternativePaths: null,
                             reachableAddresses: null,
                             initializeRegisters: tracker =>
-                                SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress.Value));
+                                SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress.Value),
+                            analysisCacheScopeKey: "default");
 
                         bool hasSignificantCode = HasSignificantVariants(finalVariants);
                         if (!hasSignificantCode)
@@ -2102,6 +2466,7 @@ namespace MMMapEditor
             tracker.SetRegisterValue("BL", x, patchStartAddress, "Initial X coordinate");
             tracker.SetRegisterValue("BH", 0, patchStartAddress, "Initial BH = 0");
             tracker.SetRegisterValue("BX", (ushort)x, patchStartAddress, $"Initial BX = X ({x})");
+            tracker.MarkRegisterAsCoordinateSeed("BX");
         }
 
         private (List<TextEntry> local, List<TextEntry> context) CollectTextsFromResult(PathAnalysisResult result)
@@ -2218,7 +2583,8 @@ namespace MMMapEditor
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
                 PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
                     ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
-                    : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds)
+                    : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
+                UsesInitialCoordinates = source.UsesInitialCoordinates
             };
         }
 

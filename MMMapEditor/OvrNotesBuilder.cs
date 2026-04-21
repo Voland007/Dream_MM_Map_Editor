@@ -24,7 +24,8 @@ namespace MMMapEditor
             Dictionary<Point, string> existingCentralOptions,
             Dictionary<Point, string> existingNotes = null,
             Dictionary<Point, MainForm.SideValues<bool>> existingMessageStates = null,
-            bool? useHierarchicalView = null)
+            bool? useHierarchicalView = null,
+            IReadOnlyList<OvrObject> preAnalyzedObjects = null)
         {
             var result = new OvrNotesBuildResult
             {
@@ -75,7 +76,8 @@ namespace MMMapEditor
             bool useHierarchical = useHierarchicalView
                 ?? MainForm.GetBooleanSetting("OvrLoadSettings", "Hierarchical", true);
 
-            var allObjects = OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions);
+            var allObjects = preAnalyzedObjects?.ToList()
+                ?? OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions);
 
             result.TotalObjects = allObjects.Count;
             result.TableObjects = allObjects.Count(o => o.IsFromTable);

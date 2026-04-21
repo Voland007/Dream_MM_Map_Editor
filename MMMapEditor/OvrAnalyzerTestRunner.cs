@@ -285,11 +285,17 @@ namespace MMMapEditor.Tests
                         }
                     }
 
+                    var analyzedObjects = OvrFileAnalyzer.AnalyzeOvrFile(
+                        testCase.OvrFilePath,
+                        _configs[configKey],
+                        new Dictionary<Point, string>(centralOptions));
+
                     RunChecksForMode(
                         result,
                         logger,
                         testCase,
                         centralOptions,
+                        analyzedObjects,
                         useHierarchical: false,
                         modeName: "Плоский");
 
@@ -298,6 +304,7 @@ namespace MMMapEditor.Tests
                         logger,
                         testCase,
                         centralOptions,
+                        analyzedObjects,
                         useHierarchical: true,
                         modeName: "Иерархический");
 
@@ -327,6 +334,7 @@ namespace MMMapEditor.Tests
             TestLogger logger,
             TestCase testCase,
             Dictionary<Point, string> centralOptions,
+            IReadOnlyList<OvrObject> preAnalyzedObjects,
             bool useHierarchical,
             string modeName)
         {
@@ -337,7 +345,8 @@ namespace MMMapEditor.Tests
                 new Dictionary<Point, string>(centralOptions),
                 null,
                 null,
-                useHierarchical);
+                useHierarchical,
+                preAnalyzedObjects);
 
             System.Diagnostics.Debug.WriteLine(
                 $"Load({modeName}) завершён. NotesPerCell={loadResult.NotesPerCell.Count}, " +
@@ -378,7 +387,7 @@ namespace MMMapEditor.Tests
                     Expected = expectation.GetFullTextForDisplay(useHierarchical),
                     Actual = actualText,
                     Passed = passed,
-                    AnalysisTrace = logger.GetAnalysisTrace(cellPos.X, cellPos.Y),
+                    AnalysisTrace = passed ? string.Empty : logger.GetAnalysisTrace(cellPos.X, cellPos.Y),
                     Notes = string.IsNullOrWhiteSpace(expectation.Comment)
                         ? modeName
                         : $"{expectation.Comment} [{modeName}]",

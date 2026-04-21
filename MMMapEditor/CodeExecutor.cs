@@ -153,7 +153,7 @@ namespace MMMapEditor
                             result.ExitCallDepth = currentCallDepth;
                             result.IsTerminated = true;
                             CaptureExitEmulatedState(result);
-                            FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
+                            FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode);
                             return result;
                         }
 
@@ -265,7 +265,7 @@ namespace MMMapEditor
                 result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
                 result.ExitCallDepth = currentCallDepth;
                 CaptureExitEmulatedState(result);
-                FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
+                FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode);
                 return result;
             }
             finally
@@ -6231,7 +6231,7 @@ namespace MMMapEditor
         /// <summary>
         /// Завершает анализ и устанавливает флаг наличия значимого кода
         /// </summary>
-        private void FinalizeResult(PathAnalysisResult result, int instructionCount,
+        private void FinalizeResult(PathAnalysisResult result, RegisterTracker registerTracker, int instructionCount,
             uint currentAddress, long fileLength, bool debugMode)
         {
             if (instructionCount >= MAX_INSTRUCTIONS_PER_PATH)
@@ -6246,6 +6246,12 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"      Достигнут конец оверлея - конец пути");
                 result.IsTerminated = true;
             }
+
+            result.UsesInitialCoordinates =
+                (registerTracker?.HasObservedCoordinateSeedRead ?? false) ||
+                result.MemoryReadAddresses.Contains(0x3C38) ||
+                result.MemoryReadAddresses.Contains(0x3C39) ||
+                result.MemoryReadAddresses.Contains(0x3C3A);
 
             result.HasSignificantCode = result.OrderedTexts.Count > 0 ||
                                          result.FoundTexts.Count > 0 ||

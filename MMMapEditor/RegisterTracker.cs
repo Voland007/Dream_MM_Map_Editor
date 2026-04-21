@@ -82,6 +82,8 @@ namespace MMMapEditor
         private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
         private Dictionary<string, PartyPointerByteReference> partyPointerBytes = new Dictionary<string, PartyPointerByteReference>();
+        private HashSet<string> coordinateSeedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public bool HasObservedCoordinateSeedRead { get; private set; }
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -352,9 +354,63 @@ namespace MMMapEditor
             partyFieldValues.Remove(highReg);
         }
 
+        private void ClearCoordinateSeed(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                coordinateSeedRegisters.Remove(regUpper);
+                return;
+            }
+
+            coordinateSeedRegisters.Remove(fullReg);
+            coordinateSeedRegisters.Remove(lowReg);
+            coordinateSeedRegisters.Remove(highReg);
+        }
+
+        public void MarkRegisterAsCoordinateSeed(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                coordinateSeedRegisters.Add(regUpper);
+                return;
+            }
+
+            coordinateSeedRegisters.Add(fullReg);
+            coordinateSeedRegisters.Add(lowReg);
+            coordinateSeedRegisters.Add(highReg);
+        }
+
+        private void MarkCoordinateSeedRead(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (coordinateSeedRegisters.Contains(regUpper))
+            {
+                HasObservedCoordinateSeedRead = true;
+                return;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg) &&
+                (coordinateSeedRegisters.Contains(fullReg) ||
+                 coordinateSeedRegisters.Contains(lowReg) ||
+                 coordinateSeedRegisters.Contains(highReg)))
+            {
+                HasObservedCoordinateSeedRead = true;
+            }
+        }
+
         public void SetRegisterRange(string reg, byte min, byte max, RegisterValueDistribution distribution = RegisterValueDistribution.Unknown)
         {
             string regUpper = reg.ToUpperInvariant();
+            ClearCoordinateSeed(regUpper);
             registerRanges[regUpper] = new ValueRange8(min, max);
             registerRangeDistributions[regUpper] = distribution;
 
@@ -401,10 +457,16 @@ namespace MMMapEditor
         {
             string regUpper = reg.ToUpperInvariant();
             if (registerRanges.TryGetValue(regUpper, out range))
+            {
+                MarkCoordinateSeedRead(regUpper);
                 return true;
+            }
 
             if ((regUpper == "AL" || regUpper == "AH") && registerRanges.TryGetValue("AX", out range))
+            {
+                MarkCoordinateSeedRead(regUpper);
                 return true;
+            }
 
             range = null;
             return false;
@@ -441,6 +503,7 @@ namespace MMMapEditor
         public void SetRegisterValue(string reg, ushort value, uint address, string instruction)
         {
             string regUpper = reg.ToUpper();
+            ClearCoordinateSeed(regUpper);
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
@@ -911,14 +974,21 @@ namespace MMMapEditor
 
         public bool TryGetRegisterValue(string reg, out ushort value)
         {
-            return registers.TryGetValue(reg.ToUpper(), out value);
+            string regUpper = reg.ToUpperInvariant();
+            bool found = registers.TryGetValue(regUpper, out value);
+            if (found)
+                MarkCoordinateSeedRead(regUpper);
+
+            return found;
         }
 
         public bool TryGetByteRegisterValue(string reg, out byte value)
         {
             value = 0;
-            if (registers.TryGetValue(reg.ToUpper(), out ushort fullValue))
+            string regUpper = reg.ToUpperInvariant();
+            if (registers.TryGetValue(regUpper, out ushort fullValue))
             {
+                MarkCoordinateSeedRead(regUpper);
                 value = (byte)fullValue;
                 return true;
             }
@@ -932,6 +1002,7 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(regUpper))
                 return;
 
+            ClearCoordinateSeed(regUpper);
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
@@ -1001,6 +1072,7 @@ namespace MMMapEditor
         {
             string regUpper = reg.ToUpper();
 
+            ClearCoordinateSeed(regUpper);
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
@@ -1142,6 +1214,7 @@ namespace MMMapEditor
                     }
                     if (!preserveExternalDerivation)
                     {
+                        ClearCoordinateSeed(partialRegUpper);
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
                         ClearRegisterRange(fullRegUpper);
@@ -1165,6 +1238,7 @@ namespace MMMapEditor
                     }
                     if (!preserveExternalDerivation)
                     {
+                        ClearCoordinateSeed(partialRegUpper);
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
                         ClearRegisterRange(fullRegUpper);
@@ -1188,6 +1262,7 @@ namespace MMMapEditor
                     }
                     if (!preserveExternalDerivation)
                     {
+                        ClearCoordinateSeed(partialRegUpper);
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
                         ClearRegisterRange(fullRegUpper);
@@ -1211,6 +1286,7 @@ namespace MMMapEditor
                     }
                     if (!preserveExternalDerivation)
                     {
+                        ClearCoordinateSeed(partialRegUpper);
                         ClearExternalDerivation(fullRegUpper);
                         ClearPendingExternalCallResult(fullRegUpper);
                         ClearRegisterRange(fullRegUpper);
@@ -1295,6 +1371,10 @@ namespace MMMapEditor
             {
                 clone.partyPointerBytes[kvp.Key] = kvp.Value?.Clone();
             }
+            foreach (var reg in coordinateSeedRegisters)
+            {
+                clone.coordinateSeedRegisters.Add(reg);
+            }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;
             clone.SignFlag = this.SignFlag;
@@ -1306,6 +1386,7 @@ namespace MMMapEditor
             clone.LastCompareImmediate = this.LastCompareImmediate;
             clone.LastComparedMemoryAddress = this.LastComparedMemoryAddress;
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
+            clone.HasObservedCoordinateSeedRead = this.HasObservedCoordinateSeedRead;
             clone.ActivePartyConditionWindows = this.ActivePartyConditionWindows?
                 .Select(window => window?.Clone())
                 .Where(window => window != null)

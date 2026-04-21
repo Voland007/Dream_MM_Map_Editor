@@ -345,6 +345,7 @@ namespace MMMapEditor
         public HashSet<uint> VisitedAddresses { get; set; } = new HashSet<uint>();
         public List<uint> ExitPendingReturnAddresses { get; set; } = new List<uint>();
         public int ExitCallDepth { get; set; } = 0;
+        public bool UsesInitialCoordinates { get; set; } = false;
 
         // Адрес первой инструкции, которая загрузила локальный текст
         public uint FirstLocalTextAddress { get; set; } = uint.MaxValue;

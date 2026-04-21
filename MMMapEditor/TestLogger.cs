@@ -173,6 +173,7 @@ namespace MMMapEditor.Tests
             private readonly TextWriter _primary;
             private readonly TextWriter _secondary;
             private readonly List<string> _captured;
+            private readonly StringBuilder _lineBuffer = new StringBuilder();
 
             public override Encoding Encoding => Encoding.UTF8;
 
@@ -187,28 +188,42 @@ namespace MMMapEditor.Tests
             {
                 _primary.Write(value);
                 _secondary.Write(value);
-                _captured.Add(value.ToString());
+                AppendCapturedText(value.ToString());
             }
 
             public override void Write(string value)
             {
                 _primary.Write(value);
                 _secondary.Write(value);
-
-                if (!string.IsNullOrEmpty(value))
-                {
-                    foreach (var line in value.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
-                    {
-                        _captured.Add(line);
-                    }
-                }
+                AppendCapturedText(value);
             }
 
             public override void WriteLine(string value)
             {
                 _primary.WriteLine(value);
                 _secondary.WriteLine(value);
-                _captured.Add(value ?? "");
+                AppendCapturedText((value ?? string.Empty) + Environment.NewLine);
+            }
+
+            private void AppendCapturedText(string value)
+            {
+                if (string.IsNullOrEmpty(value))
+                    return;
+
+                foreach (char ch in value)
+                {
+                    if (ch == '\r')
+                        continue;
+
+                    if (ch == '\n')
+                    {
+                        _captured.Add(_lineBuffer.ToString());
+                        _lineBuffer.Clear();
+                        continue;
+                    }
+
+                    _lineBuffer.Append(ch);
+                }
             }
         }
     }

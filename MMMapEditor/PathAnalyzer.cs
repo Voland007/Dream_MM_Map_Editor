@@ -432,6 +432,7 @@ namespace MMMapEditor
             merged.IsIndeterminateLoop = merged.IsIndeterminateLoop || currentState.IsIndeterminateLoop;
             merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
+            merged.UsesInitialCoordinates = merged.UsesInitialCoordinates || inheritedState.UsesInitialCoordinates || currentState.UsesInitialCoordinates;
             merged.MemoryReadAddresses.UnionWith(currentState.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             merged.MemoryWrittenAddresses.UnionWith(currentState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
 
@@ -649,6 +650,7 @@ namespace MMMapEditor
             clone.LoopIterationCount = source.LoopIterationCount;
             clone.IsTerminated = source.IsTerminated;
             clone.HasSignificantCode = source.HasSignificantCode;
+            clone.UsesInitialCoordinates = source.UsesInitialCoordinates;
 
             foreach (var entry in source.BattleMonsterEntries)
                 clone.BattleMonsterEntries[entry.Key] = entry.Value;
@@ -781,6 +783,7 @@ namespace MMMapEditor
                     ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
                     : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                UsesInitialCoordinates = source.UsesInitialCoordinates,
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
@@ -1764,6 +1767,7 @@ namespace MMMapEditor
                     : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
+                UsesInitialCoordinates = source.UsesInitialCoordinates,
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
                     .Distinct()
@@ -1799,6 +1803,7 @@ namespace MMMapEditor
                 target.OccurrenceRanges,
                 source.OccurrenceRanges);
             target.HasRepeatedEventOccurrenceSensitivity |= source.HasRepeatedEventOccurrenceSensitivity;
+            target.UsesInitialCoordinates |= source.UsesInitialCoordinates;
 
             if (string.IsNullOrWhiteSpace(target.OccurrenceDescription))
                 target.OccurrenceDescription = source.OccurrenceDescription;

@@ -68,7 +68,8 @@ namespace MMMapEditor
             Dictionary<Point, string> seedCentralOptions = null,
             Dictionary<Point, string> seedNotes = null,
             Dictionary<Point, MainForm.SideValues<bool>> seedMessageStates = null,
-            bool? useHierarchicalView = null)
+            bool? useHierarchicalView = null,
+            IReadOnlyList<OvrObject> preAnalyzedObjects = null)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
@@ -83,7 +84,8 @@ namespace MMMapEditor
                 seedCentralOptions,
                 seedNotes,
                 seedMessageStates,
-                useHierarchicalView);
+                useHierarchicalView,
+                preAnalyzedObjects);
 
             var result = new OvrOverlayLoadResult
             {
