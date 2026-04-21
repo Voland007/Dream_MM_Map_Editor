@@ -26,6 +26,7 @@ namespace MMMapEditor
     public static class AnalysisDebug
     {
         private static readonly AsyncLocal<(byte X, byte Y)?> _currentCell = new AsyncLocal<(byte X, byte Y)?>();
+        private static int _suppressionDepth;
 
         public static bool EnableGlobalLogs { get; private set; } = false;
         public static bool DisableCacheForTargetCell { get; private set; } = true;
@@ -48,8 +49,17 @@ namespace MMMapEditor
             DisableCacheForTargetCell = disableCacheForTargetCell;
         }
 
+        public static IDisposable Suppress()
+        {
+            Interlocked.Increment(ref _suppressionDepth);
+            return new Scope(() => Interlocked.Decrement(ref _suppressionDepth));
+        }
+
         public static bool IsEnabledFor(byte x, byte y)
         {
+            if (Volatile.Read(ref _suppressionDepth) > 0)
+                return false;
+
             if (!Enabled)
                 return false;
 
@@ -69,6 +79,9 @@ namespace MMMapEditor
 
         public static bool ShouldDisableCacheFor(byte x, byte y)
         {
+            if (Volatile.Read(ref _suppressionDepth) > 0)
+                return false;
+
             return DisableCacheForTargetCell &&
                    Enabled &&
                    TargetX.HasValue &&
@@ -96,6 +109,9 @@ namespace MMMapEditor
 
         public static void WriteLine(string message)
         {
+            if (Volatile.Read(ref _suppressionDepth) > 0)
+                return;
+
             if (!Enabled)
                 return;
 
@@ -103,19 +119,13 @@ namespace MMMapEditor
             if (currentCell.HasValue)
             {
                 if (IsEnabledFor(currentCell.Value.X, currentCell.Value.Y))
-                {
-                    Debug.WriteLine(message);
                     Trace.WriteLine(message);
-                }
 
                 return;
             }
 
             if (EnableGlobalLogs)
-            {
-                Debug.WriteLine(message);
                 Trace.WriteLine(message);
-            }
         }
 
         private sealed class Scope : IDisposable
