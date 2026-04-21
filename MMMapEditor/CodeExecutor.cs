@@ -35,6 +35,7 @@ namespace MMMapEditor
         private readonly Dictionary<ushort, byte> _emulatedMemory8 = new Dictionary<ushort, byte>();
         private readonly Dictionary<ushort, PartyMemberReference> _emulatedPartyPointers = new Dictionary<ushort, PartyMemberReference>();
         private readonly Dictionary<ushort, PartyPointerByteReference> _emulatedPartyPointerBytes = new Dictionary<ushort, PartyPointerByteReference>();
+        private readonly HashSet<ushort> _persistentEventStateAddresses = new HashSet<ushort>();
 
         private const int MAX_DEPTH = 12;
         private const ushort PARTY_POINTER_TABLE = 0x3CA8;
@@ -63,7 +64,8 @@ namespace MMMapEditor
             List<uint> pendingReturnAddresses = null,
             Dictionary<ushort, byte> initialEmulatedMemory8 = null,
             Dictionary<ushort, PartyMemberReference> initialEmulatedPartyPointers = null,
-            Dictionary<ushort, PartyPointerByteReference> initialEmulatedPartyPointerBytes = null)
+            Dictionary<ushort, PartyPointerByteReference> initialEmulatedPartyPointerBytes = null,
+            HashSet<ushort> persistentStateAddresses = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
@@ -78,9 +80,16 @@ namespace MMMapEditor
             var savedEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
             var savedEmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone());
             var savedEmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone());
+            var savedPersistentEventStateAddresses = new HashSet<ushort>(_persistentEventStateAddresses);
             _emulatedMemory8.Clear();
             _emulatedPartyPointers.Clear();
             _emulatedPartyPointerBytes.Clear();
+            if (persistentStateAddresses != null)
+            {
+                _persistentEventStateAddresses.Clear();
+                foreach (ushort address in persistentStateAddresses)
+                    _persistentEventStateAddresses.Add(address);
+            }
             if (initialEmulatedMemory8 != null)
             {
                 foreach (var kv in initialEmulatedMemory8)
@@ -143,6 +152,7 @@ namespace MMMapEditor
                             result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
                             result.ExitCallDepth = currentCallDepth;
                             result.IsTerminated = true;
+                            CaptureExitEmulatedState(result);
                             FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
                             return result;
                         }
@@ -215,6 +225,7 @@ namespace MMMapEditor
                         if (TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY,
                             currentCallDepth, currentPendingReturnAddresses, ref textOrderCounter))
                         {
+                            CaptureExitEmulatedState(result);
                             return result;
                         }
 
@@ -232,7 +243,10 @@ namespace MMMapEditor
                             visitedInThisPath, finiteLoopProgressByJumpAddress);
 
                         if (handlingResult.ShouldReturn)
+                        {
+                            CaptureExitEmulatedState(handlingResult.Result);
                             return handlingResult.Result;
+                        }
 
                         currentAddress = handlingResult.NextAddress;
                         if (handlingResult.UpdatedPendingReturnAddresses != null)
@@ -250,6 +264,7 @@ namespace MMMapEditor
 
                 result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
                 result.ExitCallDepth = currentCallDepth;
+                CaptureExitEmulatedState(result);
                 FinalizeResult(result, instructionCount, currentAddress, fileLength, debugMode);
                 return result;
             }
@@ -264,6 +279,9 @@ namespace MMMapEditor
                 _emulatedPartyPointerBytes.Clear();
                 foreach (var kv in savedEmulatedPartyPointerBytes)
                     _emulatedPartyPointerBytes[kv.Key] = kv.Value?.Clone();
+                _persistentEventStateAddresses.Clear();
+                foreach (ushort address in savedPersistentEventStateAddresses)
+                    _persistentEventStateAddresses.Add(address);
             }
         }
 
@@ -272,6 +290,32 @@ namespace MMMapEditor
             return _emulatedMemory8.TryGetValue(address, out byte value)
                 ? value
                 : (byte?)null;
+        }
+
+        private void CaptureExitEmulatedState(PathAnalysisResult result)
+        {
+            if (result == null)
+                return;
+
+            result.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
+        }
+
+        private void RegisterMemoryRead(PathAnalysisResult result, ushort memAddr, bool contributesToPersistentState)
+        {
+            if (result == null)
+                return;
+
+            result.MemoryReadAddresses.Add(memAddr);
+            if (contributesToPersistentState && !result.MemoryWrittenAddresses.Contains(memAddr))
+                result.MemoryReadBeforeWriteAddresses.Add(memAddr);
+        }
+
+        private void RegisterMemoryWrite(PathAnalysisResult result, ushort memAddr)
+        {
+            if (result == null)
+                return;
+
+            result.MemoryWrittenAddresses.Add(memAddr);
         }
 
         private void PropagateExternalCallInfluenceOnRegisterCopy(
@@ -2612,6 +2656,8 @@ namespace MMMapEditor
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
+                TrackStateValueConstraintForCurrentFlags(registerTracker, insn.Mnemonic, result);
+
                 bool? branchTaken = EvaluateConditionalJump(insn.Mnemonic, registerTracker);
                 if (branchTaken.HasValue)
                 {
@@ -2792,6 +2838,59 @@ namespace MMMapEditor
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+        }
+
+        private void TrackStateValueConstraintForCurrentFlags(
+            RegisterTracker registerTracker,
+            string mnemonic,
+            PathAnalysisResult result)
+        {
+            if (registerTracker == null ||
+                result == null ||
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
+                !registerTracker.LastCompareImmediate.HasValue)
+            {
+                return;
+            }
+
+            StateValueBoundaryKind? boundaryKind = GetStateValueBoundaryKindForJump(mnemonic);
+            if (!boundaryKind.HasValue)
+                return;
+
+            ushort? sourceAddress = null;
+            if (!string.IsNullOrWhiteSpace(registerTracker.LastFlagsRegister))
+                sourceAddress = registerTracker.GetSourceAddress(registerTracker.LastFlagsRegister);
+
+            if (!sourceAddress.HasValue)
+                sourceAddress = registerTracker.LastComparedMemoryAddress;
+
+            if (!sourceAddress.HasValue ||
+                sourceAddress.Value == 0x3C38 ||
+                sourceAddress.Value == 0x3C39 ||
+                sourceAddress.Value == 0x3C3A)
+            {
+                return;
+            }
+
+            if (!result.StateValueConstraints.TryGetValue(sourceAddress.Value, out var info))
+            {
+                info = new StateValueConstraintInfo();
+                result.StateValueConstraints[sourceAddress.Value] = info;
+            }
+
+            info.Add(boundaryKind.Value, registerTracker.LastCompareImmediate.Value);
+        }
+
+        private StateValueBoundaryKind? GetStateValueBoundaryKindForJump(string mnemonic)
+        {
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            return jump switch
+            {
+                "JE" or "JZ" or "JNE" or "JNZ" => StateValueBoundaryKind.Exact,
+                "JB" or "JC" or "JNAE" or "JAE" or "JNB" or "JNC" => StateValueBoundaryKind.LowerInclusive,
+                "JBE" or "JNA" or "JA" or "JNBE" => StateValueBoundaryKind.UpperInclusive,
+                _ => (StateValueBoundaryKind?)null
+            };
         }
 
 
@@ -4794,6 +4893,7 @@ namespace MMMapEditor
                 }
 
                 registerTracker.LastCompareImmediate = immediateValue;
+                registerTracker.LastComparedMemoryAddress = null;
 
                 if (hasPartyGenderCompare)
                 {
@@ -4933,17 +5033,20 @@ namespace MMMapEditor
                         byte cmpResult = (byte)(regValue - immediateValue);
                         SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult, regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         registerTracker.LastCompareImmediate = immediateValue;
+                        registerTracker.LastComparedMemoryAddress = null;
                     }
                     else if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetRegisterRange(regName, out var _))
                     {
                         registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         registerTracker.LastCompareImmediate = immediateValue;
+                        registerTracker.LastComparedMemoryAddress = null;
                     }
                     else if (hasTechnicalFieldCompare)
                     {
                         registerTracker.FlagsKnown = false;
                         registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         registerTracker.LastCompareImmediate = immediateValue;
+                        registerTracker.LastComparedMemoryAddress = null;
                     }
 
                     if (hasTechnicalFieldCompare)
@@ -4999,6 +5102,7 @@ namespace MMMapEditor
                         }
 
                         registerTracker.LastCompareImmediate = immediateValue;
+                        registerTracker.LastComparedMemoryAddress = hasExactMemAddr ? memAddr : null;
 
                         if (hasPartyFieldRef && comparedFieldRef?.Field == PartyFieldKind.Technical77)
                         {
@@ -5929,21 +6033,32 @@ namespace MMMapEditor
         private bool TryResolveTrackedByteValue(BinaryReader br, ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out byte value)
         {
             if (_emulatedMemory8.TryGetValue(memAddr, out value))
+            {
+                RegisterMemoryRead(result, memAddr, _persistentEventStateAddresses.Contains(memAddr));
                 return true;
+            }
 
             if (memAddr == 0x3C38)
             {
                 value = result?.TeleportTargetX ?? targetX;
+                RegisterMemoryRead(result, memAddr, false);
                 return true;
             }
 
             if (memAddr == 0x3C39)
             {
                 value = result?.TeleportTargetY ?? targetY;
+                RegisterMemoryRead(result, memAddr, false);
                 return true;
             }
 
-            return TryReadOverlayByte(br, memAddr, out value);
+            if (TryReadOverlayByte(br, memAddr, out value))
+            {
+                RegisterMemoryRead(result, memAddr, true);
+                return true;
+            }
+
+            return false;
         }
 
         private bool TryResolveTrackedWordValue(BinaryReader br, ushort memAddr, PathAnalysisResult result, byte targetX, byte targetY, out ushort value)
@@ -5998,6 +6113,7 @@ namespace MMMapEditor
             _emulatedPartyPointerBytes.Remove(memAddr);
             _emulatedPartyPointers.Remove(memAddr);
             _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
+            RegisterMemoryWrite(result, memAddr);
 
             if (debugMode)
                 AnalysisDebug.WriteLine($"        {sourceDescription}: записали 0x{value:X2} в эмулируемую память [0x{memAddr:X4}]");

@@ -48,7 +48,8 @@ namespace MMMapEditor
             int inheritedProbabilityNumerator = 1,
             int inheritedProbabilityDenominator = 1,
             bool inheritedProbabilityApplicable = false,
-            List<BranchChoice> inheritedBranchChoices = null)
+            List<BranchChoice> inheritedBranchChoices = null,
+            HashSet<ushort> persistentStateAddresses = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > 8) return;
@@ -75,7 +76,8 @@ namespace MMMapEditor
                     path.PendingReturnAddresses == null ? new List<uint>() : new List<uint>(path.PendingReturnAddresses),
                     path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8),
                     path.EmulatedPartyPointers == null ? null : path.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    path.EmulatedPartyPointerBytes == null ? null : path.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()));
+                    path.EmulatedPartyPointerBytes == null ? null : path.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    persistentStateAddresses == null ? null : new HashSet<ushort>(persistentStateAddresses));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
 
                 // Формируем тексты для этого пути с сохранением порядка
@@ -160,7 +162,8 @@ namespace MMMapEditor
                         combinedProbabilityNumerator,
                         combinedProbabilityDenominator,
                         combinedProbabilityApplicable,
-                        currentBranchChoices);
+                        currentBranchChoices,
+                        persistentStateAddresses);
                 }
             }
         }
@@ -428,6 +431,19 @@ namespace MMMapEditor
             merged.IsIndeterminateLoop = merged.IsIndeterminateLoop || currentState.IsIndeterminateLoop;
             merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
+            merged.MemoryReadAddresses.UnionWith(currentState.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
+            merged.MemoryWrittenAddresses.UnionWith(currentState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+
+            var currentReadBeforeWrite = new HashSet<ushort>(
+                currentState.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+            currentReadBeforeWrite.ExceptWith(inheritedState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+            merged.MemoryReadBeforeWriteAddresses.UnionWith(currentReadBeforeWrite);
+
+            MergeStateValueConstraints(merged.StateValueConstraints, currentState.StateValueConstraints);
+
+            if (currentState.ExitEmulatedMemory8 != null && currentState.ExitEmulatedMemory8.Count > 0)
+                merged.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(currentState.ExitEmulatedMemory8);
+
             return merged;
         }
 
@@ -655,6 +671,13 @@ namespace MMMapEditor
             clone.FoundTexts = new HashSet<string>(source.FoundTexts);
             clone.ContextTexts = new HashSet<string>(source.ContextTexts);
             clone.OrderedTexts = source.OrderedTexts.Select(t => t.Clone()).ToList();
+            clone.MemoryReadAddresses = new HashSet<ushort>(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
+            clone.MemoryWrittenAddresses = new HashSet<ushort>(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+            clone.MemoryReadBeforeWriteAddresses = new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+            clone.StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints);
+            clone.ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
+                ? new Dictionary<ushort, byte>()
+                : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8);
             clone.VisitedAddresses = new HashSet<uint>(source.VisitedAddresses);
             clone.FirstLocalTextAddress = source.FirstLocalTextAddress;
             clone.ExitPendingReturnAddresses = source.ExitPendingReturnAddresses == null
@@ -738,6 +761,13 @@ namespace MMMapEditor
                 HasAnyTableLoad = source.HasPartialBattlePattern,
                 LoadedValues = CloneLoadedValues(source),
                 PartyEffects = semanticPartyEffects,
+                ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
+                    ? new Dictionary<ushort, byte>()
+                    : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
+                StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
@@ -919,8 +949,10 @@ namespace MMMapEditor
                 }
 
                 var existingExact = uniqueVariants[exactKey];
+                MergeVariantOccurrences(existingExact, result);
                 if (GetVariantPrecisionScore(result) > GetVariantPrecisionScore(existingExact))
                 {
+                    MergeVariantOccurrences(result, existingExact);
                     uniqueVariants[exactKey] = result;
                 }
             }
@@ -938,8 +970,10 @@ namespace MMMapEditor
                     continue;
                 }
 
+                MergeVariantOccurrences(existing, variant);
                 if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
                 {
+                    MergeVariantOccurrences(variant, existing);
                     semanticallyUnique[semanticKey] = variant;
                 }
             }
@@ -957,8 +991,12 @@ namespace MMMapEditor
                     continue;
                 }
 
+                MergeVariantOccurrences(existing, variant);
                 if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
+                {
+                    MergeVariantOccurrences(variant, existing);
                     branchInsensitiveUnique[key] = variant;
+                }
             }
 
             var orderedUniqueVariants = CollapseConditionalLoopSubsetOutcomeVariants(
@@ -1167,10 +1205,18 @@ namespace MMMapEditor
                     preferred = withoutText;
             }
 
-            return preferred
+            var selected = preferred
                 .OrderByDescending(GetVariantPrecisionScore)
                 .ThenBy(v => v.PathId)
                 .First();
+
+            foreach (var variant in variants)
+            {
+                if (!ReferenceEquals(selected, variant))
+                    MergeVariantOccurrences(selected, variant);
+            }
+
+            return selected;
         }
 
         private string BuildPartyLoopTextCollapseKey(PathVariantInfo variant)
@@ -1600,6 +1646,12 @@ namespace MMMapEditor
                 effect.ObservedMemberIndex = null;
             }
 
+            foreach (var variant in variants)
+            {
+                if (!ReferenceEquals(variant, merged))
+                    MergeVariantOccurrences(merged, variant);
+            }
+
             return merged;
         }
 
@@ -1666,12 +1718,73 @@ namespace MMMapEditor
                     .Where(e => e != null)
                     .Select(e => e.Clone())
                     .ToList() ?? new List<PartyEffect>(),
+                ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
+                    ? new Dictionary<ushort, byte>()
+                    : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
+                StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                OccurrenceIndices = source.OccurrenceIndices?
+                    .Where(index => index > 0)
+                    .Distinct()
+                    .OrderBy(index => index)
+                    .ToList() ?? new List<int>(),
+                OccurrenceDescription = source.OccurrenceDescription,
                 ProbabilityNumerator = source.ProbabilityNumerator,
                 ProbabilityDenominator = source.ProbabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 HasBranchSpecificContribution = source.HasBranchSpecificContribution
             };
+        }
+
+        private void MergeVariantOccurrences(PathVariantInfo target, PathVariantInfo source)
+        {
+            if (target == null || source == null)
+                return;
+
+            var merged = (target.OccurrenceIndices ?? new List<int>())
+                .Concat(source.OccurrenceIndices ?? Enumerable.Empty<int>())
+                .Where(index => index > 0)
+                .Distinct()
+                .OrderBy(index => index)
+                .ToList();
+
+            target.OccurrenceIndices = merged;
+
+            if (string.IsNullOrWhiteSpace(target.OccurrenceDescription))
+                target.OccurrenceDescription = source.OccurrenceDescription;
+        }
+
+        private Dictionary<ushort, StateValueConstraintInfo> CloneStateValueConstraints(
+            Dictionary<ushort, StateValueConstraintInfo> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, StateValueConstraintInfo>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value?.Clone() ?? new StateValueConstraintInfo());
+        }
+
+        private void MergeStateValueConstraints(
+            Dictionary<ushort, StateValueConstraintInfo> target,
+            Dictionary<ushort, StateValueConstraintInfo> source)
+        {
+            if (target == null || source == null || source.Count == 0)
+                return;
+
+            foreach (var kvp in source)
+            {
+                if (!target.TryGetValue(kvp.Key, out var existing))
+                {
+                    target[kvp.Key] = kvp.Value?.Clone() ?? new StateValueConstraintInfo();
+                    continue;
+                }
+
+                existing.MergeFrom(kvp.Value);
+            }
         }
 
         private int GetVariantPrecisionScore(PathVariantInfo variant)

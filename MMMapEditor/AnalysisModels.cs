@@ -60,6 +60,63 @@ namespace MMMapEditor
         }
     }
 
+    public enum StateValueBoundaryKind
+    {
+        Exact,
+        LowerInclusive,
+        UpperInclusive
+    }
+
+    public class StateValueConstraintInfo
+    {
+        public HashSet<byte> ExactValues { get; set; } = new HashSet<byte>();
+        public HashSet<byte> LowerInclusiveValues { get; set; } = new HashSet<byte>();
+        public HashSet<byte> UpperInclusiveValues { get; set; } = new HashSet<byte>();
+
+        public bool IsEmpty =>
+            ExactValues.Count == 0 &&
+            LowerInclusiveValues.Count == 0 &&
+            UpperInclusiveValues.Count == 0;
+
+        public StateValueConstraintInfo Clone()
+        {
+            return new StateValueConstraintInfo
+            {
+                ExactValues = new HashSet<byte>(ExactValues),
+                LowerInclusiveValues = new HashSet<byte>(LowerInclusiveValues),
+                UpperInclusiveValues = new HashSet<byte>(UpperInclusiveValues)
+            };
+        }
+
+        public void Add(StateValueBoundaryKind kind, byte value)
+        {
+            switch (kind)
+            {
+                case StateValueBoundaryKind.Exact:
+                    ExactValues.Add(value);
+                    break;
+
+                case StateValueBoundaryKind.LowerInclusive:
+                    LowerInclusiveValues.Add(value);
+                    break;
+
+                case StateValueBoundaryKind.UpperInclusive:
+                    UpperInclusiveValues.Add(value);
+                    break;
+            }
+        }
+
+        public void MergeFrom(StateValueConstraintInfo other)
+        {
+            if (other == null)
+                return;
+
+            ExactValues.UnionWith(other.ExactValues ?? new HashSet<byte>());
+            LowerInclusiveValues.UnionWith(other.LowerInclusiveValues ?? new HashSet<byte>());
+            UpperInclusiveValues.UnionWith(other.UpperInclusiveValues ?? new HashSet<byte>());
+        }
+    }
+
     public enum RegisterValueDistribution
     {
         Unknown,
@@ -230,6 +287,11 @@ namespace MMMapEditor
         public HashSet<string> FoundTexts { get; set; } = new HashSet<string>();
         public HashSet<string> ContextTexts { get; set; } = new HashSet<string>(); // legacy-коллекции для дедупликации и совместимости
         public List<TextEntry> OrderedTexts { get; set; } = new List<TextEntry>();
+        public HashSet<ushort> MemoryReadAddresses { get; set; } = new HashSet<ushort>();
+        public HashSet<ushort> MemoryWrittenAddresses { get; set; } = new HashSet<ushort>();
+        public HashSet<ushort> MemoryReadBeforeWriteAddresses { get; set; } = new HashSet<ushort>();
+        public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         public byte? MonsterPower { get; set; }
         public byte? MonsterLevel { get; set; }

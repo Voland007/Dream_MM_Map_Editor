@@ -402,17 +402,179 @@ namespace MMMapEditor
             return objects;
         }
 
+        private const int MaxRepeatedEventOccurrences = 64;
+        private const int MaxRepeatedEventOccurrencesToAnalyze = 5;
+        private const int MaxRepeatedEventStatesPerOccurrence = 32;
+        private const int MaxRepeatedEventCanonicalOutcomes = 5;
+
+        private sealed class SingleOccurrenceAnalysisResult
+        {
+            public Dictionary<int, PathVariantInfo> CanonicalVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
+            public List<PathVariantInfo> RawLeafVariants { get; set; } = new List<PathVariantInfo>();
+        }
+
+        private sealed class RepeatedEventStateInfo
+        {
+            public Dictionary<ushort, byte> Memory { get; set; } = new Dictionary<ushort, byte>();
+            public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        }
+
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
             byte targetX, byte targetY, List<AlternativePath> predefinedAlternativePaths,
             HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null)
         {
+            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
+            var currentStates = new Dictionary<string, RepeatedEventStateInfo>(StringComparer.Ordinal)
+            {
+                [BuildMemoryStateKey(new Dictionary<ushort, byte>())] = new RepeatedEventStateInfo()
+            };
+            var collectedVariants = new List<PathVariantInfo>();
+            bool analysisTruncated = false;
+            int maxAnalyzedOccurrence = 0;
+            Dictionary<int, PathVariantInfo> finalVariants = null;
+
+            for (int occurrence = 1; occurrence <= MaxRepeatedEventOccurrences && currentStates.Count > 0; occurrence++)
+            {
+                maxAnalyzedOccurrence = occurrence;
+
+                if (debugMode && occurrence > 1)
+                {
+                    AnalysisDebug.WriteLine($"\n=== ПОВТОРНОЕ НАСТУПЛЕНИЕ СОБЫТИЯ #{occurrence} ===");
+                    AnalysisDebug.WriteLine($"Стартовых состояний памяти: {currentStates.Count}");
+                }
+
+                var nextStates = new Dictionary<string, RepeatedEventStateInfo>(StringComparer.Ordinal);
+
+                foreach (var currentStateInfo in currentStates.Values)
+                {
+                    var currentState = currentStateInfo.Memory;
+                    var passResult = AnalyzeSingleOccurrenceVariants(
+                        br,
+                        startAddress,
+                        targetX,
+                        targetY,
+                        predefinedAlternativePaths,
+                        reachableAddresses,
+                        initializeRegisters,
+                        currentState,
+                        new HashSet<ushort>(currentState.Keys));
+
+                    foreach (var variant in passResult.CanonicalVariants.Values)
+                    {
+                        MarkVariantOccurrence(variant, occurrence);
+                        collectedVariants.Add(variant);
+                    }
+
+                    foreach (var rawLeaf in passResult.RawLeafVariants)
+                    {
+                        var carryOverState = BuildCarryOverState(br, currentState, rawLeaf);
+                        if (carryOverState.Count == 0)
+                            continue;
+
+                        var nextConstraints = MergeStateValueConstraints(
+                            currentStateInfo.StateValueConstraints,
+                            rawLeaf.StateValueConstraints);
+
+                        string currentKey = BuildMemoryStateKey(currentState, currentStateInfo.StateValueConstraints);
+                        string nextKey = BuildMemoryStateKey(carryOverState, nextConstraints);
+                        if (string.Equals(currentKey, nextKey, StringComparison.Ordinal))
+                            continue;
+
+                        if (!nextStates.ContainsKey(nextKey))
+                        {
+                            if (nextStates.Count >= MaxRepeatedEventStatesPerOccurrence)
+                            {
+                                analysisTruncated = true;
+                                if (debugMode)
+                                    AnalysisDebug.WriteLine($"Достигнут лимит состояний повторного анализа ({MaxRepeatedEventStatesPerOccurrence})");
+                                break;
+                            }
+
+                            nextStates[nextKey] = new RepeatedEventStateInfo
+                            {
+                                Memory = carryOverState,
+                                StateValueConstraints = nextConstraints
+                            };
+                        }
+                    }
+
+                    if (analysisTruncated)
+                        break;
+                }
+
+                finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
+                if (finalVariants.Count >= MaxRepeatedEventCanonicalOutcomes)
+                {
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"Достигнут лимит канонических outcomes ({MaxRepeatedEventCanonicalOutcomes})");
+                    break;
+                }
+
+                if (occurrence >= MaxRepeatedEventOccurrencesToAnalyze)
+                {
+                    analysisTruncated = true;
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"Достигнут лимит анализируемых наступлений ({MaxRepeatedEventOccurrencesToAnalyze})");
+                    break;
+                }
+
+                if (analysisTruncated || nextStates.Count == 0)
+                    break;
+
+                if (occurrence == MaxRepeatedEventOccurrences)
+                {
+                    analysisTruncated = true;
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"Достигнут лимит наступлений события ({MaxRepeatedEventOccurrences})");
+                    break;
+                }
+
+                currentStates = nextStates;
+            }
+
+            finalVariants ??= _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
+            ApplyOccurrenceDescriptions(finalVariants.Values, maxAnalyzedOccurrence, analysisTruncated);
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
+
+            return finalVariants;
+        }
+
+        private SingleOccurrenceAnalysisResult AnalyzeSingleOccurrenceVariants(
+            BinaryReader br,
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            List<AlternativePath> predefinedAlternativePaths,
+            HashSet<uint> reachableAddresses,
+            Action<RegisterTracker> initializeRegisters,
+            Dictionary<ushort, byte> initialEmulatedMemory8,
+            HashSet<ushort> persistentStateAddresses)
+        {
             var registerTracker = new RegisterTracker();
             initializeRegisters?.Invoke(registerTracker);
+            var effectivePersistentStateAddresses = persistentStateAddresses == null
+                ? new HashSet<ushort>((initialEmulatedMemory8 ?? new Dictionary<ushort, byte>()).Keys)
+                : new HashSet<ushort>(persistentStateAddresses);
 
             var processedBackEdges = new HashSet<(uint From, uint To)>();
-            var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(br, startAddress, registerTracker,
-                new HashSet<uint>(), 0, 0, 0, targetX, targetY,
-                processedBackEdges, invalidateReturnRegistersAfterExternalCall: true);
+            var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(
+                br,
+                startAddress,
+                registerTracker,
+                new HashSet<uint>(),
+                0,
+                0,
+                0,
+                targetX,
+                targetY,
+                processedBackEdges,
+                invalidateReturnRegistersAfterExternalCall: true,
+                initialEmulatedMemory8: initialEmulatedMemory8 == null
+                    ? null
+                    : new Dictionary<ushort, byte>(initialEmulatedMemory8),
+                persistentStateAddresses: effectivePersistentStateAddresses);
 
             if (reachableAddresses != null)
             {
@@ -432,10 +594,6 @@ namespace MMMapEditor
                 .ToList();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
 
-            // Если основной путь уже распознал внутренний семантический цикл
-            // (например, partial-battle или перебор членов партии),
-            // не анализируем обратные переходы, возвращающиеся внутрь этого же цикла.
-            // Иначе цикл разворачивается как дерево альтернативных сценариев.
             bool suppressLoopBackAlternatives =
                 mainPathResult.IsInLoop &&
                 mainPathResult.LoopStartAddress != 0 &&
@@ -466,7 +624,8 @@ namespace MMMapEditor
                     targetX, targetY, allResults, null, processedBackEdges,
                     invalidateReturnRegistersAfterExternalCall: true,
                     reachableAddresses: reachableAddresses,
-                    inheritedState: mainPathResult);
+                    inheritedState: mainPathResult,
+                    persistentStateAddresses: effectivePersistentStateAddresses);
             }
 
             var rawLeafVariants = allResults
@@ -493,12 +652,330 @@ namespace MMMapEditor
                 }
             }
 
-            var finalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults);
+            return new SingleOccurrenceAnalysisResult
+            {
+                CanonicalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults),
+                RawLeafVariants = rawLeafVariants
+            };
+        }
 
-            if (debugMode)
-                AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
+        private void MarkVariantOccurrence(PathVariantInfo variant, int occurrence)
+        {
+            if (variant == null || occurrence <= 0)
+                return;
 
-            return finalVariants;
+            variant.OccurrenceIndices = new List<int> { occurrence };
+            variant.OccurrenceDescription = null;
+        }
+
+        private Dictionary<ushort, byte> BuildCarryOverState(
+            BinaryReader br,
+            Dictionary<ushort, byte> currentState,
+            PathVariantInfo leafVariant)
+        {
+            var result = new Dictionary<ushort, byte>();
+            if (leafVariant == null)
+                return result;
+
+            var addressesToCarry = new HashSet<ushort>((currentState ?? new Dictionary<ushort, byte>()).Keys);
+            addressesToCarry.UnionWith(leafVariant.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+
+            foreach (var addr in addressesToCarry.OrderBy(value => value))
+            {
+                if (addr == 0x3C38 || addr == 0x3C39)
+                    continue;
+
+                if (leafVariant.ExitEmulatedMemory8 != null &&
+                    leafVariant.ExitEmulatedMemory8.TryGetValue(addr, out byte value))
+                {
+                    if (TryReadOverlayByte(br, addr, out byte overlayValue) && overlayValue == value)
+                        continue;
+
+                    result[addr] = value;
+                }
+            }
+
+            return result;
+        }
+
+        private string BuildMemoryStateKey(
+            Dictionary<ushort, byte> state,
+            Dictionary<ushort, StateValueConstraintInfo> stateValueConstraints = null)
+        {
+            if (state == null || state.Count == 0)
+                return "<EMPTY>";
+
+            return string.Join(";",
+                state.OrderBy(kvp => kvp.Key)
+                    .Select(kvp =>
+                    {
+                        StateValueConstraintInfo constraintInfo = null;
+                        stateValueConstraints?.TryGetValue(kvp.Key, out constraintInfo);
+                        string canonicalValue = BuildCanonicalStateValueToken(kvp.Value, constraintInfo);
+                        return $"{kvp.Key:X4}={canonicalValue}";
+                    }));
+        }
+
+        private Dictionary<ushort, StateValueConstraintInfo> MergeStateValueConstraints(
+            Dictionary<ushort, StateValueConstraintInfo> current,
+            Dictionary<ushort, StateValueConstraintInfo> next)
+        {
+            var merged = CloneStateValueConstraints(current);
+            if (next == null || next.Count == 0)
+                return merged;
+
+            foreach (var kvp in next)
+            {
+                if (!merged.TryGetValue(kvp.Key, out var existing))
+                {
+                    merged[kvp.Key] = kvp.Value?.Clone() ?? new StateValueConstraintInfo();
+                    continue;
+                }
+
+                existing.MergeFrom(kvp.Value);
+            }
+
+            return merged;
+        }
+
+        private Dictionary<ushort, StateValueConstraintInfo> CloneStateValueConstraints(
+            Dictionary<ushort, StateValueConstraintInfo> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, StateValueConstraintInfo>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value?.Clone() ?? new StateValueConstraintInfo());
+        }
+
+        private string BuildCanonicalStateValueToken(byte value, StateValueConstraintInfo constraintInfo)
+        {
+            if (constraintInfo == null || constraintInfo.IsEmpty)
+                return value.ToString("X2");
+
+            if (constraintInfo.ExactValues.Contains(value))
+                return value.ToString("X2");
+
+            if (constraintInfo.LowerInclusiveValues != null && constraintInfo.LowerInclusiveValues.Count > 0)
+            {
+                byte lowerTailStart = constraintInfo.LowerInclusiveValues.Max();
+                if (value >= lowerTailStart)
+                    return $"{lowerTailStart:X2}-FF";
+            }
+
+            if (constraintInfo.UpperInclusiveValues != null && constraintInfo.UpperInclusiveValues.Count > 0)
+            {
+                byte upperTailEnd = constraintInfo.UpperInclusiveValues.Min();
+                if (value <= upperTailEnd)
+                    return $"00-{upperTailEnd:X2}";
+            }
+
+            return value.ToString("X2");
+        }
+
+        private void ApplyOccurrenceDescriptions(
+            IEnumerable<PathVariantInfo> variants,
+            int maxAnalyzedOccurrence,
+            bool analysisTruncated)
+        {
+            var variantList = (variants ?? Enumerable.Empty<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .ToList();
+
+            var suppressOccurrenceDescriptionFor = new HashSet<PathVariantInfo>();
+            foreach (var group in variantList.GroupBy(BuildOccurrenceInsensitiveLoopFallbackKey))
+            {
+                if (!group.Any(HasConditionalLoopSubsetOutcomeEffectsForOccurrenceSuppression))
+                    continue;
+
+                foreach (var variant in group.Where(IsPureEmptyNoOpVariantForOccurrenceSuppression))
+                    suppressOccurrenceDescriptionFor.Add(variant);
+            }
+
+            foreach (var variant in variantList)
+            {
+                var occurrences = (variant?.OccurrenceIndices ?? new List<int>())
+                    .Where(index => index > 0)
+                    .Distinct()
+                    .OrderBy(index => index)
+                    .ToList();
+
+                if (variant == null)
+                    continue;
+
+                variant.OccurrenceIndices = occurrences;
+                variant.OccurrenceDescription = suppressOccurrenceDescriptionFor.Contains(variant)
+                    ? null
+                    : BuildOccurrenceDescription(
+                        occurrences,
+                        maxAnalyzedOccurrence,
+                        analysisTruncated);
+            }
+        }
+
+        private bool IsPureEmptyNoOpVariantForOccurrenceSuppression(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.Texts != null && variant.Texts.Count > 0)
+                return false;
+
+            if (variant.PartyEffects != null && variant.PartyEffects.Count > 0)
+                return false;
+
+            return !variant.MonsterPower.HasValue &&
+                   !variant.MonsterLevel.HasValue &&
+                   !variant.MonsterBatchCount.HasValue &&
+                   !variant.DarkeningLevel.HasValue &&
+                   !variant.RandomEncounterChance.HasValue &&
+                   !variant.CallsRandomEncounter &&
+                   !variant.TeleportTargetX.HasValue &&
+                   !variant.TeleportTargetY.HasValue &&
+                   variant.TeleportTargetXRange == null &&
+                   variant.TeleportTargetYRange == null &&
+                   !variant.BattleMonsterCount.HasValue &&
+                   variant.BattleMonsterCountRange == null &&
+                   !variant.IsBattleMonsterCountIndeterminate &&
+                   !variant.HasAnyTableLoad &&
+                   (variant.BattleMonsters == null || variant.BattleMonsters.Count == 0) &&
+                   (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
+                   (variant.LoadedValues == null || variant.LoadedValues.Count == 0);
+        }
+
+        private bool HasConditionalLoopSubsetOutcomeEffectsForOccurrenceSuppression(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null &&
+                   variant.PartyEffects.Any(IsConditionalLoopSubsetOutcomeEffectForOccurrenceSuppression);
+        }
+
+        private bool IsConditionalLoopSubsetOutcomeEffectForOccurrenceSuppression(PartyEffect effect)
+        {
+            return effect != null &&
+                   PartyEffectSemantics.IsStateChanging(effect) &&
+                   PartyEffectSemantics.IsLoopDerived(effect) &&
+                   PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
+                   (PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None ||
+                    PartyEffectSemantics.HasEffectiveGuardPredicates(effect));
+        }
+
+        private string BuildOccurrenceInsensitiveLoopFallbackKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+
+            string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(monster => monster.Index)
+                    .Select(monster => $"{monster.Index}:{monster.MonsterIndex1:X2}:{monster.MonsterIndex2:X2}:{monster.IsIndeterminate}"))
+                : "<NO_BATTLE>";
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(battle => battle.BxIndex)
+                    .Select(battle => battle.GetIdentityKey()))
+                : "<NO_PARTIAL>";
+
+            string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
+                ? string.Join(";", variant.LoadedValues
+                    .OrderBy(value => value.BxIndex)
+                    .ThenBy(value => value.SourceAddr)
+                    .ThenBy(value => value.RegName)
+                    .Select(value => $"{value.BxIndex}:{value.RegName}:{value.Value:X2}:{value.SourceAddr:X4}:{value.IsFirstTable}:{value.IsSaved}"))
+                : "<NO_LOADS>";
+
+            return $"{statKey}||{battleKey}||{partialKey}||{loadKey}||{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
+        }
+
+        private string BuildOccurrenceDescription(
+            List<int> occurrences,
+            int maxAnalyzedOccurrence,
+            bool analysisTruncated)
+        {
+            if (occurrences == null || occurrences.Count == 0)
+                return null;
+
+            if (maxAnalyzedOccurrence <= 1)
+                return null;
+
+            bool coversAllAnalyzedOccurrences =
+                occurrences.Count == maxAnalyzedOccurrence &&
+                occurrences.First() == 1 &&
+                occurrences.Last() == maxAnalyzedOccurrence &&
+                occurrences.Zip(Enumerable.Range(1, maxAnalyzedOccurrence), (left, right) => left == right).All(match => match);
+
+            if (coversAllAnalyzedOccurrences)
+                return null;
+
+            if (occurrences.Count == 1)
+                return $"только при {FormatOccurrenceOrdinal(occurrences[0])} наступлении";
+
+            bool isContiguous = occurrences.Zip(occurrences.Skip(1), (left, right) => right == left + 1).All(match => match);
+            if (isContiguous)
+            {
+                if (analysisTruncated && occurrences.Last() == maxAnalyzedOccurrence)
+                    return $"только при {FormatOccurrenceOrdinal(occurrences.First())} и последующих наступлениях";
+
+                return $"только при {FormatOccurrenceOrdinal(occurrences.First())}..{FormatOccurrenceOrdinal(occurrences.Last())} наступлениях";
+            }
+
+            return $"только при {FormatOccurrenceList(occurrences)} наступлениях";
+        }
+
+        private string FormatOccurrenceOrdinal(int occurrence)
+        {
+            return $"{occurrence}-м";
+        }
+
+        private string FormatOccurrenceList(List<int> occurrences)
+        {
+            var parts = occurrences?
+                .Where(index => index > 0)
+                .Select(FormatOccurrenceOrdinal)
+                .ToList() ?? new List<string>();
+
+            if (parts.Count == 0)
+                return string.Empty;
+
+            if (parts.Count == 1)
+                return parts[0];
+
+            if (parts.Count == 2)
+                return $"{parts[0]} и {parts[1]}";
+
+            return string.Join(", ", parts.Take(parts.Count - 1)) + " и " + parts.Last();
+        }
+
+        private bool TryReadOverlayByte(BinaryReader br, ushort memAddr, out byte value)
+        {
+            value = 0;
+
+            if (br == null)
+                return false;
+
+            long fileOffset = memAddr - _config.TextBaseAddr;
+            if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
+                return false;
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = fileOffset;
+                value = br.ReadByte();
+                return true;
+            }
+            catch
+            {
+                value = 0;
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPosition;
+            }
         }
 
         private void PopulateObjectPathData(OvrObject obj, Dictionary<int, PathVariantInfo> finalVariants)
@@ -866,7 +1343,13 @@ namespace MMMapEditor
                         IsSaved = false
                     })
                     .ToList(),
-                PartyEffects = BuildNormalizedPartyEffects(source)
+                PartyEffects = BuildNormalizedPartyEffects(source),
+                ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
+                    ? new Dictionary<ushort, byte>()
+                    : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses)
             };
         }
 
@@ -884,6 +1367,10 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine("        <variant is null>");
                 return;
             }
+
+            string occurrence = variant.GetOccurrenceDescription();
+            if (!string.IsNullOrWhiteSpace(occurrence))
+                AnalysisDebug.WriteLine($"        Occurrence: {occurrence}");
 
             if (variant.HasProbabilityInfo)
             {

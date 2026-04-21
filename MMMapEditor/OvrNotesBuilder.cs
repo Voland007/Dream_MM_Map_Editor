@@ -374,12 +374,9 @@ namespace MMMapEditor
 
             if (obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var pathVariant))
             {
-                string probability = BuildProbabilityLine(pathVariant);
-                if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: "))
-                {
-                    probability = probability.Substring("Вероятность: ".Length);
-                    header += $" ({PrefixProbabilityWordInParentheses(probability)})";
-                }
+                var annotations = BuildVariantHeaderAnnotations(pathVariant);
+                if (annotations.Count > 0)
+                    header += $" ({string.Join("; ", annotations)})";
             }
 
             return header;
@@ -456,6 +453,32 @@ namespace MMMapEditor
                 return null;
 
             return variant.GetProbabilityDescription();
+        }
+
+        private static string BuildOccurrenceLine(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return null;
+
+            return variant.GetOccurrenceDescription();
+        }
+
+        private static List<string> BuildVariantHeaderAnnotations(PathVariantInfo variant)
+        {
+            var annotations = new List<string>();
+
+            string occurrence = BuildOccurrenceLine(variant);
+            if (!string.IsNullOrWhiteSpace(occurrence))
+                annotations.Add(occurrence);
+
+            string probability = BuildProbabilityLine(variant);
+            if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
+            {
+                probability = probability.Substring("Вероятность: ".Length);
+                annotations.Add(PrefixProbabilityWordInParentheses(probability));
+            }
+
+            return annotations;
         }
 
         private static void MergeObjectMetaIntoVariants(
@@ -1760,9 +1783,9 @@ namespace MMMapEditor
             string header = $"{indent}Вариант {variantNumber}";
             if (singleLeaf != null)
             {
-                string probability = BuildProbabilityLine(singleLeaf);
-                if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
-                    header += $" ({PrefixProbabilityWordInParentheses(probability.Substring("Вероятность: ".Length))})";
+                var annotations = BuildVariantHeaderAnnotations(singleLeaf);
+                if (annotations.Count > 0)
+                    header += $" ({string.Join("; ", annotations)})";
             }
 
             if (!string.IsNullOrWhiteSpace(node.Label))
@@ -1877,9 +1900,9 @@ namespace MMMapEditor
         {
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
-            string probability = BuildProbabilityLine(item?.Variant);
-            if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
-                header += $" ({PrefixProbabilityWordInParentheses(probability.Substring("Вероятность: ".Length))})";
+            var annotations = BuildVariantHeaderAnnotations(item?.Variant);
+            if (annotations.Count > 0)
+                header += $" ({string.Join("; ", annotations)})";
             header += ":";
             sb.AppendLine(header);
 
@@ -2055,15 +2078,20 @@ namespace MMMapEditor
             List<string> lines)
         {
             string probabilityKey = string.Empty;
+            string occurrenceKey = string.Empty;
             if (obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var variant))
+            {
                 probabilityKey = BuildProbabilityLine(variant) ?? string.Empty;
+                occurrenceKey = BuildOccurrenceLine(variant) ?? string.Empty;
+            }
 
             string linesKey = string.Join("\n", (lines ?? new List<string>()).Select(line => line ?? string.Empty));
-            return probabilityKey + "\n---\n" + linesKey;
+            return occurrenceKey + "\n---\n" + probabilityKey + "\n---\n" + linesKey;
         }
 
         private static string BuildDisplayedVariantItemKey(VariantRenderItem item)
         {
+            string occurrenceKey = BuildOccurrenceLine(item?.Variant) ?? string.Empty;
             string probabilityKey = BuildProbabilityLine(item?.Variant) ?? string.Empty;
             string branchKey = string.Join("|",
                 GetRelevantBranchChoices(item?.Variant)
@@ -2072,7 +2100,7 @@ namespace MMMapEditor
                 (item?.Lines ?? new List<string>())
                     .Select(line => line?.TrimEnd() ?? string.Empty));
 
-            return string.Join("\n---\n", probabilityKey, branchKey, linesKey);
+            return string.Join("\n---\n", occurrenceKey, probabilityKey, branchKey, linesKey);
         }
 
         private static List<string> NumberLootBlockIfNeeded(List<string> lines)

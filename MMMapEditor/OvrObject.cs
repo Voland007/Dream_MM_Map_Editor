@@ -852,6 +852,11 @@ namespace MMMapEditor
         public bool HasAnyTableLoad { get; set; }
         public List<OvrObject.LoadedValueInfo> LoadedValues { get; set; } = new List<OvrObject.LoadedValueInfo>();
         public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
+        public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
+        public HashSet<ushort> MemoryReadBeforeWriteAddresses { get; set; } = new HashSet<ushort>();
+        public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        public List<int> OccurrenceIndices { get; set; } = new List<int>();
+        public string OccurrenceDescription { get; set; }
 
         public int ProbabilityNumerator { get; set; } = 1;
         public int ProbabilityDenominator { get; set; } = 1;
@@ -878,6 +883,7 @@ namespace MMMapEditor
             (PartyEffects == null || PartyEffects.Count == 0);
 
         public bool HasProbabilityInfo => ProbabilityDenominator > 1;
+        public bool HasOccurrenceInfo => !string.IsNullOrWhiteSpace(OccurrenceDescription);
 
         public OvrObject ToOvrObject(byte x, byte y, byte directionByte)
         {
@@ -989,6 +995,7 @@ namespace MMMapEditor
             HasAnyTableLoad ||
             CallsRandomEncounter ||
             HasProbabilityInfo ||
+            HasOccurrenceInfo ||
             (PartyEffects != null && PartyEffects.Count > 0);
 
         public string GetProbabilityDescription()
@@ -1002,6 +1009,13 @@ namespace MMMapEditor
                 : percent.ToString("0.##");
 
             return $"Вероятность: {percentText}% ({ProbabilityNumerator}/{ProbabilityDenominator})";
+        }
+
+        public string GetOccurrenceDescription()
+        {
+            return string.IsNullOrWhiteSpace(OccurrenceDescription)
+                ? null
+                : OccurrenceDescription;
         }
     }
 

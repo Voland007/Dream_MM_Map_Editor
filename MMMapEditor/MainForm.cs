@@ -3068,6 +3068,7 @@ namespace MMMapEditor
             else if (bits.HasWallBit && bits.HasDoorBit)
             {
                 passageType = 2;
+                isClosed = bits.SecondLowBit;
             }
 
             return new DirectionState
