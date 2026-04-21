@@ -32,6 +32,8 @@ namespace MMMapEditor
         private readonly PathAnalyzer _pathAnalyzer;
         private readonly Dictionary<string, ObjectVariantAnalysisCacheEntry> _objectVariantAnalysisCache
             = new Dictionary<string, ObjectVariantAnalysisCacheEntry>(StringComparer.Ordinal);
+        private readonly Dictionary<string, SingleOccurrenceAnalysisCacheEntry> _singleOccurrenceAnalysisCache
+            = new Dictionary<string, SingleOccurrenceAnalysisCacheEntry>(StringComparer.Ordinal);
 
         public OvrFileAnalyzer(OvrFileConfig config)
         {
@@ -256,7 +258,7 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"  -> создаём объекты для {validCells.Count} клеток");
 
                 int objectsCreated = 0;
-                foreach (var cellPos in validCells)
+                foreach (var cellPos in OrderCellsForCacheEvidence(validCells))
                 {
                     byte cellX = (byte)cellPos.X;
                     byte cellY = (byte)cellPos.Y;
@@ -420,6 +422,15 @@ namespace MMMapEditor
             public bool UsesInitialCoordinates { get; set; }
         }
 
+        private sealed class SingleOccurrenceAnalysisCacheEntry
+        {
+            public string SampleSignature { get; set; } = string.Empty;
+            public bool VerificationFailed { get; set; }
+            public bool IsVerified { get; set; }
+            public HashSet<byte> MatchingOppositeAxisValues { get; set; } = new HashSet<byte>();
+            public SingleOccurrenceAnalysisResult ReusableResult { get; set; }
+        }
+
         private sealed class ObjectVariantAnalysisCacheEntry
         {
             public byte SampleX { get; set; }
@@ -427,6 +438,10 @@ namespace MMMapEditor
             public string SampleSignature { get; set; } = string.Empty;
             public string SampleVisitedKey { get; set; } = string.Empty;
             public bool SampleUsesInitialCoordinates { get; set; }
+            public bool CoordinateSensitiveMismatchObserved { get; set; }
+            public HashSet<string> MatchingCoordinatePairs { get; set; } = new HashSet<string>(StringComparer.Ordinal);
+            public HashSet<byte> MatchingXValues { get; set; } = new HashSet<byte>();
+            public HashSet<byte> MatchingYValues { get; set; } = new HashSet<byte>();
             public Dictionary<int, PathVariantInfo> SampleVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
             public HashSet<uint> SampleVisitedAddresses { get; set; } = new HashSet<uint>();
             public bool IsCoordinateIndependentVerified { get; set; }
@@ -466,6 +481,13 @@ namespace MMMapEditor
             public PathVariantInfo TargetVariant { get; set; }
         }
 
+        private sealed class RepeatedEventStateTransition
+        {
+            public ushort Address { get; set; }
+            public int Delta { get; set; }
+            public StateValueConstraintInfo ConstraintInfo { get; set; } = new StateValueConstraintInfo();
+        }
+
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
             byte targetX, byte targetY, List<AlternativePath> predefinedAlternativePaths,
             HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null,
@@ -473,6 +495,9 @@ namespace MMMapEditor
         {
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
             bool bypassCacheForTargetCell = AnalysisDebug.ShouldDisableCacheFor(targetX, targetY);
+            string perfKey = string.IsNullOrWhiteSpace(analysisCacheScopeKey)
+                ? $"<NO_SCOPE>|{startAddress:X4}"
+                : $"{analysisCacheScopeKey}|{startAddress:X4}";
 
             if (!bypassCacheForTargetCell &&
                 TryGetCachedObjectVariants(
@@ -481,8 +506,11 @@ namespace MMMapEditor
                     reachableAddresses,
                     out var cachedVariants))
             {
+                OvrAnalysisPerfStats.RecordAnalyzeCall(perfKey, cacheHit: true);
                 return cachedVariants;
             }
+
+            OvrAnalysisPerfStats.RecordAnalyzeCall(perfKey, cacheHit: false);
 
             if (debugMode && bypassCacheForTargetCell && !string.IsNullOrWhiteSpace(analysisCacheScopeKey))
             {
@@ -547,12 +575,14 @@ namespace MMMapEditor
 
                 foreach (var currentStateInfo in currentStates.Values)
                 {
+                    OvrAnalysisPerfStats.RecordSingleOccurrencePass(perfKey);
                     var currentState = currentStateInfo.Memory;
                     var passResult = AnalyzeSingleOccurrenceVariants(
                         br,
                         startAddress,
                         targetX,
                         targetY,
+                        analysisCacheScopeKey,
                         predefinedAlternativePaths,
                         reachableAddresses,
                         initializeRegisters,
@@ -611,6 +641,7 @@ namespace MMMapEditor
                             carryOverState,
                             nextConstraints,
                             rawLeaf,
+                            perfKey,
                             out var fastForwardPlan))
                         {
                             usedRepeatedEventAcceleration |=
@@ -756,7 +787,8 @@ namespace MMMapEditor
                 targetY,
                 finalVariants,
                 totalVisitedAddresses,
-                usesInitialCoordinates);
+                usesInitialCoordinates,
+                requireVisitedAddressEquivalence: reachableAddresses != null);
 
             if (debugMode)
                 AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
@@ -769,12 +801,27 @@ namespace MMMapEditor
             uint startAddress,
             byte targetX,
             byte targetY,
+            string analysisCacheScopeKey,
             List<AlternativePath> predefinedAlternativePaths,
             HashSet<uint> reachableAddresses,
             Action<RegisterTracker> initializeRegisters,
             Dictionary<ushort, byte> initialEmulatedMemory8,
             HashSet<ushort> persistentStateAddresses)
         {
+            if (TryGetCachedSingleOccurrenceAnalysis(
+                    analysisCacheScopeKey,
+                    startAddress,
+                    targetX,
+                    targetY,
+                    initialEmulatedMemory8,
+                    out var cachedResult))
+            {
+                if (reachableAddresses != null)
+                    reachableAddresses.UnionWith(cachedResult.VisitedAddresses ?? Enumerable.Empty<uint>());
+
+                return cachedResult;
+            }
+
             var registerTracker = new RegisterTracker();
             initializeRegisters?.Invoke(registerTracker);
             var effectivePersistentStateAddresses = persistentStateAddresses == null
@@ -880,7 +927,7 @@ namespace MMMapEditor
                 }
             }
 
-            return new SingleOccurrenceAnalysisResult
+            var result = new SingleOccurrenceAnalysisResult
             {
                 CanonicalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults),
                 RawLeafVariants = rawLeafVariants,
@@ -889,6 +936,16 @@ namespace MMMapEditor
                     mainPathResult.UsesInitialCoordinates ||
                     allResults.Any(variant => variant?.UsesInitialCoordinates ?? false)
             };
+
+            RegisterSingleOccurrenceAnalysis(
+                analysisCacheScopeKey,
+                startAddress,
+                targetX,
+                targetY,
+                initialEmulatedMemory8,
+                result);
+
+            return result;
         }
 
         private void ScheduleRepeatedEventState(
@@ -1278,6 +1335,7 @@ namespace MMMapEditor
             Dictionary<ushort, byte> carryOverState,
             Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
             PathVariantInfo rawLeaf,
+            string perfKey,
             out RepeatedEventFastForwardPlan plan)
         {
             plan = null;
@@ -1288,6 +1346,7 @@ namespace MMMapEditor
                 nextConstraints == null ||
                 rawLeaf == null)
             {
+                OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "other");
                 return false;
             }
 
@@ -1296,58 +1355,84 @@ namespace MMMapEditor
                 .Where(addr =>
                     TryGetRepeatedEventStateValue(br, currentState, addr, out byte previousValue) &&
                     previousValue != carryOverState[addr])
+                .OrderBy(addr => addr)
                 .ToList();
 
-            // Консервативно ускоряем только сценарии с одним монотонным persistent-байтом.
-            if (changedAddresses.Count != 1)
-                return false;
-
-            ushort address = changedAddresses[0];
-            if (!(rawLeaf.MemoryReadBeforeWriteAddresses?.Contains(address) ?? false) &&
-                !nextConstraints.ContainsKey(address))
+            if (changedAddresses.Count == 0)
             {
+                OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "multi");
                 return false;
             }
 
-            if (!TryGetRepeatedEventStateValue(br, currentState, address, out byte currentValueByte))
-                return false;
-
-            int currentValue = currentValueByte;
-            int nextValue = carryOverState[address];
-            int delta = nextValue - currentValue;
-            if (delta == 0 || Math.Abs(delta) > 4)
-                return false;
-
-            if ((delta > 0 && nextValue <= currentValue) ||
-                (delta < 0 && nextValue >= currentValue))
+            var transitions = new List<RepeatedEventStateTransition>();
+            foreach (ushort address in changedAddresses)
             {
-                return false;
+                if (!(rawLeaf.MemoryReadBeforeWriteAddresses?.Contains(address) ?? false) &&
+                    !nextConstraints.ContainsKey(address))
+                {
+                    OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "other");
+                    return false;
+                }
+
+                if (!TryGetRepeatedEventStateValue(br, currentState, address, out byte currentValueByte))
+                {
+                    OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "other");
+                    return false;
+                }
+
+                int currentValue = currentValueByte;
+                int nextValue = carryOverState[address];
+                int delta = nextValue - currentValue;
+                if (delta == 0)
+                {
+                    OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "other");
+                    return false;
+                }
+
+                if ((delta > 0 && nextValue <= currentValue) ||
+                    (delta < 0 && nextValue >= currentValue))
+                {
+                    OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "other");
+                    return false;
+                }
+
+                StateValueConstraintInfo constraintInfo = null;
+                rawLeaf.StateValueConstraints?.TryGetValue(address, out constraintInfo);
+
+                if ((constraintInfo == null || constraintInfo.IsEmpty) &&
+                    !nextConstraints.TryGetValue(address, out constraintInfo))
+                {
+                    constraintInfo = null;
+                }
+
+                if (constraintInfo == null || constraintInfo.IsEmpty)
+                {
+                    OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "constraint");
+                    return false;
+                }
+
+                transitions.Add(new RepeatedEventStateTransition
+                {
+                    Address = address,
+                    Delta = delta,
+                    ConstraintInfo = constraintInfo.Clone()
+                });
             }
-
-            StateValueConstraintInfo constraintInfo = null;
-            rawLeaf.StateValueConstraints?.TryGetValue(address, out constraintInfo);
-
-            if ((constraintInfo == null || constraintInfo.IsEmpty) &&
-                !nextConstraints.TryGetValue(address, out constraintInfo))
-            {
-                constraintInfo = null;
-            }
-
-            if (constraintInfo == null || constraintInfo.IsEmpty)
-                return false;
 
             int nextOccurrence = occurrence + 1;
             if (nextOccurrence > MaxRepeatedEventOccurrences)
+            {
+                OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "plan");
                 return false;
+            }
 
-            if (!TryBuildRepeatedEventPlanFromConstraint(
+            if (!TryBuildRepeatedEventPlanFromConstraints(
                     nextOccurrence,
                     carryOverState,
-                    address,
-                    delta,
-                    constraintInfo,
+                    transitions,
                     out plan))
             {
+                OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "plan");
                 return false;
             }
 
@@ -1355,10 +1440,109 @@ namespace MMMapEditor
                 !plan.IsOpenEnded &&
                 !plan.NextInterestingOccurrence.HasValue)
             {
+                OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "plan");
                 return false;
             }
 
             plan.ScheduledConstraints = CloneStateValueConstraints(nextConstraints);
+            OvrAnalysisPerfStats.RecordFastForwardDecision(perfKey, "success");
+            return true;
+        }
+
+        private bool TryBuildRepeatedEventPlanFromConstraints(
+            int occurrence,
+            Dictionary<ushort, byte> stateAtOccurrenceStart,
+            IEnumerable<RepeatedEventStateTransition> transitions,
+            out RepeatedEventFastForwardPlan plan)
+        {
+            plan = null;
+
+            var transitionList = (transitions ?? Enumerable.Empty<RepeatedEventStateTransition>())
+                .Where(transition =>
+                    transition != null &&
+                    transition.Address != 0 &&
+                    transition.Delta != 0 &&
+                    transition.ConstraintInfo != null &&
+                    !transition.ConstraintInfo.IsEmpty)
+                .ToList();
+
+            if (occurrence <= 0 ||
+                stateAtOccurrenceStart == null ||
+                transitionList.Count == 0)
+            {
+                return false;
+            }
+
+            var probeValues = new Dictionary<ushort, int>();
+            foreach (var transition in transitionList)
+            {
+                if (!stateAtOccurrenceStart.TryGetValue(transition.Address, out byte currentValueByte))
+                    return false;
+
+                int nextValue = currentValueByte + transition.Delta;
+                if (nextValue < 0 || nextValue > 0xFF || !AllowsStateValue(transition.ConstraintInfo, nextValue))
+                    return false;
+
+                probeValues[transition.Address] = nextValue;
+            }
+
+            int contiguousEndOccurrence = occurrence;
+            int probeOccurrence = occurrence;
+
+            while (true)
+            {
+                bool allTransitionsStillValid = true;
+                foreach (var transition in transitionList)
+                {
+                    int currentProbeValue = probeValues[transition.Address];
+                    int nextProbeValue = currentProbeValue + transition.Delta;
+                    if (nextProbeValue < 0 ||
+                        nextProbeValue > 0xFF ||
+                        !AllowsStateValue(transition.ConstraintInfo, nextProbeValue))
+                    {
+                        allTransitionsStillValid = false;
+                        break;
+                    }
+                }
+
+                if (!allTransitionsStillValid)
+                    break;
+
+                foreach (var transition in transitionList)
+                    probeValues[transition.Address] += transition.Delta;
+
+                probeOccurrence++;
+                contiguousEndOccurrence = probeOccurrence;
+            }
+
+            int immediateNextOccurrence = contiguousEndOccurrence + 1;
+            int coverageEndOccurrence = Math.Min(MaxRepeatedEventOccurrences, contiguousEndOccurrence);
+            bool isOpenEnded = contiguousEndOccurrence > MaxRepeatedEventOccurrences;
+
+            plan = new RepeatedEventFastForwardPlan
+            {
+                CoverageEndOccurrence = Math.Max(occurrence, coverageEndOccurrence),
+                IsOpenEnded = isOpenEnded
+            };
+
+            if (isOpenEnded)
+                return true;
+
+            plan.NextInterestingOccurrence = immediateNextOccurrence;
+            plan.ScheduledState = new Dictionary<ushort, byte>(stateAtOccurrenceStart);
+
+            foreach (var transition in transitionList)
+            {
+                if (!stateAtOccurrenceStart.TryGetValue(transition.Address, out byte currentValueByte))
+                    return false;
+
+                int scheduledValue = currentValueByte + transition.Delta * Math.Max(0, immediateNextOccurrence - occurrence);
+                if (scheduledValue < 0 || scheduledValue > 0xFF)
+                    return false;
+
+                plan.ScheduledState[transition.Address] = (byte)scheduledValue;
+            }
+
             return true;
         }
 
@@ -1930,7 +2114,8 @@ namespace MMMapEditor
             byte targetY,
             Dictionary<int, PathVariantInfo> finalVariants,
             HashSet<uint> visitedAddresses,
-            bool usesInitialCoordinates)
+            bool usesInitialCoordinates,
+            bool requireVisitedAddressEquivalence)
         {
             if (AnalysisDebug.ShouldDisableCacheFor(targetX, targetY))
                 return;
@@ -1953,40 +2138,90 @@ namespace MMMapEditor
                     SampleX = targetX,
                     SampleY = targetY,
                     SampleSignature = signature,
-                    SampleVisitedKey = visitedKey,
+                    SampleVisitedKey = requireVisitedAddressEquivalence ? visitedKey : string.Empty,
                     SampleUsesInitialCoordinates = usesInitialCoordinates,
+                    MatchingCoordinatePairs = new HashSet<string>(StringComparer.Ordinal)
+                    {
+                        BuildCoordinatePairKey(targetX, targetY)
+                    },
+                    MatchingXValues = new HashSet<byte> { targetX },
+                    MatchingYValues = new HashSet<byte> { targetY },
                     SampleVariants = CloneFinalVariants(finalVariants),
                     SampleVisitedAddresses = new HashSet<uint>(visitedAddresses ?? Enumerable.Empty<uint>())
                 };
                 return;
             }
 
-            if (usesInitialCoordinates)
-            {
-                entry.SampleUsesInitialCoordinates = true;
-                return;
-            }
-
             if (entry.IsCoordinateIndependentVerified)
                 return;
 
-            if (entry.SampleUsesInitialCoordinates)
+            bool coordinateSensitiveComparison = entry.SampleUsesInitialCoordinates || usesInitialCoordinates;
+            if (entry.CoordinateSensitiveMismatchObserved)
                 return;
 
             if (entry.SampleX == targetX && entry.SampleY == targetY)
                 return;
 
-            if (!string.Equals(entry.SampleSignature, signature, StringComparison.Ordinal))
-                return;
+            bool signatureMismatch =
+                !string.Equals(entry.SampleSignature, signature, StringComparison.Ordinal);
+            bool visitedMismatch =
+                requireVisitedAddressEquivalence &&
+                !string.Equals(entry.SampleVisitedKey, visitedKey, StringComparison.Ordinal);
 
-            if (!string.Equals(entry.SampleVisitedKey, visitedKey, StringComparison.Ordinal))
+            if (signatureMismatch || visitedMismatch)
+            {
+                if (coordinateSensitiveComparison)
+                    entry.CoordinateSensitiveMismatchObserved = true;
                 return;
+            }
+
+            if (coordinateSensitiveComparison)
+            {
+                entry.SampleUsesInitialCoordinates = true;
+                entry.MatchingCoordinatePairs.Add(BuildCoordinatePairKey(targetX, targetY));
+                entry.MatchingXValues.Add(targetX);
+                entry.MatchingYValues.Add(targetY);
+
+                bool hasEnoughCoordinateEvidence = HasEnoughCoordinateEvidence(cacheKey, entry);
+
+                if (!hasEnoughCoordinateEvidence)
+                {
+                    OvrAnalysisPerfStats.RecordCoordinateUsageCacheRejection(cacheKey);
+                    return;
+                }
+            }
 
             entry.IsCoordinateIndependentVerified = true;
             entry.ReusableVariants = CloneFinalVariants(finalVariants);
             entry.ReusableVisitedAddresses = new HashSet<uint>(
                 (entry.SampleVisitedAddresses ?? Enumerable.Empty<uint>())
                     .Concat(visitedAddresses ?? Enumerable.Empty<uint>()));
+        }
+
+        private string BuildCoordinatePairKey(byte x, byte y)
+        {
+            return $"{x},{y}";
+        }
+
+        private bool HasEnoughCoordinateEvidence(string cacheKey, ObjectVariantAnalysisCacheEntry entry)
+        {
+            if (entry == null)
+                return false;
+
+            if (entry.MatchingCoordinatePairs.Count < 4)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(cacheKey))
+            {
+                if (cacheKey.Contains("|XCoord|", StringComparison.Ordinal))
+                    return entry.MatchingXValues.Count >= 2;
+
+                if (cacheKey.Contains("|YCoord|", StringComparison.Ordinal))
+                    return entry.MatchingYValues.Count >= 2;
+            }
+
+            return entry.MatchingXValues.Count >= 2 &&
+                   entry.MatchingYValues.Count >= 2;
         }
 
         private string BuildFinalVariantsCacheSignature(Dictionary<int, PathVariantInfo> finalVariants)
@@ -2025,12 +2260,221 @@ namespace MMMapEditor
             });
         }
 
+        private bool TryGetCachedSingleOccurrenceAnalysis(
+            string analysisCacheScopeKey,
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            Dictionary<ushort, byte> initialEmulatedMemory8,
+            out SingleOccurrenceAnalysisResult cachedResult)
+        {
+            cachedResult = null;
+
+            if (AnalysisDebug.ShouldDisableCacheFor(targetX, targetY))
+                return false;
+
+            if (!TryBuildSingleOccurrenceCacheKey(
+                    analysisCacheScopeKey,
+                    startAddress,
+                    targetX,
+                    targetY,
+                    initialEmulatedMemory8,
+                    out string cacheKey,
+                    out _))
+            {
+                return false;
+            }
+
+            if (!_singleOccurrenceAnalysisCache.TryGetValue(cacheKey, out var entry) ||
+                entry == null ||
+                !entry.IsVerified ||
+                entry.ReusableResult == null)
+            {
+                return false;
+            }
+
+            cachedResult = CloneSingleOccurrenceAnalysisResult(entry.ReusableResult);
+            return true;
+        }
+
+        private void RegisterSingleOccurrenceAnalysis(
+            string analysisCacheScopeKey,
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            Dictionary<ushort, byte> initialEmulatedMemory8,
+            SingleOccurrenceAnalysisResult result)
+        {
+            if (AnalysisDebug.ShouldDisableCacheFor(targetX, targetY) || result == null)
+                return;
+
+            if (!TryBuildSingleOccurrenceCacheKey(
+                    analysisCacheScopeKey,
+                    startAddress,
+                    targetX,
+                    targetY,
+                    initialEmulatedMemory8,
+                    out string cacheKey,
+                    out byte oppositeAxisValue))
+            {
+                return;
+            }
+
+            string signature = BuildSingleOccurrenceAnalysisSignature(result);
+
+            if (!_singleOccurrenceAnalysisCache.TryGetValue(cacheKey, out var entry) || entry == null)
+            {
+                _singleOccurrenceAnalysisCache[cacheKey] = new SingleOccurrenceAnalysisCacheEntry
+                {
+                    SampleSignature = signature,
+                    MatchingOppositeAxisValues = new HashSet<byte> { oppositeAxisValue }
+                };
+                return;
+            }
+
+            if (entry.VerificationFailed || entry.IsVerified || entry.MatchingOppositeAxisValues.Contains(oppositeAxisValue))
+                return;
+
+            if (!string.Equals(entry.SampleSignature, signature, StringComparison.Ordinal))
+            {
+                entry.VerificationFailed = true;
+                return;
+            }
+
+            entry.MatchingOppositeAxisValues.Add(oppositeAxisValue);
+            if (entry.MatchingOppositeAxisValues.Count < 2)
+                return;
+
+            entry.IsVerified = true;
+            entry.ReusableResult = CloneSingleOccurrenceAnalysisResult(result);
+        }
+
+        private bool TryBuildSingleOccurrenceCacheKey(
+            string analysisCacheScopeKey,
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            Dictionary<ushort, byte> initialEmulatedMemory8,
+            out string cacheKey,
+            out byte oppositeAxisValue)
+        {
+            cacheKey = null;
+            oppositeAxisValue = 0;
+
+            if (string.IsNullOrWhiteSpace(analysisCacheScopeKey))
+                return false;
+
+            string stateKey = BuildMemoryStateKey(initialEmulatedMemory8);
+            if (analysisCacheScopeKey.Contains("|XCoord|", StringComparison.Ordinal))
+            {
+                cacheKey = $"single|{analysisCacheScopeKey}|{startAddress:X4}|x:{targetX:X2}|state:{stateKey}";
+                oppositeAxisValue = targetY;
+                return true;
+            }
+
+            if (analysisCacheScopeKey.Contains("|YCoord|", StringComparison.Ordinal))
+            {
+                cacheKey = $"single|{analysisCacheScopeKey}|{startAddress:X4}|y:{targetY:X2}|state:{stateKey}";
+                oppositeAxisValue = targetX;
+                return true;
+            }
+
+            return false;
+        }
+
         private Dictionary<int, PathVariantInfo> CloneFinalVariants(Dictionary<int, PathVariantInfo> source)
         {
             if (source == null)
                 return new Dictionary<int, PathVariantInfo>();
 
             return source.ToDictionary(kvp => kvp.Key, kvp => CloneVariantInfo(kvp.Value));
+        }
+
+        private SingleOccurrenceAnalysisResult CloneSingleOccurrenceAnalysisResult(SingleOccurrenceAnalysisResult source)
+        {
+            if (source == null)
+                return null;
+
+            return new SingleOccurrenceAnalysisResult
+            {
+                CanonicalVariants = CloneFinalVariants(source.CanonicalVariants),
+                RawLeafVariants = source.RawLeafVariants?
+                    .Where(variant => variant != null)
+                    .Select(CloneVariantInfo)
+                    .ToList() ?? new List<PathVariantInfo>(),
+                VisitedAddresses = new HashSet<uint>(source.VisitedAddresses ?? Enumerable.Empty<uint>()),
+                UsesInitialCoordinates = source.UsesInitialCoordinates
+            };
+        }
+
+        private string BuildSingleOccurrenceAnalysisSignature(SingleOccurrenceAnalysisResult result)
+        {
+            if (result == null)
+                return "<NULL_SINGLE_OCCURRENCE>";
+
+            string canonicalKey = result.CanonicalVariants == null || result.CanonicalVariants.Count == 0
+                ? "<NO_CANONICAL>"
+                : string.Join("##", result.CanonicalVariants
+                    .OrderBy(kvp => kvp.Key)
+                    .Select(kvp => $"{kvp.Key}:{BuildSingleOccurrenceVariantSignature(kvp.Value)}"));
+
+            string rawLeafKey = result.RawLeafVariants == null || result.RawLeafVariants.Count == 0
+                ? "<NO_RAW_LEAFS>"
+                : string.Join("##", result.RawLeafVariants
+                    .Where(variant => variant != null)
+                    .OrderBy(BuildSingleOccurrenceVariantSignature)
+                    .Select(BuildSingleOccurrenceVariantSignature));
+
+            return $"{canonicalKey}||{rawLeafKey}||coord:{result.UsesInitialCoordinates}";
+        }
+
+        private string BuildSingleOccurrenceVariantSignature(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string exitMemoryKey = variant.ExitEmulatedMemory8 == null || variant.ExitEmulatedMemory8.Count == 0
+                ? "<NO_EXIT_MEM>"
+                : string.Join(";",
+                    variant.ExitEmulatedMemory8
+                        .OrderBy(kvp => kvp.Key)
+                        .Select(kvp => $"{kvp.Key:X4}={kvp.Value:X2}"));
+
+            string readKey = variant.MemoryReadBeforeWriteAddresses == null || variant.MemoryReadBeforeWriteAddresses.Count == 0
+                ? "<NO_READ_BEFORE_WRITE>"
+                : string.Join(",",
+                    variant.MemoryReadBeforeWriteAddresses
+                        .OrderBy(address => address)
+                        .Select(address => address.ToString("X4")));
+
+            string firstAccessKey = variant.PersistentMemoryFirstAccessKinds == null || variant.PersistentMemoryFirstAccessKinds.Count == 0
+                ? "<NO_FIRST_ACCESS>"
+                : string.Join(";",
+                    variant.PersistentMemoryFirstAccessKinds
+                        .OrderBy(kvp => kvp.Key)
+                        .Select(kvp => $"{kvp.Key:X4}:{kvp.Value}"));
+
+            string constraintKey = variant.StateValueConstraints == null || variant.StateValueConstraints.Count == 0
+                ? "<NO_CONSTRAINTS>"
+                : string.Join(";",
+                    variant.StateValueConstraints
+                        .Where(kvp => kvp.Value != null && !kvp.Value.IsEmpty)
+                        .OrderBy(kvp => kvp.Key)
+                        .Select(kvp => $"{kvp.Key:X4}:{BuildConstraintOnlyToken(kvp.Value)}"));
+
+            return string.Join("||", new[]
+            {
+                BuildRepeatedEventVariantTargetKey(variant),
+                $"leaf:{variant.IsLeaf}",
+                $"exit:{exitMemoryKey}",
+                $"read:{readKey}",
+                $"first:{firstAccessKey}",
+                $"constraints:{constraintKey}",
+                $"coord:{variant.UsesInitialCoordinates}",
+                $"repeat:{variant.HasRepeatedEventOccurrenceSensitivity}",
+                $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
+                $"branch:{variant.HasBranchSpecificContribution}"
+            });
         }
 
         private string BuildVisitedAddressesKey(IEnumerable<uint> visitedAddresses)
@@ -2840,6 +3284,56 @@ namespace MMMapEditor
             }
 
             return targetCells;
+        }
+
+        private IEnumerable<Point> OrderCellsForCacheEvidence(List<Point> cells)
+        {
+            if (cells == null || cells.Count <= 2)
+                return cells ?? Enumerable.Empty<Point>();
+
+            var remaining = new List<Point>(cells);
+            var ordered = new List<Point>(cells.Count);
+            var seenX = new HashSet<int>();
+            var seenY = new HashSet<int>();
+            Point? last = null;
+
+            while (remaining.Count > 0)
+            {
+                int bestIndex = 0;
+                int bestScore = int.MinValue;
+
+                for (int i = 0; i < remaining.Count; i++)
+                {
+                    Point candidate = remaining[i];
+                    int score = 0;
+
+                    if (!seenX.Contains(candidate.X))
+                        score += 1000;
+                    if (!seenY.Contains(candidate.Y))
+                        score += 1000;
+
+                    if (last.HasValue)
+                    {
+                        score += Math.Abs(candidate.X - last.Value.X) * 10;
+                        score += Math.Abs(candidate.Y - last.Value.Y) * 10;
+                    }
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestIndex = i;
+                    }
+                }
+
+                Point chosen = remaining[bestIndex];
+                remaining.RemoveAt(bestIndex);
+                ordered.Add(chosen);
+                seenX.Add(chosen.X);
+                seenY.Add(chosen.Y);
+                last = chosen;
+            }
+
+            return ordered;
         }
 
         private bool CheckCondition(byte value, byte compareValue, string jumpType)
