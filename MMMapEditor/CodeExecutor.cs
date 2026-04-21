@@ -149,12 +149,16 @@ namespace MMMapEditor
                                 AnalyzePartialBattleRanges(br, result, isFinalPass: true);
                             }
 
-                            result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
-                            result.ExitCallDepth = currentCallDepth;
                             result.IsTerminated = true;
-                            CaptureExitEmulatedState(result);
-                            FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode);
-                            return result;
+                            return CaptureExitStateAndFinalizeResult(
+                                result,
+                                registerTracker,
+                                instructionCount,
+                                currentAddress,
+                                fileLength,
+                                debugMode,
+                                currentPendingReturnAddresses,
+                                currentCallDepth);
                         }
 
                         visitedInThisPath.Add(currentAddress);
@@ -225,8 +229,15 @@ namespace MMMapEditor
                         if (TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY,
                             currentCallDepth, currentPendingReturnAddresses, ref textOrderCounter))
                         {
-                            CaptureExitEmulatedState(result);
-                            return result;
+                            return CaptureExitStateAndFinalizeResult(
+                                result,
+                                registerTracker,
+                                instructionCount,
+                                currentAddress,
+                                fileLength,
+                                debugMode,
+                                currentPendingReturnAddresses,
+                                currentCallDepth);
                         }
 
                         // Анализ частичных битв
@@ -244,8 +255,20 @@ namespace MMMapEditor
 
                         if (handlingResult.ShouldReturn)
                         {
-                            CaptureExitEmulatedState(handlingResult.Result);
-                            return handlingResult.Result;
+                            List<uint> exitPendingReturnAddresses =
+                                handlingResult.UpdatedPendingReturnAddresses ?? currentPendingReturnAddresses;
+                            int exitCallDepth =
+                                handlingResult.UpdatedCallDepth >= 0 ? handlingResult.UpdatedCallDepth : currentCallDepth;
+
+                            return CaptureExitStateAndFinalizeResult(
+                                handlingResult.Result,
+                                registerTracker,
+                                instructionCount,
+                                currentAddress,
+                                fileLength,
+                                debugMode,
+                                exitPendingReturnAddresses,
+                                exitCallDepth);
                         }
 
                         currentAddress = handlingResult.NextAddress;
@@ -262,11 +285,15 @@ namespace MMMapEditor
                     AnalyzePartialBattleRanges(br, result, isFinalPass: true);
                 }
 
-                result.ExitPendingReturnAddresses = new List<uint>(currentPendingReturnAddresses);
-                result.ExitCallDepth = currentCallDepth;
-                CaptureExitEmulatedState(result);
-                FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode);
-                return result;
+                return CaptureExitStateAndFinalizeResult(
+                    result,
+                    registerTracker,
+                    instructionCount,
+                    currentAddress,
+                    fileLength,
+                    debugMode,
+                    currentPendingReturnAddresses,
+                    currentCallDepth);
             }
             finally
             {
@@ -298,6 +325,22 @@ namespace MMMapEditor
                 return;
 
             result.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
+        }
+
+        private PathAnalysisResult CaptureExitStateAndFinalizeResult(PathAnalysisResult result,
+            RegisterTracker registerTracker, int instructionCount, uint currentAddress,
+            long fileLength, bool debugMode, List<uint> exitPendingReturnAddresses, int exitCallDepth)
+        {
+            if (result == null)
+                return null;
+
+            result.ExitPendingReturnAddresses = exitPendingReturnAddresses == null
+                ? new List<uint>()
+                : new List<uint>(exitPendingReturnAddresses);
+            result.ExitCallDepth = exitCallDepth;
+            CaptureExitEmulatedState(result);
+            FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode);
+            return result;
         }
 
         private void RegisterMemoryRead(PathAnalysisResult result, ushort memAddr, bool contributesToPersistentState)
@@ -2623,6 +2666,7 @@ namespace MMMapEditor
                 result.IsTerminated = subroutineResult.IsTerminated;
                 result.HasSignificantCode = result.HasSignificantCode || subroutineResult.HasSignificantCode;
                 result.IsOnlyRandomEncounterJump = result.IsOnlyRandomEncounterJump || subroutineResult.IsOnlyRandomEncounterJump;
+                result.UsesInitialCoordinates = result.UsesInitialCoordinates || subroutineResult.UsesInitialCoordinates;
                 result.ExitPendingReturnAddresses = subroutineResult.ExitPendingReturnAddresses == null
                     ? new List<uint>()
                     : new List<uint>(subroutineResult.ExitPendingReturnAddresses);
@@ -6248,12 +6292,14 @@ namespace MMMapEditor
             }
 
             result.UsesInitialCoordinates =
+                result.UsesInitialCoordinates ||
                 (registerTracker?.HasObservedCoordinateSeedRead ?? false) ||
                 result.MemoryReadAddresses.Contains(0x3C38) ||
                 result.MemoryReadAddresses.Contains(0x3C39) ||
                 result.MemoryReadAddresses.Contains(0x3C3A);
 
-            result.HasSignificantCode = result.OrderedTexts.Count > 0 ||
+            result.HasSignificantCode = result.HasSignificantCode ||
+                                         result.OrderedTexts.Count > 0 ||
                                          result.FoundTexts.Count > 0 ||
                                          result.ContextTexts.Count > 0 ||
                                          result.MonsterPower.HasValue ||

@@ -471,7 +471,11 @@ namespace MMMapEditor
             HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null,
             string analysisCacheScopeKey = null)
         {
-            if (TryGetCachedObjectVariants(
+            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
+            bool bypassCacheForTargetCell = AnalysisDebug.ShouldDisableCacheFor(targetX, targetY);
+
+            if (!bypassCacheForTargetCell &&
+                TryGetCachedObjectVariants(
                     analysisCacheScopeKey,
                     startAddress,
                     reachableAddresses,
@@ -480,7 +484,12 @@ namespace MMMapEditor
                 return cachedVariants;
             }
 
-            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
+            if (debugMode && bypassCacheForTargetCell && !string.IsNullOrWhiteSpace(analysisCacheScopeKey))
+            {
+                AnalysisDebug.WriteLine(
+                    $"Кэш анализа отключён для target-клетки: {analysisCacheScopeKey}|0x{startAddress:X4}");
+            }
+
             var scheduledStates = new SortedDictionary<int, Dictionary<string, RepeatedEventStateInfo>>();
             var progressionPatterns = new List<RepeatedEventProgressionPattern>();
             var progressionPatternKeys = new HashSet<string>(StringComparer.Ordinal);
@@ -1923,6 +1932,9 @@ namespace MMMapEditor
             HashSet<uint> visitedAddresses,
             bool usesInitialCoordinates)
         {
+            if (AnalysisDebug.ShouldDisableCacheFor(targetX, targetY))
+                return;
+
             if (string.IsNullOrWhiteSpace(analysisCacheScopeKey) ||
                 finalVariants == null ||
                 finalVariants.Count == 0)
@@ -1949,10 +1961,16 @@ namespace MMMapEditor
                 return;
             }
 
+            if (usesInitialCoordinates)
+            {
+                entry.SampleUsesInitialCoordinates = true;
+                return;
+            }
+
             if (entry.IsCoordinateIndependentVerified)
                 return;
 
-            if (entry.SampleUsesInitialCoordinates || usesInitialCoordinates)
+            if (entry.SampleUsesInitialCoordinates)
                 return;
 
             if (entry.SampleX == targetX && entry.SampleY == targetY)

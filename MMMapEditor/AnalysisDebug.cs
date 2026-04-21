@@ -28,17 +28,24 @@ namespace MMMapEditor
         private static readonly AsyncLocal<(byte X, byte Y)?> _currentCell = new AsyncLocal<(byte X, byte Y)?>();
 
         public static bool EnableGlobalLogs { get; private set; } = false;
+        public static bool DisableCacheForTargetCell { get; private set; } = true;
         public static bool Enabled { get; private set; } = true;
-        public static byte? TargetX { get; private set; } = 4;
-        public static byte? TargetY { get; private set; } = 9;
+        public static byte? TargetX { get; private set; } = 3;
+        public static byte? TargetY { get; private set; } = 3;
 
 
-        public static void Configure(bool enabled, byte? targetX = null, byte? targetY = null, bool enableGlobalLogs = false)
+        public static void Configure(
+            bool enabled,
+            byte? targetX = null,
+            byte? targetY = null,
+            bool enableGlobalLogs = false,
+            bool disableCacheForTargetCell = true)
         {
             Enabled = enabled;
             TargetX = targetX;
             TargetY = targetY;
             EnableGlobalLogs = enableGlobalLogs;
+            DisableCacheForTargetCell = disableCacheForTargetCell;
         }
 
         public static bool IsEnabledFor(byte x, byte y)
@@ -58,6 +65,21 @@ namespace MMMapEditor
         public static bool IsEnabledFor(OvrObject obj)
         {
             return obj != null && IsEnabledFor(obj.X, obj.Y);
+        }
+
+        public static bool ShouldDisableCacheFor(byte x, byte y)
+        {
+            return DisableCacheForTargetCell &&
+                   Enabled &&
+                   TargetX.HasValue &&
+                   TargetY.HasValue &&
+                   x == TargetX.Value &&
+                   y == TargetY.Value;
+        }
+
+        public static bool ShouldDisableCacheFor(OvrObject obj)
+        {
+            return obj != null && ShouldDisableCacheFor(obj.X, obj.Y);
         }
 
         public static IDisposable BeginCellScope(byte x, byte y)
