@@ -403,7 +403,7 @@ namespace MMMapEditor
         }
 
         private const int MaxRepeatedEventOccurrences = 64;
-        private const int MaxRepeatedEventOccurrencesToAnalyze = 5;
+        private const int MaxRepeatedEventRepresentativeOccurrences = 16;
         private const int MaxRepeatedEventStatesPerOccurrence = 32;
         private const int MaxRepeatedEventCanonicalOutcomes = 5;
 
@@ -419,31 +419,85 @@ namespace MMMapEditor
             public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         }
 
+        private sealed class RepeatedEventFastForwardPlan
+        {
+            public int CoverageEndOccurrence { get; set; }
+            public bool IsOpenEnded { get; set; }
+            public int? NextInterestingOccurrence { get; set; }
+            public Dictionary<ushort, byte> ScheduledState { get; set; } = new Dictionary<ushort, byte>();
+            public Dictionary<ushort, StateValueConstraintInfo> ScheduledConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        }
+
+        private sealed class RepeatedEventProgressionPattern
+        {
+            public ushort Address { get; set; }
+            public int Delta { get; set; }
+            public Dictionary<ushort, byte> StateTemplateWithoutAddress { get; set; } = new Dictionary<ushort, byte>();
+            public StateValueConstraintInfo ConstraintInfo { get; set; } = new StateValueConstraintInfo();
+            public PathVariantInfo TargetVariant { get; set; }
+        }
+
+        private sealed class RepeatedEventStableStatePattern
+        {
+            public string StateKey { get; set; } = string.Empty;
+            public PathVariantInfo TargetVariant { get; set; }
+        }
+
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
             byte targetX, byte targetY, List<AlternativePath> predefinedAlternativePaths,
             HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null)
         {
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
-            var currentStates = new Dictionary<string, RepeatedEventStateInfo>(StringComparer.Ordinal)
-            {
-                [BuildMemoryStateKey(new Dictionary<ushort, byte>())] = new RepeatedEventStateInfo()
-            };
-            var collectedVariants = new List<PathVariantInfo>();
+            var scheduledStates = new SortedDictionary<int, Dictionary<string, RepeatedEventStateInfo>>();
+            var progressionPatterns = new List<RepeatedEventProgressionPattern>();
+            var stableStatePatterns = new List<RepeatedEventStableStatePattern>();
             bool analysisTruncated = false;
+            bool usedRepeatedEventAcceleration = false;
+            ScheduleRepeatedEventState(
+                scheduledStates,
+                1,
+                new RepeatedEventStateInfo(),
+                debugMode,
+                ref analysisTruncated,
+                null);
+
+            var collectedVariants = new List<PathVariantInfo>();
             int maxAnalyzedOccurrence = 0;
+            int analyzedRepresentativeOccurrences = 0;
             Dictionary<int, PathVariantInfo> finalVariants = null;
 
-            for (int occurrence = 1; occurrence <= MaxRepeatedEventOccurrences && currentStates.Count > 0; occurrence++)
+            while (scheduledStates.Count > 0)
             {
-                maxAnalyzedOccurrence = occurrence;
+                int occurrence = scheduledStates.First().Key;
+                var currentStates = scheduledStates[occurrence];
+                scheduledStates.Remove(occurrence);
+
+                if (occurrence > MaxRepeatedEventOccurrences)
+                {
+                    analysisTruncated = true;
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"Достигнут лимит наступлений события ({MaxRepeatedEventOccurrences})");
+                    break;
+                }
+
+                analyzedRepresentativeOccurrences++;
+                if (analyzedRepresentativeOccurrences > MaxRepeatedEventRepresentativeOccurrences)
+                {
+                    analysisTruncated = true;
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"Достигнут лимит репрезентативных наступлений ({MaxRepeatedEventRepresentativeOccurrences})");
+                    break;
+                }
+
+                maxAnalyzedOccurrence = Math.Max(maxAnalyzedOccurrence, occurrence);
 
                 if (debugMode && occurrence > 1)
                 {
                     AnalysisDebug.WriteLine($"\n=== ПОВТОРНОЕ НАСТУПЛЕНИЕ СОБЫТИЯ #{occurrence} ===");
                     AnalysisDebug.WriteLine($"Стартовых состояний памяти: {currentStates.Count}");
+                    foreach (var scheduledState in currentStates)
+                        AnalysisDebug.WriteLine($"  RepeatedState: {scheduledState.Key}");
                 }
-
-                var nextStates = new Dictionary<string, RepeatedEventStateInfo>(StringComparer.Ordinal);
 
                 foreach (var currentStateInfo in currentStates.Values)
                 {
@@ -461,41 +515,166 @@ namespace MMMapEditor
 
                     foreach (var variant in passResult.CanonicalVariants.Values)
                     {
-                        MarkVariantOccurrence(variant, occurrence);
+                        MarkVariantOccurrenceRange(variant, occurrence, occurrence);
                         collectedVariants.Add(variant);
                     }
 
                     foreach (var rawLeaf in passResult.RawLeafVariants)
                     {
-                        var carryOverState = BuildCarryOverState(br, currentState, rawLeaf);
-                        if (carryOverState.Count == 0)
-                            continue;
+                        var repeatedEventRelevantAddresses = BuildRepeatedEventRelevantAddresses(rawLeaf);
+                        var carryOverState = BuildCarryOverState(
+                            br,
+                            currentState,
+                            rawLeaf,
+                            repeatedEventRelevantAddresses);
+                        var nextConstraints = FilterStateValueConstraintsForRepeatedEvent(
+                            MergeStateValueConstraints(
+                                currentStateInfo.StateValueConstraints,
+                                rawLeaf.StateValueConstraints),
+                            repeatedEventRelevantAddresses);
 
-                        var nextConstraints = MergeStateValueConstraints(
-                            currentStateInfo.StateValueConstraints,
-                            rawLeaf.StateValueConstraints);
-
-                        string currentKey = BuildMemoryStateKey(currentState, currentStateInfo.StateValueConstraints);
-                        string nextKey = BuildMemoryStateKey(carryOverState, nextConstraints);
-                        if (string.Equals(currentKey, nextKey, StringComparison.Ordinal))
-                            continue;
-
-                        if (!nextStates.ContainsKey(nextKey))
+                        var canonicalVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(
+                            rawLeaf,
+                            passResult.CanonicalVariants.Values);
+                        if (canonicalVariant != null &&
+                            rawLeaf.StateValueConstraints != null &&
+                            rawLeaf.StateValueConstraints.Any(kvp =>
+                                repeatedEventRelevantAddresses.Contains(kvp.Key) &&
+                                kvp.Value != null &&
+                                !kvp.Value.IsEmpty))
                         {
-                            if (nextStates.Count >= MaxRepeatedEventStatesPerOccurrence)
+                            canonicalVariant.HasRepeatedEventOccurrenceSensitivity = true;
+                        }
+
+                        RegisterRepeatedEventProgressionPattern(
+                            progressionPatterns,
+                            br,
+                            currentState,
+                            carryOverState,
+                            rawLeaf,
+                            canonicalVariant);
+
+                        if (TryBuildRepeatedEventFastForwardPlan(
+                            br,
+                            occurrence,
+                            currentStateInfo,
+                            carryOverState,
+                            nextConstraints,
+                            rawLeaf,
+                            out var fastForwardPlan))
+                        {
+                            usedRepeatedEventAcceleration |=
+                                fastForwardPlan.IsOpenEnded ||
+                                fastForwardPlan.CoverageEndOccurrence > occurrence + 1 ||
+                                (fastForwardPlan.NextInterestingOccurrence.HasValue &&
+                                 fastForwardPlan.NextInterestingOccurrence.Value > occurrence + 1);
+
+                            if (canonicalVariant != null)
                             {
-                                analysisTruncated = true;
-                                if (debugMode)
-                                    AnalysisDebug.WriteLine($"Достигнут лимит состояний повторного анализа ({MaxRepeatedEventStatesPerOccurrence})");
-                                break;
+                                AddOccurrenceCoverage(canonicalVariant, occurrence + 1, fastForwardPlan.CoverageEndOccurrence, fastForwardPlan.IsOpenEnded);
                             }
 
-                            nextStates[nextKey] = new RepeatedEventStateInfo
+                            if (!fastForwardPlan.IsOpenEnded && fastForwardPlan.NextInterestingOccurrence.HasValue)
+                            {
+                                ScheduleRepeatedEventState(
+                                    scheduledStates,
+                                    fastForwardPlan.NextInterestingOccurrence.Value,
+                                    new RepeatedEventStateInfo
+                                    {
+                                        Memory = fastForwardPlan.ScheduledState,
+                                        StateValueConstraints = fastForwardPlan.ScheduledConstraints
+                                    },
+                                    debugMode,
+                                    ref analysisTruncated,
+                                    occurrence);
+                            }
+
+                            if (analysisTruncated)
+                                break;
+
+                            continue;
+                        }
+
+                        if (TryApplyStableSelfLoopOptimization(
+                            passResult,
+                            occurrence,
+                            currentState,
+                            carryOverState,
+                            canonicalVariant,
+                            stableStatePatterns))
+                        {
+                            usedRepeatedEventAcceleration = true;
+                            continue;
+                        }
+
+                        if (TryApplyStoredStableStatePattern(
+                            stableStatePatterns,
+                            occurrence,
+                            carryOverState,
+                            nextConstraints,
+                            out var stableVariant))
+                        {
+                            usedRepeatedEventAcceleration = true;
+                            if (stableVariant != null)
+                                AddOccurrenceCoverage(stableVariant, occurrence + 1, occurrence + 1, isOpenEnded: true);
+
+                            continue;
+                        }
+
+                        if (TryApplyStoredProgressionPattern(
+                            progressionPatterns,
+                            occurrence,
+                            carryOverState,
+                            out var bridgedVariant,
+                            out var bridgedPlan))
+                        {
+                            usedRepeatedEventAcceleration |=
+                                bridgedPlan.IsOpenEnded ||
+                                bridgedPlan.CoverageEndOccurrence > occurrence + 1 ||
+                                (bridgedPlan.NextInterestingOccurrence.HasValue &&
+                                 bridgedPlan.NextInterestingOccurrence.Value > occurrence + 1);
+
+                            if (bridgedVariant != null)
+                                AddOccurrenceCoverage(bridgedVariant, occurrence + 1, bridgedPlan.CoverageEndOccurrence, bridgedPlan.IsOpenEnded);
+
+                            if (!bridgedPlan.IsOpenEnded && bridgedPlan.NextInterestingOccurrence.HasValue)
+                            {
+                                ScheduleRepeatedEventState(
+                                    scheduledStates,
+                                    bridgedPlan.NextInterestingOccurrence.Value,
+                                    new RepeatedEventStateInfo
+                                    {
+                                        Memory = bridgedPlan.ScheduledState,
+                                        StateValueConstraints = bridgedPlan.ScheduledConstraints
+                                    },
+                                    debugMode,
+                                    ref analysisTruncated,
+                                    occurrence);
+                            }
+
+                            if (analysisTruncated)
+                                break;
+
+                            continue;
+                        }
+
+                        if (carryOverState.Count == 0 && nextConstraints.Count == 0)
+                            continue;
+
+                        ScheduleRepeatedEventState(
+                            scheduledStates,
+                            occurrence + 1,
+                            new RepeatedEventStateInfo
                             {
                                 Memory = carryOverState,
                                 StateValueConstraints = nextConstraints
-                            };
-                        }
+                            },
+                            debugMode,
+                            ref analysisTruncated,
+                            occurrence);
+
+                        if (analysisTruncated)
+                            break;
                     }
 
                     if (analysisTruncated)
@@ -510,30 +689,12 @@ namespace MMMapEditor
                     break;
                 }
 
-                if (occurrence >= MaxRepeatedEventOccurrencesToAnalyze)
-                {
-                    analysisTruncated = true;
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"Достигнут лимит анализируемых наступлений ({MaxRepeatedEventOccurrencesToAnalyze})");
+                if (analysisTruncated)
                     break;
-                }
-
-                if (analysisTruncated || nextStates.Count == 0)
-                    break;
-
-                if (occurrence == MaxRepeatedEventOccurrences)
-                {
-                    analysisTruncated = true;
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"Достигнут лимит наступлений события ({MaxRepeatedEventOccurrences})");
-                    break;
-                }
-
-                currentStates = nextStates;
             }
 
             finalVariants ??= _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
-            ApplyOccurrenceDescriptions(finalVariants.Values, maxAnalyzedOccurrence, analysisTruncated);
+            ApplyOccurrenceDescriptions(finalVariants.Values, maxAnalyzedOccurrence, analysisTruncated, usedRepeatedEventAcceleration);
 
             if (debugMode)
                 AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
@@ -659,26 +820,646 @@ namespace MMMapEditor
             };
         }
 
-        private void MarkVariantOccurrence(PathVariantInfo variant, int occurrence)
+        private void ScheduleRepeatedEventState(
+            SortedDictionary<int, Dictionary<string, RepeatedEventStateInfo>> scheduledStates,
+            int occurrence,
+            RepeatedEventStateInfo stateInfo,
+            bool debugMode,
+            ref bool analysisTruncated,
+            int? sourceOccurrence)
         {
-            if (variant == null || occurrence <= 0)
+            if (scheduledStates == null || stateInfo == null || occurrence <= 0)
                 return;
 
-            variant.OccurrenceIndices = new List<int> { occurrence };
+            if (occurrence > MaxRepeatedEventOccurrences)
+                return;
+
+            if (!scheduledStates.TryGetValue(occurrence, out var statesForOccurrence))
+            {
+                statesForOccurrence = new Dictionary<string, RepeatedEventStateInfo>(StringComparer.Ordinal);
+                scheduledStates[occurrence] = statesForOccurrence;
+            }
+
+            string stateKey = BuildMemoryStateKey(stateInfo.Memory, stateInfo.StateValueConstraints);
+            if (statesForOccurrence.ContainsKey(stateKey))
+                return;
+
+            if (statesForOccurrence.Count >= MaxRepeatedEventStatesPerOccurrence)
+            {
+                analysisTruncated = true;
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"Достигнут лимит состояний повторного анализа ({MaxRepeatedEventStatesPerOccurrence})");
+                return;
+            }
+
+            statesForOccurrence[stateKey] = new RepeatedEventStateInfo
+            {
+                Memory = stateInfo.Memory == null
+                    ? new Dictionary<ushort, byte>()
+                    : new Dictionary<ushort, byte>(stateInfo.Memory),
+                StateValueConstraints = CloneStateValueConstraints(stateInfo.StateValueConstraints)
+            };
+
+            if (debugMode && sourceOccurrence.HasValue && occurrence > sourceOccurrence.Value + 1)
+                AnalysisDebug.WriteLine($"      Быстрый переход по повторному сценарию: следующее репрезентативное наступление #{occurrence}");
+        }
+
+        private void RegisterRepeatedEventProgressionPattern(
+            List<RepeatedEventProgressionPattern> progressionPatterns,
+            BinaryReader br,
+            Dictionary<ushort, byte> currentState,
+            Dictionary<ushort, byte> carryOverState,
+            PathVariantInfo rawLeaf,
+            PathVariantInfo canonicalVariant)
+        {
+            if (progressionPatterns == null ||
+                br == null ||
+                currentState == null ||
+                carryOverState == null ||
+                rawLeaf == null ||
+                canonicalVariant == null)
+            {
+                return;
+            }
+
+            if (rawLeaf.StateValueConstraints == null || rawLeaf.StateValueConstraints.Count == 0)
+                return;
+
+            var changedAddresses = carryOverState.Keys
+                .Where(addr =>
+                    TryGetRepeatedEventStateValue(br, currentState, addr, out byte previousValue) &&
+                    previousValue != carryOverState[addr])
+                .ToList();
+
+            if (changedAddresses.Count != 1)
+                return;
+
+            ushort address = changedAddresses[0];
+            if (!rawLeaf.StateValueConstraints.TryGetValue(address, out var constraintInfo) ||
+                constraintInfo == null ||
+                constraintInfo.IsEmpty)
+            {
+                return;
+            }
+
+            if (!TryGetRepeatedEventStateValue(br, currentState, address, out byte currentValueByte))
+                return;
+
+            int currentValue = currentValueByte;
+            int nextValue = carryOverState[address];
+            int delta = nextValue - currentValue;
+            if (delta == 0)
+                return;
+
+            progressionPatterns.Add(new RepeatedEventProgressionPattern
+            {
+                Address = address,
+                Delta = delta,
+                StateTemplateWithoutAddress = BuildStateWithoutAddress(carryOverState, address),
+                ConstraintInfo = constraintInfo.Clone(),
+                TargetVariant = canonicalVariant
+            });
+
+        }
+
+        private bool TryApplyStableSelfLoopOptimization(
+            SingleOccurrenceAnalysisResult passResult,
+            int occurrence,
+            Dictionary<ushort, byte> currentState,
+            Dictionary<ushort, byte> carryOverState,
+            PathVariantInfo canonicalVariant,
+            List<RepeatedEventStableStatePattern> stableStatePatterns)
+        {
+            if (passResult == null ||
+                occurrence <= 0 ||
+                canonicalVariant == null ||
+                passResult.RawLeafVariants == null ||
+                passResult.CanonicalVariants == null)
+            {
+                return false;
+            }
+
+            if (passResult.RawLeafVariants.Count != 1 || passResult.CanonicalVariants.Count != 1)
+                return false;
+
+            if (!AreStatesEqual(currentState, carryOverState))
+                return false;
+
+            AddOccurrenceCoverage(canonicalVariant, occurrence + 1, occurrence + 1, isOpenEnded: true);
+            RegisterRepeatedEventStableStatePattern(stableStatePatterns, carryOverState, new Dictionary<ushort, StateValueConstraintInfo>(), canonicalVariant);
+            return true;
+        }
+
+        private void RegisterRepeatedEventStableStatePattern(
+            List<RepeatedEventStableStatePattern> stableStatePatterns,
+            Dictionary<ushort, byte> state,
+            Dictionary<ushort, StateValueConstraintInfo> constraints,
+            PathVariantInfo canonicalVariant)
+        {
+            if (stableStatePatterns == null || canonicalVariant == null)
+                return;
+
+            string stateKey = BuildMemoryStateKey(state, constraints);
+            if (string.IsNullOrWhiteSpace(stateKey))
+                return;
+
+            if (stableStatePatterns.Any(pattern =>
+                    pattern != null &&
+                    string.Equals(pattern.StateKey, stateKey, StringComparison.Ordinal) &&
+                    ReferenceEquals(pattern.TargetVariant, canonicalVariant)))
+            {
+                return;
+            }
+
+            stableStatePatterns.Add(new RepeatedEventStableStatePattern
+            {
+                StateKey = stateKey,
+                TargetVariant = canonicalVariant
+            });
+        }
+
+        private bool TryApplyStoredStableStatePattern(
+            List<RepeatedEventStableStatePattern> stableStatePatterns,
+            int occurrence,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            out PathVariantInfo targetVariant)
+        {
+            targetVariant = null;
+
+            if (stableStatePatterns == null ||
+                stableStatePatterns.Count == 0 ||
+                carryOverState == null ||
+                carryOverState.Count == 0)
+            {
+                return false;
+            }
+
+            string stateKey = BuildMemoryStateKey(carryOverState, nextConstraints);
+            if (string.IsNullOrWhiteSpace(stateKey))
+                return false;
+
+            var matchedPattern = stableStatePatterns
+                .AsEnumerable()
+                .Reverse()
+                .FirstOrDefault(pattern =>
+                    pattern != null &&
+                    string.Equals(pattern.StateKey, stateKey, StringComparison.Ordinal) &&
+                    pattern.TargetVariant != null);
+
+            if (matchedPattern == null)
+                return false;
+
+            targetVariant = matchedPattern.TargetVariant;
+            return true;
+        }
+
+        private bool TryApplyStoredProgressionPattern(
+            List<RepeatedEventProgressionPattern> progressionPatterns,
+            int occurrence,
+            Dictionary<ushort, byte> carryOverState,
+            out PathVariantInfo targetVariant,
+            out RepeatedEventFastForwardPlan plan)
+        {
+            targetVariant = null;
+            plan = null;
+
+            if (progressionPatterns == null || progressionPatterns.Count == 0 || carryOverState == null)
+                return false;
+
+            foreach (var pattern in progressionPatterns.AsEnumerable().Reverse())
+            {
+                if (pattern == null ||
+                    pattern.TargetVariant == null ||
+                    pattern.ConstraintInfo == null ||
+                    pattern.ConstraintInfo.IsEmpty)
+                {
+                    continue;
+                }
+
+                if (!carryOverState.TryGetValue(pattern.Address, out byte currentValue))
+                    continue;
+
+                if (!AreStatesEqual(
+                        BuildStateWithoutAddress(carryOverState, pattern.Address),
+                        pattern.StateTemplateWithoutAddress))
+                {
+                    continue;
+                }
+
+                if (!TryBuildRepeatedEventPlanFromConstraint(
+                        occurrence + 1,
+                        carryOverState,
+                        pattern.Address,
+                        pattern.Delta,
+                        pattern.ConstraintInfo,
+                        out var bridgedPlan))
+                {
+                    continue;
+                }
+
+                targetVariant = pattern.TargetVariant;
+                plan = bridgedPlan;
+                plan.ScheduledConstraints = new Dictionary<ushort, StateValueConstraintInfo>
+                {
+                    [pattern.Address] = pattern.ConstraintInfo.Clone()
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        private void MarkVariantOccurrenceRange(PathVariantInfo variant, int startOccurrence, int endOccurrence)
+        {
+            AddOccurrenceCoverage(variant, startOccurrence, endOccurrence, isOpenEnded: false);
+        }
+
+        private void AddOccurrenceCoverage(PathVariantInfo variant, int startOccurrence, int endOccurrence, bool isOpenEnded)
+        {
+            if (variant == null || startOccurrence <= 0)
+                return;
+
+            int normalizedEnd = isOpenEnded
+                ? Math.Max(startOccurrence, endOccurrence)
+                : Math.Max(startOccurrence, endOccurrence);
+
+            variant.OccurrenceRanges ??= new List<OccurrenceRangeInfo>();
+            variant.OccurrenceRanges.Add(new OccurrenceRangeInfo
+            {
+                Start = startOccurrence,
+                End = normalizedEnd,
+                IsOpenEnded = isOpenEnded
+            });
+
+            NormalizeOccurrenceCoverage(variant);
             variant.OccurrenceDescription = null;
+        }
+
+        private void NormalizeOccurrenceCoverage(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return;
+
+            var mergedRanges = NormalizeOccurrenceRanges(
+                (variant.OccurrenceRanges ?? new List<OccurrenceRangeInfo>())
+                    .Concat((variant.OccurrenceIndices ?? new List<int>())
+                        .Where(index => index > 0)
+                        .Select(index => new OccurrenceRangeInfo
+                        {
+                            Start = index,
+                            End = index,
+                            IsOpenEnded = false
+                        })));
+
+            variant.OccurrenceRanges = mergedRanges;
+            variant.OccurrenceIndices = ExpandOccurrenceIndices(mergedRanges);
+        }
+
+        private List<OccurrenceRangeInfo> NormalizeOccurrenceRanges(IEnumerable<OccurrenceRangeInfo> ranges)
+        {
+            var ordered = (ranges ?? Enumerable.Empty<OccurrenceRangeInfo>())
+                .Where(range => range != null && range.Start > 0)
+                .Select(range => new OccurrenceRangeInfo
+                {
+                    Start = range.Start,
+                    End = Math.Max(range.Start, range.End),
+                    IsOpenEnded = range.IsOpenEnded
+                })
+                .OrderBy(range => range.Start)
+                .ThenBy(range => range.IsOpenEnded ? int.MaxValue : range.End)
+                .ToList();
+
+            if (ordered.Count == 0)
+                return new List<OccurrenceRangeInfo>();
+
+            var merged = new List<OccurrenceRangeInfo> { ordered[0] };
+            foreach (var range in ordered.Skip(1))
+            {
+                var current = merged[merged.Count - 1];
+                int currentEnd = current.IsOpenEnded ? int.MaxValue : Math.Max(current.Start, current.End);
+                bool overlapsOrTouches = current.IsOpenEnded || range.Start <= currentEnd || range.Start == currentEnd + 1;
+
+                if (overlapsOrTouches)
+                {
+                    current.End = Math.Max(current.End, range.End);
+                    current.IsOpenEnded = current.IsOpenEnded || range.IsOpenEnded;
+                    if (current.IsOpenEnded)
+                        current.End = Math.Max(current.End, range.Start);
+                    continue;
+                }
+
+                merged.Add(range);
+            }
+
+            return merged;
+        }
+
+        private List<int> ExpandOccurrenceIndices(IEnumerable<OccurrenceRangeInfo> ranges)
+        {
+            var result = new List<int>();
+            foreach (var range in ranges ?? Enumerable.Empty<OccurrenceRangeInfo>())
+            {
+                if (range == null || range.Start <= 0)
+                    continue;
+
+                if (range.IsOpenEnded)
+                {
+                    result.Add(range.Start);
+                    continue;
+                }
+
+                int end = Math.Max(range.Start, range.End);
+                for (int value = range.Start; value <= end; value++)
+                    result.Add(value);
+            }
+
+            return result.Distinct().OrderBy(value => value).ToList();
+        }
+
+        private bool TryBuildRepeatedEventFastForwardPlan(
+            BinaryReader br,
+            int occurrence,
+            RepeatedEventStateInfo currentStateInfo,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            PathVariantInfo rawLeaf,
+            out RepeatedEventFastForwardPlan plan)
+        {
+            plan = null;
+            if (occurrence <= 0 ||
+                br == null ||
+                currentStateInfo == null ||
+                carryOverState == null ||
+                nextConstraints == null ||
+                rawLeaf == null)
+            {
+                return false;
+            }
+
+            var currentState = currentStateInfo.Memory ?? new Dictionary<ushort, byte>();
+            var changedAddresses = carryOverState.Keys
+                .Where(addr =>
+                    TryGetRepeatedEventStateValue(br, currentState, addr, out byte previousValue) &&
+                    previousValue != carryOverState[addr])
+                .ToList();
+
+            // Консервативно ускоряем только сценарии с одним монотонным persistent-байтом.
+            if (changedAddresses.Count != 1)
+                return false;
+
+            ushort address = changedAddresses[0];
+            if (!(rawLeaf.MemoryReadBeforeWriteAddresses?.Contains(address) ?? false) &&
+                !nextConstraints.ContainsKey(address))
+            {
+                return false;
+            }
+
+            if (!TryGetRepeatedEventStateValue(br, currentState, address, out byte currentValueByte))
+                return false;
+
+            int currentValue = currentValueByte;
+            int nextValue = carryOverState[address];
+            int delta = nextValue - currentValue;
+            if (delta == 0 || Math.Abs(delta) > 4)
+                return false;
+
+            if ((delta > 0 && nextValue <= currentValue) ||
+                (delta < 0 && nextValue >= currentValue))
+            {
+                return false;
+            }
+
+            StateValueConstraintInfo constraintInfo = null;
+            rawLeaf.StateValueConstraints?.TryGetValue(address, out constraintInfo);
+
+            if ((constraintInfo == null || constraintInfo.IsEmpty) &&
+                !nextConstraints.TryGetValue(address, out constraintInfo))
+            {
+                constraintInfo = null;
+            }
+
+            if (constraintInfo == null || constraintInfo.IsEmpty)
+                return false;
+
+            int nextOccurrence = occurrence + 1;
+            if (nextOccurrence > MaxRepeatedEventOccurrences)
+                return false;
+
+            if (!TryBuildRepeatedEventPlanFromConstraint(
+                    nextOccurrence,
+                    carryOverState,
+                    address,
+                    delta,
+                    constraintInfo,
+                    out plan))
+            {
+                return false;
+            }
+
+            if (plan.CoverageEndOccurrence < nextOccurrence &&
+                !plan.IsOpenEnded &&
+                !plan.NextInterestingOccurrence.HasValue)
+            {
+                return false;
+            }
+
+            plan.ScheduledConstraints = CloneStateValueConstraints(nextConstraints);
+            return true;
+        }
+
+        private bool TryBuildRepeatedEventPlanFromConstraint(
+            int occurrence,
+            Dictionary<ushort, byte> stateAtOccurrenceStart,
+            ushort address,
+            int delta,
+            StateValueConstraintInfo constraintInfo,
+            out RepeatedEventFastForwardPlan plan)
+        {
+            plan = null;
+            if (occurrence <= 0 ||
+                stateAtOccurrenceStart == null ||
+                delta == 0 ||
+                constraintInfo == null ||
+                constraintInfo.IsEmpty ||
+                !stateAtOccurrenceStart.TryGetValue(address, out byte currentValueByte))
+            {
+                return false;
+            }
+
+            int currentValue = currentValueByte;
+            int nextValue = currentValue + delta;
+            if (nextValue < 0 || nextValue > 0xFF)
+                return false;
+
+            if (!AllowsStateValue(constraintInfo, nextValue))
+                return false;
+
+            int contiguousEndOccurrence = occurrence;
+            int contiguousEndValue = nextValue;
+            int probeValue = nextValue;
+            int probeOccurrence = occurrence;
+
+            while (true)
+            {
+                int nextProbeValue = probeValue + delta;
+                if (nextProbeValue < 0 || nextProbeValue > 0xFF)
+                    break;
+
+                int nextProbeOccurrence = probeOccurrence + 1;
+                if (!AllowsStateValue(constraintInfo, nextProbeValue))
+                    break;
+
+                probeValue = nextProbeValue;
+                probeOccurrence = nextProbeOccurrence;
+                contiguousEndOccurrence = probeOccurrence;
+                contiguousEndValue = probeValue;
+            }
+
+            int immediateNextValue = contiguousEndValue + delta;
+            int immediateNextOccurrence = contiguousEndOccurrence + 1;
+
+            int coverageEndOccurrence = Math.Min(MaxRepeatedEventOccurrences, contiguousEndOccurrence);
+            bool isOpenEnded = contiguousEndOccurrence > MaxRepeatedEventOccurrences;
+
+            plan = new RepeatedEventFastForwardPlan
+            {
+                CoverageEndOccurrence = Math.Max(occurrence, coverageEndOccurrence),
+                IsOpenEnded = isOpenEnded
+            };
+
+            if (isOpenEnded)
+                return true;
+
+            if (immediateNextValue < 0 || immediateNextValue > 0xFF)
+                return true;
+
+            plan.NextInterestingOccurrence = immediateNextOccurrence;
+
+            int scheduledValue = currentValue + delta * Math.Max(0, immediateNextOccurrence - occurrence);
+            if (scheduledValue < 0 || scheduledValue > 0xFF)
+                return false;
+
+            plan.ScheduledState = new Dictionary<ushort, byte>(stateAtOccurrenceStart)
+            {
+                [address] = (byte)scheduledValue
+            };
+
+            return true;
+        }
+
+        private bool AllowsStateValue(StateValueConstraintInfo constraintInfo, int value)
+        {
+            if (constraintInfo == null || constraintInfo.IsEmpty || value < 0 || value > 0xFF)
+                return false;
+
+            byte byteValue = (byte)value;
+
+            bool hasBroadConstraint =
+                (constraintInfo.LowerInclusiveValues?.Count ?? 0) > 0 ||
+                (constraintInfo.UpperInclusiveValues?.Count ?? 0) > 0;
+
+            bool broadMatch = true;
+            if (hasBroadConstraint)
+            {
+                if ((constraintInfo.LowerInclusiveValues?.Count ?? 0) > 0)
+                    broadMatch &= value >= constraintInfo.LowerInclusiveValues.Max();
+
+                if ((constraintInfo.UpperInclusiveValues?.Count ?? 0) > 0)
+                    broadMatch &= value <= constraintInfo.UpperInclusiveValues.Min();
+
+                if ((constraintInfo.ExcludedValues?.Count ?? 0) > 0)
+                    broadMatch &= !constraintInfo.ExcludedValues.Contains(byteValue);
+            }
+
+            bool exactMatch =
+                (constraintInfo.ExactValues?.Count ?? 0) > 0 &&
+                constraintInfo.ExactValues.Contains(byteValue);
+
+            if (hasBroadConstraint)
+                return broadMatch || exactMatch;
+
+            if (exactMatch)
+                return true;
+
+            if ((constraintInfo.ExcludedValues?.Count ?? 0) > 0)
+                return !constraintInfo.ExcludedValues.Contains(byteValue);
+
+            return false;
+        }
+
+        private bool TryGetRepeatedEventStateValue(
+            BinaryReader br,
+            Dictionary<ushort, byte> currentState,
+            ushort address,
+            out byte value)
+        {
+            value = 0;
+            if (currentState != null && currentState.TryGetValue(address, out value))
+                return true;
+
+            return TryReadOverlayByte(br, address, out value);
+        }
+
+        private HashSet<ushort> BuildRepeatedEventRelevantAddresses(PathVariantInfo rawLeafVariant)
+        {
+            if (rawLeafVariant == null)
+                return new HashSet<ushort>();
+
+            return BuildRepeatedEventRelevantAddresses(new[] { rawLeafVariant });
+        }
+
+        private HashSet<ushort> BuildRepeatedEventRelevantAddresses(IEnumerable<PathVariantInfo> rawLeafVariants)
+        {
+            var relevantAddresses = new HashSet<ushort>();
+            foreach (var rawLeaf in rawLeafVariants ?? Enumerable.Empty<PathVariantInfo>())
+            {
+                var firstAccessKinds = rawLeaf.PersistentMemoryFirstAccessKinds;
+                if (firstAccessKinds != null && firstAccessKinds.Count > 0)
+                {
+                    relevantAddresses.UnionWith(firstAccessKinds
+                        .Where(kvp => kvp.Value == PersistentMemoryFirstAccessKind.Read)
+                        .Select(kvp => kvp.Key));
+                    continue;
+                }
+
+                relevantAddresses.UnionWith(rawLeaf.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+            }
+
+            return relevantAddresses;
+        }
+
+        private Dictionary<ushort, StateValueConstraintInfo> FilterStateValueConstraintsForRepeatedEvent(
+            Dictionary<ushort, StateValueConstraintInfo> constraints,
+            HashSet<ushort> relevantAddresses)
+        {
+            if (constraints == null || constraints.Count == 0)
+                return new Dictionary<ushort, StateValueConstraintInfo>();
+
+            if (relevantAddresses == null || relevantAddresses.Count == 0)
+                return new Dictionary<ushort, StateValueConstraintInfo>();
+
+            return constraints
+                .Where(kvp =>
+                    relevantAddresses.Contains(kvp.Key) &&
+                    kvp.Value != null &&
+                    !kvp.Value.IsEmpty)
+                .ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => kvp.Value.Clone());
         }
 
         private Dictionary<ushort, byte> BuildCarryOverState(
             BinaryReader br,
             Dictionary<ushort, byte> currentState,
-            PathVariantInfo leafVariant)
+            PathVariantInfo leafVariant,
+            HashSet<ushort> relevantAddresses)
         {
             var result = new Dictionary<ushort, byte>();
             if (leafVariant == null)
                 return result;
 
-            var addressesToCarry = new HashSet<ushort>((currentState ?? new Dictionary<ushort, byte>()).Keys);
-            addressesToCarry.UnionWith(leafVariant.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+            var addressesToCarry = new HashSet<ushort>(relevantAddresses ?? Enumerable.Empty<ushort>());
 
             foreach (var addr in addressesToCarry.OrderBy(value => value))
             {
@@ -692,27 +1473,75 @@ namespace MMMapEditor
                         continue;
 
                     result[addr] = value;
+                    continue;
                 }
+
+                if (currentState != null && currentState.TryGetValue(addr, out byte currentValue))
+                    result[addr] = currentValue;
             }
 
             return result;
+        }
+
+        private Dictionary<ushort, byte> BuildStateWithoutAddress(
+            Dictionary<ushort, byte> state,
+            ushort excludedAddress)
+        {
+            return (state ?? new Dictionary<ushort, byte>())
+                .Where(kvp => kvp.Key != excludedAddress)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        }
+
+        private bool AreStatesEqual(
+            Dictionary<ushort, byte> left,
+            Dictionary<ushort, byte> right)
+        {
+            left ??= new Dictionary<ushort, byte>();
+            right ??= new Dictionary<ushort, byte>();
+
+            if (left.Count != right.Count)
+                return false;
+
+            foreach (var kvp in left)
+            {
+                if (!right.TryGetValue(kvp.Key, out byte otherValue) || otherValue != kvp.Value)
+                    return false;
+            }
+
+            return true;
         }
 
         private string BuildMemoryStateKey(
             Dictionary<ushort, byte> state,
             Dictionary<ushort, StateValueConstraintInfo> stateValueConstraints = null)
         {
-            if (state == null || state.Count == 0)
+            var stateAddresses = state?.Keys ?? Enumerable.Empty<ushort>();
+            var constraintAddresses = (stateValueConstraints ?? new Dictionary<ushort, StateValueConstraintInfo>())
+                .Where(kvp => kvp.Value != null && !kvp.Value.IsEmpty)
+                .Select(kvp => kvp.Key);
+
+            var allAddresses = stateAddresses
+                .Concat(constraintAddresses)
+                .Distinct()
+                .OrderBy(address => address)
+                .ToList();
+
+            if (allAddresses.Count == 0)
                 return "<EMPTY>";
 
             return string.Join(";",
-                state.OrderBy(kvp => kvp.Key)
-                    .Select(kvp =>
+                allAddresses.Select(address =>
                     {
+                        byte value = 0;
                         StateValueConstraintInfo constraintInfo = null;
-                        stateValueConstraints?.TryGetValue(kvp.Key, out constraintInfo);
-                        string canonicalValue = BuildCanonicalStateValueToken(kvp.Value, constraintInfo);
-                        return $"{kvp.Key:X4}={canonicalValue}";
+                        state?.TryGetValue(address, out value);
+                        stateValueConstraints?.TryGetValue(address, out constraintInfo);
+
+                        string canonicalValue = state != null && state.ContainsKey(address)
+                            ? BuildCanonicalStateValueToken(value, constraintInfo)
+                            : BuildConstraintOnlyToken(constraintInfo);
+
+                        return $"{address:X4}={canonicalValue}";
                     }));
         }
 
@@ -760,24 +1589,49 @@ namespace MMMapEditor
             if (constraintInfo.LowerInclusiveValues != null && constraintInfo.LowerInclusiveValues.Count > 0)
             {
                 byte lowerTailStart = constraintInfo.LowerInclusiveValues.Max();
-                if (value >= lowerTailStart)
+                bool excluded = constraintInfo.ExcludedValues != null && constraintInfo.ExcludedValues.Contains(value);
+                if (value >= lowerTailStart && !excluded)
                     return $"{lowerTailStart:X2}-FF";
             }
 
             if (constraintInfo.UpperInclusiveValues != null && constraintInfo.UpperInclusiveValues.Count > 0)
             {
                 byte upperTailEnd = constraintInfo.UpperInclusiveValues.Min();
-                if (value <= upperTailEnd)
+                bool excluded = constraintInfo.ExcludedValues != null && constraintInfo.ExcludedValues.Contains(value);
+                if (value <= upperTailEnd && !excluded)
                     return $"00-{upperTailEnd:X2}";
             }
 
             return value.ToString("X2");
         }
 
+        private string BuildConstraintOnlyToken(StateValueConstraintInfo constraintInfo)
+        {
+            if (constraintInfo == null || constraintInfo.IsEmpty)
+                return "??";
+
+            var parts = new List<string>();
+
+            if (constraintInfo.ExactValues != null && constraintInfo.ExactValues.Count > 0)
+                parts.Add("EQ:" + string.Join(",", constraintInfo.ExactValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+
+            if (constraintInfo.LowerInclusiveValues != null && constraintInfo.LowerInclusiveValues.Count > 0)
+                parts.Add("GE:" + string.Join(",", constraintInfo.LowerInclusiveValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+
+            if (constraintInfo.UpperInclusiveValues != null && constraintInfo.UpperInclusiveValues.Count > 0)
+                parts.Add("LE:" + string.Join(",", constraintInfo.UpperInclusiveValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+
+            if (constraintInfo.ExcludedValues != null && constraintInfo.ExcludedValues.Count > 0)
+                parts.Add("NE:" + string.Join(",", constraintInfo.ExcludedValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+
+            return parts.Count == 0 ? "??" : string.Join("|", parts);
+        }
+
         private void ApplyOccurrenceDescriptions(
             IEnumerable<PathVariantInfo> variants,
             int maxAnalyzedOccurrence,
-            bool analysisTruncated)
+            bool analysisTruncated,
+            bool usedRepeatedEventAcceleration)
         {
             var variantList = (variants ?? Enumerable.Empty<PathVariantInfo>())
                 .Where(variant => variant != null)
@@ -795,23 +1649,37 @@ namespace MMMapEditor
 
             foreach (var variant in variantList)
             {
-                var occurrences = (variant?.OccurrenceIndices ?? new List<int>())
-                    .Where(index => index > 0)
-                    .Distinct()
-                    .OrderBy(index => index)
-                    .ToList();
-
                 if (variant == null)
                     continue;
 
-                variant.OccurrenceIndices = occurrences;
+                NormalizeOccurrenceCoverage(variant);
                 variant.OccurrenceDescription = suppressOccurrenceDescriptionFor.Contains(variant)
                     ? null
+                    : usedRepeatedEventAcceleration &&
+                      !variant.HasRepeatedEventOccurrenceSensitivity &&
+                      HasRepresentativeOccurrenceGaps(variant.OccurrenceRanges, maxAnalyzedOccurrence)
+                        ? null
                     : BuildOccurrenceDescription(
-                        occurrences,
+                        variant.OccurrenceRanges,
                         maxAnalyzedOccurrence,
                         analysisTruncated);
             }
+        }
+
+        private bool HasRepresentativeOccurrenceGaps(
+            List<OccurrenceRangeInfo> occurrenceRanges,
+            int maxAnalyzedOccurrence)
+        {
+            var ranges = NormalizeOccurrenceRanges(occurrenceRanges);
+            if (ranges.Count == 0 || maxAnalyzedOccurrence <= 1)
+                return false;
+
+            if (ranges.Count > 1)
+                return true;
+
+            var range = ranges[0];
+            int end = Math.Max(range.Start, range.End);
+            return range.Start > 1 || (!range.IsOpenEnded && end < maxAnalyzedOccurrence);
         }
 
         private bool IsPureEmptyNoOpVariantForOccurrenceSuppression(PathVariantInfo variant)
@@ -891,38 +1759,26 @@ namespace MMMapEditor
         }
 
         private string BuildOccurrenceDescription(
-            List<int> occurrences,
+            List<OccurrenceRangeInfo> occurrenceRanges,
             int maxAnalyzedOccurrence,
             bool analysisTruncated)
         {
-            if (occurrences == null || occurrences.Count == 0)
+            var ranges = NormalizeOccurrenceRanges(occurrenceRanges);
+            if (ranges.Count == 0)
                 return null;
 
             if (maxAnalyzedOccurrence <= 1)
                 return null;
 
             bool coversAllAnalyzedOccurrences =
-                occurrences.Count == maxAnalyzedOccurrence &&
-                occurrences.First() == 1 &&
-                occurrences.Last() == maxAnalyzedOccurrence &&
-                occurrences.Zip(Enumerable.Range(1, maxAnalyzedOccurrence), (left, right) => left == right).All(match => match);
+                ranges.Count == 1 &&
+                ranges[0].Start == 1 &&
+                (ranges[0].IsOpenEnded || Math.Max(ranges[0].Start, ranges[0].End) >= maxAnalyzedOccurrence);
 
             if (coversAllAnalyzedOccurrences)
                 return null;
 
-            if (occurrences.Count == 1)
-                return $"только при {FormatOccurrenceOrdinal(occurrences[0])} наступлении";
-
-            bool isContiguous = occurrences.Zip(occurrences.Skip(1), (left, right) => right == left + 1).All(match => match);
-            if (isContiguous)
-            {
-                if (analysisTruncated && occurrences.Last() == maxAnalyzedOccurrence)
-                    return $"только при {FormatOccurrenceOrdinal(occurrences.First())} и последующих наступлениях";
-
-                return $"только при {FormatOccurrenceOrdinal(occurrences.First())}..{FormatOccurrenceOrdinal(occurrences.Last())} наступлениях";
-            }
-
-            return $"только при {FormatOccurrenceList(occurrences)} наступлениях";
+            return $"только при {FormatOccurrenceRanges(ranges)} наступлениях";
         }
 
         private string FormatOccurrenceOrdinal(int occurrence)
@@ -930,12 +1786,22 @@ namespace MMMapEditor
             return $"{occurrence}-м";
         }
 
-        private string FormatOccurrenceList(List<int> occurrences)
+        private string FormatOccurrenceRanges(List<OccurrenceRangeInfo> ranges)
         {
-            var parts = occurrences?
-                .Where(index => index > 0)
-                .Select(FormatOccurrenceOrdinal)
-                .ToList() ?? new List<string>();
+            var parts = (ranges ?? Enumerable.Empty<OccurrenceRangeInfo>())
+                .Where(range => range != null && range.Start > 0)
+                .Select(range =>
+                {
+                    int end = Math.Max(range.Start, range.End);
+                    if (range.IsOpenEnded)
+                        return $"{FormatOccurrenceOrdinal(range.Start)} и последующих";
+
+                    if (range.Start == end)
+                        return FormatOccurrenceOrdinal(range.Start);
+
+                    return $"{FormatOccurrenceOrdinal(range.Start)}..{FormatOccurrenceOrdinal(end)}";
+                })
+                .ToList();
 
             if (parts.Count == 0)
                 return string.Empty;
@@ -1349,7 +2215,10 @@ namespace MMMapEditor
                     : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
-                    : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses)
+                    : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
+                PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
+                    ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
+                    : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds)
             };
         }
 

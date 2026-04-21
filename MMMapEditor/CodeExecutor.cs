@@ -306,6 +306,9 @@ namespace MMMapEditor
                 return;
 
             result.MemoryReadAddresses.Add(memAddr);
+            if (!result.PersistentMemoryFirstAccessKinds.ContainsKey(memAddr))
+                result.PersistentMemoryFirstAccessKinds[memAddr] = PersistentMemoryFirstAccessKind.Read;
+
             if (contributesToPersistentState && !result.MemoryWrittenAddresses.Contains(memAddr))
                 result.MemoryReadBeforeWriteAddresses.Add(memAddr);
         }
@@ -316,6 +319,8 @@ namespace MMMapEditor
                 return;
 
             result.MemoryWrittenAddresses.Add(memAddr);
+            if (!result.PersistentMemoryFirstAccessKinds.ContainsKey(memAddr))
+                result.PersistentMemoryFirstAccessKinds[memAddr] = PersistentMemoryFirstAccessKind.Write;
         }
 
         private void PropagateExternalCallInfluenceOnRegisterCopy(
@@ -2656,11 +2661,10 @@ namespace MMMapEditor
         {
             if (condJumpTarget < fileLength && condJumpTarget != 0)
             {
-                TrackStateValueConstraintForCurrentFlags(registerTracker, insn.Mnemonic, result);
-
                 bool? branchTaken = EvaluateConditionalJump(insn.Mnemonic, registerTracker);
                 if (branchTaken.HasValue)
                 {
+                    TrackStateValueConstraintForCurrentFlags(registerTracker, insn.Mnemonic, branchTaken.Value, result);
                     uint resolvedTarget = branchTaken.Value ? condJumpTarget : nextAddress;
 
                     if (condJumpTarget < currentAddress && branchTaken.Value)
@@ -2777,6 +2781,7 @@ namespace MMMapEditor
                     EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                     EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                     BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                     BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, (uint)insn.Address)
                 };
@@ -2809,6 +2814,7 @@ namespace MMMapEditor
                     EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                     EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                     BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                     BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, (uint)insn.Address)
                 };
@@ -2843,19 +2849,40 @@ namespace MMMapEditor
         private void TrackStateValueConstraintForCurrentFlags(
             RegisterTracker registerTracker,
             string mnemonic,
+            bool branchTaken,
             PathAnalysisResult result)
         {
+            if (result == null)
+                return;
+
+            var constraints = BuildStateValueConstraintsForBranch(registerTracker, mnemonic, branchTaken);
+            if (constraints.Count == 0)
+                return;
+
+            foreach (var kvp in constraints)
+            {
+                if (!result.StateValueConstraints.TryGetValue(kvp.Key, out var info))
+                {
+                    info = new StateValueConstraintInfo();
+                    result.StateValueConstraints[kvp.Key] = info;
+                }
+
+                info.MergeFrom(kvp.Value);
+            }
+        }
+
+        private Dictionary<ushort, StateValueConstraintInfo> BuildStateValueConstraintsForBranch(
+            RegisterTracker registerTracker,
+            string mnemonic,
+            bool branchTaken)
+        {
+            var result = new Dictionary<ushort, StateValueConstraintInfo>();
             if (registerTracker == null ||
-                result == null ||
                 registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
                 !registerTracker.LastCompareImmediate.HasValue)
             {
-                return;
+                return result;
             }
-
-            StateValueBoundaryKind? boundaryKind = GetStateValueBoundaryKindForJump(mnemonic);
-            if (!boundaryKind.HasValue)
-                return;
 
             ushort? sourceAddress = null;
             if (!string.IsNullOrWhiteSpace(registerTracker.LastFlagsRegister))
@@ -2869,28 +2896,63 @@ namespace MMMapEditor
                 sourceAddress.Value == 0x3C39 ||
                 sourceAddress.Value == 0x3C3A)
             {
-                return;
+                return result;
             }
 
-            if (!result.StateValueConstraints.TryGetValue(sourceAddress.Value, out var info))
-            {
-                info = new StateValueConstraintInfo();
-                result.StateValueConstraints[sourceAddress.Value] = info;
-            }
+            var boundary = GetStateValueBoundaryForJump(mnemonic, branchTaken, registerTracker.LastCompareImmediate.Value);
+            if (!boundary.HasValue)
+                return result;
 
-            info.Add(boundaryKind.Value, registerTracker.LastCompareImmediate.Value);
+            var info = new StateValueConstraintInfo();
+            info.Add(boundary.Value.kind, boundary.Value.value);
+            result[sourceAddress.Value] = info;
+            return result;
         }
 
-        private StateValueBoundaryKind? GetStateValueBoundaryKindForJump(string mnemonic)
+        private (StateValueBoundaryKind kind, byte value)? GetStateValueBoundaryForJump(
+            string mnemonic,
+            bool branchTaken,
+            byte compareValue)
         {
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
             return jump switch
             {
-                "JE" or "JZ" or "JNE" or "JNZ" => StateValueBoundaryKind.Exact,
-                "JB" or "JC" or "JNAE" or "JAE" or "JNB" or "JNC" => StateValueBoundaryKind.LowerInclusive,
-                "JBE" or "JNA" or "JA" or "JNBE" => StateValueBoundaryKind.UpperInclusive,
-                _ => (StateValueBoundaryKind?)null
+                "JE" or "JZ" => branchTaken
+                    ? (StateValueBoundaryKind.Exact, compareValue)
+                    : (StateValueBoundaryKind.Excluded, compareValue),
+                "JNE" or "JNZ" => branchTaken
+                    ? (StateValueBoundaryKind.Excluded, compareValue)
+                    : (StateValueBoundaryKind.Exact, compareValue),
+                "JB" or "JC" or "JNAE" => branchTaken
+                    ? BuildUpperInclusiveBoundary(compareValue - 1)
+                    : (StateValueBoundaryKind.LowerInclusive, compareValue),
+                "JAE" or "JNB" or "JNC" => branchTaken
+                    ? (StateValueBoundaryKind.LowerInclusive, compareValue)
+                    : BuildUpperInclusiveBoundary(compareValue - 1),
+                "JBE" or "JNA" => branchTaken
+                    ? (StateValueBoundaryKind.UpperInclusive, compareValue)
+                    : BuildLowerInclusiveBoundary(compareValue + 1),
+                "JA" or "JNBE" => branchTaken
+                    ? BuildLowerInclusiveBoundary(compareValue + 1)
+                    : (StateValueBoundaryKind.UpperInclusive, compareValue),
+                _ => ((StateValueBoundaryKind kind, byte value)?)null
             };
+        }
+
+        private (StateValueBoundaryKind kind, byte value)? BuildUpperInclusiveBoundary(int value)
+        {
+            if (value < 0 || value > 0xFF)
+                return null;
+
+            return (StateValueBoundaryKind.UpperInclusive, (byte)value);
+        }
+
+        private (StateValueBoundaryKind kind, byte value)? BuildLowerInclusiveBoundary(int value)
+        {
+            if (value < 0 || value > 0xFF)
+                return null;
+
+            return (StateValueBoundaryKind.LowerInclusive, (byte)value);
         }
 
 

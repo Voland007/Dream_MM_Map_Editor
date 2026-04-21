@@ -79,6 +79,7 @@ namespace MMMapEditor
                     path.EmulatedPartyPointerBytes == null ? null : path.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     persistentStateAddresses == null ? null : new HashSet<ushort>(persistentStateAddresses));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
+                MergeStateValueConstraints(effectivePathResult.StateValueConstraints, path.BranchStateValueConstraints);
 
                 // Формируем тексты для этого пути с сохранением порядка
                 if (reachableAddresses != null)
@@ -438,6 +439,11 @@ namespace MMMapEditor
                 currentState.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
             currentReadBeforeWrite.ExceptWith(inheritedState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             merged.MemoryReadBeforeWriteAddresses.UnionWith(currentReadBeforeWrite);
+            foreach (var kvp in currentState.PersistentMemoryFirstAccessKinds ?? Enumerable.Empty<KeyValuePair<ushort, PersistentMemoryFirstAccessKind>>())
+            {
+                if (!merged.PersistentMemoryFirstAccessKinds.ContainsKey(kvp.Key))
+                    merged.PersistentMemoryFirstAccessKinds[kvp.Key] = kvp.Value;
+            }
 
             MergeStateValueConstraints(merged.StateValueConstraints, currentState.StateValueConstraints);
 
@@ -674,6 +680,9 @@ namespace MMMapEditor
             clone.MemoryReadAddresses = new HashSet<ushort>(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             clone.MemoryWrittenAddresses = new HashSet<ushort>(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             clone.MemoryReadBeforeWriteAddresses = new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+            clone.PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
+                ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
+                : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds);
             clone.StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints);
             clone.ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                 ? new Dictionary<ushort, byte>()
@@ -719,6 +728,7 @@ namespace MMMapEditor
                     EmulatedPartyPointerBytes = alt.EmulatedPartyPointerBytes == null
                         ? new Dictionary<ushort, PartyPointerByteReference>()
                         : alt.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    BranchStateValueConstraints = CloneStateValueConstraints(alt.BranchStateValueConstraints),
                     BranchPartyCondition = alt.BranchPartyCondition,
                     BranchPartyPredicate = alt.BranchPartyPredicate?.Clone()
                 });
@@ -767,6 +777,9 @@ namespace MMMapEditor
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
+                PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
+                    ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
+                    : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
@@ -1014,6 +1027,28 @@ namespace MMMapEditor
             }
 
             return finalVariants;
+        }
+
+        public PathVariantInfo FindCanonicalVariantForLeaf(
+            PathVariantInfo leafVariant,
+            IEnumerable<PathVariantInfo> canonicalVariants)
+        {
+            if (leafVariant == null || canonicalVariants == null)
+                return null;
+
+            string exactKey = BuildVariantIdentityKey(leafVariant);
+            var canonicalList = canonicalVariants
+                .Where(variant => variant != null)
+                .ToList();
+
+            var exactMatch = canonicalList.FirstOrDefault(variant =>
+                string.Equals(BuildVariantIdentityKey(variant), exactKey, StringComparison.Ordinal));
+            if (exactMatch != null)
+                return exactMatch;
+
+            string semanticKey = BuildSemanticVariantKey(leafVariant);
+            return canonicalList.FirstOrDefault(variant =>
+                string.Equals(BuildSemanticVariantKey(variant), semanticKey, StringComparison.Ordinal));
         }
 
         private IEnumerable<PathVariantInfo> CollapseRedundantPartyLoopTextVariants(IEnumerable<PathVariantInfo> variants)
@@ -1724,12 +1759,20 @@ namespace MMMapEditor
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
+                PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
+                    ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
+                    : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
                     .Distinct()
                     .OrderBy(index => index)
                     .ToList() ?? new List<int>(),
+                OccurrenceRanges = source.OccurrenceRanges?
+                    .Where(range => range != null && range.Start > 0)
+                    .Select(range => range.Clone())
+                    .ToList() ?? new List<OccurrenceRangeInfo>(),
                 OccurrenceDescription = source.OccurrenceDescription,
                 ProbabilityNumerator = source.ProbabilityNumerator,
                 ProbabilityDenominator = source.ProbabilityDenominator,
@@ -1752,9 +1795,51 @@ namespace MMMapEditor
                 .ToList();
 
             target.OccurrenceIndices = merged;
+            target.OccurrenceRanges = MergeOccurrenceRanges(
+                target.OccurrenceRanges,
+                source.OccurrenceRanges);
+            target.HasRepeatedEventOccurrenceSensitivity |= source.HasRepeatedEventOccurrenceSensitivity;
 
             if (string.IsNullOrWhiteSpace(target.OccurrenceDescription))
                 target.OccurrenceDescription = source.OccurrenceDescription;
+        }
+
+        private List<OccurrenceRangeInfo> MergeOccurrenceRanges(
+            IEnumerable<OccurrenceRangeInfo> left,
+            IEnumerable<OccurrenceRangeInfo> right)
+        {
+            var ranges = (left ?? Enumerable.Empty<OccurrenceRangeInfo>())
+                .Concat(right ?? Enumerable.Empty<OccurrenceRangeInfo>())
+                .Where(range => range != null && range.Start > 0)
+                .Select(range => range.Clone())
+                .OrderBy(range => range.Start)
+                .ThenBy(range => range.IsOpenEnded ? int.MaxValue : range.End)
+                .ToList();
+
+            if (ranges.Count == 0)
+                return new List<OccurrenceRangeInfo>();
+
+            var merged = new List<OccurrenceRangeInfo> { ranges[0] };
+            foreach (var range in ranges.Skip(1))
+            {
+                var current = merged[merged.Count - 1];
+                int currentEnd = current.IsOpenEnded ? int.MaxValue : Math.Max(current.Start, current.End);
+                int rangeEnd = range.IsOpenEnded ? int.MaxValue : Math.Max(range.Start, range.End);
+                bool overlapsOrTouches = current.IsOpenEnded || range.Start <= currentEnd || range.Start == currentEnd + 1;
+
+                if (overlapsOrTouches)
+                {
+                    current.End = Math.Max(current.End, range.End);
+                    current.IsOpenEnded = current.IsOpenEnded || range.IsOpenEnded;
+                    if (current.IsOpenEnded)
+                        current.End = Math.Max(current.End, range.Start);
+                    continue;
+                }
+
+                merged.Add(range);
+            }
+
+            return merged;
         }
 
         private Dictionary<ushort, StateValueConstraintInfo> CloneStateValueConstraints(

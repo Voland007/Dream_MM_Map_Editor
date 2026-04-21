@@ -64,7 +64,8 @@ namespace MMMapEditor
     {
         Exact,
         LowerInclusive,
-        UpperInclusive
+        UpperInclusive,
+        Excluded
     }
 
     public class StateValueConstraintInfo
@@ -72,11 +73,13 @@ namespace MMMapEditor
         public HashSet<byte> ExactValues { get; set; } = new HashSet<byte>();
         public HashSet<byte> LowerInclusiveValues { get; set; } = new HashSet<byte>();
         public HashSet<byte> UpperInclusiveValues { get; set; } = new HashSet<byte>();
+        public HashSet<byte> ExcludedValues { get; set; } = new HashSet<byte>();
 
         public bool IsEmpty =>
             ExactValues.Count == 0 &&
             LowerInclusiveValues.Count == 0 &&
-            UpperInclusiveValues.Count == 0;
+            UpperInclusiveValues.Count == 0 &&
+            ExcludedValues.Count == 0;
 
         public StateValueConstraintInfo Clone()
         {
@@ -84,7 +87,8 @@ namespace MMMapEditor
             {
                 ExactValues = new HashSet<byte>(ExactValues),
                 LowerInclusiveValues = new HashSet<byte>(LowerInclusiveValues),
-                UpperInclusiveValues = new HashSet<byte>(UpperInclusiveValues)
+                UpperInclusiveValues = new HashSet<byte>(UpperInclusiveValues),
+                ExcludedValues = new HashSet<byte>(ExcludedValues)
             };
         }
 
@@ -103,6 +107,10 @@ namespace MMMapEditor
                 case StateValueBoundaryKind.UpperInclusive:
                     UpperInclusiveValues.Add(value);
                     break;
+
+                case StateValueBoundaryKind.Excluded:
+                    ExcludedValues.Add(value);
+                    break;
             }
         }
 
@@ -114,6 +122,7 @@ namespace MMMapEditor
             ExactValues.UnionWith(other.ExactValues ?? new HashSet<byte>());
             LowerInclusiveValues.UnionWith(other.LowerInclusiveValues ?? new HashSet<byte>());
             UpperInclusiveValues.UnionWith(other.UpperInclusiveValues ?? new HashSet<byte>());
+            ExcludedValues.UnionWith(other.ExcludedValues ?? new HashSet<byte>());
         }
     }
 
@@ -155,6 +164,7 @@ namespace MMMapEditor
         public Dictionary<ushort, byte> EmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
         public Dictionary<ushort, PartyPointerByteReference> EmulatedPartyPointerBytes { get; set; } = new Dictionary<ushort, PartyPointerByteReference>();
+        public Dictionary<ushort, StateValueConstraintInfo> BranchStateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         public PartyConditionKind BranchPartyCondition { get; set; } = PartyConditionKind.None;
         public PartyPredicate BranchPartyPredicate { get; set; }
     }
@@ -290,6 +300,8 @@ namespace MMMapEditor
         public HashSet<ushort> MemoryReadAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> MemoryWrittenAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> MemoryReadBeforeWriteAddresses { get; set; } = new HashSet<ushort>();
+        public Dictionary<ushort, PersistentMemoryFirstAccessKind> PersistentMemoryFirstAccessKinds { get; set; }
+            = new Dictionary<ushort, PersistentMemoryFirstAccessKind>();
         public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
@@ -342,6 +354,12 @@ namespace MMMapEditor
         public byte? LastCompareImm { get; set; }
         public ushort? LastCompareMem { get; set; }
         public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
+    }
+
+    public enum PersistentMemoryFirstAccessKind
+    {
+        Read = 0,
+        Write = 1
     }
 
 
@@ -417,6 +435,23 @@ namespace MMMapEditor
                 StartAddress = StartAddress,
                 EndAddress = EndAddress,
                 TargetMember = TargetMember?.Clone()
+            };
+        }
+    }
+
+    public class OccurrenceRangeInfo
+    {
+        public int Start { get; set; }
+        public int End { get; set; }
+        public bool IsOpenEnded { get; set; }
+
+        public OccurrenceRangeInfo Clone()
+        {
+            return new OccurrenceRangeInfo
+            {
+                Start = Start,
+                End = End,
+                IsOpenEnded = IsOpenEnded
             };
         }
     }

@@ -29,8 +29,8 @@ namespace MMMapEditor
 
         public static bool EnableGlobalLogs { get; private set; } = false;
         public static bool Enabled { get; private set; } = true;
-        public static byte? TargetX { get; private set; } = 1;
-        public static byte? TargetY { get; private set; } = 3;
+        public static byte? TargetX { get; private set; } = 4;
+        public static byte? TargetY { get; private set; } = 9;
 
 
         public static void Configure(bool enabled, byte? targetX = null, byte? targetY = null, bool enableGlobalLogs = false)
@@ -81,13 +81,19 @@ namespace MMMapEditor
             if (currentCell.HasValue)
             {
                 if (IsEnabledFor(currentCell.Value.X, currentCell.Value.Y))
+                {
                     Debug.WriteLine(message);
+                    Trace.WriteLine(message);
+                }
 
                 return;
             }
 
             if (EnableGlobalLogs)
+            {
                 Debug.WriteLine(message);
+                Trace.WriteLine(message);
+            }
         }
 
         private sealed class Scope : IDisposable
