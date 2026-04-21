@@ -107,11 +107,15 @@ namespace MMMapEditor
             if (field == PartyFieldKind.Hp && operation == PartyEffectOperation.Halve)
             {
                 if (condition == PartyConditionKind.MaleOnly)
-                    return "! HP мужчин в партии уменьшается вдвое !";
+                    return "! HP каждого мужчины в партии уменьшается вдвое !";
                 if (condition == PartyConditionKind.FemaleOnly)
                     return "HP женщин в партии уменьшается вдвое";
-                if (scope == PartyEffectScope.WholeParty || scope == PartyEffectScope.PartySubset || scope == PartyEffectScope.CurrentLoopMember)
-                    return "HP членов партии уменьшается вдвое";
+                if (scope == PartyEffectScope.WholeParty)
+                    return "! HP каждого персонажа партии уменьшается вдвое !";
+                if (scope == PartyEffectScope.PartySubset)
+                    return "HP части партии уменьшается вдвое";
+                if (scope == PartyEffectScope.CurrentLoopMember)
+                    return "HP текущего члена партии уменьшается вдвое";
                 if (scope == PartyEffectScope.RandomMember)
                     return "HP случайного члена партии уменьшается вдвое";
                 if (scope == PartyEffectScope.SelectedMember)

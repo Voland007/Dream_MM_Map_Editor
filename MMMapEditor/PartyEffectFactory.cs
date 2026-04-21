@@ -242,13 +242,13 @@ namespace MMMapEditor
         private static string BuildHpHalvedDescription(PartyConditionKind condition, LoopSemanticKind loopSemantic, PartyMemberReference member)
         {
             if (condition == PartyConditionKind.MaleOnly)
-                return "! HP мужчин в партии уменьшается вдвое !";
+                return "! HP каждого мужчины в партии уменьшается вдвое !";
 
             if (condition == PartyConditionKind.FemaleOnly)
                 return "HP женщин в партии уменьшается вдвое";
 
             if (IsLoopTarget(member, loopSemantic))
-                return "HP членов партии уменьшается вдвое";
+                return "! HP каждого персонажа партии уменьшается вдвое !";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
                 return "HP случайного члена партии уменьшается вдвое";

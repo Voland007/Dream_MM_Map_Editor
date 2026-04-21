@@ -2217,7 +2217,7 @@ namespace MMMapEditor
 
             var serviceWarningMatches = Regex.Matches(
                 noteText,
-                @"⚠Вызывается random encounter ⚠|! HP мужчин в партии уменьшается вдвое !|! У каждого персонажа партии отнимается \d+ HP !",
+                @"⚠Вызывается random encounter ⚠|! HP (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается вдвое !|! У каждого персонажа партии отнимается \d+ HP !",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in serviceWarningMatches)

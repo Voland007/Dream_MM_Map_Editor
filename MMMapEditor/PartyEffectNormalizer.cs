@@ -110,11 +110,14 @@ namespace MMMapEditor
             if (pending == null)
                 return false;
 
+            // Для 16-битного деления HP пополам достаточно шаблона
+            // SHR старшего байта + RCR младшего байта: SHR сам выставляет CF,
+            // который затем потребляет RCR. Предварительный CLC может встречаться,
+            // но не является обязательным признаком паттерна.
             return pending.SawReadHigh &&
                    pending.SawReadLow &&
                    pending.SawWriteHigh &&
                    pending.SawWriteLow &&
-                   pending.SawClc &&
                    pending.SawShrHigh &&
                    pending.SawRcrLow;
         }
