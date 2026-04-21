@@ -1948,8 +1948,57 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(syntheticText))
                 return false;
 
+            // Range-loot для gems/gold может распознаться только здесь, уже после
+            // стадии FindTextsInInstruction. Если путь заканчивается сразу после
+            // этой записи, отдельная строка контейнера иначе не успевает появиться.
+            AddImplicitContainerIntroForSyntheticLoot(
+                result,
+                instructionAddress,
+                callDepth,
+                debugMode,
+                ref textOrderCounter);
+
             AddSyntheticOutcomeText(result, syntheticText, callDepth, instructionAddress, debugMode, ref textOrderCounter);
             return true;
+        }
+
+        private void AddImplicitContainerIntroForSyntheticLoot(PathAnalysisResult result, uint instructionAddress,
+            int callDepth, bool debugMode, ref int textOrderCounter)
+        {
+            if (result == null)
+                return;
+
+            if (_emulatedMemory8.ContainsKey(0x3C79))
+                return;
+
+            if (HasContainerIntroText(result))
+                return;
+
+            string containerText = BuildImplicitContainerIntroText();
+            if (string.IsNullOrEmpty(containerText))
+                return;
+
+            AddSyntheticOutcomeText(result, containerText, callDepth, instructionAddress, debugMode, ref textOrderCounter);
+        }
+
+        private static bool HasContainerIntroText(PathAnalysisResult result)
+        {
+            if (result?.OrderedTexts == null)
+                return false;
+
+            return result.OrderedTexts.Any(textEntry =>
+                textEntry != null &&
+                !string.IsNullOrWhiteSpace(textEntry.Text) &&
+                textEntry.Text.StartsWith("На ячейке находится ", StringComparison.OrdinalIgnoreCase) &&
+                textEntry.Text.EndsWith("в котором лежит:", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string BuildImplicitContainerIntroText()
+        {
+            if (ContainerDatabase.TryGetContainerName(0x00, out string containerName))
+                return $"На ячейке находится {containerName} в котором лежит:";
+
+            return "На ячейке находится контейнер #0 в котором лежит:";
         }
 
         private static string FormatGoldRangeText(ushort rawMin, ushort rawMax)
