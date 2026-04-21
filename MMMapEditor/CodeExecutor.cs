@@ -213,7 +213,7 @@ namespace MMMapEditor
                         _instructionAnalyzer.FindMonsterStatChanges(insn, br, registerTracker, depth, result);
                         _instructionAnalyzer.FindMonsterBattleInfo(insn, br, registerTracker, depth, result, targetX, targetY, TryGetEmulatedMemory8Value);
                         if (TrackRegisterOperations(insn, br, registerTracker, depth, debugMode, result, targetX, targetY,
-                            currentCallDepth, currentPendingReturnAddresses))
+                            currentCallDepth, currentPendingReturnAddresses, ref textOrderCounter))
                         {
                             return result;
                         }
@@ -1891,6 +1891,81 @@ namespace MMMapEditor
             }
         }
 
+        private void AddSyntheticOutcomeText(PathAnalysisResult result, string text, int callDepth,
+            uint instructionAddress, bool debugMode, ref int textOrderCounter)
+        {
+            if (result == null || string.IsNullOrEmpty(text))
+                return;
+
+            bool isContextual = callDepth > 0;
+            bool alreadyPresent = result.OrderedTexts.Any(t => t.Text == text && t.IsContextual == isContextual);
+
+            AddOrderedText(result, text, isContextual, instructionAddress, ref textOrderCounter);
+            result.HasSignificantCode = true;
+
+            if (!isContextual && result.FirstLocalTextAddress == uint.MaxValue)
+            {
+                result.FirstLocalTextAddress = instructionAddress;
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
+            }
+
+            if (debugMode && !alreadyPresent)
+            {
+                string scope = isContextual ? "контекстный" : "локальный";
+                AnalysisDebug.WriteLine($"        Синтетически добавлен {scope} outcome-текст: {text}");
+            }
+        }
+
+        private bool TryAddSyntheticRangeLootText(BinaryReader br, PathAnalysisResult result, ushort memAddr,
+            ValueRange8 valueRange, byte targetX, byte targetY, uint instructionAddress, int callDepth,
+            bool debugMode, ref int textOrderCounter)
+        {
+            if (result == null || valueRange == null)
+                return false;
+
+            string syntheticText = null;
+
+            if (memAddr == 0x3C7F)
+            {
+                syntheticText = FormatRangeText(valueRange.Min, valueRange.Max, "GEMS");
+            }
+            else if (memAddr == 0x3C7D &&
+                     TryResolveTrackedByteValue(br, 0x3C7E, result, targetX, targetY, out byte highByte))
+            {
+                ushort rawMin = (ushort)(valueRange.Min | (highByte << 8));
+                ushort rawMax = (ushort)(valueRange.Max | (highByte << 8));
+                syntheticText = FormatGoldRangeText(rawMin, rawMax);
+            }
+            else if (memAddr == 0x3C7E &&
+                     TryResolveTrackedByteValue(br, 0x3C7D, result, targetX, targetY, out byte lowByte))
+            {
+                ushort rawMin = (ushort)(lowByte | (valueRange.Min << 8));
+                ushort rawMax = (ushort)(lowByte | (valueRange.Max << 8));
+                syntheticText = FormatGoldRangeText(rawMin, rawMax);
+            }
+
+            if (string.IsNullOrEmpty(syntheticText))
+                return false;
+
+            AddSyntheticOutcomeText(result, syntheticText, callDepth, instructionAddress, debugMode, ref textOrderCounter);
+            return true;
+        }
+
+        private static string FormatGoldRangeText(ushort rawMin, ushort rawMax)
+        {
+            int goldMin = rawMin >> 1;
+            int goldMax = rawMax >> 1;
+            return FormatRangeText(goldMin, goldMax, "GOLD");
+        }
+
+        private static string FormatRangeText(int minValue, int maxValue, string suffix)
+        {
+            return minValue == maxValue
+                ? $"{minValue} {suffix}"
+                : $"{minValue}-{maxValue} {suffix}";
+        }
+
         private void MergeOrderedTextsFromSubroutine(PathAnalysisResult result, PathAnalysisResult subroutineResult)
         {
             int nextOrder = result.OrderedTexts.Count == 0 ? 0 : result.OrderedTexts.Max(t => t.Order) + 1;
@@ -3420,7 +3495,7 @@ namespace MMMapEditor
         private bool TrackRegisterOperations(X86Instruction insn, BinaryReader br,
             RegisterTracker registerTracker, int depth, bool debugMode,
             PathAnalysisResult result, byte targetX, byte targetY,
-            int callDepth, List<uint> pendingReturnAddresses)
+            int callDepth, List<uint> pendingReturnAddresses, ref int textOrderCounter)
         {
             byte[] instructionBytes = insn.Bytes;
             uint address = (uint)insn.Address;
@@ -3585,6 +3660,10 @@ namespace MMMapEditor
                         result.HasSignificantCode = true;
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        Обнаружен случайный телепорт по Y: X = {(result.TeleportTargetX.HasValue ? result.TeleportTargetX.Value.ToString() : result.TeleportTargetXRange != null ? $"{result.TeleportTargetXRange.Min}..{result.TeleportTargetXRange.Max}" : "?")}, диапазон Y = {alRange.Min}..{alRange.Max} (инструкция 0x{insn.Address:X4})");
+                    }
+                    else if (TryAddSyntheticRangeLootText(br, result, memAddr, alRange, targetX, targetY,
+                        address, callDepth, debugMode, ref textOrderCounter))
+                    {
                     }
                     else if (debugMode)
                     {
