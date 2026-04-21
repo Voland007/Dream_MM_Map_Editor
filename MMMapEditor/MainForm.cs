@@ -1868,7 +1868,7 @@ namespace MMMapEditor
                 string body = match.Groups[2].Value;
                 int bodyStart = match.Groups[2].Index;
 
-                var valueMatch = Regex.Match(body, @"\b(\d+\s+GEMS?|GEMS?[:\s]+\d+|\d+\s+GOLD|GOLD[:\s]+\d+)\b", RegexOptions.IgnoreCase);
+                var valueMatch = Regex.Match(body, @"\b(\d+(?:-\d+)?\s+GEMS?|GEMS?[:\s]+\d+(?:-\d+)?|\d+(?:-\d+)?\s+GOLD|GOLD[:\s]+\d+(?:-\d+)?)\b", RegexOptions.IgnoreCase);
                 if (valueMatch.Success)
                 {
                     string valueText = valueMatch.Value;
@@ -1890,10 +1890,10 @@ namespace MMMapEditor
                 }
             }
 
-            var singleLootValueMatches = Regex.Matches(noteText, @"^\s*(предмет\b.*|ITEM[: ].*|\d+\s+GEMS?$|GEMS?[:\s]+\d+$|\d+\s+GOLD$|GOLD[:\s]+\d+$)$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            var singleLootValueMatches = Regex.Matches(noteText, @"^\s*(предмет\b.*|ITEM[: ].*|\d+(?:-\d+)?\s+GEMS?$|GEMS?[:\s]+\d+(?:-\d+)?$|\d+(?:-\d+)?\s+GOLD$|GOLD[:\s]+\d+(?:-\d+)?$)$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
             foreach (Match match in singleLootValueMatches)
             {
-                bool startsWithNumbering = match.Value.Length > 0 && char.IsDigit(match.Value[0]);
+                bool startsWithNumbering = Regex.IsMatch(match.Value, @"^\s*\d+[\)\.]\s+");
                 if (startsWithNumbering)
                     continue;
 

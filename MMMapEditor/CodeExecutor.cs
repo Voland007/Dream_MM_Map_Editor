@@ -1930,16 +1930,28 @@ namespace MMMapEditor
             {
                 syntheticText = FormatRangeText(valueRange.Min, valueRange.Max, "GEMS");
             }
-            else if (memAddr == 0x3C7D &&
-                     TryResolveTrackedByteValue(br, 0x3C7E, result, targetX, targetY, out byte highByte))
+            else if (memAddr == 0x3C7D)
             {
+                if (!TryResolveTrackedByteValue(br, 0x3C7E, result, targetX, targetY, out byte highByte))
+                {
+                    highByte = 0x00;
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("        Для диапазонного GOLD не найден [0x3C7E], предполагаем старший байт 0x00");
+                }
+
                 ushort rawMin = (ushort)(valueRange.Min | (highByte << 8));
                 ushort rawMax = (ushort)(valueRange.Max | (highByte << 8));
                 syntheticText = FormatGoldRangeText(rawMin, rawMax);
             }
-            else if (memAddr == 0x3C7E &&
-                     TryResolveTrackedByteValue(br, 0x3C7D, result, targetX, targetY, out byte lowByte))
+            else if (memAddr == 0x3C7E)
             {
+                if (!TryResolveTrackedByteValue(br, 0x3C7D, result, targetX, targetY, out byte lowByte))
+                {
+                    lowByte = 0x00;
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("        Для диапазонного GOLD не найден [0x3C7D], предполагаем младший байт 0x00");
+                }
+
                 ushort rawMin = (ushort)(lowByte | (valueRange.Min << 8));
                 ushort rawMax = (ushort)(lowByte | (valueRange.Max << 8));
                 syntheticText = FormatGoldRangeText(rawMin, rawMax);

@@ -2218,16 +2218,16 @@ namespace MMMapEditor
             if (upper.StartsWith("ITEM ") || upper.StartsWith("ITEM:"))
                 return true;
 
-            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^\d+\s+GEMS?$"))
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^\d+(?:-\d+)?\s+GEMS?$"))
                 return true;
 
-            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^GEMS?[:\s]+\d+$"))
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^GEMS?[:\s]+\d+(?:-\d+)?$"))
                 return true;
 
-            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^\d+\s+GOLD$"))
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^\d+(?:-\d+)?\s+GOLD$"))
                 return true;
 
-            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^GOLD[:\s]+\d+$"))
+            if (System.Text.RegularExpressions.Regex.IsMatch(upper, @"^GOLD[:\s]+\d+(?:-\d+)?$"))
                 return true;
 
             return false;
