@@ -156,12 +156,13 @@ namespace MMMapEditor
             {
                 X = coords.Item1,
                 Y = coords.Item2,
-                DirectionByte = direction
+                DirectionByte = direction,
+                PatchAddress = CalculatePatchAddress(patchKey)
             };
 
             using (AnalysisDebug.BeginCellScope(ovrObject))
             {
-                uint patchAddress = CalculatePatchAddress(patchKey);
+                uint patchAddress = ovrObject.PatchAddress ?? CalculatePatchAddress(patchKey);
                 bool debugMode = AnalysisDebug.IsEnabledFor(ovrObject);
 
                 if (debugMode)

@@ -2292,6 +2292,28 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
             }
 
+            var spoilerPasswordMatches = Regex.Matches(
+                noteText,
+                @"!!! ВНИМАНИЕ СПОЙЛЕР !!! ТРЕБУЕМЫЙ ПАРОЛЬ:\s*(?<password>[^\r\n]+)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in spoilerPasswordMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(170, 170, 170);
+                rt.SelectionBackColor = Color.FromArgb(150, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group passwordGroup = match.Groups["password"];
+                if (!passwordGroup.Success || passwordGroup.Length == 0)
+                    continue;
+
+                rt.Select(passwordGroup.Index, passwordGroup.Length);
+                rt.SelectionColor = Color.Black;
+                rt.SelectionBackColor = Color.Black;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
             rt.Select(0, 0);
         }
 

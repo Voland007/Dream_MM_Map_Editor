@@ -124,6 +124,12 @@ namespace MMMapEditor
 
                 result.MessageStates[pos] = currentMessages;
 
+                string specialSpoilerLine = TryBuildSpecialSpoilerLine(
+                    filename,
+                    fileNameOnly,
+                    config,
+                    obj);
+
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
                         obj,
@@ -131,7 +137,8 @@ namespace MMMapEditor
                         defaultMonsterLevel,
                         defaultMonsterBatchCount,
                         defaultDarkeningLevel,
-                        defaultRandomEncounterChance)
+                        defaultRandomEncounterChance,
+                        specialSpoilerLine)
                     : string.Empty;
 
                 StringBuilder newNotes = new StringBuilder();
@@ -157,6 +164,8 @@ namespace MMMapEditor
                     variantContents = hasExplicitPathVariants
                         ? DeduplicateDisplayedVariantContents(obj, variantContents)
                         : DeduplicateVariantContents(variantContents);
+
+                    AppendLineToFirstMeaningfulVariant(variantContents, specialSpoilerLine);
 
                     if (variantContents.Count == 0)
                     {
@@ -575,7 +584,8 @@ namespace MMMapEditor
     byte defaultMonsterLevel,
     byte defaultMonsterBatchCount,
     byte defaultDarkeningLevel,
-    byte defaultRandomEncounterChance)
+    byte defaultRandomEncounterChance,
+    string specialSpoilerLine)
         {
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
@@ -616,6 +626,8 @@ namespace MMMapEditor
 
             if (items.Count <= 1)
                 return null;
+
+            AppendLineToFirstMeaningfulVariantItem(items, specialSpoilerLine);
 
             var groups = BuildTopLevelVariantGroups(items);
             if (groups.Count == 0)
@@ -2084,6 +2096,132 @@ namespace MMMapEditor
                 item?.Lines,
                 item?.Variant?.HasProbabilityInfo == true);
         }
+
+        private static void AppendLineToFirstMeaningfulVariant(
+            Dictionary<int, List<string>> variantContents,
+            string line)
+        {
+            if (string.IsNullOrWhiteSpace(line) || variantContents == null || variantContents.Count == 0)
+                return;
+
+            int? targetKey = variantContents
+                .OrderBy(v => v.Key)
+                .Where(v => HasMeaningfulVariantPayload(v.Value))
+                .Select(v => (int?)v.Key)
+                .FirstOrDefault();
+
+            if (!targetKey.HasValue)
+            {
+                targetKey = variantContents
+                    .OrderBy(v => v.Key)
+                    .Select(v => (int?)v.Key)
+                    .FirstOrDefault();
+            }
+
+            if (!targetKey.HasValue)
+                return;
+
+            if (!variantContents.TryGetValue(targetKey.Value, out var lines) || lines == null)
+            {
+                lines = new List<string>();
+                variantContents[targetKey.Value] = lines;
+            }
+
+            if (!lines.Contains(line, StringComparer.Ordinal))
+                lines.Add(line);
+        }
+
+        private static void AppendLineToFirstMeaningfulVariantItem(
+            List<VariantRenderItem> items,
+            string line)
+        {
+            if (string.IsNullOrWhiteSpace(line) || items == null || items.Count == 0)
+                return;
+
+            var target = items.FirstOrDefault(item => HasMeaningfulVariantPayload(item?.Lines))
+                ?? items.FirstOrDefault(item => item != null);
+
+            if (target == null)
+                return;
+
+            target.Lines ??= new List<string>();
+            if (!target.Lines.Contains(line, StringComparer.Ordinal))
+                target.Lines.Add(line);
+        }
+
+        private static bool HasMeaningfulVariantPayload(List<string> lines)
+        {
+            if (lines == null || lines.Count == 0)
+                return false;
+
+            return lines.Any(line =>
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    return false;
+
+                string trimmed = line.Trim();
+                return !string.Equals(trimmed, "Ничего не происходит", StringComparison.Ordinal)
+                    && !string.Equals(trimmed, "Ничего не происходит (не выполнены условия для наступления ни одного варианта)", StringComparison.Ordinal);
+            });
+        }
+
+        private static string TryBuildSpecialSpoilerLine(
+            string filename,
+            string fileNameOnly,
+            OvrFileConfig config,
+            OvrObject obj)
+        {
+            if (!string.Equals(fileNameOnly, "CAVE4.OVR", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            if (obj?.PatchAddress != 0x0092)
+                return null;
+
+            string password = TryReadCave4AccessCode(filename, config);
+            if (string.IsNullOrWhiteSpace(password))
+                return null;
+
+            return $"!!! ВНИМАНИЕ СПОЙЛЕР !!! ТРЕБУЕМЫЙ ПАРОЛЬ: {password}";
+        }
+
+        private static string TryReadCave4AccessCode(string filename, OvrFileConfig config)
+        {
+            if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
+                return null;
+
+            const ushort accessCodeAddress = 0xC9D3;
+            const int maxPasswordLength = 32;
+
+            try
+            {
+                using var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                var decodedBytes = new List<byte>();
+                for (int i = 0; i < maxPasswordLength; i++)
+                {
+                    ushort currentAddress = unchecked((ushort)(accessCodeAddress + i));
+                    if (!OvrOverlayAddressReader.TryReadByte(br, config, currentAddress, out byte encodedByte))
+                        break;
+
+                    if (encodedByte == 0)
+                        break;
+
+                    // В CAVE4 патч 0x0092 проверяет пароль как storedByte + 0x1F
+                    // (последовательность CLC / ADC AL, 1Fh перед сравнением с вводом).
+                    decodedBytes.Add(unchecked((byte)(encodedByte + 0x1F)));
+                }
+
+                return decodedBytes.Count == 0
+                    ? null
+                    : OvrOverlayAddressReader.DecodeText(decodedBytes.ToArray());
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private static List<string> DecodeNoteTexts(IEnumerable<string> rawTexts)
         {
             var result = new List<string>();

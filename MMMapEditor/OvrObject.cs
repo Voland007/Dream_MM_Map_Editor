@@ -30,6 +30,7 @@ namespace MMMapEditor
         public byte X { get; set; }
         public byte Y { get; set; }
         public byte DirectionByte { get; set; }
+        public uint? PatchAddress { get; set; }
         public Dictionary<int, HashSet<string>> PathTexts { get; set; } = new Dictionary<int, HashSet<string>>();
 
         // НОВОЕ: упорядоченные версии путей для отображения

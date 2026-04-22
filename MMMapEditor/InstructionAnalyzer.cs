@@ -2338,121 +2338,27 @@ namespace MMMapEditor
 
         private bool TryMapOverlayAddressToFileOffset(BinaryReader br, ushort memAddr, out long fileOffset)
         {
-            fileOffset = -1;
-
-            if (br == null)
-                return false;
-
-            long textBaseOffset = memAddr - _config.TextBaseAddr;
-            if (textBaseOffset >= 0 && textBaseOffset < br.BaseStream.Length)
-            {
-                fileOffset = textBaseOffset;
-                return true;
-            }
-
-            return false;
+            return OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, memAddr, out fileOffset);
         }
 
         private bool TryReadOverlayByte(BinaryReader br, ushort memAddr, out byte value)
         {
-            value = 0;
-
-            if (!TryMapOverlayAddressToFileOffset(br, memAddr, out long fileOffset))
-                return false;
-
-            long originalPos = br.BaseStream.Position;
-            try
-            {
-                br.BaseStream.Position = fileOffset;
-                value = br.ReadByte();
-                return true;
-            }
-            catch
-            {
-                value = 0;
-                return false;
-            }
-            finally
-            {
-                br.BaseStream.Position = originalPos;
-            }
+            return OvrOverlayAddressReader.TryReadByte(br, _config, memAddr, out value);
         }
 
         private bool TryReadOverlayWord(BinaryReader br, ushort memAddr, out ushort value)
         {
-            value = 0;
-
-            if (!TryMapOverlayAddressToFileOffset(br, memAddr, out long fileOffset))
-                return false;
-
-            if (fileOffset + 1 >= br.BaseStream.Length)
-                return false;
-
-            long originalPos = br.BaseStream.Position;
-            try
-            {
-                br.BaseStream.Position = fileOffset;
-                byte lowByte = br.ReadByte();
-                byte highByte = br.ReadByte();
-                value = (ushort)((highByte << 8) | lowByte);
-                return true;
-            }
-            catch
-            {
-                value = 0;
-                return false;
-            }
-            finally
-            {
-                br.BaseStream.Position = originalPos;
-            }
+            return OvrOverlayAddressReader.TryReadWord(br, _config, memAddr, out value);
         }
 
         private string ExtractText(BinaryReader br, ushort textAddress)
         {
-            try
-            {
-                if (!TryMapOverlayAddressToFileOffset(br, textAddress, out long fileOffset))
-                    return $"Cannot locate text at 0x{textAddress:X4}";
-
-                long originalPos = br.BaseStream.Position;
-                br.BaseStream.Position = fileOffset;
-
-                var bytes = new List<byte>();
-                byte b;
-                int maxLength = 250;
-
-                while ((b = br.ReadByte()) != 0 && bytes.Count < maxLength)
-                {
-                    bytes.Add(b);
-                }
-
-                br.BaseStream.Position = originalPos;
-
-                if (bytes.Count == 0) return "(empty string)";
-
-                return DecodeText(bytes.ToArray());
-            }
-            catch (Exception ex)
-            {
-                return $"Error reading text: {ex.Message}";
-            }
+            return OvrOverlayAddressReader.ExtractText(br, _config, textAddress);
         }
 
         private string DecodeText(byte[] bytes)
         {
-            var sb = new StringBuilder();
-            foreach (byte b in bytes)
-            {
-                if (b == 0x0D) sb.Append("\\r");
-                else if (b == 0x0A) sb.Append("\\n");
-                else if (b == 0x09) sb.Append("\\t");
-                else if (b >= 0x20 && b <= 0x7E) sb.Append((char)b);
-                else if (b == 0x22) sb.Append("\\\"");
-                else if (b == 0x5C) sb.Append("\\\\");
-                else sb.Append($"\\x{b:X2}");
-            }
-            return sb.ToString();
+            return OvrOverlayAddressReader.DecodeText(bytes);
         }
     }
 }
