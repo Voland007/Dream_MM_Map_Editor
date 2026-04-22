@@ -2291,20 +2291,78 @@ namespace MMMapEditor
             if (!string.IsNullOrEmpty(teleportDescription))
                 lines.Add(teleportDescription);
 
+            lines.AddRange(BuildOrderedSpecialEffectLines(obj));
+
+            return lines;
+        }
+
+        private static List<string> BuildOrderedSpecialEffectLines(OvrObject obj)
+        {
+            var lines = new List<string>();
+            if (obj == null)
+                return lines;
+
+            var orderedEntries = new List<(uint Address, int KindOrder, string Text, int SortBucket, int ExecutionOrder)>();
+            var seenPartyLines = new HashSet<string>(StringComparer.Ordinal);
+            var effects = (obj.PartyEffects ?? new List<PartyEffect>())
+                .Where(effect => effect != null)
+                .ToList();
+
+            foreach (var effect in effects
+                         .Where(effect => PartyEffectSemantics.ShouldIncludeInNotes(effect, effects))
+                         .OrderBy(effect => GetSpecialLineSortBucket(effect.ExecutionOrder))
+                         .ThenBy(effect => NormalizeSpecialExecutionOrder(effect.ExecutionOrder))
+                         .ThenBy(effect => NormalizeSpecialLineAddress(effect.InstructionAddress))
+                         .ThenBy(effect => PartyEffectSemantics.BuildHumanDescription(effect), StringComparer.Ordinal))
+            {
+                string description = PartyEffectSemantics.BuildHumanDescription(effect);
+                if (string.IsNullOrWhiteSpace(description) || !seenPartyLines.Add(description))
+                    continue;
+
+                orderedEntries.Add((
+                    NormalizeSpecialLineAddress(effect.InstructionAddress),
+                    0,
+                    description,
+                    GetSpecialLineSortBucket(effect.ExecutionOrder),
+                    NormalizeSpecialExecutionOrder(effect.ExecutionOrder)));
+            }
+
             // Заметка про random encounter нужна только для табличных объектов
             // без явного описания битвы. Если битва уже описана как группа монстров,
             // то информация о random count выводится в самой строке битвы.
-            // Если одновременно есть телепорт, выводим его раньше: это ближе к
-            // реальному порядку исполнения патча, где сначала меняются координаты,
-            // а затем вызывается random encounter / событие.
             if (obj.IsFromTable && obj.CallsRandomEncounter && !obj.HasBattleLikeInfo)
-                lines.Add("⚠Вызывается random encounter ⚠");
+            {
+                orderedEntries.Add((
+                    NormalizeSpecialLineAddress(obj.RandomEncounterInstructionAddress),
+                    1,
+                    "⚠Вызывается random encounter ⚠",
+                    GetSpecialLineSortBucket(obj.RandomEncounterExecutionOrder),
+                    NormalizeSpecialExecutionOrder(obj.RandomEncounterExecutionOrder)));
+            }
 
-            var partyLines = obj.GetPartyEffectDescriptions();
-            if (partyLines != null && partyLines.Count > 0)
-                lines.AddRange(partyLines);
+            lines.AddRange(orderedEntries
+                .OrderBy(entry => entry.SortBucket)
+                .ThenBy(entry => entry.ExecutionOrder)
+                .ThenBy(entry => entry.Address)
+                .ThenBy(entry => entry.KindOrder)
+                .Select(entry => entry.Text));
 
             return lines;
+        }
+
+        private static int GetSpecialLineSortBucket(int executionOrder)
+        {
+            return executionOrder > 0 ? 0 : 1;
+        }
+
+        private static int NormalizeSpecialExecutionOrder(int executionOrder)
+        {
+            return executionOrder > 0 ? executionOrder : int.MaxValue;
+        }
+
+        private static uint NormalizeSpecialLineAddress(uint address)
+        {
+            return address == 0 ? uint.MaxValue : address;
         }
 
         private static Dictionary<int, List<string>> DeduplicateVariantContents(

@@ -654,6 +654,132 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryResolveDynamicPartyPointerByteFromMemoryOperand(
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            out PartyPointerByteReference pointerByte)
+        {
+            pointerByte = null;
+            if (registerTracker == null)
+                return false;
+
+            if (!TryDecode16BitMemoryOperandSyntax(instructionBytes, out byte mod, out byte rm, out int signedDisp, out _, out _))
+                return false;
+
+            int baseContribution = signedDisp;
+            ValueRange8 rangedOffset = null;
+            RegisterValueDistribution rangedDistribution = RegisterValueDistribution.Unknown;
+
+            bool AccumulateComponent(string regName)
+            {
+                if (registerTracker.TryGetRegisterValue(regName, out ushort exactValue))
+                {
+                    baseContribution += exactValue;
+                    return true;
+                }
+
+                if (registerTracker.TryGetRegisterRange(regName, out var rangeValue) && rangeValue != null)
+                {
+                    if (rangedOffset != null)
+                        return false;
+
+                    rangedOffset = new ValueRange8(rangeValue.Min, rangeValue.Max);
+                    registerTracker.TryGetRegisterDistribution(regName, out rangedDistribution);
+                    return true;
+                }
+
+                return false;
+            }
+
+            switch (rm)
+            {
+                case 0x00:
+                    if (!AccumulateComponent("BX") || !AccumulateComponent("SI"))
+                        return false;
+                    break;
+                case 0x01:
+                    if (!AccumulateComponent("BX") || !AccumulateComponent("DI"))
+                        return false;
+                    break;
+                case 0x02:
+                    if (!AccumulateComponent("BP") || !AccumulateComponent("SI"))
+                        return false;
+                    break;
+                case 0x03:
+                    if (!AccumulateComponent("BP") || !AccumulateComponent("DI"))
+                        return false;
+                    break;
+                case 0x04:
+                    if (!AccumulateComponent("SI"))
+                        return false;
+                    break;
+                case 0x05:
+                    if (!AccumulateComponent("DI"))
+                        return false;
+                    break;
+                case 0x06:
+                    if (mod == 0x00 || !AccumulateComponent("BP"))
+                        return false;
+                    break;
+                case 0x07:
+                    if (!AccumulateComponent("BX"))
+                        return false;
+                    break;
+                default:
+                    return false;
+            }
+
+            if (rangedOffset == null || rangedOffset.Max >= PARTY_MEMBER_COUNT * 2)
+                return false;
+
+            bool isHighByte;
+            if (baseContribution == PARTY_POINTER_TABLE)
+            {
+                isHighByte = false;
+            }
+            else if (baseContribution == PARTY_POINTER_TABLE + 1)
+            {
+                isHighByte = true;
+            }
+            else
+            {
+                return false;
+            }
+
+            PartyMemberSelectionKind selectionKind =
+                rangedDistribution == RegisterValueDistribution.UniformDiscreteRange
+                    ? PartyMemberSelectionKind.Random
+                    : PartyMemberSelectionKind.Dynamic;
+
+            int? memberIndex = null;
+            ushort? pointerTableAddress = PARTY_POINTER_TABLE;
+            if (rangedOffset.IsExact && (rangedOffset.Min & 1) == 0)
+            {
+                int resolvedIndex = rangedOffset.Min / 2;
+                if (resolvedIndex >= 0 && resolvedIndex < PARTY_MEMBER_COUNT)
+                {
+                    memberIndex = resolvedIndex;
+                    pointerTableAddress = (ushort)(PARTY_POINTER_TABLE + rangedOffset.Min);
+                    selectionKind = PartyMemberSelectionKind.Exact;
+                }
+            }
+
+            pointerByte = new PartyPointerByteReference
+            {
+                Member = new PartyMemberReference
+                {
+                    MemberIndex = memberIndex,
+                    PointerTableAddress = pointerTableAddress,
+                    SelectionKind = selectionKind,
+                    Source = "PartyPointerTableByteRange"
+                },
+                IsHighByte = isHighByte,
+                Source = "PartyPointerTableByteRange"
+            };
+
+            return true;
+        }
+
         private static bool RegisterTrackerCanCombinePointerBytes(PartyPointerByteReference lowByte, PartyPointerByteReference highByte)
         {
             var lowMember = lowByte?.Member;
@@ -1611,6 +1737,9 @@ namespace MMMapEditor
                     member,
                     result.LoopSemantic));
 
+            if (effect.ExecutionOrder <= 0)
+                effect.ExecutionOrder = ++result.NextSpecialEventOrder;
+
             string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
             if (!string.IsNullOrWhiteSpace(humanDescription))
                 effect.Description = humanDescription;
@@ -2333,7 +2462,7 @@ namespace MMMapEditor
             public int UpdatedCallDepth { get; set; } = -1;
         }
 
-        private void MarkRandomEncounterJump(PathAnalysisResult result, bool debugMode, string jumpKind)
+        private void MarkRandomEncounterJump(PathAnalysisResult result, uint instructionAddress, bool debugMode, string jumpKind)
         {
             if (result == null)
                 return;
@@ -2357,6 +2486,10 @@ namespace MMMapEditor
 
             result.CallsRandomEncounter = true;
             result.IsOnlyRandomEncounterJump = !hasOtherEffects;
+            if (result.RandomEncounterInstructionAddress == 0 || instructionAddress < result.RandomEncounterInstructionAddress)
+                result.RandomEncounterInstructionAddress = instructionAddress;
+            if (result.RandomEncounterExecutionOrder == 0)
+                result.RandomEncounterExecutionOrder = ++result.NextSpecialEventOrder;
             result.HasSignificantCode = true;
 
             if (debugMode)
@@ -2378,7 +2511,7 @@ namespace MMMapEditor
 
             if (jumpTarget == 0x517C)
             {
-                MarkRandomEncounterJump(result, debugMode, "JMP");
+                MarkRandomEncounterJump(result, currentAddress, debugMode, "JMP");
                 result.IsTerminated = true;
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
@@ -2418,7 +2551,7 @@ namespace MMMapEditor
                 // потому что адрес 0x517C обычно находится вне текущего overlay-файла.
                 if (jumpTarget == 0x517C)
                 {
-                    MarkRandomEncounterJump(result, debugMode, "JMP");
+                    MarkRandomEncounterJump(result, currentAddress, debugMode, "JMP");
                     result.IsTerminated = true;
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
@@ -2458,7 +2591,7 @@ namespace MMMapEditor
                 {
                     if (jumpTarget == 0x517C)
                     {
-                        MarkRandomEncounterJump(result, debugMode, "SHORT JMP");
+                        MarkRandomEncounterJump(result, currentAddress, debugMode, "SHORT JMP");
                     }
 
                     if (debugMode)
@@ -3535,6 +3668,7 @@ namespace MMMapEditor
                 "JZ", "JE", "JNZ", "JNE", "JB", "JNAE", "JC",
                 "JNB", "JAE", "JNC", "JBE", "JNA", "JA", "JNBE",
                 "JL", "JNGE", "JGE", "JNL", "JLE", "JNG", "JG", "JNLE",
+                "JS", "JNS",
                 "JP", "JPE", "JNP", "JPO", "JCXZ", "JECXZ"
             };
 
@@ -3839,18 +3973,27 @@ namespace MMMapEditor
                         });
                     }
 
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"        Развилка по диапазону AL для записи в [0x{memAddr:X4}]: {splitRange.Min:X2}..{splitRange.Max:X2}");
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Развилка по диапазону AL для записи в [0x{memAddr:X4}]: {splitRange.Min:X2}..{splitRange.Max:X2}");
 
-                    result.IsTerminated = true;
-                    result.HasSignificantCode = true;
-                    return true;
-                }
-                else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && !alRange.IsExact)
+                result.IsTerminated = true;
+                result.HasSignificantCode = true;
+                return true;
+            }
+            else if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteSemanticOnly))
+            {
+                _emulatedPartyPointers.Remove(memAddr);
+                _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
+                ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteSemanticOnly);
+
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        MOV [moffs8], AL: перенесли байтовую семантику указателя члена партии в [0x{memAddr:X4}] без точного значения");
+            }
+            else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && !alRange.IsExact)
+            {
+                if (memAddr == 0x3C38)
                 {
-                    if (memAddr == 0x3C38)
-                    {
-                        result.TeleportTargetX = null;
+                    result.TeleportTargetX = null;
                         result.TeleportTargetXRange = new ValueRange8(alRange.Min, alRange.Max);
                         if (!result.TeleportTargetY.HasValue && result.TeleportTargetYRange == null)
                             result.TeleportTargetY = targetY;
@@ -3878,21 +4021,12 @@ namespace MMMapEditor
                     }
                 }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
-                {
-                    ApplyTrackedByteWrite(memAddr, alValue, result, targetX, targetY, insn, debugMode, "MOV [moffs8], AL");
-                    if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteExact))
-                        ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteExact);
-                }
-                else if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteSemanticOnly))
-                {
-                    _emulatedPartyPointers.Remove(memAddr);
-                    _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
-                    ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteSemanticOnly);
-
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"        MOV [moffs8], AL: перенесли байтовую семантику указателя члена партии в [0x{memAddr:X4}] без точного значения");
-                }
+            {
+                ApplyTrackedByteWrite(memAddr, alValue, result, targetX, targetY, insn, debugMode, "MOV [moffs8], AL");
+                if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteExact))
+                    ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteExact);
             }
+        }
             else if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xC6)
             {
                 byte modRm = instructionBytes[1];
@@ -4260,8 +4394,9 @@ namespace MMMapEditor
                     PartyFieldReference partyFieldRef = null;
                     bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
                     PartyPointerByteReference pointerByteSemantic8A = null;
-                    bool hasPointerByteSemantic8A = hasExactMemAddr &&
-                        TryResolveTrackedPartyPointerByte(memAddr, out pointerByteSemantic8A);
+                    bool hasPointerByteSemantic8A = hasExactMemAddr
+                        ? TryResolveTrackedPartyPointerByte(memAddr, out pointerByteSemantic8A)
+                        : TryResolveDynamicPartyPointerByteFromMemoryOperand(instructionBytes, registerTracker, out pointerByteSemantic8A);
 
                     if (hasExactMemAddr && TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte value))
                     {
@@ -5003,6 +5138,13 @@ namespace MMMapEditor
                     registerTracker.FlagsKnown = true;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
                 }
+                else if (registerTracker.TryGetRegisterRange("AL", out var _) ||
+                         (registerTracker.TryGetPartyFieldValue("AL", out var alFieldForOr) && alFieldForOr != null) ||
+                         (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteForOr) && alPointerByteForOr != null))
+                {
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
             }
 
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xA8)
@@ -5054,6 +5196,13 @@ namespace MMMapEditor
                     registerTracker.CarryFlag = false;
                     registerTracker.OverflowFlag = false;
                     registerTracker.FlagsKnown = true;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                }
+                else if (registerTracker.TryGetRegisterRange("AL", out var _) ||
+                         (registerTracker.TryGetPartyFieldValue("AL", out var alFieldForTest) && alFieldForTest != null) ||
+                         (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteForTest) && alPointerByteForTest != null))
+                {
+                    registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
                 }
             }

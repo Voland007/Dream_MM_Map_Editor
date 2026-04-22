@@ -336,6 +336,8 @@ namespace MMMapEditor
         public bool TerminatedByTerminalRet { get; set; } = false;
         public bool CallsRandomEncounter { get; set; } = false;
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
+        public uint RandomEncounterInstructionAddress { get; set; } = 0;
+        public int RandomEncounterExecutionOrder { get; set; } = 0;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -349,6 +351,7 @@ namespace MMMapEditor
 
         // Адрес первой инструкции, которая загрузила локальный текст
         public uint FirstLocalTextAddress { get; set; } = uint.MaxValue;
+        public int NextSpecialEventOrder { get; set; } = 0;
 
         // Для отслеживания последнего сравнения
         public string LastCompareReg { get; set; }
@@ -589,6 +592,7 @@ namespace MMMapEditor
         public ushort? ImmediateValue { get; set; }
         public ValueRange8 ImmediateRange { get; set; }
         public uint InstructionAddress { get; set; }
+        public int ExecutionOrder { get; set; }
         public string Description { get; set; }
 
         public PartyEffect Clone()
@@ -609,6 +613,7 @@ namespace MMMapEditor
                 ImmediateValue = ImmediateValue,
                 ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
                 InstructionAddress = InstructionAddress,
+                ExecutionOrder = ExecutionOrder,
                 Description = Description
             };
         }

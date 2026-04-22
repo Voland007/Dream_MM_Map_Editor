@@ -53,6 +53,8 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
+        public uint RandomEncounterInstructionAddress { get; set; } = 0;
+        public int RandomEncounterExecutionOrder { get; set; } = 0;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -837,6 +839,8 @@ namespace MMMapEditor
         public byte? RandomEncounterChance { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
+        public uint RandomEncounterInstructionAddress { get; set; } = 0;
+        public int RandomEncounterExecutionOrder { get; set; } = 0;
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -907,6 +911,8 @@ namespace MMMapEditor
                 DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
                 CallsRandomEncounter = CallsRandomEncounter,
+                RandomEncounterInstructionAddress = RandomEncounterInstructionAddress,
+                RandomEncounterExecutionOrder = RandomEncounterExecutionOrder,
                 TeleportTargetX = TeleportTargetX,
                 TeleportTargetY = TeleportTargetY,
                 TeleportTargetXRange = TeleportTargetXRange == null ? null : new ValueRange8(TeleportTargetXRange.Min, TeleportTargetXRange.Max),

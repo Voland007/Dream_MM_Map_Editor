@@ -2519,6 +2519,8 @@ namespace MMMapEditor
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
+                RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
+                RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -3001,6 +3003,8 @@ namespace MMMapEditor
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
+                RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
+                RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -3155,6 +3159,8 @@ namespace MMMapEditor
             target.DarkeningLevel = null;
             target.RandomEncounterChance = null;
             target.CallsRandomEncounter = false;
+            target.RandomEncounterInstructionAddress = 0;
+            target.RandomEncounterExecutionOrder = 0;
             target.BattleMonsterCount = null;
             target.BattleMonsterCountRange = null;
             target.IsBattleMonsterCountIndeterminate = false;
@@ -3173,6 +3179,8 @@ namespace MMMapEditor
             target.DarkeningLevel = variant.DarkeningLevel;
             target.RandomEncounterChance = variant.RandomEncounterChance;
             target.CallsRandomEncounter = variant.CallsRandomEncounter;
+            target.RandomEncounterInstructionAddress = variant.RandomEncounterInstructionAddress;
+            target.RandomEncounterExecutionOrder = variant.RandomEncounterExecutionOrder;
             target.BattleMonsterCount = variant.BattleMonsterCount;
             target.BattleMonsterCountRange = variant.BattleMonsterCountRange == null ? null : new ValueRange8(variant.BattleMonsterCountRange.Min, variant.BattleMonsterCountRange.Max);
             target.IsBattleMonsterCountIndeterminate = variant.IsBattleMonsterCountIndeterminate;
@@ -3380,6 +3388,8 @@ namespace MMMapEditor
                 DarkeningLevel = darkeningLevel,
                 RandomEncounterChance = randomEncounterChance,
                 CallsRandomEncounter = callsRandomEncounter,
+                RandomEncounterInstructionAddress = 0,
+                RandomEncounterExecutionOrder = 0,
                 BattleMonsterCount = battleMonsterCount,
                 BattleMonsterCountRange = battleMonsterCountRange == null ? null : new ValueRange8(battleMonsterCountRange.Min, battleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = isBattleMonsterCountIndeterminate,
@@ -3417,6 +3427,8 @@ namespace MMMapEditor
                 DarkeningLevel = result.DarkeningLevel,
                 RandomEncounterChance = result.RandomEncounterChance,
                 CallsRandomEncounter = result.CallsRandomEncounter,
+                RandomEncounterInstructionAddress = result.RandomEncounterInstructionAddress,
+                RandomEncounterExecutionOrder = result.RandomEncounterExecutionOrder,
                 TeleportTargetX = result.TeleportTargetX,
                 TeleportTargetY = result.TeleportTargetY,
                 TeleportTargetXRange = result.TeleportTargetXRange == null ? null : new ValueRange8(result.TeleportTargetXRange.Min, result.TeleportTargetXRange.Max),

@@ -301,6 +301,20 @@ namespace MMMapEditor
             if (currentState.RandomEncounterChance.HasValue)
                 merged.RandomEncounterChance = currentState.RandomEncounterChance;
             merged.CallsRandomEncounter = merged.CallsRandomEncounter || currentState.CallsRandomEncounter;
+            if (currentState.RandomEncounterInstructionAddress != 0 &&
+                (merged.RandomEncounterInstructionAddress == 0 ||
+                 currentState.RandomEncounterInstructionAddress < merged.RandomEncounterInstructionAddress))
+            {
+                merged.RandomEncounterInstructionAddress = currentState.RandomEncounterInstructionAddress;
+            }
+            if (currentState.RandomEncounterExecutionOrder != 0 &&
+                (merged.RandomEncounterExecutionOrder == 0 ||
+                 currentState.RandomEncounterExecutionOrder < merged.RandomEncounterExecutionOrder))
+            {
+                merged.RandomEncounterExecutionOrder = currentState.RandomEncounterExecutionOrder;
+            }
+            if (currentState.NextSpecialEventOrder > merged.NextSpecialEventOrder)
+                merged.NextSpecialEventOrder = currentState.NextSpecialEventOrder;
             if (currentState.TeleportTargetX.HasValue)
                 merged.TeleportTargetX = currentState.TeleportTargetX;
             if (currentState.TeleportTargetY.HasValue)
@@ -633,6 +647,8 @@ namespace MMMapEditor
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.CallsRandomEncounter = source.CallsRandomEncounter;
             clone.IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump;
+            clone.RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress;
+            clone.RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder;
             clone.TeleportTargetX = source.TeleportTargetX;
             clone.TeleportTargetY = source.TeleportTargetY;
             clone.TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max);
@@ -691,6 +707,7 @@ namespace MMMapEditor
                 : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8);
             clone.VisitedAddresses = new HashSet<uint>(source.VisitedAddresses);
             clone.FirstLocalTextAddress = source.FirstLocalTextAddress;
+            clone.NextSpecialEventOrder = source.NextSpecialEventOrder;
             clone.ExitPendingReturnAddresses = source.ExitPendingReturnAddresses == null
                 ? new List<uint>()
                 : new List<uint>(source.ExitPendingReturnAddresses);
@@ -761,6 +778,8 @@ namespace MMMapEditor
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
+                RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
+                RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -1721,6 +1740,8 @@ namespace MMMapEditor
                 RandomEncounterChance = source.RandomEncounterChance,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
+                RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
+                RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
