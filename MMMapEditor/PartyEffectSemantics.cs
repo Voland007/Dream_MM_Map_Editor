@@ -540,7 +540,8 @@ namespace MMMapEditor
             if (effect.ImmediateValue.HasValue)
             {
                 byte rawValue = (byte)effect.ImmediateValue.Value;
-                return (rawValue & (PartyStatusSemantics.UnconsciousMask | PartyStatusSemantics.DeadMask)) != 0;
+                return (rawValue & PartyStatusSemantics.UnconsciousMask) != 0 ||
+                       PartyStatusSemantics.IsDeadStatusValue(rawValue);
             }
 
             string description = effect.Description ?? string.Empty;
