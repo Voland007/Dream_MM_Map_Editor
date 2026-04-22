@@ -561,6 +561,14 @@ namespace MMMapEditor
             public bool GroupedByChoice { get; set; }
         }
 
+        private sealed class OrderedRenderEntry
+        {
+            public int OccurrenceOrderKey { get; set; }
+            public int PathOrderKey { get; set; }
+            public VariantTreeNode ChildNode { get; set; }
+            public VariantRenderItem DirectVariant { get; set; }
+        }
+
         private static string BuildHierarchicalVariantNotes(
     OvrObject obj,
     byte defaultMonsterPower,
@@ -674,14 +682,14 @@ namespace MMMapEditor
             {
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
+                IntroduceSharedLineHierarchy(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 group.TreeRoot = SimplifyGenericChoiceTree(CompressVariantTree(root));
             }
 
             groups = groups
                 .Where(HasRenderableTopLevelContent)
-                .OrderBy(g => IsNoOpTopLevelGroup(g) ? 1 : 0)
-                .ThenByDescending(g => g.GroupedByChoice)
+                .OrderByDescending(g => g.GroupedByChoice)
                 .ThenBy(g => g.Items.Min(v => v.Variant?.PathId ?? int.MaxValue))
                 .ToList();
 
@@ -1381,6 +1389,72 @@ namespace MMMapEditor
                 ComputeCommonLines(child);
         }
 
+        private static void IntroduceSharedLineHierarchy(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children)
+                IntroduceSharedLineHierarchy(child);
+
+            if (node.DirectVariants == null || node.DirectVariants.Count <= 1)
+                return;
+
+            var orderedVariants = node.DirectVariants
+                .Where(variant => variant != null)
+                .OrderBy(GetVariantRenderOrderKey)
+                .ToList();
+
+            var candidateGroups = orderedVariants
+                .Where(variant => HasMeaningfulLines(variant.Lines))
+                .GroupBy(variant => variant.Lines[0] ?? string.Empty, StringComparer.Ordinal)
+                .Where(group => !string.IsNullOrWhiteSpace(group.Key) && group.Count() > 1)
+                .Select(group => group.OrderBy(GetVariantRenderOrderKey).ToList())
+                .OrderBy(group => group.Min(GetVariantRenderOrderKey))
+                .ToList();
+
+            if (candidateGroups.Count == 0)
+                return;
+
+            var consumedVariants = new HashSet<VariantRenderItem>();
+            var syntheticChildren = new List<VariantTreeNode>();
+
+            foreach (var group in candidateGroups)
+            {
+                var commonLines = GetCommonPrefix(group.Select(variant => variant.Lines).ToList());
+                if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                    continue;
+
+                var childVariants = new List<VariantRenderItem>();
+                foreach (var variant in group)
+                {
+                    consumedVariants.Add(variant);
+                    variant.Lines = variant.Lines
+                        .Skip(commonLines.Count)
+                        .ToList();
+                    childVariants.Add(variant);
+                }
+
+                var childNode = new VariantTreeNode
+                {
+                    CommonLines = commonLines,
+                    DirectVariants = childVariants
+                };
+
+                IntroduceSharedLineHierarchy(childNode);
+                syntheticChildren.Add(childNode);
+            }
+
+            if (syntheticChildren.Count == 0)
+                return;
+
+            node.DirectVariants = orderedVariants
+                .Where(variant => !consumedVariants.Contains(variant))
+                .ToList();
+
+            node.Children.AddRange(syntheticChildren);
+        }
+
         private static void PromoteConditionalPartyNotesBeforeBattle(VariantTreeNode node)
         {
             if (node == null)
@@ -1666,6 +1740,94 @@ namespace MMMapEditor
             return node;
         }
 
+        private static int GetVariantRenderOrderKey(VariantRenderItem variant)
+        {
+            return variant?.Variant?.PathId ?? int.MaxValue;
+        }
+
+        private static int GetVariantOccurrenceOrderKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return int.MaxValue;
+
+            int minOccurrence = int.MaxValue;
+
+            if (variant.OccurrenceIndices != null && variant.OccurrenceIndices.Count > 0)
+                minOccurrence = Math.Min(minOccurrence, variant.OccurrenceIndices.Min());
+
+            if (variant.OccurrenceRanges != null && variant.OccurrenceRanges.Count > 0)
+            {
+                foreach (var range in variant.OccurrenceRanges.Where(range => range != null))
+                    minOccurrence = Math.Min(minOccurrence, range.Start);
+            }
+
+            // Отсутствие occurrence-ограничений считаем "самым ранним" случаем,
+            // чтобы базовые/обычные исходы показывались перед специальными.
+            return minOccurrence == int.MaxValue ? 0 : minOccurrence;
+        }
+
+        private static int GetVariantOccurrenceOrderKey(VariantRenderItem variant)
+        {
+            return GetVariantOccurrenceOrderKey(variant?.Variant);
+        }
+
+        private static int GetNodeRenderOrderKey(VariantTreeNode node)
+        {
+            return GetAllVariants(node)
+                .Where(variant => variant != null)
+                .Select(GetVariantRenderOrderKey)
+                .DefaultIfEmpty(int.MaxValue)
+                .Min();
+        }
+
+        private static int GetNodeOccurrenceOrderKey(VariantTreeNode node)
+        {
+            return GetAllVariants(node)
+                .Where(variant => variant != null)
+                .Select(GetVariantOccurrenceOrderKey)
+                .DefaultIfEmpty(int.MaxValue)
+                .Min();
+        }
+
+        private static List<OrderedRenderEntry> BuildOrderedRenderEntries(
+            IEnumerable<VariantTreeNode> children,
+            IEnumerable<VariantRenderItem> directVariants)
+        {
+            var result = new List<OrderedRenderEntry>();
+
+            foreach (var child in children ?? Enumerable.Empty<VariantTreeNode>())
+            {
+                if (child == null)
+                    continue;
+
+                result.Add(new OrderedRenderEntry
+                {
+                    OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
+                    PathOrderKey = GetNodeRenderOrderKey(child),
+                    ChildNode = child
+                });
+            }
+
+            foreach (var variant in directVariants ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                if (variant == null)
+                    continue;
+
+                result.Add(new OrderedRenderEntry
+                {
+                    OccurrenceOrderKey = GetVariantOccurrenceOrderKey(variant),
+                    PathOrderKey = GetVariantRenderOrderKey(variant),
+                    DirectVariant = variant
+                });
+            }
+
+            return result
+                .OrderBy(entry => entry.OccurrenceOrderKey)
+                .ThenBy(entry => entry.PathOrderKey)
+                .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
+                .ToList();
+        }
+
         private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
         {
             string header = $"Вариант {groupNumber}";
@@ -1716,25 +1878,27 @@ namespace MMMapEditor
             int childIndex = 1;
             bool wroteAnyChild = false;
 
-            foreach (var child in renderableChildren)
-            {
-                if (wroteAnyChild)
-                    sb.AppendLine();
-                RenderVariantTreeNode(child, sb, new List<int> { groupNumber, childIndex++ }, 1);
-                wroteAnyChild = true;
-            }
-
-            foreach (var item in directVariants)
+            foreach (var entry in BuildOrderedRenderEntries(renderableChildren, directVariants))
             {
                 if (wroteAnyChild)
                     sb.AppendLine();
 
-                if (syntheticChoiceLabels.TryGetValue(item, out string syntheticLabel))
-                    RenderChoiceLeaf(syntheticLabel, item, sb, new List<int> { groupNumber, childIndex++ }, 1);
-                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(item))
-                    RenderChoiceLeaf("N)", item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                if (entry.ChildNode != null)
+                {
+                    RenderVariantTreeNode(entry.ChildNode, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                }
+                else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
+                {
+                    RenderChoiceLeaf(syntheticLabel, entry.DirectVariant, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                }
+                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
+                {
+                    RenderChoiceLeaf("N)", entry.DirectVariant, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                }
                 else
-                    RenderLooseVariant(item, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                {
+                    RenderLooseVariant(entry.DirectVariant, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                }
 
                 wroteAnyChild = true;
             }
@@ -1837,25 +2001,27 @@ namespace MMMapEditor
             int nestedIndex = 1;
             bool wroteAny = false;
 
-            foreach (var child in renderableChildren)
-            {
-                if (wroteAny)
-                    sb.AppendLine();
-                RenderVariantTreeNode(child, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
-                wroteAny = true;
-            }
-
-            foreach (var variant in renderableDirectVariants)
+            foreach (var entry in BuildOrderedRenderEntries(renderableChildren, renderableDirectVariants))
             {
                 if (wroteAny)
                     sb.AppendLine();
 
-                if (syntheticChoiceLabels.TryGetValue(variant, out string syntheticLabel))
-                    RenderChoiceLeaf(syntheticLabel, variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
-                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(variant))
-                    RenderChoiceLeaf("N)", variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                if (entry.ChildNode != null)
+                {
+                    RenderVariantTreeNode(entry.ChildNode, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                }
+                else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
+                {
+                    RenderChoiceLeaf(syntheticLabel, entry.DirectVariant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                }
+                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
+                {
+                    RenderChoiceLeaf("N)", entry.DirectVariant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                }
                 else
-                    RenderLooseVariant(variant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                {
+                    RenderLooseVariant(entry.DirectVariant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                }
 
                 wroteAny = true;
             }
