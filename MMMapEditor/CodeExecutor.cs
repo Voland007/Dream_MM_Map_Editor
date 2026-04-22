@@ -43,6 +43,8 @@ namespace MMMapEditor
         private const ushort BATTLE_MONSTER_COUNT_ADDRESS = 0x3C1D;
         private const int PARTY_MEMBER_COUNT = 6;
         private const int PARTY_GENDER_OFFSET = 0x10;
+        private const int PARTY_SP_LOW_OFFSET = 0x2B;
+        private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
         private const int PARTY_HP_HIGH_OFFSET = 0x34;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
@@ -876,6 +878,8 @@ namespace MMMapEditor
             PartyFieldKind field = offset switch
             {
                 PARTY_GENDER_OFFSET => PartyFieldKind.Gender,
+                PARTY_SP_LOW_OFFSET => PartyFieldKind.SpLow,
+                PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
                 PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
@@ -1090,7 +1094,7 @@ namespace MMMapEditor
             return targetAddress != 0;
         }
 
-        private void ApplyPartyConditionToPending(PendingPartyHpOperation pending, PartyConditionKind condition)
+        private void ApplyPartyConditionToPending(PendingPartyStatOperation pending, PartyConditionKind condition)
         {
             if (pending == null)
                 return;
@@ -1107,7 +1111,7 @@ namespace MMMapEditor
             }
         }
 
-        private void ApplyPartyPredicatesToPending(PendingPartyHpOperation pending, IEnumerable<PartyPredicate> predicates)
+        private void ApplyPartyPredicatesToPending(PendingPartyStatOperation pending, IEnumerable<PartyPredicate> predicates)
         {
             if (pending == null)
                 return;
@@ -1122,39 +1126,114 @@ namespace MMMapEditor
                 .ToList();
         }
 
-        private PendingPartyHpOperation EnsurePendingPartyHpOperation(PathAnalysisResult result,
+        private static bool IsPartyStatField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.HpLow ||
+                   field == PartyFieldKind.HpHigh ||
+                   field == PartyFieldKind.SpLow ||
+                   field == PartyFieldKind.SpHigh;
+        }
+
+        private static bool IsPartyStatLowField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.HpLow || field == PartyFieldKind.SpLow;
+        }
+
+        private static bool IsPartyStatHighField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.HpHigh || field == PartyFieldKind.SpHigh;
+        }
+
+        private static PartyFieldKind GetPartyStatBaseField(PartyFieldKind field)
+        {
+            return field switch
+            {
+                PartyFieldKind.HpLow or PartyFieldKind.HpHigh or PartyFieldKind.Hp => PartyFieldKind.Hp,
+                PartyFieldKind.SpLow or PartyFieldKind.SpHigh or PartyFieldKind.Sp => PartyFieldKind.Sp,
+                _ => PartyFieldKind.Unknown
+            };
+        }
+
+        private PendingPartyStatOperation GetPendingPartyStatOperation(PathAnalysisResult result, PartyFieldKind field)
+        {
+            if (result == null)
+                return null;
+
+            return GetPartyStatBaseField(field) switch
+            {
+                PartyFieldKind.Hp => result.PendingPartyHpOperation,
+                PartyFieldKind.Sp => result.PendingPartySpOperation,
+                _ => null
+            };
+        }
+
+        private void SetPendingPartyStatOperation(PathAnalysisResult result, PartyFieldKind field, PendingPartyStatOperation pending)
+        {
+            if (result == null)
+                return;
+
+            switch (GetPartyStatBaseField(field))
+            {
+                case PartyFieldKind.Hp:
+                    result.PendingPartyHpOperation = pending;
+                    break;
+                case PartyFieldKind.Sp:
+                    result.PendingPartySpOperation = pending;
+                    break;
+            }
+        }
+
+        private PendingPartyStatOperation EnsurePendingPartyStatOperation(PathAnalysisResult result,
             PartyFieldReference fieldRef, uint instructionAddress)
         {
             if (result == null || fieldRef == null)
                 return null;
 
-            if (result.PendingPartyHpOperation != null &&
-                !MatchesPendingPartyTarget(result.PendingPartyHpOperation.Member, fieldRef.Member))
+            PartyFieldKind statField = GetPartyStatBaseField(fieldRef.Field);
+            if (statField == PartyFieldKind.Unknown)
+                return null;
+
+            var pending = GetPendingPartyStatOperation(result, statField);
+            if (pending != null &&
+                !MatchesPendingPartyTarget(pending.Member, fieldRef.Member))
             {
-                result.PendingPartyHpOperation = null;
+                pending = null;
+                SetPendingPartyStatOperation(result, statField, null);
             }
 
-            if (result.PendingPartyHpOperation == null)
+            if (pending == null)
             {
-                result.PendingPartyHpOperation = new PendingPartyHpOperation
+                pending = new PendingPartyStatOperation
                 {
                     Member = fieldRef.Member?.Clone(),
                     StartAddress = instructionAddress
                 };
+                SetPendingPartyStatOperation(result, statField, pending);
             }
             else
             {
-                if (result.PendingPartyHpOperation.Member == null)
-                    result.PendingPartyHpOperation.Member = fieldRef.Member?.Clone();
+                if (pending.Member == null)
+                    pending.Member = fieldRef.Member?.Clone();
 
                 if (instructionAddress != 0 &&
-                    (result.PendingPartyHpOperation.StartAddress == 0 || instructionAddress < result.PendingPartyHpOperation.StartAddress))
+                    (pending.StartAddress == 0 || instructionAddress < pending.StartAddress))
                 {
-                    result.PendingPartyHpOperation.StartAddress = instructionAddress;
+                    pending.StartAddress = instructionAddress;
                 }
             }
 
-            return result.PendingPartyHpOperation;
+            return pending;
+        }
+
+        private int EnsurePendingPartyStatExecutionOrder(PathAnalysisResult result, PendingPartyStatOperation pending)
+        {
+            if (result == null || pending == null)
+                return 0;
+
+            if (pending.ExecutionOrder <= 0)
+                pending.ExecutionOrder = ++result.NextSpecialEventOrder;
+
+            return pending.ExecutionOrder;
         }
 
         private bool IsPartyLoopTarget(PartyMemberReference member, LoopSemanticKind loopSemantic)
@@ -1186,22 +1265,25 @@ namespace MMMapEditor
             if (detectedLoopEnd > result.LoopEndAddress)
                 result.LoopEndAddress = detectedLoopEnd;
 
-            if (result.PendingPartyHpOperation?.Member != null)
-                result.PendingPartyHpOperation.Member =
-                    NormalizeMemberForLoopAggregation(result.PendingPartyHpOperation.Member, result.LoopSemantic);
-
-            if (result.PendingPartyHpOperation?.GuardPredicates != null &&
-                result.PendingPartyHpOperation.GuardPredicates.Count > 0)
-            {
-                result.PendingPartyHpOperation.GuardPredicates =
-                    PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(
-                        result.PendingPartyHpOperation.GuardPredicates);
-            }
+            NormalizePendingPartyStatForLoopAggregation(result.PendingPartyHpOperation, result.LoopSemantic);
+            NormalizePendingPartyStatForLoopAggregation(result.PendingPartySpOperation, result.LoopSemantic);
 
             PromoteEffectsCapturedBeforeLoopRecognition(result, loopBodyStartAddress, detectedLoopEnd);
 
             if (debugMode && firstDetection)
                 AnalysisDebug.WriteLine($"    РАСПОЗНАН ЦИКЛ ОБХОДА ПАРТИИ: счётчик сравнивается с [0x{PARTY_COUNT_ADDRESS:X4}]");
+        }
+
+        private void NormalizePendingPartyStatForLoopAggregation(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic)
+        {
+            if (pending?.Member != null)
+                pending.Member = NormalizeMemberForLoopAggregation(pending.Member, loopSemantic);
+
+            if (pending?.GuardPredicates != null && pending.GuardPredicates.Count > 0)
+            {
+                pending.GuardPredicates =
+                    PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(pending.GuardPredicates);
+            }
         }
 
         private void PromoteEffectsCapturedBeforeLoopRecognition(PathAnalysisResult result, uint loopBodyStartAddress, uint loopDetectionAddress)
@@ -1493,6 +1575,9 @@ namespace MMMapEditor
                 PartyFieldKind.Hp => "HP",
                 PartyFieldKind.HpLow => "HP low",
                 PartyFieldKind.HpHigh => "HP high",
+                PartyFieldKind.Sp => "SP",
+                PartyFieldKind.SpLow => "SP low",
+                PartyFieldKind.SpHigh => "SP high",
                 PartyFieldKind.Status => "Status",
                 PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
                 _ => field.ToString()
@@ -1568,17 +1653,14 @@ namespace MMMapEditor
             var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var currentPredicates = GetCurrentPartyPredicates(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
 
-            if (fieldRef.Field == PartyFieldKind.HpHigh || fieldRef.Field == PartyFieldKind.HpLow)
+            if (IsPartyStatField(fieldRef.Field))
             {
                 var pendingFieldRef = fieldRef.Clone();
                 pendingFieldRef.Member = NormalizeMemberForLoopAggregation(fieldRef.Member, result.LoopSemantic);
-                var pending = EnsurePendingPartyHpOperation(result, pendingFieldRef, instructionAddress);
+                var pending = EnsurePendingPartyStatOperation(result, pendingFieldRef, instructionAddress);
                 if (pending != null)
                 {
-                    pending.MaleOnly = pending.MaleOnly || result.PendingPartyHpOperation?.MaleOnly == true;
-                    pending.FemaleOnly = pending.FemaleOnly || result.PendingPartyHpOperation?.FemaleOnly == true;
-
-                    if (fieldRef.Field == PartyFieldKind.HpHigh)
+                    if (IsPartyStatHighField(fieldRef.Field))
                         pending.SawReadHigh = true;
                     else
                         pending.SawReadLow = true;
@@ -1634,37 +1716,48 @@ namespace MMMapEditor
                 effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
                 effects.Add(effect);
             }
-            else if (fieldRef.Field == PartyFieldKind.HpHigh || fieldRef.Field == PartyFieldKind.HpLow)
+            else if (IsPartyStatField(fieldRef.Field))
             {
+                PartyFieldKind statField = GetPartyStatBaseField(fieldRef.Field);
+                var pendingStat = GetPendingPartyStatOperation(result, statField);
                 var effect = new PartyEffect
                 {
                     Kind = PartyEffectKind.HpWritten,
+                    Field = statField,
                     InstructionAddress = instructionAddress
                 };
                 PartyConditionKind effectCondition = currentCondition != PartyConditionKind.None
                     ? currentCondition
-                    : (IsPartyLoopTarget(fieldRef.Member, result.LoopSemantic) && result.PendingPartyHpOperation?.MaleOnly == true
+                    : (IsPartyLoopTarget(fieldRef.Member, result.LoopSemantic) && pendingStat?.MaleOnly == true
                         ? PartyConditionKind.MaleOnly
-                        : IsPartyLoopTarget(fieldRef.Member, result.LoopSemantic) && result.PendingPartyHpOperation?.FemaleOnly == true
+                        : IsPartyLoopTarget(fieldRef.Member, result.LoopSemantic) && pendingStat?.FemaleOnly == true
                             ? PartyConditionKind.FemaleOnly
                             : PartyConditionKind.None);
                 ApplyResolvedPartyEffectTarget(effect, fieldRef.Member, result.LoopSemantic, effectCondition);
-                effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
-                effects.Add(effect);
 
                 var pendingFieldRef = fieldRef.Clone();
                 pendingFieldRef.Member = NormalizeMemberForLoopAggregation(fieldRef.Member, result.LoopSemantic);
-                var pending = EnsurePendingPartyHpOperation(result, pendingFieldRef, instructionAddress);
+                var pending = EnsurePendingPartyStatOperation(result, pendingFieldRef, instructionAddress);
                 if (pending != null)
                 {
+                    effect.ExecutionOrder = EnsurePendingPartyStatExecutionOrder(result, pending);
                     ApplyPartyConditionToPending(pending, currentCondition);
                     ApplyPartyPredicatesToPending(pending, currentPredicates);
 
-                    if (fieldRef.Field == PartyFieldKind.HpHigh)
+                    if (IsPartyStatHighField(fieldRef.Field))
+                    {
                         pending.SawWriteHigh = true;
+                        pending.FinalWriteHighByteValue = exactValue;
+                    }
                     else
+                    {
                         pending.SawWriteLow = true;
+                        pending.FinalWriteLowByteValue = exactValue;
+                    }
                 }
+
+                effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+                effects.Add(effect);
             }
             else if (fieldRef.Field == PartyFieldKind.Status)
             {
@@ -1991,31 +2084,46 @@ namespace MMMapEditor
 
         private void TrackPartyArithmeticInstruction(X86Instruction insn, RegisterTracker registerTracker, PathAnalysisResult result)
         {
-            if (result?.PendingPartyHpOperation == null || insn?.Bytes == null || insn.Bytes.Length == 0)
+            if (result == null || insn?.Bytes == null || insn.Bytes.Length == 0)
                 return;
 
             byte[] bytes = insn.Bytes;
 
             if (bytes.Length == 1 && bytes[0] == 0xF8)
             {
-                result.PendingPartyHpOperation.SawClc = true;
+                if (result.PendingPartyHpOperation != null)
+                    result.PendingPartyHpOperation.SawClc = true;
+                if (result.PendingPartySpOperation != null)
+                    result.PendingPartySpOperation.SawClc = true;
                 return;
             }
 
-            if (bytes.Length >= 2 && bytes[0] == 0xD0 && bytes[1] == 0xE8 && registerTracker.TryGetPartyFieldValue("AL", out var shrField) && shrField.Field == PartyFieldKind.HpHigh)
+            if (bytes.Length >= 2 &&
+                bytes[0] == 0xD0 &&
+                bytes[1] == 0xE8 &&
+                registerTracker.TryGetPartyFieldValue("AL", out var shrField) &&
+                IsPartyStatHighField(shrField.Field))
             {
-                result.PendingPartyHpOperation.SawShrHigh = true;
+                var shrPending = GetPendingPartyStatOperation(result, shrField.Field);
+                if (shrPending != null)
+                    shrPending.SawShrHigh = true;
                 return;
             }
 
-            if (bytes.Length >= 2 && bytes[0] == 0xD0 && bytes[1] == 0xD8 && registerTracker.TryGetPartyFieldValue("AL", out var rcrField) && rcrField.Field == PartyFieldKind.HpLow)
+            if (bytes.Length >= 2 &&
+                bytes[0] == 0xD0 &&
+                bytes[1] == 0xD8 &&
+                registerTracker.TryGetPartyFieldValue("AL", out var rcrField) &&
+                IsPartyStatLowField(rcrField.Field))
             {
-                result.PendingPartyHpOperation.SawRcrLow = true;
+                var rcrPending = GetPendingPartyStatOperation(result, rcrField.Field);
+                if (rcrPending != null)
+                    rcrPending.SawRcrLow = true;
                 return;
             }
 
-            if (!registerTracker.TryGetPartyFieldValue("AL", out var hpField) ||
-                (hpField.Field != PartyFieldKind.HpLow && hpField.Field != PartyFieldKind.HpHigh))
+            if (!registerTracker.TryGetPartyFieldValue("AL", out var statFieldRef) ||
+                !IsPartyStatField(statFieldRef.Field))
             {
                 return;
             }
@@ -2040,7 +2148,7 @@ namespace MMMapEditor
                 rawImmediate = bytes[1];
                 carryInKnown = registerTracker.FlagsKnown;
                 carryInValue = carryInKnown && registerTracker.CarryFlag;
-                effectiveImmediate = hpField.Field == PartyFieldKind.HpLow
+                effectiveImmediate = IsPartyStatLowField(statFieldRef.Field)
                     ? carryInKnown ? (ushort)(rawImmediate + (carryInValue ? 1 : 0)) : (ushort?)null
                     : rawImmediate;
             }
@@ -2057,7 +2165,7 @@ namespace MMMapEditor
                 rawImmediate = bytes[1];
                 carryInKnown = registerTracker.FlagsKnown;
                 carryInValue = carryInKnown && registerTracker.CarryFlag;
-                effectiveImmediate = hpField.Field == PartyFieldKind.HpLow
+                effectiveImmediate = IsPartyStatLowField(statFieldRef.Field)
                     ? carryInKnown ? (ushort)(rawImmediate + (carryInValue ? 1 : 0)) : (ushort?)null
                     : rawImmediate;
             }
@@ -2065,10 +2173,10 @@ namespace MMMapEditor
             if (operation == PartyEffectOperation.Unknown)
                 return;
 
-            var pendingField = hpField.Clone();
-            pendingField.Member = NormalizeMemberForLoopAggregation(hpField.Member, result.LoopSemantic);
+            var pendingField = statFieldRef.Clone();
+            pendingField.Member = NormalizeMemberForLoopAggregation(statFieldRef.Member, result.LoopSemantic);
 
-            var pending = EnsurePendingPartyHpOperation(result, pendingField, (uint)insn.Address);
+            var pending = EnsurePendingPartyStatOperation(result, pendingField, (uint)insn.Address);
             if (pending == null)
                 return;
 
@@ -2083,7 +2191,7 @@ namespace MMMapEditor
                 InstructionAddress = (uint)insn.Address
             };
 
-            if (hpField.Field == PartyFieldKind.HpLow)
+            if (IsPartyStatLowField(statFieldRef.Field))
                 pending.LowByteArithmetic = byteArithmetic;
             else
                 pending.HighByteArithmetic = byteArithmetic;

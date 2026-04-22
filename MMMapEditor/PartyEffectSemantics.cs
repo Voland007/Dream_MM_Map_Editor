@@ -104,68 +104,75 @@ namespace MMMapEditor
             if (field == PartyFieldKind.Technical77)
                 return BuildTechnicalField77Description(effect, scope, condition);
 
-            if (field == PartyFieldKind.Hp && operation == PartyEffectOperation.Halve)
+            if (IsScalarPartyStatField(field) && operation == PartyEffectOperation.Halve)
             {
+                string statLabel = GetScalarPartyStatLabel(field);
                 if (condition == PartyConditionKind.MaleOnly)
-                    return "! HP каждого мужчины в партии уменьшается вдвое !";
+                    return $"! {statLabel} каждого мужчины в партии уменьшается вдвое !";
                 if (condition == PartyConditionKind.FemaleOnly)
-                    return "HP женщин в партии уменьшается вдвое";
+                    return $"{statLabel} женщин в партии уменьшается вдвое";
                 if (scope == PartyEffectScope.WholeParty)
-                    return "! HP каждого персонажа партии уменьшается вдвое !";
+                    return $"! {statLabel} каждого персонажа партии уменьшается вдвое !";
                 if (scope == PartyEffectScope.PartySubset)
-                    return "HP части партии уменьшается вдвое";
+                    return $"{statLabel} части партии уменьшается вдвое";
                 if (scope == PartyEffectScope.CurrentLoopMember)
-                    return "HP текущего члена партии уменьшается вдвое";
+                    return $"{statLabel} текущего члена партии уменьшается вдвое";
                 if (scope == PartyEffectScope.RandomMember)
-                    return "HP случайного члена партии уменьшается вдвое";
+                    return $"{statLabel} случайного члена партии уменьшается вдвое";
                 if (scope == PartyEffectScope.SelectedMember)
-                    return "HP выбранного члена партии уменьшается вдвое";
-                return "HP персонажа уменьшается вдвое";
+                    return $"{statLabel} выбранного члена партии уменьшается вдвое";
+                return $"{statLabel} персонажа уменьшается вдвое";
             }
 
-            if (field == PartyFieldKind.Hp &&
+            if (IsScalarPartyStatField(field) &&
                 (operation == PartyEffectOperation.Increment || operation == PartyEffectOperation.Decrement) &&
                 effect.ImmediateValue.HasValue)
             {
                 ushort amount = effect.ImmediateValue.Value;
                 string verb = operation == PartyEffectOperation.Increment ? "добавляется" : "отнимается";
+                string statLabel = GetScalarPartyStatLabel(field);
 
                 if (condition == PartyConditionKind.MaleOnly)
-                    return $"У мужчин в партии {verb} {amount} HP";
+                    return $"У мужчин в партии {verb} {amount} {statLabel}";
 
                 if (condition == PartyConditionKind.FemaleOnly)
-                    return $"У женщин в партии {verb} {amount} HP";
+                    return $"У женщин в партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.WholeParty || scope == PartyEffectScope.CurrentLoopMember || IsLoopDerived(effect))
                 {
                     return operation == PartyEffectOperation.Decrement
-                        ? $"! У каждого персонажа партии {verb} {amount} HP !"
-                        : $"У каждого персонажа партии {verb} {amount} HP";
+                        ? $"! У каждого персонажа партии {verb} {amount} {statLabel} !"
+                        : $"У каждого персонажа партии {verb} {amount} {statLabel}";
                 }
 
                 if (scope == PartyEffectScope.PartySubset)
-                    return $"У части партии {verb} {amount} HP";
+                    return $"У части партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.RandomMember)
-                    return $"У случайного члена партии {verb} {amount} HP";
+                    return $"У случайного члена партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.SelectedMember)
-                    return $"У выбранного члена партии {verb} {amount} HP";
+                    return $"У выбранного члена партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
-                    return $"У персонажа #{effect.MemberIndex.Value} {verb} {amount} HP";
+                    return $"У персонажа #{effect.MemberIndex.Value} {verb} {amount} {statLabel}";
 
                 return operation == PartyEffectOperation.Increment
-                    ? $"HP персонажа увеличивается на {amount}"
-                    : $"HP персонажа уменьшается на {amount}";
+                    ? $"{statLabel} персонажа увеличивается на {amount}"
+                    : $"{statLabel} персонажа уменьшается на {amount}";
             }
 
             string subject = BuildSubject(effect, field, scope, condition);
             if (string.IsNullOrWhiteSpace(subject))
                 return effect.Description;
 
-            if (field == PartyFieldKind.Hp && operation == PartyEffectOperation.Write)
-                return $"Изменяется HP {subject}";
+            if (IsScalarPartyStatField(field) && operation == PartyEffectOperation.Write)
+            {
+                if (effect.ImmediateValue.HasValue)
+                    return BuildExactStatWriteDescription(effect, field, scope, condition, effect.ImmediateValue.Value);
+
+                return $"Изменяется {GetScalarPartyStatLabel(field)} {subject}";
+            }
 
             if (field == PartyFieldKind.Gender && operation == PartyEffectOperation.Write)
                 return $"Меняется пол {subject}";
@@ -267,7 +274,7 @@ namespace MMMapEditor
             if (!IsStateChanging(effect))
                 return false;
 
-            if (IsRedundantHpImplementationDetailForNotes(effect, allEffects))
+            if (IsRedundantStatImplementationDetailForNotes(effect, allEffects))
                 return false;
 
             if (IsStatusDerivedFromHpLossForNotes(effect, allEffects))
@@ -448,7 +455,7 @@ namespace MMMapEditor
                 BuildPredicateTargetKey(predicate.TargetMember));
         }
 
-        private static PartyValueKnowledge GetEffectiveValueKnowledge(PartyEffect effect)
+        internal static PartyValueKnowledge GetEffectiveValueKnowledgeForDiagnostics(PartyEffect effect)
         {
             if (effect == null)
                 return PartyValueKnowledge.Unknown;
@@ -465,6 +472,11 @@ namespace MMMapEditor
             return GetEffectiveOperation(effect) == PartyEffectOperation.Halve
                 ? PartyValueKnowledge.Structural
                 : PartyValueKnowledge.Unknown;
+        }
+
+        private static PartyValueKnowledge GetEffectiveValueKnowledge(PartyEffect effect)
+        {
+            return GetEffectiveValueKnowledgeForDiagnostics(effect);
         }
 
         public static bool IsLoopDerived(PartyEffect effect)
@@ -496,7 +508,7 @@ namespace MMMapEditor
             return (allEffects ?? Enumerable.Empty<PartyEffect>())
                 .Where(candidate => candidate != null && !ReferenceEquals(candidate, effect))
                 .Any(candidate =>
-                    GetEffectiveField(candidate) == PartyFieldKind.Hp &&
+                    IsScalarPartyStatField(GetEffectiveField(candidate)) &&
                     GetEffectiveOperation(candidate) == PartyEffectOperation.Halve &&
                     GetEffectiveCondition(candidate) == condition &&
                     candidate.MemberIndex == effect.MemberIndex &&
@@ -519,9 +531,9 @@ namespace MMMapEditor
                     IsLikelyConsequenceByInstructionOrder(effect, candidate));
         }
 
-        private static bool IsRedundantHpImplementationDetailForNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
+        private static bool IsRedundantStatImplementationDetailForNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
         {
-            if (GetEffectiveField(effect) != PartyFieldKind.Hp)
+            if (!IsScalarPartyStatField(GetEffectiveField(effect)))
                 return false;
 
             if (GetEffectiveScope(effect) != PartyEffectScope.SingleMember || !effect.MemberIndex.HasValue)
@@ -529,7 +541,7 @@ namespace MMMapEditor
 
             return (allEffects ?? Enumerable.Empty<PartyEffect>())
                 .Where(candidate => candidate != null && !ReferenceEquals(candidate, effect))
-                .Any(candidate => IsAggregatedHpSummaryForSingleMemberArtifact(effect, candidate));
+                .Any(candidate => IsAggregatedStatSummaryForSingleMemberArtifact(effect, candidate));
         }
 
         private static bool IsLikelyHpLossConsequenceStatus(PartyEffect effect)
@@ -576,12 +588,13 @@ namespace MMMapEditor
                    IsLoopDerived(left) == IsLoopDerived(right);
         }
 
-        private static bool IsAggregatedHpSummaryForSingleMemberArtifact(PartyEffect specificEffect, PartyEffect aggregateEffect)
+        private static bool IsAggregatedStatSummaryForSingleMemberArtifact(PartyEffect specificEffect, PartyEffect aggregateEffect)
         {
             if (specificEffect == null || aggregateEffect == null)
                 return false;
 
-            if (GetEffectiveField(aggregateEffect) != PartyFieldKind.Hp)
+            if (GetEffectiveField(aggregateEffect) != GetEffectiveField(specificEffect) ||
+                !IsScalarPartyStatField(GetEffectiveField(aggregateEffect)))
                 return false;
 
             if (!IsPartyWideLoopEffect(aggregateEffect))
@@ -805,6 +818,77 @@ namespace MMMapEditor
             };
         }
 
+        private static string BuildExactStatWriteDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition,
+            ushort value)
+        {
+            string statLabel = GetScalarPartyStatLabel(field);
+            bool isZero = value == 0;
+
+            if (condition == PartyConditionKind.MaleOnly)
+            {
+                return isZero
+                    ? $"! {statLabel} каждого мужчины в партии обнуляется !"
+                    : $"{statLabel} каждого мужчины в партии становится равным {value}";
+            }
+
+            if (condition == PartyConditionKind.FemaleOnly)
+            {
+                return isZero
+                    ? $"{statLabel} женщин в партии обнуляется"
+                    : $"{statLabel} женщин в партии становится равным {value}";
+            }
+
+            if (scope == PartyEffectScope.WholeParty)
+            {
+                return isZero
+                    ? $"! {statLabel} каждого персонажа партии обнуляется !"
+                    : $"{statLabel} каждого персонажа партии становится равным {value}";
+            }
+
+            if (scope == PartyEffectScope.PartySubset)
+            {
+                return isZero
+                    ? $"{statLabel} части партии обнуляется"
+                    : $"{statLabel} части партии становится равным {value}";
+            }
+
+            if (scope == PartyEffectScope.CurrentLoopMember)
+            {
+                return isZero
+                    ? $"{statLabel} текущего члена партии обнуляется"
+                    : $"{statLabel} текущего члена партии становится равным {value}";
+            }
+
+            if (scope == PartyEffectScope.RandomMember)
+            {
+                return isZero
+                    ? $"{statLabel} случайного члена партии обнуляется"
+                    : $"{statLabel} случайного члена партии становится равным {value}";
+            }
+
+            if (scope == PartyEffectScope.SelectedMember)
+            {
+                return isZero
+                    ? $"{statLabel} выбранного члена партии обнуляется"
+                    : $"{statLabel} выбранного члена партии становится равным {value}";
+            }
+
+            if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
+            {
+                return isZero
+                    ? $"{statLabel} персонажа #{effect.MemberIndex.Value} обнуляется"
+                    : $"{statLabel} персонажа #{effect.MemberIndex.Value} становится равным {value}";
+            }
+
+            return isZero
+                ? $"{statLabel} персонажа обнуляется"
+                : $"{statLabel} персонажа становится равным {value}";
+        }
+
         private static string BuildSubject(PartyEffect effect, PartyFieldKind field, PartyEffectScope scope, PartyConditionKind condition)
         {
             return scope switch
@@ -812,21 +896,21 @@ namespace MMMapEditor
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
                     ? $"персонажа #{effect.MemberIndex.Value}"
                     : "персонажа партии",
-                PartyEffectScope.RandomMember => field == PartyFieldKind.Hp
+                PartyEffectScope.RandomMember => IsScalarPartyStatField(field)
                     ? "случайного члена партии"
                     : "у случайного члена партии",
-                PartyEffectScope.SelectedMember => field == PartyFieldKind.Hp
+                PartyEffectScope.SelectedMember => IsScalarPartyStatField(field)
                     ? "выбранного члена партии"
                     : "у выбранного члена партии",
                 PartyEffectScope.CurrentLoopMember => "текущего члена партии",
                 PartyEffectScope.PartySubset => condition switch
                 {
-                    PartyConditionKind.MaleOnly => field == PartyFieldKind.Hp ? "мужчин в партии" : "у мужчин в партии",
-                    PartyConditionKind.FemaleOnly => field == PartyFieldKind.Hp ? "женщин в партии" : "у женщин в партии",
-                    _ => field == PartyFieldKind.Hp ? "части партии" : "у части партии"
+                    PartyConditionKind.MaleOnly => IsScalarPartyStatField(field) ? "мужчин в партии" : "у мужчин в партии",
+                    PartyConditionKind.FemaleOnly => IsScalarPartyStatField(field) ? "женщин в партии" : "у женщин в партии",
+                    _ => IsScalarPartyStatField(field) ? "части партии" : "у части партии"
                 },
-                PartyEffectScope.WholeParty => field == PartyFieldKind.Hp ? "членов партии" : "у членов партии",
-                _ => field == PartyFieldKind.Hp ? "персонажа" : "персонажа партии"
+                PartyEffectScope.WholeParty => IsScalarPartyStatField(field) ? "членов партии" : "у членов партии",
+                _ => IsScalarPartyStatField(field) ? "персонажа" : "персонажа партии"
             };
         }
 
@@ -837,11 +921,24 @@ namespace MMMapEditor
                 PartyFieldKind.Hp => "HP",
                 PartyFieldKind.HpHigh => "старший байт HP",
                 PartyFieldKind.HpLow => "младший байт HP",
+                PartyFieldKind.Sp => "SP",
+                PartyFieldKind.SpHigh => "старший байт SP",
+                PartyFieldKind.SpLow => "младший байт SP",
                 PartyFieldKind.Gender => "пол",
                 PartyFieldKind.Status => "status",
                 PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
                 _ => field.ToString()
             };
+        }
+
+        private static bool IsScalarPartyStatField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Hp || field == PartyFieldKind.Sp;
+        }
+
+        private static string GetScalarPartyStatLabel(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Sp ? "SP" : "HP";
         }
     }
 }

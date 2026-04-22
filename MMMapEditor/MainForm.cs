@@ -1064,7 +1064,7 @@ namespace MMMapEditor
             var results = runner.RunTests(testCases);
 
             // Показываем результаты
-            var viewer = new MMMapEditor.Tests.TestResultsViewer(results);
+            var viewer = new MMMapEditor.Tests.TestResultsViewer(results, testsFilePath);
             viewer.ShowDialog();
         }
 
@@ -2217,14 +2217,23 @@ namespace MMMapEditor
 
             var serviceWarningMatches = Regex.Matches(
                 noteText,
-                @"⚠Вызывается random encounter ⚠|! HP (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается вдвое !|! У каждого персонажа партии отнимается \d+ HP !",
+                @"⚠Вызывается random encounter ⚠|! (?:HP|SP) (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается вдвое !|! У каждого персонажа партии отнимается \d+ (?:HP|SP) !|! (?:HP|SP) (?:каждого мужчины в партии|каждого персонажа партии) обнуляется !",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in serviceWarningMatches)
             {
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = Color.FromArgb(255, 80, 80);
-                rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
+                bool isWholePartySpZeroing = string.Equals(
+                    match.Value,
+                    "! SP каждого персонажа партии обнуляется !",
+                    StringComparison.OrdinalIgnoreCase);
+
+                rt.SelectionColor = isWholePartySpZeroing
+                    ? Color.FromArgb(120, 210, 255)
+                    : Color.FromArgb(255, 80, 80);
+                rt.SelectionBackColor = isWholePartySpZeroing
+                    ? Color.FromArgb(120, 0, 0)
+                    : Color.FromArgb(70, 0, 0);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 

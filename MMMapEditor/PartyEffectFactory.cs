@@ -21,7 +21,7 @@ namespace MMMapEditor
 {
     public static class PartyEffectFactory
     {
-        public static PartyEffect CreateHpHalvedEffect(PendingPartyHpOperation pending, LoopSemanticKind loopSemantic)
+        public static PartyEffect CreateHpHalvedEffect(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic)
         {
             PartyConditionKind condition = pending == null
                 ? PartyConditionKind.None
@@ -34,7 +34,18 @@ namespace MMMapEditor
             return CreateHpHalvedEffect(pending, loopSemantic, condition);
         }
 
-        public static PartyEffect CreateHpHalvedEffect(PendingPartyHpOperation pending, LoopSemanticKind loopSemantic, PartyConditionKind condition)
+        public static PartyEffect CreateHpHalvedEffect(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic, PartyConditionKind condition)
+        {
+            return CreateStatHalvedEffect(pending, loopSemantic, condition, PartyFieldKind.Hp);
+        }
+
+        public static PartyEffect CreateSpHalvedEffect(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic, PartyConditionKind condition)
+        {
+            return CreateStatHalvedEffect(pending, loopSemantic, condition, PartyFieldKind.Sp);
+        }
+
+        public static PartyEffect CreateStatHalvedEffect(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic,
+            PartyConditionKind condition, PartyFieldKind field)
         {
             if (pending == null)
                 return null;
@@ -42,7 +53,7 @@ namespace MMMapEditor
             return new PartyEffect
             {
                 Kind = PartyEffectKind.HpHalved,
-                Field = PartyFieldKind.Hp,
+                Field = field,
                 Operation = PartyEffectOperation.Halve,
                 Scope = ResolveScope(pending.Member, loopSemantic, condition),
                 Condition = condition,
@@ -54,12 +65,38 @@ namespace MMMapEditor
                 IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
                 ValueKnowledge = PartyValueKnowledge.Structural,
                 InstructionAddress = pending.StartAddress,
-                Description = BuildHpHalvedDescription(condition, loopSemantic, pending.Member)
+                ExecutionOrder = pending.ExecutionOrder,
+                Description = BuildStatHalvedDescription(field, condition, loopSemantic, pending.Member)
             };
         }
 
-        public static PartyEffect CreateHpAdjustedEffect(PendingPartyHpOperation pending,
+        public static PartyEffect CreateHpAdjustedEffect(PendingPartyStatOperation pending,
             LoopSemanticKind loopSemantic, PartyConditionKind condition, PartyEffectOperation operation, ushort amount)
+        {
+            return CreateStatAdjustedEffect(pending, loopSemantic, condition, operation, amount, PartyFieldKind.Hp);
+        }
+
+        public static PartyEffect CreateSpAdjustedEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, PartyEffectOperation operation, ushort amount)
+        {
+            return CreateStatAdjustedEffect(pending, loopSemantic, condition, operation, amount, PartyFieldKind.Sp);
+        }
+
+        public static PartyEffect CreateHpSetEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, ushort value)
+        {
+            return CreateStatSetEffect(pending, loopSemantic, condition, value, PartyFieldKind.Hp);
+        }
+
+        public static PartyEffect CreateSpSetEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, ushort value)
+        {
+            return CreateStatSetEffect(pending, loopSemantic, condition, value, PartyFieldKind.Sp);
+        }
+
+        public static PartyEffect CreateStatAdjustedEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, PartyEffectOperation operation, ushort amount,
+            PartyFieldKind field)
         {
             if (pending == null || amount == 0 ||
                 (operation != PartyEffectOperation.Increment && operation != PartyEffectOperation.Decrement))
@@ -70,7 +107,7 @@ namespace MMMapEditor
             return new PartyEffect
             {
                 Kind = PartyEffectKind.HpWritten,
-                Field = PartyFieldKind.Hp,
+                Field = field,
                 Operation = operation,
                 Scope = ResolveScope(pending.Member, loopSemantic, condition),
                 Condition = condition,
@@ -83,8 +120,38 @@ namespace MMMapEditor
                 ValueKnowledge = PartyValueKnowledge.ExactImmediate,
                 ImmediateValue = amount,
                 InstructionAddress = pending.StartAddress,
-                Description = BuildHpAdjustedDescription(condition, loopSemantic, pending.Member, operation, amount)
+                ExecutionOrder = pending.ExecutionOrder,
+                Description = BuildStatAdjustedDescription(field, condition, loopSemantic, pending.Member, operation, amount)
             };
+        }
+
+        public static PartyEffect CreateStatSetEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, ushort value, PartyFieldKind field)
+        {
+            if (pending == null)
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.HpWritten,
+                Field = field,
+                Operation = PartyEffectOperation.Write,
+                Scope = ResolveScope(pending.Member, loopSemantic, condition),
+                Condition = condition,
+                GuardPredicates = pending.GuardPredicates?
+                    .Select(predicate => predicate?.Clone())
+                    .Where(predicate => predicate != null)
+                    .ToList() ?? new List<PartyPredicate>(),
+                MemberIndex = IsLoopTarget(pending.Member, loopSemantic) ? null : pending.Member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = value,
+                InstructionAddress = pending.StartAddress,
+                ExecutionOrder = pending.ExecutionOrder
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
         }
 
         public static PartyEffect CreateStatusWriteEffect(PartyMemberReference member, uint instructionAddress, byte? exactValue = null)
@@ -239,59 +306,68 @@ namespace MMMapEditor
             return loopSemantic == LoopSemanticKind.PartyMemberScan || member?.IsPartyLoopMember == true;
         }
 
-        private static string BuildHpHalvedDescription(PartyConditionKind condition, LoopSemanticKind loopSemantic, PartyMemberReference member)
+        private static string BuildStatHalvedDescription(PartyFieldKind field, PartyConditionKind condition,
+            LoopSemanticKind loopSemantic, PartyMemberReference member)
         {
+            string statLabel = GetStatLabel(field);
             if (condition == PartyConditionKind.MaleOnly)
-                return "! HP каждого мужчины в партии уменьшается вдвое !";
+                return $"! {statLabel} каждого мужчины в партии уменьшается вдвое !";
 
             if (condition == PartyConditionKind.FemaleOnly)
-                return "HP женщин в партии уменьшается вдвое";
+                return $"{statLabel} женщин в партии уменьшается вдвое";
 
             if (IsLoopTarget(member, loopSemantic))
-                return "! HP каждого персонажа партии уменьшается вдвое !";
+                return $"! {statLabel} каждого персонажа партии уменьшается вдвое !";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
-                return "HP случайного члена партии уменьшается вдвое";
+                return $"{statLabel} случайного члена партии уменьшается вдвое";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
-                return "HP выбранного члена партии уменьшается вдвое";
+                return $"{statLabel} выбранного члена партии уменьшается вдвое";
 
             if (member?.MemberIndex.HasValue == true)
-                return $"HP персонажа #{member.MemberIndex.Value} уменьшается вдвое";
+                return $"{statLabel} персонажа #{member.MemberIndex.Value} уменьшается вдвое";
 
-            return "HP персонажа уменьшается вдвое";
+            return $"{statLabel} персонажа уменьшается вдвое";
         }
 
-        private static string BuildHpAdjustedDescription(PartyConditionKind condition, LoopSemanticKind loopSemantic,
+        private static string BuildStatAdjustedDescription(PartyFieldKind field, PartyConditionKind condition,
+            LoopSemanticKind loopSemantic,
             PartyMemberReference member, PartyEffectOperation operation, ushort amount)
         {
             string verb = operation == PartyEffectOperation.Increment ? "добавляется" : "отнимается";
+            string statLabel = GetStatLabel(field);
 
             if (condition == PartyConditionKind.MaleOnly)
-                return $"У мужчин в партии {verb} {amount} HP";
+                return $"У мужчин в партии {verb} {amount} {statLabel}";
 
             if (condition == PartyConditionKind.FemaleOnly)
-                return $"У женщин в партии {verb} {amount} HP";
+                return $"У женщин в партии {verb} {amount} {statLabel}";
 
             if (IsLoopTarget(member, loopSemantic))
             {
                 return operation == PartyEffectOperation.Decrement
-                    ? $"! У каждого персонажа партии {verb} {amount} HP !"
-                    : $"У каждого персонажа партии {verb} {amount} HP";
+                    ? $"! У каждого персонажа партии {verb} {amount} {statLabel} !"
+                    : $"У каждого персонажа партии {verb} {amount} {statLabel}";
             }
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
-                return $"У случайного члена партии {verb} {amount} HP";
+                return $"У случайного члена партии {verb} {amount} {statLabel}";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
-                return $"У выбранного члена партии {verb} {amount} HP";
+                return $"У выбранного члена партии {verb} {amount} {statLabel}";
 
             if (member?.MemberIndex.HasValue == true)
-                return $"У персонажа #{member.MemberIndex.Value} {verb} {amount} HP";
+                return $"У персонажа #{member.MemberIndex.Value} {verb} {amount} {statLabel}";
 
             return operation == PartyEffectOperation.Increment
-                ? $"HP персонажа увеличивается на {amount}"
-                : $"HP персонажа уменьшается на {amount}";
+                ? $"{statLabel} персонажа увеличивается на {amount}"
+                : $"{statLabel} персонажа уменьшается на {amount}";
+        }
+
+        private static string GetStatLabel(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Sp ? "SP" : "HP";
         }
 
         private static string BuildStatusWriteDescription(PartyMemberReference member, byte? exactValue)

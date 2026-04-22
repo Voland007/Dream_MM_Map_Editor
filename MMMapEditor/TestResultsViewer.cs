@@ -54,21 +54,36 @@ namespace MMMapEditor.Tests
         }
 
         private readonly List<TestResult> _results;
+        private readonly TestExpectationStore _expectationStore;
         private TreeView _treeView;
         private RichTextBox _detailsBox;
         private Button _runSelectedButton;
         private Button _runAllButton;
         private Button _exportHtmlButton;
         private Button _exportTextButton;
+        private Button _acceptActualButton;
+        private Button _undoExpectationButton;
         private TextBox _filterBox;
         private ComboBox _ovrFileCombo;
         private DataGridView _summaryGrid;
         private System.Windows.Forms.Timer _filterTimer;
+        private TestResult _selectedTestResult;
+        private CellCheckResult _selectedCellResult;
+        private int _historyCount;
+
         public TestResultsViewer(List<TestResult> results)
+            : this(results, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OvrAnalyzerTests.json"))
+        {
+        }
+
+        public TestResultsViewer(List<TestResult> results, string testsFilePath)
         {
             _results = results ?? new List<TestResult>();
+            _expectationStore = new TestExpectationStore(testsFilePath);
+            _historyCount = _expectationStore.GetHistoryCount();
             InitializeComponent();
             PopulateResults();
+            UpdateActionButtons();
         }
 
         private void InitializeComponent()
@@ -227,7 +242,7 @@ namespace MMMapEditor.Tests
             _ovrFileCombo = new ComboBox
             {
                 Location = new Point(575, 5),
-                Width = 200,
+                Width = 180,
                 Height = 30,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 FlatStyle = FlatStyle.Flat,
@@ -235,13 +250,42 @@ namespace MMMapEditor.Tests
                 ForeColor = Color.White
             };
 
+            _acceptActualButton = new Button
+            {
+                Text = "✓ Принять фактический",
+                Location = new Point(765, 5),
+                Width = 180,
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(106, 153, 85),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 },
+                Enabled = false
+            };
+
+            _undoExpectationButton = new Button
+            {
+                Text = "↶ Откатить",
+                Location = new Point(950, 5),
+                Width = 170,
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(160, 120, 50),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 },
+                Enabled = false
+            };
+
             _runSelectedButton.Click += RunSelectedTest;
             _runAllButton.Click += RunAllTests;
             _exportHtmlButton.Click += ExportHtml;
             _exportTextButton.Click += ExportText;
+            _acceptActualButton.Click += AcceptActualAsExpected;
+            _undoExpectationButton.Click += UndoLastExpectationChange;
 
             buttonPanel.Controls.AddRange(new Control[] {
-                _runSelectedButton, _runAllButton, _exportHtmlButton, _exportTextButton, _ovrFileCombo
+                _runSelectedButton, _runAllButton, _exportHtmlButton, _exportTextButton,
+                _ovrFileCombo, _acceptActualButton, _undoExpectationButton
             });
 
             // Вкладки
@@ -421,6 +465,8 @@ namespace MMMapEditor.Tests
             }
 
             _treeView.Nodes.Clear();
+            _selectedTestResult = null;
+            _selectedCellResult = null;
             _treeView.BeginUpdate();
 
             try
@@ -558,6 +604,8 @@ namespace MMMapEditor.Tests
 
                 if (failedNode.Nodes.Count > 0)
                     failedNode.Expand();
+
+                UpdateActionButtons();
             }
             finally
             {
@@ -783,17 +831,75 @@ namespace MMMapEditor.Tests
             }
         }
 
+        private void SelectCell(string testId, Point cell, string viewMode)
+        {
+            foreach (TreeNode categoryNode in _treeView.Nodes)
+            {
+                foreach (TreeNode testNode in categoryNode.Nodes)
+                {
+                    if (testNode.Tag is not TestResult result || result.TestCase.Id != testId)
+                        continue;
+
+                    foreach (TreeNode cellNode in testNode.Nodes)
+                    {
+                        if (cellNode.Tag is not CellCheckResult cellResult)
+                            continue;
+
+                        bool sameCell = cellResult.Cell.Equals(cell);
+                        bool sameMode = string.IsNullOrWhiteSpace(viewMode)
+                            || string.Equals(cellResult.ViewMode, viewMode, StringComparison.Ordinal);
+
+                        if (!sameCell || !sameMode)
+                            continue;
+
+                        categoryNode.Expand();
+                        testNode.Expand();
+                        _treeView.SelectedNode = cellNode;
+                        cellNode.EnsureVisible();
+                        return;
+                    }
+
+                    categoryNode.Expand();
+                    testNode.Expand();
+                    _treeView.SelectedNode = testNode;
+                    testNode.EnsureVisible();
+                    return;
+                }
+            }
+        }
+
         private void TreeView_AfterSelect(object sender, TreeViewEventArgs e)
         {
             _detailsBox.Clear();
+            _selectedTestResult = null;
+            _selectedCellResult = null;
 
             if (e.Node.Tag is TestResult testResult)
             {
+                _selectedTestResult = testResult;
                 ShowTestResult(testResult);
             }
             else if (e.Node.Tag is CellCheckResult cellResult)
             {
+                _selectedCellResult = cellResult;
+                _selectedTestResult = GetSelectedTestResult();
                 ShowCellResult(cellResult);
+            }
+
+            UpdateActionButtons();
+        }
+
+        private void UpdateActionButtons()
+        {
+            if (_acceptActualButton != null)
+                _acceptActualButton.Enabled = _selectedCellResult != null;
+
+            if (_undoExpectationButton != null)
+            {
+                _undoExpectationButton.Enabled = _historyCount > 0;
+                _undoExpectationButton.Text = _historyCount > 0
+                    ? $"↶ Откатить ({_historyCount})"
+                    : "↶ Откатить";
             }
         }
 
@@ -1262,7 +1368,11 @@ namespace MMMapEditor.Tests
             }
         }
 
-        private void RunTestAndUpdate(TestCase testCase)
+        private TestResult? RunTestAndUpdate(
+            TestCase testCase,
+            bool showCompletionMessage = true,
+            Point? cellToSelect = null,
+            string? viewModeToSelect = null)
         {
             Cursor = Cursors.WaitCursor;
 
@@ -1280,19 +1390,143 @@ namespace MMMapEditor.Tests
                 PopulateResults();
 
                 // Показываем новый результат
-                SelectTest(newResult.TestCase.Id);
+                if (cellToSelect.HasValue)
+                    SelectCell(newResult.TestCase.Id, cellToSelect.Value, viewModeToSelect);
+                else
+                    SelectTest(newResult.TestCase.Id);
 
-                MessageBox.Show($"Тест '{testCase.Name}' завершен.\n" +
-                              $"Пройдено: {newResult.PassedChecks}/{newResult.TotalChecks}\n" +
-                              $"Время: {newResult.Logger?.ExecutionTimeMs} мс",
-                              "Тест завершен",
-                              MessageBoxButtons.OK,
-                              newResult.Passed ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                if (showCompletionMessage)
+                {
+                    MessageBox.Show($"Тест '{testCase.Name}' завершен.\n" +
+                                  $"Пройдено: {newResult.PassedChecks}/{newResult.TotalChecks}\n" +
+                                  $"Время: {newResult.Logger?.ExecutionTimeMs} мс",
+                                  "Тест завершен",
+                                  MessageBoxButtons.OK,
+                                  newResult.Passed ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                }
+
+                return newResult;
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка при запуске теста: {ex.Message}",
                               "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return null;
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+        }
+
+        private void AcceptActualAsExpected(object sender, EventArgs e)
+        {
+            if (_selectedCellResult == null || _selectedTestResult == null)
+                return;
+
+            if (string.IsNullOrWhiteSpace(_selectedCellResult.Actual))
+            {
+                DialogResult emptyResultConfirmation = MessageBox.Show(
+                    "Фактический результат пустой.\n\n" +
+                    "Будет установлен флаг пустого ожидания для клетки, а сохранённые тексты для обоих режимов очистятся.\n\n" +
+                    "Продолжить?",
+                    "Подтверждение изменения",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Warning);
+
+                if (emptyResultConfirmation != DialogResult.OK)
+                    return;
+            }
+
+            Cursor = Cursors.WaitCursor;
+
+            try
+            {
+                TestExpectationUpdateResult updateResult = _expectationStore.AcceptActualAsExpected(
+                    _selectedTestResult.TestCase.Id,
+                    _selectedCellResult.Cell,
+                    _selectedCellResult.ViewMode,
+                    _selectedCellResult.Actual);
+
+                if (!updateResult.Success)
+                {
+                    MessageBox.Show(updateResult.Message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                _historyCount = _expectationStore.GetHistoryCount();
+                UpdateActionButtons();
+
+                if (!updateResult.Changed)
+                {
+                    MessageBox.Show(updateResult.Message, "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                TestResult? refreshedResult = RunTestAndUpdate(
+                    updateResult.TestCase,
+                    showCompletionMessage: false,
+                    cellToSelect: updateResult.Cell,
+                    viewModeToSelect: updateResult.ViewMode);
+
+                if (refreshedResult != null)
+                {
+                    MessageBox.Show(updateResult.Message,
+                        "Ожидание обновлено",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Не удалось обновить ожидаемый результат: {ex.Message}",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+        }
+
+        private void UndoLastExpectationChange(object sender, EventArgs e)
+        {
+            Cursor = Cursors.WaitCursor;
+
+            try
+            {
+                TestExpectationUpdateResult rollbackResult = _expectationStore.RollbackLastChange();
+
+                if (!rollbackResult.Success)
+                {
+                    MessageBox.Show(rollbackResult.Message, "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                _historyCount = _expectationStore.GetHistoryCount();
+                UpdateActionButtons();
+
+                TestResult? refreshedResult = RunTestAndUpdate(
+                    rollbackResult.TestCase,
+                    showCompletionMessage: false,
+                    cellToSelect: rollbackResult.Cell,
+                    viewModeToSelect: rollbackResult.ViewMode);
+
+                if (refreshedResult != null)
+                {
+                    MessageBox.Show(rollbackResult.Message,
+                        "Откат выполнен",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Не удалось откатить последнее изменение: {ex.Message}",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
             }
             finally
             {

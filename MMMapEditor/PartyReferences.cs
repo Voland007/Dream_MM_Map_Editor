@@ -27,7 +27,10 @@ namespace MMMapEditor
         HpLow = 3,
         HpHigh = 4,
         Status = 5,
-        Technical77 = 6
+        Technical77 = 6,
+        Sp = 7,
+        SpLow = 8,
+        SpHigh = 9
     }
 
     public enum PartyMemberSelectionKind
@@ -267,7 +270,7 @@ namespace MMMapEditor
         }
     }
 
-    public sealed class PendingPartyHpOperation
+    public sealed class PendingPartyStatOperation
     {
         public PartyMemberReference Member { get; set; }
         public bool MaleOnly { get; set; }
@@ -277,16 +280,19 @@ namespace MMMapEditor
         public bool SawReadLow { get; set; }
         public bool SawWriteHigh { get; set; }
         public bool SawWriteLow { get; set; }
+        public byte? FinalWriteHighByteValue { get; set; }
+        public byte? FinalWriteLowByteValue { get; set; }
         public bool SawClc { get; set; }
         public bool SawShrHigh { get; set; }
         public bool SawRcrLow { get; set; }
         public PendingPartyByteArithmetic LowByteArithmetic { get; set; }
         public PendingPartyByteArithmetic HighByteArithmetic { get; set; }
         public uint StartAddress { get; set; }
+        public int ExecutionOrder { get; set; }
 
-        public PendingPartyHpOperation Clone()
+        public PendingPartyStatOperation Clone()
         {
-            return new PendingPartyHpOperation
+            return new PendingPartyStatOperation
             {
                 Member = Member?.Clone(),
                 MaleOnly = MaleOnly,
@@ -299,18 +305,23 @@ namespace MMMapEditor
                 SawReadLow = SawReadLow,
                 SawWriteHigh = SawWriteHigh,
                 SawWriteLow = SawWriteLow,
+                FinalWriteHighByteValue = FinalWriteHighByteValue,
+                FinalWriteLowByteValue = FinalWriteLowByteValue,
                 SawClc = SawClc,
                 SawShrHigh = SawShrHigh,
                 SawRcrLow = SawRcrLow,
                 LowByteArithmetic = LowByteArithmetic?.Clone(),
                 HighByteArithmetic = HighByteArithmetic?.Clone(),
-                StartAddress = StartAddress
+                StartAddress = StartAddress,
+                ExecutionOrder = ExecutionOrder
             };
         }
 
         public override string ToString()
         {
-            return $"PendingPartyHp(Member={Member}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, LowArith={LowByteArithmetic}, HighArith={HighByteArithmetic}, Start=0x{StartAddress:X4})";
+            string finalLow = FinalWriteLowByteValue.HasValue ? $"0x{FinalWriteLowByteValue.Value:X2}" : "?";
+            string finalHigh = FinalWriteHighByteValue.HasValue ? $"0x{FinalWriteHighByteValue.Value:X2}" : "?";
+            return $"PendingPartyStat(Member={Member}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, FinalLow={finalLow}, FinalHigh={finalHigh}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, LowArith={LowByteArithmetic}, HighArith={HighByteArithmetic}, Start=0x{StartAddress:X4}, Order={ExecutionOrder})";
         }
     }
 

@@ -34,10 +34,26 @@ namespace MMMapEditor
             PromotePartyScanLoopEffects(source, allPartyEffects);
             result.AddRange(allPartyEffects);
 
-            PartyConditionKind inferredCondition = InferPartyCondition(source.PendingPartyHpOperation, allPartyEffects);
-            var normalizedHpEffect = CreateNormalizedHpEffect(source.PendingPartyHpOperation, source.LoopSemantic, inferredCondition);
+            PartyConditionKind inferredCondition = InferPartyCondition(
+                allPartyEffects,
+                source.PendingPartyHpOperation,
+                source.PendingPartySpOperation);
+
+            var normalizedHpEffect = CreateNormalizedStatEffect(
+                source.PendingPartyHpOperation,
+                source.LoopSemantic,
+                inferredCondition,
+                PartyFieldKind.Hp);
             if (normalizedHpEffect != null)
                 result.Add(normalizedHpEffect);
+
+            var normalizedSpEffect = CreateNormalizedStatEffect(
+                source.PendingPartySpOperation,
+                source.LoopSemantic,
+                inferredCondition,
+                PartyFieldKind.Sp);
+            if (normalizedSpEffect != null)
+                result.Add(normalizedSpEffect);
 
             // Если есть loop-derived эффект с условием, он относится к части партии, а не ко всей партии.
             foreach (var effect in result)
@@ -58,7 +74,7 @@ namespace MMMapEditor
                 NormalizeLoopDerivedEffect(effect);
             }
 
-            result = RemoveRedundantHpWrittenEffects(result);
+            result = RemoveRedundantStatWrittenEffects(result);
             result = RemoveLoopGuardEffects(result);
 
             return result
@@ -69,19 +85,34 @@ namespace MMMapEditor
                 .ToList();
         }
 
-        public static PartyEffect CreateNormalizedHpEffect(PendingPartyHpOperation pending,
-            LoopSemanticKind loopSemantic, PartyConditionKind condition)
+        public static PartyEffect CreateNormalizedStatEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition, PartyFieldKind field)
         {
-            if (IsCompletedHpHalvingPattern(pending))
-                return PartyEffectFactory.CreateHpHalvedEffect(pending, loopSemantic, condition);
+            if (IsCompletedStatHalvingPattern(pending))
+            {
+                return field == PartyFieldKind.Sp
+                    ? PartyEffectFactory.CreateSpHalvedEffect(pending, loopSemantic, condition)
+                    : PartyEffectFactory.CreateHpHalvedEffect(pending, loopSemantic, condition);
+            }
 
-            if (TryGetExactHpAdjustment(pending, out var operation, out ushort amount))
-                return PartyEffectFactory.CreateHpAdjustedEffect(pending, loopSemantic, condition, operation, amount);
+            if (TryGetExactStatAdjustment(pending, out var operation, out ushort amount))
+            {
+                return field == PartyFieldKind.Sp
+                    ? PartyEffectFactory.CreateSpAdjustedEffect(pending, loopSemantic, condition, operation, amount)
+                    : PartyEffectFactory.CreateHpAdjustedEffect(pending, loopSemantic, condition, operation, amount);
+            }
+
+            if (TryGetExactStatWrite(pending, out ushort value))
+            {
+                return field == PartyFieldKind.Sp
+                    ? PartyEffectFactory.CreateSpSetEffect(pending, loopSemantic, condition, value)
+                    : PartyEffectFactory.CreateHpSetEffect(pending, loopSemantic, condition, value);
+            }
 
             return null;
         }
 
-        public static PartyConditionKind InferPartyCondition(PendingPartyHpOperation pending, IEnumerable<PartyEffect> effects)
+        public static PartyConditionKind InferPartyCondition(IEnumerable<PartyEffect> effects, params PendingPartyStatOperation[] pendingOperations)
         {
             foreach (var effect in effects ?? Enumerable.Empty<PartyEffect>())
             {
@@ -96,21 +127,24 @@ namespace MMMapEditor
                     return condition;
             }
 
-            if (pending?.MaleOnly == true)
-                return PartyConditionKind.MaleOnly;
+            foreach (var pending in pendingOperations ?? Enumerable.Empty<PendingPartyStatOperation>())
+            {
+                if (pending?.MaleOnly == true)
+                    return PartyConditionKind.MaleOnly;
 
-            if (pending?.FemaleOnly == true)
-                return PartyConditionKind.FemaleOnly;
+                if (pending?.FemaleOnly == true)
+                    return PartyConditionKind.FemaleOnly;
+            }
 
             return PartyConditionKind.None;
         }
 
-        public static bool IsCompletedHpHalvingPattern(PendingPartyHpOperation pending)
+        public static bool IsCompletedStatHalvingPattern(PendingPartyStatOperation pending)
         {
             if (pending == null)
                 return false;
 
-            // Для 16-битного деления HP пополам достаточно шаблона
+            // Для 16-битного деления значения пополам достаточно шаблона
             // SHR старшего байта + RCR младшего байта: SHR сам выставляет CF,
             // который затем потребляет RCR. Предварительный CLC может встречаться,
             // но не является обязательным признаком паттерна.
@@ -122,7 +156,7 @@ namespace MMMapEditor
                    pending.SawRcrLow;
         }
 
-        public static bool TryGetExactHpAdjustment(PendingPartyHpOperation pending,
+        public static bool TryGetExactStatAdjustment(PendingPartyStatOperation pending,
             out PartyEffectOperation operation, out ushort amount)
         {
             operation = PartyEffectOperation.Unknown;
@@ -160,18 +194,36 @@ namespace MMMapEditor
             return true;
         }
 
-        private static List<PartyEffect> RemoveRedundantHpWrittenEffects(List<PartyEffect> effects)
+        public static bool TryGetExactStatWrite(PendingPartyStatOperation pending, out ushort value)
+        {
+            value = 0;
+
+            if (pending == null ||
+                !pending.SawWriteHigh ||
+                !pending.SawWriteLow ||
+                !pending.FinalWriteHighByteValue.HasValue ||
+                !pending.FinalWriteLowByteValue.HasValue)
+            {
+                return false;
+            }
+
+            value = (ushort)(pending.FinalWriteLowByteValue.Value | (pending.FinalWriteHighByteValue.Value << 8));
+            return true;
+        }
+
+        private static List<PartyEffect> RemoveRedundantStatWrittenEffects(List<PartyEffect> effects)
         {
             if (effects == null || effects.Count == 0)
                 return effects ?? new List<PartyEffect>();
 
-            var normalizedHpEffects = effects
+            var normalizedStatEffects = effects
                 .Where(e => e != null &&
-                            PartyEffectSemantics.GetEffectiveField(e) == PartyFieldKind.Hp &&
-                            PartyEffectSemantics.GetEffectiveOperation(e) != PartyEffectOperation.Write)
+                            IsSupportedStatField(PartyEffectSemantics.GetEffectiveField(e)) &&
+                            (PartyEffectSemantics.GetEffectiveOperation(e) != PartyEffectOperation.Write ||
+                             PartyEffectSemantics.GetEffectiveValueKnowledgeForDiagnostics(e) != PartyValueKnowledge.Unknown))
                 .ToList();
 
-            if (normalizedHpEffects.Count == 0)
+            if (normalizedStatEffects.Count == 0)
                 return effects;
 
             return effects
@@ -180,15 +232,24 @@ namespace MMMapEditor
                     if (effect == null)
                         return false;
 
-                    if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Hp ||
+                    var field = PartyEffectSemantics.GetEffectiveField(effect);
+                    if (!IsSupportedStatField(field) ||
                         PartyEffectSemantics.GetEffectiveOperation(effect) != PartyEffectOperation.Write)
                     {
                         return true;
                     }
 
-                    return !normalizedHpEffects.Any(h => MatchesSameTarget(effect, h));
+                    return !normalizedStatEffects.Any(h =>
+                        !ReferenceEquals(h, effect) &&
+                        PartyEffectSemantics.GetEffectiveField(h) == field &&
+                        MatchesSameTarget(effect, h));
                 })
                 .ToList();
+        }
+
+        private static bool IsSupportedStatField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Hp || field == PartyFieldKind.Sp;
         }
 
         private static void PromotePartyScanLoopEffects(PathAnalysisResult source, List<PartyEffect> effects)

@@ -405,9 +405,12 @@ namespace MMMapEditor
                     merged.PartyFieldAccesses.Add(access.Clone());
             }
 
-            merged.PendingPartyHpOperation = MergePendingPartyHpOperation(
+            merged.PendingPartyHpOperation = MergePendingPartyStatOperation(
                 merged.PendingPartyHpOperation,
                 currentState.PendingPartyHpOperation);
+            merged.PendingPartySpOperation = MergePendingPartyStatOperation(
+                merged.PendingPartySpOperation,
+                currentState.PendingPartySpOperation);
 
             foreach (var effect in currentState.PartyEffects ?? Enumerable.Empty<PartyEffect>())
             {
@@ -468,9 +471,9 @@ namespace MMMapEditor
             return merged;
         }
 
-        private PendingPartyHpOperation MergePendingPartyHpOperation(
-            PendingPartyHpOperation inheritedPending,
-            PendingPartyHpOperation currentPending)
+        private PendingPartyStatOperation MergePendingPartyStatOperation(
+            PendingPartyStatOperation inheritedPending,
+            PendingPartyStatOperation currentPending)
         {
             if (inheritedPending == null)
                 return currentPending?.Clone();
@@ -505,6 +508,12 @@ namespace MMMapEditor
             merged.SawReadLow = inheritedPending.SawReadLow || currentPending.SawReadLow;
             merged.SawWriteHigh = inheritedPending.SawWriteHigh || currentPending.SawWriteHigh;
             merged.SawWriteLow = inheritedPending.SawWriteLow || currentPending.SawWriteLow;
+            merged.FinalWriteHighByteValue = currentPending.SawWriteHigh
+                ? currentPending.FinalWriteHighByteValue
+                : inheritedPending.FinalWriteHighByteValue;
+            merged.FinalWriteLowByteValue = currentPending.SawWriteLow
+                ? currentPending.FinalWriteLowByteValue
+                : inheritedPending.FinalWriteLowByteValue;
             merged.SawClc = inheritedPending.SawClc || currentPending.SawClc;
             merged.SawShrHigh = inheritedPending.SawShrHigh || currentPending.SawShrHigh;
             merged.SawRcrLow = inheritedPending.SawRcrLow || currentPending.SawRcrLow;
@@ -519,6 +528,12 @@ namespace MMMapEditor
                 (currentPending.StartAddress != 0 && currentPending.StartAddress < merged.StartAddress))
             {
                 merged.StartAddress = currentPending.StartAddress;
+            }
+
+            if (merged.ExecutionOrder <= 0 ||
+                (currentPending.ExecutionOrder > 0 && currentPending.ExecutionOrder < merged.ExecutionOrder))
+            {
+                merged.ExecutionOrder = currentPending.ExecutionOrder;
             }
 
             return merged;
@@ -716,6 +731,7 @@ namespace MMMapEditor
             clone.TerminatedByTerminalRet = source.TerminatedByTerminalRet;
             clone.PartyFieldAccesses = source.PartyFieldAccesses?.Select(a => a?.Clone()).Where(a => a != null).ToList() ?? new List<PartyFieldReference>();
             clone.PendingPartyHpOperation = source.PendingPartyHpOperation?.Clone();
+            clone.PendingPartySpOperation = source.PendingPartySpOperation?.Clone();
             clone.PartyEffects = source.PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>();
 
             foreach (var alt in source.AlternativePaths)

@@ -321,7 +321,8 @@ namespace MMMapEditor
         public List<PartialBattleInfo> PartialBattleInfo { get; set; } = new List<PartialBattleInfo>();
         public List<PartiallyDefinedBattle> PartialBattles { get; set; } = new List<PartiallyDefinedBattle>();
         public List<PartyFieldReference> PartyFieldAccesses { get; set; } = new List<PartyFieldReference>();
-        public PendingPartyHpOperation PendingPartyHpOperation { get; set; }
+        public PendingPartyStatOperation PendingPartyHpOperation { get; set; }
+        public PendingPartyStatOperation PendingPartySpOperation { get; set; }
         public PartyConditionKind ActivePartyCondition { get; set; } = PartyConditionKind.None;
         public bool IsInLoop { get; set; } = false;
         public uint LoopStartAddress { get; set; } = 0;
