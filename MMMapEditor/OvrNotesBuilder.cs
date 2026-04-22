@@ -609,25 +609,29 @@ namespace MMMapEditor
             if (items.Count <= 1)
                 return null;
 
+            var groups = BuildTopLevelVariantGroups(items);
+            if (groups.Count == 0)
+                return null;
+
             // Иерархический вывод нужен либо когда есть реальные choice-ветки,
-            // либо когда у листовых вариантов есть общий текстовый префикс.
+            // либо когда хотя бы внутри одной смысловой группы остаётся
+            // нетривиальный общий текстовый префикс. Это позволяет не терять
+            // иерархию в случаях вида "no-op + несколько родственных исходов".
             bool hasMeaningfulChoiceHierarchy = items.Any(item =>
                 GetRelevantBranchChoices(item?.Variant).Any());
 
-            bool hasCommonPrefixHierarchy =
-    items.Count > 1 &&
-    GetCommonPrefix(items.Select(item => item.Lines).ToList())
-        .Any(line => !string.IsNullOrWhiteSpace(line));
+            bool hasCommonPrefixHierarchy = groups.Any(group =>
+                (group?.Items?.Count ?? 0) > 1 &&
+                (group.TreeRoot?.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false));
 
             if (!hasMeaningfulChoiceHierarchy && !hasCommonPrefixHierarchy)
                 return null;
 
-            var groups = BuildTopLevelVariantGroups(items);
-
             bool hasRealMultiplicity =
                 groups.Count > 1 ||
-                ((groups[0].TreeRoot?.Children?.Any(IsRenderableStructuralNode) ?? false)) ||
-                ((groups[0].TreeRoot?.DirectVariants?.Count(v => v != null && IsRenderableDirectVariant(v)) ?? 0) > 1);
+                groups.Any(group =>
+                    (group?.TreeRoot?.Children?.Any(IsRenderableStructuralNode) ?? false) ||
+                    ((group?.TreeRoot?.DirectVariants?.Count(v => v != null && IsRenderableDirectVariant(v)) ?? 0) > 1));
 
             if (!hasRealMultiplicity)
                 return null;
