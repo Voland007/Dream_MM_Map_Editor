@@ -19,6 +19,9 @@ namespace MMMapEditor
 
     public static class OvrNotesBuilder
     {
+        private static readonly Lazy<HashSet<string>> KnownLootItemNames =
+            new Lazy<HashSet<string>>(BuildKnownLootItemNames);
+
         public static OvrNotesBuildResult BuildNotes(
             string filename,
             Dictionary<Point, string> existingCentralOptions,
@@ -2716,12 +2719,36 @@ namespace MMMapEditor
             if (trimmed.Contains(":") || trimmed.Contains(";") || trimmed.Contains(",") || trimmed.Contains("(") || trimmed.Contains(")"))
                 return false;
 
-            int letterCount = trimmed.Count(char.IsLetter);
-            if (letterCount == 0)
-                return false;
+            string normalized = NormalizeLootItemIdentity(trimmed);
+            return !string.IsNullOrEmpty(normalized)
+                && KnownLootItemNames.Value.Contains(normalized);
+        }
 
-            int upperCount = trimmed.Count(char.IsUpper);
-            return upperCount >= Math.Max(3, letterCount * 3 / 4);
+        private static HashSet<string> BuildKnownLootItemNames()
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in ItemDatabase.Items)
+            {
+                string normalized = NormalizeLootItemIdentity(item?.Name);
+                if (!string.IsNullOrEmpty(normalized))
+                    result.Add(normalized);
+            }
+
+            return result;
+        }
+
+        private static string NormalizeLootItemIdentity(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            string normalized = RemoveProbabilityBullet(RemoveExistingLootNumbering(value.Trim()));
+            if (normalized.Length == 0)
+                return string.Empty;
+
+            normalized = Regex.Replace(normalized, @"\s+", " ");
+            return normalized.ToUpperInvariant();
         }
 
         private static string RemoveExistingLootNumbering(string line)
