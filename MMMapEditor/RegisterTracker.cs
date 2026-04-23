@@ -106,6 +106,7 @@ namespace MMMapEditor
         public uint? LastFlagsInstructionAddress { get; set; }
         public byte? LastCompareImmediate { get; set; }
         public ushort? LastComparedMemoryAddress { get; set; }
+        public PartyFieldReference LastComparedPartyField { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
         public List<PartyConditionWindow> ActivePartyConditionWindows { get; set; } = new List<PartyConditionWindow>();
         public List<PartyPredicateWindow> ActivePartyPredicateWindows { get; set; } = new List<PartyPredicateWindow>();
@@ -115,6 +116,7 @@ namespace MMMapEditor
             LastFlagsRegister = register?.ToUpperInvariant();
             LastFlagsOrigin = origin;
             LastFlagsInstructionAddress = instructionAddress;
+            LastComparedPartyField = null;
             LastFlagsFromCoordinate = fromCoordinate ?? IsCoordinateSourceForRegister(register);
         }
 
@@ -125,6 +127,7 @@ namespace MMMapEditor
             LastFlagsInstructionAddress = null;
             LastCompareImmediate = null;
             LastComparedMemoryAddress = null;
+            LastComparedPartyField = null;
             LastFlagsFromCoordinate = false;
         }
 
@@ -1154,6 +1157,13 @@ namespace MMMapEditor
             SignFlag = false;
             OverflowFlag = false;
             FlagsKnown = false;
+            LastFlagsRegister = null;
+            LastFlagsOrigin = FlagsOriginKind.Unknown;
+            LastFlagsInstructionAddress = null;
+            LastCompareImmediate = null;
+            LastComparedMemoryAddress = null;
+            LastComparedPartyField = null;
+            LastFlagsFromCoordinate = false;
             ActivePartyConditionWindows.Clear();
             ActivePartyPredicateWindows.Clear();
         }
@@ -1385,6 +1395,7 @@ namespace MMMapEditor
             clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             clone.LastCompareImmediate = this.LastCompareImmediate;
             clone.LastComparedMemoryAddress = this.LastComparedMemoryAddress;
+            clone.LastComparedPartyField = this.LastComparedPartyField?.Clone();
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
             clone.HasObservedCoordinateSeedRead = this.HasObservedCoordinateSeedRead;
             clone.ActivePartyConditionWindows = this.ActivePartyConditionWindows?

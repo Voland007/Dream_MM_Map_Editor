@@ -378,7 +378,9 @@ namespace MMMapEditor
         StatusWritten = 5,
         TechnicalFieldRead = 6,
         TechnicalFieldWritten = 7,
-        TechnicalFieldCompared = 8
+        TechnicalFieldCompared = 8,
+        AlignmentWritten = 9,
+        AlignmentCompared = 10
     }
 
     public enum PartyEffectScope

@@ -45,6 +45,8 @@ namespace MMMapEditor
         private const int PARTY_sex_OFFSET = 0x10;
         private const byte PARTY_sex_MALE_VALUE = 0x01;
         private const byte PARTY_sex_FEMALE_VALUE = 0x02;
+        private const int PARTY_INNATE_ALIGNMENT_OFFSET = PartyAlignmentSemantics.InnateFieldOffset;
+        private const int PARTY_CURRENT_ALIGNMENT_OFFSET = PartyAlignmentSemantics.CurrentFieldOffset;
         private const int PARTY_SP_LOW_OFFSET = 0x2B;
         private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
@@ -880,6 +882,8 @@ namespace MMMapEditor
             PartyFieldKind field = offset switch
             {
                 PARTY_sex_OFFSET => PartyFieldKind.sex,
+                PARTY_INNATE_ALIGNMENT_OFFSET => PartyFieldKind.InnateAlignment,
+                PARTY_CURRENT_ALIGNMENT_OFFSET => PartyFieldKind.CurrentAlignment,
                 PARTY_SP_LOW_OFFSET => PartyFieldKind.SpLow,
                 PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
@@ -899,9 +903,7 @@ namespace MMMapEditor
                 Offset = offset,
                 EffectiveAddress = effectiveAddress,
                 FieldOffset = (byte)offset,
-                FieldName = field == PartyFieldKind.Technical77
-                    ? PartyTechnicalField77Semantics.FieldLabel
-                    : null
+                FieldName = GetPartyFieldLabel(field)
             };
 
             return true;
@@ -1510,11 +1512,18 @@ namespace MMMapEditor
                 return null;
 
             string comparedRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
-            if (string.IsNullOrWhiteSpace(comparedRegister) || !registerTracker.LastCompareImmediate.HasValue)
+            if (!registerTracker.LastCompareImmediate.HasValue)
                 return null;
 
-            if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out var comparedField) || comparedField == null)
-                return null;
+            PartyFieldReference comparedField = registerTracker.LastComparedPartyField?.Clone();
+            if (comparedField == null)
+            {
+                if (string.IsNullOrWhiteSpace(comparedRegister))
+                    return null;
+
+                if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out comparedField) || comparedField == null)
+                    return null;
+            }
 
             var comparison = ResolvePredicateComparisonForBranch(mnemonic, branchTaken);
             if (comparison == PartyPredicateComparison.Unknown)
@@ -1574,6 +1583,8 @@ namespace MMMapEditor
             string fieldText = field switch
             {
                 PartyFieldKind.sex => "sex",
+                PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
+                PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 PartyFieldKind.Hp => "HP",
                 PartyFieldKind.HpLow => "HP low",
                 PartyFieldKind.HpHigh => "HP high",
@@ -1596,7 +1607,11 @@ namespace MMMapEditor
                 _ => "?"
             };
 
-            return $"{fieldText} {comparisonText} 0x{value:X2}";
+            string valueText = PartyAlignmentSemantics.IsAlignmentField(field)
+                ? PartyAlignmentSemantics.FormatAlignmentValue(value)
+                : $"0x{value:X2}";
+
+            return $"{fieldText} {comparisonText} {valueText}";
         }
 
         private string BuildPartyPredicateKey(PartyPredicate predicate)
@@ -1718,6 +1733,14 @@ namespace MMMapEditor
                 effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
                 effects.Add(effect);
             }
+            else if (PartyAlignmentSemantics.IsAlignmentField(fieldRef.Field))
+            {
+                effects.Add(PartyEffectFactory.CreateAlignmentWriteEffect(
+                    fieldRef.Member,
+                    fieldRef.Field,
+                    instructionAddress,
+                    exactValue));
+            }
             else if (IsPartyStatField(fieldRef.Field))
             {
                 PartyFieldKind statField = GetPartyStatBaseField(fieldRef.Field);
@@ -1807,6 +1830,8 @@ namespace MMMapEditor
             {
                 string debugPrefix = fieldRef.Field switch
                 {
+                    PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
+                    PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                     PartyFieldKind.Status => "Статус персонажа",
                     PartyFieldKind.Technical77 => "Техническое поле персонажа",
                     _ => null
@@ -1873,6 +1898,71 @@ namespace MMMapEditor
                 debugMode: debugMode);
         }
 
+        private void RegisterPartyFieldCompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
+            RegisterTracker registerTracker, uint instructionAddress, byte compareValue, bool debugMode)
+        {
+            if (result == null || fieldRef == null || !IsComparablePartyField(fieldRef.Field))
+                return;
+
+            if (fieldRef.Field == PartyFieldKind.Technical77)
+            {
+                RegisterTechnicalField77CompareEffect(
+                    result,
+                    fieldRef,
+                    registerTracker,
+                    instructionAddress,
+                    compareValue,
+                    isBitMask: false,
+                    debugMode);
+                return;
+            }
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = fieldRef.Member?.Clone(),
+                Field = fieldRef.Field,
+                Offset = fieldRef.Offset,
+                EffectiveAddress = fieldRef.EffectiveAddress,
+                IsRead = true,
+                IsCompare = true
+            });
+
+            PartyEffect effect = fieldRef.Field switch
+            {
+                PartyFieldKind.sex => new PartyEffect
+                {
+                    Kind = PartyEffectKind.sexCompared,
+                    Field = PartyFieldKind.sex,
+                    Operation = PartyEffectOperation.Compare,
+                    ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                    ImmediateValue = compareValue,
+                    InstructionAddress = instructionAddress
+                },
+                PartyFieldKind.InnateAlignment or PartyFieldKind.CurrentAlignment
+                    => PartyEffectFactory.CreateAlignmentCompareEffect(fieldRef.Member, fieldRef.Field, instructionAddress, compareValue),
+                _ => null
+            };
+
+            if (effect == null)
+                return;
+
+            PartyConditionKind currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
+            PartyConditionKind compareCondition = fieldRef.Field == PartyFieldKind.sex && compareValue == PARTY_sex_MALE_VALUE
+                ? PartyConditionKind.MaleOnly
+                : fieldRef.Field == PartyFieldKind.sex && compareValue == PARTY_sex_FEMALE_VALUE
+                    ? PartyConditionKind.FemaleOnly
+                    : currentCondition;
+
+            AddResolvedPartyEffect(
+                result,
+                effect,
+                fieldRef.Member,
+                registerTracker,
+                compareCondition,
+                debugPrefix: GetPartyFieldLabel(fieldRef.Field),
+                debugMode: debugMode);
+        }
+
         private List<PartyPredicate> GetMergedGuardPredicates(IEnumerable<PartyPredicate> existing,
             IEnumerable<PartyPredicate> inferred)
         {
@@ -1927,6 +2017,24 @@ namespace MMMapEditor
                 default:
                     return false;
             }
+        }
+
+        private static bool IsComparablePartyField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.sex ||
+                   field == PartyFieldKind.Technical77 ||
+                   PartyAlignmentSemantics.IsAlignmentField(field);
+        }
+
+        private static string GetPartyFieldLabel(PartyFieldKind field)
+        {
+            return field switch
+            {
+                PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
+                PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
+                PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
+                _ => null
+            };
         }
 
         private List<PartyEffect> BuildStatusEffectsFromBitTransform(PartyMemberReference member,
@@ -5241,10 +5349,8 @@ namespace MMMapEditor
                 bool hasKnownAlForCompare = registerTracker.TryGetByteRegisterValue("AL", out byte alValue);
                 bool hasComparedPartyField = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
                     comparedPartyField != null;
-                bool hasPartysexCompare = hasComparedPartyField &&
-                    comparedPartyField.Field == PartyFieldKind.sex;
-                bool hasTechnicalFieldCompare = hasComparedPartyField &&
-                    comparedPartyField.Field == PartyFieldKind.Technical77;
+                bool hasComparablePartyField = hasComparedPartyField &&
+                    IsComparablePartyField(comparedPartyField.Field);
 
                 if (hasKnownAlForCompare)
                 {
@@ -5257,62 +5363,25 @@ namespace MMMapEditor
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                 }
-                else if (hasPartysexCompare || hasTechnicalFieldCompare)
+                else if (hasComparablePartyField)
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                 }
 
+                if (hasComparablePartyField)
+                {
+                    PartyFieldReference comparablePartyField = comparedPartyField!;
+                    registerTracker.LastComparedPartyField = comparablePartyField.Clone();
+                    RegisterPartyFieldCompareEffect(result, comparablePartyField, registerTracker, address, immediateValue, debugMode);
+                }
+                else
+                {
+                    registerTracker.LastComparedPartyField = null;
+                }
+
                 registerTracker.LastCompareImmediate = immediateValue;
                 registerTracker.LastComparedMemoryAddress = null;
-
-                if (hasPartysexCompare)
-                {
-                    result.PartyFieldAccesses.Add(new PartyFieldReference
-                    {
-                        Member = comparedPartyField.Member?.Clone(),
-                        Field = comparedPartyField.Field,
-                        Offset = comparedPartyField.Offset,
-                        EffectiveAddress = comparedPartyField.EffectiveAddress,
-                        IsRead = true,
-                        IsCompare = true
-                    });
-
-                    if (immediateValue == PARTY_sex_MALE_VALUE || immediateValue == PARTY_sex_FEMALE_VALUE)
-                    {
-                        var compareEffect = new PartyEffect
-                        {
-                            Kind = PartyEffectKind.sexCompared,
-                            Field = PartyFieldKind.sex,
-                            Operation = PartyEffectOperation.Compare,
-                            ValueKnowledge = PartyValueKnowledge.ExactImmediate,
-                            ImmediateValue = immediateValue,
-                            InstructionAddress = address
-                        };
-                        PartyConditionKind compareCondition = immediateValue == PARTY_sex_MALE_VALUE
-                            ? PartyConditionKind.MaleOnly
-                            : PartyConditionKind.FemaleOnly;
-
-                        AddResolvedPartyEffect(
-                            result,
-                            compareEffect,
-                            comparedPartyField.Member,
-                            registerTracker,
-                            compareCondition);
-                    }
-                }
-
-                if (hasTechnicalFieldCompare)
-                {
-                    RegisterTechnicalField77CompareEffect(
-                        result,
-                        comparedPartyField,
-                        registerTracker,
-                        address,
-                        immediateValue,
-                        isBitMask: false,
-                        debugMode);
-                }
             }
 
             // OR AL, AL / TEST AL, AL (точное выставление флагов для проверок на ноль)
@@ -5409,9 +5478,10 @@ namespace MMMapEditor
                     string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
                     string regName = regIndex < regNames8.Length ? regNames8[regIndex] : null;
                     PartyFieldReference comparedPartyField = null;
-                    bool hasTechnicalFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
+                    bool hasComparablePartyField = !string.IsNullOrWhiteSpace(regName) &&
                         registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
-                        comparedPartyField?.Field == PartyFieldKind.Technical77;
+                        comparedPartyField != null &&
+                        IsComparablePartyField(comparedPartyField.Field);
 
                     if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
                     {
@@ -5426,7 +5496,7 @@ namespace MMMapEditor
                         registerTracker.LastCompareImmediate = immediateValue;
                         registerTracker.LastComparedMemoryAddress = null;
                     }
-                    else if (hasTechnicalFieldCompare)
+                    else if (hasComparablePartyField)
                     {
                         registerTracker.FlagsKnown = false;
                         registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
@@ -5434,16 +5504,15 @@ namespace MMMapEditor
                         registerTracker.LastComparedMemoryAddress = null;
                     }
 
-                    if (hasTechnicalFieldCompare)
+                    if (hasComparablePartyField)
                     {
-                        RegisterTechnicalField77CompareEffect(
-                            result,
-                            comparedPartyField,
-                            registerTracker,
-                            address,
-                            immediateValue,
-                            isBitMask: false,
-                            debugMode);
+                        PartyFieldReference comparablePartyField = comparedPartyField!;
+                        registerTracker.LastComparedPartyField = comparablePartyField.Clone();
+                        RegisterPartyFieldCompareEffect(result, comparablePartyField, registerTracker, address, immediateValue, debugMode);
+                    }
+                    else
+                    {
+                        registerTracker.LastComparedPartyField = null;
                     }
                 }
                 else if (mode == 0x03)
@@ -5480,26 +5549,28 @@ namespace MMMapEditor
                             byte cmpResult = (byte)(memValue - immediateValue);
                             SetArithmeticFlagsForSub8(registerTracker, memValue, immediateValue, cmpResult, null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         }
-                        else if (hasPartyFieldRef && comparedFieldRef?.Field == PartyFieldKind.Technical77)
+                        else if (hasPartyFieldRef && comparedFieldRef != null && IsComparablePartyField(comparedFieldRef.Field))
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         }
 
+                        bool hasComparableComparedField = hasPartyFieldRef &&
+                                                         comparedFieldRef != null &&
+                                                         IsComparablePartyField(comparedFieldRef.Field);
+                        if (hasComparableComparedField)
+                        {
+                            PartyFieldReference comparableComparedField = comparedFieldRef!;
+                            registerTracker.LastComparedPartyField = comparableComparedField.Clone();
+                            RegisterPartyFieldCompareEffect(result, comparableComparedField, registerTracker, address, immediateValue, debugMode);
+                        }
+                        else
+                        {
+                            registerTracker.LastComparedPartyField = null;
+                        }
+
                         registerTracker.LastCompareImmediate = immediateValue;
                         registerTracker.LastComparedMemoryAddress = hasExactMemAddr ? memAddr : null;
-
-                        if (hasPartyFieldRef && comparedFieldRef?.Field == PartyFieldKind.Technical77)
-                        {
-                            RegisterTechnicalField77CompareEffect(
-                                result,
-                                comparedFieldRef,
-                                registerTracker,
-                                address,
-                                immediateValue,
-                                isBitMask: false,
-                                debugMode);
-                        }
                     }
 
                     PartyEffectOperation memoryOperation = MapImmediateByteTransformOperation(operation);

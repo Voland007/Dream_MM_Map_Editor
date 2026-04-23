@@ -197,6 +197,52 @@ namespace MMMapEditor
             };
         }
 
+        public static PartyEffect CreateAlignmentWriteEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
+        {
+            if (!PartyAlignmentSemantics.IsAlignmentField(field))
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.AlignmentWritten,
+                Field = field,
+                Operation = PartyEffectOperation.Write,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        public static PartyEffect CreateAlignmentCompareEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte compareValue)
+        {
+            if (!PartyAlignmentSemantics.IsAlignmentField(field))
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.AlignmentCompared,
+                Field = field,
+                Operation = PartyEffectOperation.Compare,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = compareValue,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
         public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
             uint instructionAddress, byte? exactValue = null)
         {

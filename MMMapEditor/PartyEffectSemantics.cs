@@ -104,6 +104,9 @@ namespace MMMapEditor
             if (field == PartyFieldKind.Technical77)
                 return BuildTechnicalField77Description(effect, scope, condition);
 
+            if (PartyAlignmentSemantics.IsAlignmentField(field))
+                return BuildAlignmentDescription(effect, field, operation, scope, condition);
+
             if (IsScalarPartyStatField(field) && operation == PartyEffectOperation.Halve)
             {
                 string statLabel = GetScalarPartyStatLabel(field);
@@ -304,6 +307,8 @@ namespace MMMapEditor
                 ? PartyFieldKind.Hp
                 : effect.Kind == PartyEffectKind.sexWritten || effect.Kind == PartyEffectKind.sexCompared
                     ? PartyFieldKind.sex
+                    : effect.Kind == PartyEffectKind.AlignmentWritten || effect.Kind == PartyEffectKind.AlignmentCompared
+                        ? effect.Field
                     : effect.Kind == PartyEffectKind.StatusWritten
                         ? PartyFieldKind.Status
                         : effect.Kind == PartyEffectKind.TechnicalFieldRead ||
@@ -327,6 +332,8 @@ namespace MMMapEditor
                 PartyEffectKind.HpWritten => PartyEffectOperation.Write,
                 PartyEffectKind.sexWritten => PartyEffectOperation.Write,
                 PartyEffectKind.sexCompared => PartyEffectOperation.Compare,
+                PartyEffectKind.AlignmentWritten => PartyEffectOperation.Write,
+                PartyEffectKind.AlignmentCompared => PartyEffectOperation.Compare,
                 PartyEffectKind.StatusWritten => PartyEffectOperation.Write,
                 PartyEffectKind.TechnicalFieldRead => PartyEffectOperation.Read,
                 PartyEffectKind.TechnicalFieldWritten => PartyEffectOperation.Write,
@@ -797,6 +804,42 @@ namespace MMMapEditor
             };
         }
 
+        private static string BuildAlignmentDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectOperation operation,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null)
+                return null;
+
+            string fieldLabel = FormatFieldName(field);
+            string subject = BuildSubject(effect, field, scope, condition);
+            string valueText = effect.ImmediateValue.HasValue
+                ? PartyAlignmentSemantics.FormatAlignmentValue(effect.ImmediateValue.Value)
+                : null;
+
+            return operation switch
+            {
+                PartyEffectOperation.Read when !string.IsNullOrWhiteSpace(valueText)
+                    => $"Читается {fieldLabel} {subject} (= {valueText})",
+                PartyEffectOperation.Read
+                    => $"Читается {fieldLabel} {subject}",
+                PartyEffectOperation.Compare when !string.IsNullOrWhiteSpace(valueText)
+                    => $"Проверяется {fieldLabel} {subject} на {valueText}",
+                PartyEffectOperation.Compare
+                    => $"Проверяется {fieldLabel} {subject}",
+                PartyEffectOperation.Write when !string.IsNullOrWhiteSpace(valueText)
+                    => $"{fieldLabel} {subject} становится {valueText}",
+                PartyEffectOperation.Write
+                    => $"Меняется {fieldLabel} {subject}",
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : $"{fieldLabel}: {subject}"
+            };
+        }
+
         private static string BuildStatusTarget(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
         {
             return scope switch
@@ -925,6 +968,8 @@ namespace MMMapEditor
                 PartyFieldKind.SpHigh => "старший байт SP",
                 PartyFieldKind.SpLow => "младший байт SP",
                 PartyFieldKind.sex => "пол",
+                PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
+                PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 PartyFieldKind.Status => "status",
                 PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
                 _ => field.ToString()

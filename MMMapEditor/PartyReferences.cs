@@ -30,7 +30,9 @@ namespace MMMapEditor
         Technical77 = 6,
         Sp = 7,
         SpLow = 8,
-        SpHigh = 9
+        SpHigh = 9,
+        InnateAlignment = 10,
+        CurrentAlignment = 11
     }
 
     public enum PartyMemberSelectionKind
