@@ -542,12 +542,14 @@ namespace MMMapEditor
     {
         public PartyEffectKind Kind { get; set; }
         public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
+        public PartyFieldKind ComparedField { get; set; } = PartyFieldKind.Unknown;
         public PartyEffectOperation Operation { get; set; } = PartyEffectOperation.Unknown;
         public PartyEffectScope Scope { get; set; } = PartyEffectScope.Unknown;
         public PartyConditionKind Condition { get; set; } = PartyConditionKind.None;
         public List<PartyPredicate> GuardPredicates { get; set; } = new List<PartyPredicate>();
         public int? MemberIndex { get; set; }
         public int? ObservedMemberIndex { get; set; }
+        public int? ComparedMemberIndex { get; set; }
         public bool IsLoopDerived { get; set; }
         public bool AppliesToWholePartyLoop
         {
@@ -604,6 +606,7 @@ namespace MMMapEditor
             {
                 Kind = Kind,
                 Field = Field,
+                ComparedField = ComparedField,
                 Operation = Operation,
                 Scope = Scope,
                 Condition = Condition,
@@ -611,6 +614,7 @@ namespace MMMapEditor
                     ?? new List<PartyPredicate>(),
                 MemberIndex = MemberIndex,
                 ObservedMemberIndex = ObservedMemberIndex,
+                ComparedMemberIndex = ComparedMemberIndex,
                 IsLoopDerived = IsLoopDerived,
                 ValueKnowledge = ValueKnowledge,
                 ImmediateValue = ImmediateValue,

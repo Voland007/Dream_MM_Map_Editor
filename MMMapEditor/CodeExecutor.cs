@@ -1963,6 +1963,61 @@ namespace MMMapEditor
                 debugMode: debugMode);
         }
 
+        private void RegisterPartyFieldToFieldCompareEffect(
+            PathAnalysisResult result,
+            PartyFieldReference leftFieldRef,
+            PartyFieldReference rightFieldRef,
+            RegisterTracker registerTracker,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result == null ||
+                leftFieldRef == null ||
+                rightFieldRef == null ||
+                !PartyAlignmentSemantics.IsAlignmentField(leftFieldRef.Field) ||
+                !PartyAlignmentSemantics.IsAlignmentField(rightFieldRef.Field))
+            {
+                return;
+            }
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = leftFieldRef.Member?.Clone(),
+                Field = leftFieldRef.Field,
+                Offset = leftFieldRef.Offset,
+                EffectiveAddress = leftFieldRef.EffectiveAddress,
+                IsRead = true,
+                IsCompare = true
+            });
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = rightFieldRef.Member?.Clone(),
+                Field = rightFieldRef.Field,
+                Offset = rightFieldRef.Offset,
+                EffectiveAddress = rightFieldRef.EffectiveAddress,
+                IsRead = true,
+                IsCompare = true
+            });
+
+            PartyEffect effect = PartyEffectFactory.CreateAlignmentFieldCompareEffect(leftFieldRef, rightFieldRef, instructionAddress);
+            if (effect == null)
+                return;
+
+            PartyFieldReference primaryFieldRef = effect.Field == leftFieldRef.Field
+                ? leftFieldRef
+                : rightFieldRef;
+
+            AddResolvedPartyEffect(
+                result,
+                effect,
+                primaryFieldRef.Member,
+                registerTracker,
+                GetCurrentPartyCondition(registerTracker, instructionAddress, primaryFieldRef.Member, result.LoopSemantic),
+                debugPrefix: "Сравнение alignment",
+                debugMode: debugMode);
+        }
+
         private List<PartyPredicate> GetMergedGuardPredicates(IEnumerable<PartyPredicate> existing,
             IEnumerable<PartyPredicate> inferred)
         {
@@ -5282,6 +5337,20 @@ namespace MMMapEditor
                 byte rm = (byte)(modRm & 0x07);
                 bool handledSpecialCompare = false;
                 bool hasExactMemAddress = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _);
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                string compareRegName = reg < regNames8.Length ? regNames8[reg] : string.Empty;
+                PartyFieldReference registerComparedField = null!;
+                bool hasRegisterComparedField = !string.IsNullOrWhiteSpace(compareRegName) &&
+                    registerTracker.TryGetPartyFieldValue(compareRegName, out registerComparedField) &&
+                    registerComparedField != null;
+                PartyFieldReference memoryComparedField = null!;
+                bool hasMemoryComparedField = mod != 0x03 &&
+                    TryResolvePartyFieldAccess(
+                        instructionBytes,
+                        registerTracker,
+                        hasExactMemAddress ? memAddr : (ushort?)null,
+                        out memoryComparedField) &&
+                    memoryComparedField != null;
 
                 bool comparesBl =
                     (instructionBytes[0] == 0x3A && reg == 0x03 && mod != 0x03) ||
@@ -5305,8 +5374,7 @@ namespace MMMapEditor
                     hasExactMemAddress &&
                     TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
                 {
-                    string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
-                    string regName = regNames8[reg];
+                    string regName = compareRegName;
 
                     if (registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
                     {
@@ -5338,6 +5406,28 @@ namespace MMMapEditor
                         result.BattleMonsterCountRange = new ValueRange8(memValue, memValue);
                         result.IsBattleMonsterCountIndeterminate = false;
                     }
+                }
+
+                if (!handledSpecialCompare &&
+                    hasRegisterComparedField &&
+                    hasMemoryComparedField &&
+                    PartyAlignmentSemantics.IsAlignmentField(registerComparedField.Field) &&
+                    PartyAlignmentSemantics.IsAlignmentField(memoryComparedField.Field))
+                {
+                    PartyFieldReference leftField = instructionBytes[0] == 0x3A
+                        ? registerComparedField
+                        : memoryComparedField;
+                    PartyFieldReference rightField = instructionBytes[0] == 0x3A
+                        ? memoryComparedField
+                        : registerComparedField;
+
+                    RegisterPartyFieldToFieldCompareEffect(
+                        result,
+                        leftField,
+                        rightField,
+                        registerTracker,
+                        address,
+                        debugMode);
                 }
             }
 

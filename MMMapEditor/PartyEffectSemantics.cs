@@ -38,11 +38,13 @@ namespace MMMapEditor
             return string.Join("|",
                 effect.Kind,
                 GetEffectiveField(effect),
+                effect.ComparedField,
                 GetEffectiveOperation(effect),
                 scope,
                 GetEffectiveCondition(effect),
                 BuildGuardPredicatesKey(effect),
                 memberKey,
+                effect.ComparedMemberIndex?.ToString() ?? "-",
                 IsLoopDerived(effect) ? "Loop" : "Direct",
                 GetEffectiveValueKnowledge(effect),
                 effect.ImmediateValue?.ToString() ?? "-",
@@ -74,6 +76,12 @@ namespace MMMapEditor
                 parts.Add($"Member=#{effect.MemberIndex.Value}");
             else if (effect.ObservedMemberIndex.HasValue)
                 parts.Add($"ObservedMember=#{effect.ObservedMemberIndex.Value}");
+
+            if (effect.ComparedField != PartyFieldKind.Unknown)
+                parts.Add($"ComparedField={effect.ComparedField}");
+
+            if (effect.ComparedMemberIndex.HasValue)
+                parts.Add($"ComparedMember=#{effect.ComparedMemberIndex.Value}");
 
             if (IsLoopDerived(effect))
                 parts.Add("LoopDerived=True");
@@ -263,6 +271,9 @@ namespace MMMapEditor
             if (GetEffectiveField(effect) == PartyFieldKind.Technical77)
                 return true;
 
+            if (IsStructuralFieldComparison(effect))
+                return true;
+
             return IsStateChanging(effect);
         }
 
@@ -272,6 +283,9 @@ namespace MMMapEditor
                 return false;
 
             if (GetEffectiveField(effect) == PartyFieldKind.Technical77)
+                return true;
+
+            if (IsStructuralFieldComparison(effect))
                 return true;
 
             if (!IsStateChanging(effect))
@@ -820,6 +834,20 @@ namespace MMMapEditor
                 ? PartyAlignmentSemantics.FormatAlignmentValue(effect.ImmediateValue.Value)
                 : null;
 
+            if (operation == PartyEffectOperation.Compare &&
+                PartyAlignmentSemantics.IsAlignmentField(effect.ComparedField))
+            {
+                string comparedFieldLabel = FormatFieldName(effect.ComparedField);
+                if (effect.ComparedMemberIndex.HasValue &&
+                    effect.MemberIndex.HasValue &&
+                    effect.ComparedMemberIndex.Value != effect.MemberIndex.Value)
+                {
+                    return $"ПРОВЕРКА УСЛОВИЯ: Сравнивается {fieldLabel} персонажа #{effect.MemberIndex.Value} с {comparedFieldLabel} персонажа #{effect.ComparedMemberIndex.Value}";
+                }
+
+                return $"ПРОВЕРКА УСЛОВИЯ: Проверяется, совпадают ли {fieldLabel} и {comparedFieldLabel} {subject}";
+            }
+
             return operation switch
             {
                 PartyEffectOperation.Read when !string.IsNullOrWhiteSpace(valueText)
@@ -979,6 +1007,14 @@ namespace MMMapEditor
         private static bool IsScalarPartyStatField(PartyFieldKind field)
         {
             return field == PartyFieldKind.Hp || field == PartyFieldKind.Sp;
+        }
+
+        private static bool IsStructuralFieldComparison(PartyEffect effect)
+        {
+            return effect != null &&
+                   GetEffectiveOperation(effect) == PartyEffectOperation.Compare &&
+                   effect.ComparedField != PartyFieldKind.Unknown &&
+                   GetEffectiveValueKnowledge(effect) == PartyValueKnowledge.Structural;
         }
 
         private static string GetScalarPartyStatLabel(PartyFieldKind field)

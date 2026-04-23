@@ -698,6 +698,7 @@ namespace MMMapEditor
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
+                HoistSharedGuardLikePartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 group.TreeRoot = SimplifyGenericChoiceTree(CompressVariantTree(root));
             }
@@ -1571,29 +1572,51 @@ namespace MMMapEditor
             return true;
         }
 
-        private static List<string> GetVariantPartyEffectLines(VariantRenderItem item)
+        private static IEnumerable<PartyEffect> GetOrderedDisplayablePartyEffects(
+            List<PartyEffect> effects,
+            Func<PartyEffect, bool> includePredicate = null)
+        {
+            return (effects ?? new List<PartyEffect>())
+                .Where(effect => effect != null)
+                .Where(effect => PartyEffectSemantics.ShouldIncludeInNotes(effect, effects))
+                .Where(effect => includePredicate == null || includePredicate(effect))
+                .OrderBy(effect => GetSpecialLineSortBucket(effect.ExecutionOrder))
+                .ThenBy(effect => NormalizeSpecialExecutionOrder(effect.ExecutionOrder))
+                .ThenBy(effect => NormalizeSpecialLineAddress(effect.InstructionAddress))
+                .ThenBy(effect => PartyEffectSemantics.BuildHumanDescription(effect), StringComparer.Ordinal);
+        }
+
+        private static List<string> GetVariantPartyEffectLines(
+            VariantRenderItem item,
+            Func<PartyEffect, bool> includePredicate = null)
         {
             var effects = (item?.Variant?.PartyEffects ?? new List<PartyEffect>())
                 .Where(effect => effect != null)
                 .ToList();
 
-            return effects
-                .Where(effect => PartyEffectSemantics.ShouldIncludeInNotes(effect, effects))
+            return GetOrderedDisplayablePartyEffects(effects, includePredicate)
                 .Select(PartyEffectSemantics.BuildHumanDescription)
                 .Where(text => !string.IsNullOrWhiteSpace(text))
                 .Distinct()
                 .ToList();
         }
 
-        private static List<string> GetSharedPartyEffectLines(List<VariantRenderItem> variants)
+        private static List<string> GetSharedPartyEffectLines(
+            List<VariantRenderItem> variants,
+            Func<PartyEffect, bool> includePredicate = null)
         {
             if (variants == null || variants.Count == 0)
                 return new List<string>();
 
             var orderedSource = variants
-                .Where(variant => variant?.Lines != null)
-                .OrderBy(variant => variant.Lines.Count)
-                .Select(variant => variant.Lines)
+                .Select(variant => new
+                {
+                    Variant = variant,
+                    Lines = GetVariantPartyEffectLines(variant, includePredicate)
+                })
+                .Where(entry => entry.Lines.Count > 0)
+                .OrderBy(entry => entry.Lines.Count)
+                .Select(entry => entry.Lines)
                 .FirstOrDefault();
 
             if (orderedSource == null || orderedSource.Count == 0)
@@ -1629,6 +1652,65 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static void HoistSharedGuardLikePartyNotes(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children)
+                HoistSharedGuardLikePartyNotes(child);
+
+            var renderableVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null && HasMeaningfulLines(variant.Lines))
+                .ToList();
+
+            if (renderableVariants.Count < 2)
+                return;
+
+            var sharedGuardLines = GetSharedPartyEffectLines(
+                    renderableVariants,
+                    effect => effect != null && PartyEffectSemantics.IsGuardLike(effect))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Where(line => !(node.CommonLines ?? new List<string>()).Contains(line, StringComparer.Ordinal))
+                .ToList();
+
+            if (sharedGuardLines.Count == 0)
+                return;
+
+            InsertCommonLinesBeforeBattle(node, sharedGuardLines);
+
+            foreach (var variant in renderableVariants)
+                variant.Lines = RemoveLineOccurrences(variant.Lines, sharedGuardLines);
+        }
+
+        private static void InsertCommonLinesBeforeBattle(VariantTreeNode node, IEnumerable<string> linesToInsert)
+        {
+            if (node == null)
+                return;
+
+            var orderedLines = (linesToInsert ?? Enumerable.Empty<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            if (orderedLines.Count == 0)
+                return;
+
+            node.CommonLines ??= new List<string>();
+
+            int battleIndex = FindFirstBattleLineIndex(node.CommonLines);
+            if (battleIndex < 0)
+            {
+                node.CommonLines.AddRange(orderedLines);
+                return;
+            }
+
+            var reorderedCommon = new List<string>();
+            reorderedCommon.AddRange(node.CommonLines.Take(battleIndex));
+            reorderedCommon.AddRange(orderedLines);
+            reorderedCommon.AddRange(node.CommonLines.Skip(battleIndex));
+            node.CommonLines = reorderedCommon;
         }
 
         private static List<string> RemoveLineOccurrences(IEnumerable<string> source, IEnumerable<string> linesToRemove)
@@ -2311,12 +2393,7 @@ namespace MMMapEditor
                 .Where(effect => effect != null)
                 .ToList();
 
-            foreach (var effect in effects
-                         .Where(effect => PartyEffectSemantics.ShouldIncludeInNotes(effect, effects))
-                         .OrderBy(effect => GetSpecialLineSortBucket(effect.ExecutionOrder))
-                         .ThenBy(effect => NormalizeSpecialExecutionOrder(effect.ExecutionOrder))
-                         .ThenBy(effect => NormalizeSpecialLineAddress(effect.InstructionAddress))
-                         .ThenBy(effect => PartyEffectSemantics.BuildHumanDescription(effect), StringComparer.Ordinal))
+            foreach (var effect in GetOrderedDisplayablePartyEffects(effects))
             {
                 string description = PartyEffectSemantics.BuildHumanDescription(effect);
                 if (string.IsNullOrWhiteSpace(description) || !seenPartyLines.Add(description))

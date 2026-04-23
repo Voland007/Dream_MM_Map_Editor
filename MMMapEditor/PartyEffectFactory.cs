@@ -243,6 +243,48 @@ namespace MMMapEditor
             return effect;
         }
 
+        public static PartyEffect CreateAlignmentFieldCompareEffect(
+            PartyFieldReference leftField,
+            PartyFieldReference rightField,
+            uint instructionAddress)
+        {
+            if (leftField == null ||
+                rightField == null ||
+                !PartyAlignmentSemantics.IsAlignmentField(leftField.Field) ||
+                !PartyAlignmentSemantics.IsAlignmentField(rightField.Field))
+            {
+                return null;
+            }
+
+            PartyFieldReference primaryField = leftField;
+            PartyFieldReference secondaryField = rightField;
+
+            if (leftField.Field == PartyFieldKind.CurrentAlignment &&
+                rightField.Field == PartyFieldKind.InnateAlignment)
+            {
+                primaryField = rightField;
+                secondaryField = leftField;
+            }
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.AlignmentCompared,
+                Field = primaryField.Field,
+                ComparedField = secondaryField.Field,
+                Operation = PartyEffectOperation.Compare,
+                Scope = ResolveScope(primaryField.Member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(primaryField.Member, LoopSemanticKind.None) ? null : primaryField.Member?.MemberIndex,
+                ObservedMemberIndex = primaryField.Member?.MemberIndex,
+                ComparedMemberIndex = secondaryField.Member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(primaryField.Member, LoopSemanticKind.None),
+                ValueKnowledge = PartyValueKnowledge.Structural,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
         public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
             uint instructionAddress, byte? exactValue = null)
         {

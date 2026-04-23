@@ -2267,6 +2267,28 @@ namespace MMMapEditor
                 }
             }
 
+            var conditionCheckMatches = Regex.Matches(
+                noteText,
+                @"ПРОВЕРКА УСЛОВИЯ:\s*(?:Проверяется, совпадают ли [^\r\n]+|Сравнивается [^\r\n]+? с [^\r\n]+)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in conditionCheckMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(145, 145, 145);
+                rt.SelectionBackColor = Color.FromArgb(60, 45, 20);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+
+                Match predicateMatch = Regex.Match(match.Value, @"^ПРОВЕРКА УСЛОВИЯ:", RegexOptions.IgnoreCase);
+                if (predicateMatch.Success)
+                {
+                    rt.Select(match.Index + predicateMatch.Index, predicateMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(145, 145, 145);
+                    rt.SelectionBackColor = Color.FromArgb(85, 60, 20);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Italic | FontStyle.Underline);
+                }
+            }
+
             var teleportMatches = Regex.Matches(
                 noteText,
                 @"Телепорт на (?:(случайную)\s+)?клетку \(X=(?:\??\d+|\d+\.\.\d+), Y=(?:\??\d+|\d+\.\.\d+)\)",
