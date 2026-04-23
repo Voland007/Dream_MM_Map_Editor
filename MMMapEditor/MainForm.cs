@@ -2352,17 +2352,39 @@ namespace MMMapEditor
         {
             if (string.IsNullOrEmpty(noteText)) return;
 
+            Color technicalBackColor = Color.FromArgb(46, 28, 64);
+            Color questNumberColor = Color.FromArgb(225, 214, 255);
+            Color lordNameColor = Color.FromArgb(255, 196, 255);
+
             var technicalNoteMatches = Regex.Matches(
                 noteText,
-                @"-=\*Техническая\(временная\) заметка:[^\r\n]*\*=-",
+                @"-=\*[^\r\n]*\*=-",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in technicalNoteMatches)
             {
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(145, 145, 145);
-                rt.SelectionBackColor = Color.Black;
+                rt.SelectionBackColor = technicalBackColor;
                 rt.SelectionFont = new Font("Segoe UI Light", rt.Font.Size, FontStyle.Italic);
+
+                Match questNumberMatch = Regex.Match(match.Value, @"\bквест(?:ы)?\s+([0-9,\s]+)", RegexOptions.IgnoreCase);
+                if (questNumberMatch.Success && questNumberMatch.Groups.Count > 1)
+                {
+                    Group questNumberGroup = questNumberMatch.Groups[1];
+                    rt.Select(match.Index + questNumberGroup.Index, questNumberGroup.Length);
+                    rt.SelectionColor = questNumberColor;
+                    rt.SelectionBackColor = technicalBackColor;
+                    rt.SelectionFont = new Font("Segoe UI", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                }
+
+                foreach (Match lordMatch in Regex.Matches(match.Value, @"\bЛорда\d+\b", RegexOptions.IgnoreCase))
+                {
+                    rt.Select(match.Index + lordMatch.Index, lordMatch.Length);
+                    rt.SelectionColor = lordNameColor;
+                    rt.SelectionBackColor = technicalBackColor;
+                    rt.SelectionFont = new Font("Segoe UI", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                }
             }
 
             rt.Select(0, 0);

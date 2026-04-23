@@ -336,22 +336,51 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance)
         {
             var lines = new List<string>();
-
-            lines.AddRange(DecodeNoteTexts(rawTexts));
-            lines.AddRange(GetMonsterStatLines(
+            var narrativeLines = DecodeNoteTexts(rawTexts);
+            var monsterStatLines = GetMonsterStatLines(
                 variantObject,
                 defaultMonsterPower,
                 defaultMonsterLevel,
                 defaultMonsterBatchCount,
                 defaultDarkeningLevel,
-                defaultRandomEncounterChance));
-            lines.AddRange(GetSpecialNoteLines(variantObject));
+                defaultRandomEncounterChance);
+            var specialNoteLines = GetSpecialNoteLines(variantObject);
+            var promotedConditionLines = GetPromotedFlatConditionLines(variantObject);
+
+            if (narrativeLines.Count > 0 && promotedConditionLines.Count > 0)
+            {
+                lines.Add(narrativeLines[0]);
+                lines.AddRange(promotedConditionLines);
+                lines.AddRange(narrativeLines.Skip(1));
+                specialNoteLines = RemoveLineOccurrences(specialNoteLines, promotedConditionLines);
+            }
+            else
+            {
+                lines.AddRange(narrativeLines);
+            }
+
+            lines.AddRange(monsterStatLines);
+            lines.AddRange(specialNoteLines);
             lines.AddRange(GetBattleLines(variantObject));
 
             if (lines.Count == 0)
                 lines.Add("Ничего не происходит");
 
             return lines;
+        }
+
+        private static List<string> GetPromotedFlatConditionLines(OvrObject obj)
+        {
+            if (obj?.PartyEffects == null || obj.PartyEffects.Count == 0)
+                return new List<string>();
+
+            return GetOrderedDisplayablePartyEffects(
+                    obj.PartyEffects.Where(effect => effect != null).ToList(),
+                    effect => effect != null && PartyEffectSemantics.IsGuardLike(effect))
+                .Select(PartyEffectSemantics.BuildHumanDescription)
+                .Where(IsPromotableFlatConditionLine)
+                .Distinct()
+                .ToList();
         }
 
         private static List<string> BuildVariantLinesForHierarchy(
@@ -1802,6 +1831,14 @@ namespace MMMapEditor
                 return false;
 
             return line.TrimStart().StartsWith("CONDITION ", StringComparison.Ordinal);
+        }
+
+        private static bool IsPromotableFlatConditionLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return line.TrimStart().StartsWith("ПРОВЕРКА УСЛОВИЯ:", StringComparison.Ordinal);
         }
 
         private static bool HasMeaningfulLines(List<string> lines)

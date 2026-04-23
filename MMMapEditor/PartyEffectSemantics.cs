@@ -109,8 +109,8 @@ namespace MMMapEditor
             var scope = GetEffectiveScope(effect);
             var condition = GetEffectiveCondition(effect);
 
-            if (field == PartyFieldKind.Technical77)
-                return BuildTechnicalField77Description(effect, scope, condition);
+            if (PartyQuestLordFieldSemantics.IsQuestField(field))
+                return BuildQuestLordFieldDescription(effect, field, scope, condition);
 
             if (PartyAlignmentSemantics.IsAlignmentField(field))
                 return BuildAlignmentDescription(effect, field, operation, scope, condition);
@@ -249,8 +249,7 @@ namespace MMMapEditor
         public static bool IsGuardLike(PartyEffect effect)
         {
             return effect != null &&
-                   GetEffectiveOperation(effect) == PartyEffectOperation.Compare &&
-                   GetEffectiveField(effect) != PartyFieldKind.Technical77;
+                   GetEffectiveOperation(effect) == PartyEffectOperation.Compare;
         }
 
         public static bool IsStateChanging(PartyEffect effect)
@@ -268,8 +267,8 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            if (GetEffectiveField(effect) == PartyFieldKind.Technical77)
-                return true;
+            if (PartyQuestLordFieldSemantics.IsQuestField(GetEffectiveField(effect)))
+                return IsStateChanging(effect);
 
             if (IsStructuralFieldComparison(effect))
                 return true;
@@ -282,8 +281,8 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            if (GetEffectiveField(effect) == PartyFieldKind.Technical77)
-                return true;
+            if (PartyQuestLordFieldSemantics.IsQuestField(GetEffectiveField(effect)))
+                return IsStateChanging(effect);
 
             if (IsStructuralFieldComparison(effect))
                 return true;
@@ -754,68 +753,180 @@ namespace MMMapEditor
             };
         }
 
-        private static string BuildTechnicalField77Description(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
+        private static string BuildQuestLordFieldDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
         {
-            if (effect == null)
+            if (effect == null || !PartyQuestLordFieldSemantics.IsQuestField(field))
                 return null;
 
-            string target = BuildTechnicalField77Target(effect, scope, condition);
+            string fieldLabel = PartyQuestLordFieldSemantics.GetFieldLabel(field);
+            string lordLabel = PartyQuestLordFieldSemantics.GetLordLabel(field);
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
             var operation = GetEffectiveOperation(effect);
             var knowledge = GetEffectiveValueKnowledge(effect);
 
             string body = operation switch
             {
                 PartyEffectOperation.Read => effect.ImmediateValue.HasValue
-                    ? $"Читается поле +0x77 {target} (=0x{effect.ImmediateValue.Value:X2})"
-                    : $"Читается поле +0x77 {target}",
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})",
+                        $"читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})")
+                    : ComposeQuestLordSentence(targetPrefix, $"Читается {fieldLabel}", $"читается {fieldLabel}"),
                 PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
                     ? knowledge == PartyValueKnowledge.ExactDerived
-                        ? $"Проверяются биты 0x{effect.ImmediateValue.Value:X2} поля +0x77 {target}"
-                        : $"Проверяется поле +0x77 {target} на значение 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Проверяется поле +0x77 {target}",
+                        ? BuildQuestLordCompareDescription(targetPrefix, lordLabel, (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}",
+                            $"проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Проверяется {fieldLabel}", $"проверяется {fieldLabel}"),
                 PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
-                    ? $"В поле +0x77 {target} устанавливаются биты 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется поле +0x77 {target}",
+                    ? BuildQuestLordBitDescription(targetPrefix, lordLabel, PartyEffectOperation.BitSet, (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
                 PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
-                    ? $"В поле +0x77 {target} сбрасываются биты 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется поле +0x77 {target}",
+                    ? BuildQuestLordBitDescription(targetPrefix, lordLabel, PartyEffectOperation.BitClear, (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
                 PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
-                    ? $"В поле +0x77 {target} переключаются биты 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется поле +0x77 {target}",
+                    ? BuildQuestLordBitDescription(targetPrefix, lordLabel, PartyEffectOperation.BitToggle, (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
                 PartyEffectOperation.Write => effect.ImmediateValue.HasValue
-                    ? $"В поле +0x77 {target} записывается 0x{effect.ImmediateValue.Value:X2}"
-                    : $"Изменяется поле +0x77 {target}",
+                    ? BuildQuestLordWriteDescription(targetPrefix, lordLabel, (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
                 _ => !string.IsNullOrWhiteSpace(effect.Description)
                     ? effect.Description
-                    : $"поле +0x77: {target}"
+                    : fieldLabel
             };
 
-            return $"-=*Техническая(временная) заметка: {body}*=-";
+            return WrapTechnicalQuestLordNote(body);
         }
 
-        private static string BuildTechnicalField77Target(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
+        private static string BuildQuestLordCompareDescription(string targetPrefix, string lordLabel, byte mask)
+        {
+            int? questNumber = PartyQuestLordFieldSemantics.TryGetSingleQuestNumber(mask);
+            if (questNumber.HasValue)
+            {
+                return ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Проверяется, готов ли квест {questNumber.Value} у {lordLabel} к сдаче",
+                    $"проверяется, готов ли квест {questNumber.Value} у {lordLabel} к сдаче");
+            }
+
+            string questNumbers = PartyQuestLordFieldSemantics.FormatQuestNumbers(mask);
+            return ComposeQuestLordSentence(
+                targetPrefix,
+                $"Проверяется, готовы ли квесты {questNumbers} у {lordLabel} к сдаче",
+                $"проверяется, готовы ли квесты {questNumbers} у {lordLabel} к сдаче");
+        }
+
+        private static string BuildQuestLordBitDescription(
+            string targetPrefix,
+            string lordLabel,
+            PartyEffectOperation operation,
+            byte mask)
+        {
+            int? questNumber = PartyQuestLordFieldSemantics.TryGetSingleQuestNumber(mask);
+            string questNumbers = PartyQuestLordFieldSemantics.FormatQuestNumbers(mask);
+
+            return operation switch
+            {
+                PartyEffectOperation.BitSet when questNumber.HasValue => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Квест {questNumber.Value} у {lordLabel} готов к сдаче",
+                    $"квест {questNumber.Value} у {lordLabel} готов к сдаче"),
+                PartyEffectOperation.BitSet => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Квесты {questNumbers} у {lordLabel} готовы к сдаче",
+                    $"квесты {questNumbers} у {lordLabel} готовы к сдаче"),
+                PartyEffectOperation.BitClear when questNumber.HasValue => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Сбрасывается готовность к сдаче квеста {questNumber.Value} у {lordLabel}",
+                    $"сбрасывается готовность к сдаче квеста {questNumber.Value} у {lordLabel}"),
+                PartyEffectOperation.BitClear => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Сбрасывается готовность к сдаче квестов {questNumbers} у {lordLabel}",
+                    $"сбрасывается готовность к сдаче квестов {questNumbers} у {lordLabel}"),
+                PartyEffectOperation.BitToggle when questNumber.HasValue => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Переключается готовность к сдаче квеста {questNumber.Value} у {lordLabel}",
+                    $"переключается готовность к сдаче квеста {questNumber.Value} у {lordLabel}"),
+                PartyEffectOperation.BitToggle => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Переключается готовность к сдаче квестов {questNumbers} у {lordLabel}",
+                    $"переключается готовность к сдаче квестов {questNumbers} у {lordLabel}"),
+                _ => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Изменяется готовность к сдаче квестов у {lordLabel}",
+                    $"изменяется готовность к сдаче квестов у {lordLabel}")
+            };
+        }
+
+        private static string BuildQuestLordWriteDescription(string targetPrefix, string lordLabel, byte value)
+        {
+            if (value == 0)
+            {
+                return ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Сбрасывается готовность к сдаче квестов у {lordLabel}",
+                    $"сбрасывается готовность к сдаче квестов у {lordLabel}");
+            }
+
+            int? questNumber = PartyQuestLordFieldSemantics.TryGetSingleQuestNumber(value);
+            if (questNumber.HasValue)
+            {
+                return ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Квест {questNumber.Value} у {lordLabel} готов к сдаче",
+                    $"квест {questNumber.Value} у {lordLabel} готов к сдаче");
+            }
+
+            string questNumbers = PartyQuestLordFieldSemantics.FormatQuestNumbers(value);
+            return ComposeQuestLordSentence(
+                targetPrefix,
+                $"Квесты {questNumbers} у {lordLabel} готовы к сдаче",
+                $"квесты {questNumbers} у {lordLabel} готовы к сдаче");
+        }
+
+        private static string BuildQuestLordTargetPrefix(PartyEffect effect, PartyEffectScope scope, PartyConditionKind condition)
         {
             return scope switch
             {
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
-                    ? $"у персонажа #{effect.MemberIndex.Value}"
+                    ? $"У персонажа #{effect.MemberIndex.Value} "
                     : effect.ObservedMemberIndex.HasValue
-                        ? $"у персонажа #{effect.ObservedMemberIndex.Value}"
-                        : "у персонажа",
-                PartyEffectScope.RandomMember => "у случайного члена партии",
-                PartyEffectScope.SelectedMember => "у выбранного члена партии",
-                PartyEffectScope.CurrentLoopMember => "у текущего члена партии",
+                        ? $"У персонажа #{effect.ObservedMemberIndex.Value} "
+                        : string.Empty,
+                PartyEffectScope.RandomMember => "У случайного члена партии ",
+                PartyEffectScope.SelectedMember => "У выбранного члена партии ",
+                PartyEffectScope.CurrentLoopMember => "У текущего члена партии ",
                 PartyEffectScope.PartySubset => condition switch
                 {
-                    PartyConditionKind.MaleOnly => "у мужчин в партии",
-                    PartyConditionKind.FemaleOnly => "у женщин в партии",
-                    _ => "у части партии"
+                    PartyConditionKind.MaleOnly => "У мужчин в партии ",
+                    PartyConditionKind.FemaleOnly => "У женщин в партии ",
+                    _ => "У части партии "
                 },
-                PartyEffectScope.WholeParty => "у каждого члена партии",
+                PartyEffectScope.WholeParty => "У всех персонажей партии ",
                 _ => effect.ObservedMemberIndex.HasValue
-                    ? $"у персонажа #{effect.ObservedMemberIndex.Value}"
-                    : "у персонажа"
+                    ? $"У персонажа #{effect.ObservedMemberIndex.Value} "
+                    : string.Empty
             };
+        }
+
+        private static string ComposeQuestLordSentence(string targetPrefix, string standaloneText, string prefixedText)
+        {
+            return string.IsNullOrWhiteSpace(targetPrefix)
+                ? standaloneText
+                : targetPrefix + prefixedText;
+        }
+
+        private static string WrapTechnicalQuestLordNote(string text)
+        {
+            return string.IsNullOrWhiteSpace(text)
+                ? text
+                : $"-=*{text}*=-";
         }
 
         private static string BuildAlignmentDescription(
@@ -999,7 +1110,8 @@ namespace MMMapEditor
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 PartyFieldKind.Status => "status",
-                PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
+                PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
+                    => PartyQuestLordFieldSemantics.GetFieldLabel(field),
                 _ => field.ToString()
             };
         }

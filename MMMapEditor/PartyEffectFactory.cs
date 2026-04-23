@@ -285,65 +285,81 @@ namespace MMMapEditor
             return effect;
         }
 
-        public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
-            uint instructionAddress, byte? exactValue = null)
+        public static PartyEffect CreateQuestLordFieldReadEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
         {
-            return new PartyEffect
+            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+                return null;
+
+            var effect = new PartyEffect
             {
                 Kind = PartyEffectKind.TechnicalFieldRead,
-                Field = PartyFieldKind.Technical77,
+                Field = field,
                 Operation = PartyEffectOperation.Read,
                 Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
                 MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
                 ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
                 ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
-                InstructionAddress = instructionAddress,
-                Description = BuildTechnicalField77ReadDescription(member, exactValue)
+                InstructionAddress = instructionAddress
             };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
         }
 
-        public static PartyEffect CreateTechnicalField77CompareEffect(PartyMemberReference member,
-            uint instructionAddress, byte compareValue, bool isBitMask)
+        public static PartyEffect CreateQuestLordFieldCompareEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte compareValue, bool isBitMask)
         {
-            return new PartyEffect
+            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+                return null;
+
+            var effect = new PartyEffect
             {
                 Kind = PartyEffectKind.TechnicalFieldCompared,
-                Field = PartyFieldKind.Technical77,
+                Field = field,
                 Operation = PartyEffectOperation.Compare,
                 Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
                 MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
                 ValueKnowledge = isBitMask ? PartyValueKnowledge.ExactDerived : PartyValueKnowledge.ExactImmediate,
                 ImmediateValue = compareValue,
-                InstructionAddress = instructionAddress,
-                Description = isBitMask
-                    ? BuildTechnicalField77BitReadDescription(member, compareValue)
-                    : BuildTechnicalField77CompareDescription(member, compareValue)
+                InstructionAddress = instructionAddress
             };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
         }
 
-        public static PartyEffect CreateTechnicalField77WriteEffect(PartyMemberReference member,
-            uint instructionAddress, byte? exactValue = null)
+        public static PartyEffect CreateQuestLordFieldWriteEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
         {
-            return new PartyEffect
+            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+                return null;
+
+            var effect = new PartyEffect
             {
                 Kind = PartyEffectKind.TechnicalFieldWritten,
-                Field = PartyFieldKind.Technical77,
+                Field = field,
                 Operation = PartyEffectOperation.Write,
                 Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
                 MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
                 ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
                 ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
-                InstructionAddress = instructionAddress,
-                Description = BuildTechnicalField77WriteDescription(member, exactValue)
+                InstructionAddress = instructionAddress
             };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
         }
 
-        public static PartyEffect CreateTechnicalField77BitEffect(PartyMemberReference member,
-            PartyEffectOperation operation, byte mask, uint instructionAddress)
+        public static PartyEffect CreateQuestLordFieldBitEffect(PartyMemberReference member,
+            PartyFieldKind field, PartyEffectOperation operation, byte mask, uint instructionAddress)
         {
+            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+                return null;
+
             if ((operation != PartyEffectOperation.BitSet &&
                  operation != PartyEffectOperation.BitClear &&
                  operation != PartyEffectOperation.BitToggle) ||
@@ -352,19 +368,50 @@ namespace MMMapEditor
                 return null;
             }
 
-            return new PartyEffect
+            var effect = new PartyEffect
             {
                 Kind = PartyEffectKind.TechnicalFieldWritten,
-                Field = PartyFieldKind.Technical77,
+                Field = field,
                 Operation = operation,
                 Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
                 MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
                 ValueKnowledge = PartyValueKnowledge.ExactImmediate,
                 ImmediateValue = mask,
-                InstructionAddress = instructionAddress,
-                Description = BuildTechnicalField77BitWriteDescription(member, operation, mask)
+                InstructionAddress = instructionAddress
             };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
+            uint instructionAddress, byte? exactValue = null)
+        {
+            return CreateQuestLordFieldReadEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
+        }
+
+        public static PartyEffect CreateTechnicalField77CompareEffect(PartyMemberReference member,
+            uint instructionAddress, byte compareValue, bool isBitMask)
+        {
+            return CreateQuestLordFieldCompareEffect(
+                member,
+                PartyFieldKind.Technical77,
+                instructionAddress,
+                compareValue,
+                isBitMask);
+        }
+
+        public static PartyEffect CreateTechnicalField77WriteEffect(PartyMemberReference member,
+            uint instructionAddress, byte? exactValue = null)
+        {
+            return CreateQuestLordFieldWriteEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
+        }
+
+        public static PartyEffect CreateTechnicalField77BitEffect(PartyMemberReference member,
+            PartyEffectOperation operation, byte mask, uint instructionAddress)
+        {
+            return CreateQuestLordFieldBitEffect(member, PartyFieldKind.Technical77, operation, mask, instructionAddress);
         }
 
         private static PartyEffectScope ResolveScope(PartyMemberReference member, LoopSemanticKind loopSemantic, PartyConditionKind condition)
@@ -552,68 +599,5 @@ namespace MMMapEditor
             return "Персонаж";
         }
 
-        private static string BuildTechnicalField77ReadDescription(PartyMemberReference member, byte? exactValue)
-        {
-            string target = BuildTechnicalField77Target(member);
-            string body = exactValue.HasValue
-                ? $"Читается поле +0x77 {target} (=0x{exactValue.Value:X2})"
-                : $"Читается поле +0x77 {target}";
-
-            return $"-=*Техническая(временная) заметка: {body}*=-";
-        }
-
-        private static string BuildTechnicalField77CompareDescription(PartyMemberReference member, byte compareValue)
-        {
-            string target = BuildTechnicalField77Target(member);
-            return $"-=*Техническая(временная) заметка: Проверяется поле +0x77 {target} на значение 0x{compareValue:X2}*=-";
-        }
-
-        private static string BuildTechnicalField77BitReadDescription(PartyMemberReference member, byte mask)
-        {
-            string target = BuildTechnicalField77Target(member);
-            return $"-=*Техническая(временная) заметка: Проверяются биты 0x{mask:X2} поля +0x77 {target}*=-";
-        }
-
-        private static string BuildTechnicalField77WriteDescription(PartyMemberReference member, byte? exactValue)
-        {
-            string target = BuildTechnicalField77Target(member);
-            string body = exactValue.HasValue
-                ? $"В поле +0x77 {target} записывается 0x{exactValue.Value:X2}"
-                : $"Изменяется поле +0x77 {target}";
-
-            return $"-=*Техническая(временная) заметка: {body}*=-";
-        }
-
-        private static string BuildTechnicalField77BitWriteDescription(PartyMemberReference member,
-            PartyEffectOperation operation, byte mask)
-        {
-            string target = BuildTechnicalField77Target(member);
-            string action = operation switch
-            {
-                PartyEffectOperation.BitSet => "устанавливаются",
-                PartyEffectOperation.BitClear => "сбрасываются",
-                PartyEffectOperation.BitToggle => "переключаются",
-                _ => "изменяются"
-            };
-
-            return $"-=*Техническая(временная) заметка: В поле +0x77 {target} {action} биты 0x{mask:X2}*=-";
-        }
-
-        private static string BuildTechnicalField77Target(PartyMemberReference member)
-        {
-            if (IsLoopTarget(member, LoopSemanticKind.None))
-                return "у членов партии";
-
-            if (member?.SelectionKind == PartyMemberSelectionKind.Random)
-                return "у случайного члена партии";
-
-            if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
-                return "у выбранного члена партии";
-
-            if (member?.MemberIndex.HasValue == true)
-                return $"у персонажа #{member.MemberIndex.Value}";
-
-            return "у персонажа";
-        }
     }
 }
