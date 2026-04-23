@@ -21,6 +21,11 @@ namespace MMMapEditor
 {
     public static class PartyEffectSemantics
     {
+        private static string FormatMemberDisplay(int memberIndex)
+        {
+            return PartyMemberReference.FormatDisplayIndex(memberIndex);
+        }
+
         public static string BuildSemanticKey(PartyEffect effect)
         {
             if (effect == null)
@@ -73,15 +78,15 @@ namespace MMMapEditor
                 parts.Add($"Guards={guardKey}");
 
             if (effect.MemberIndex.HasValue)
-                parts.Add($"Member=#{effect.MemberIndex.Value}");
+                parts.Add($"Member={FormatMemberDisplay(effect.MemberIndex.Value)}");
             else if (effect.ObservedMemberIndex.HasValue)
-                parts.Add($"ObservedMember=#{effect.ObservedMemberIndex.Value}");
+                parts.Add($"ObservedMember={FormatMemberDisplay(effect.ObservedMemberIndex.Value)}");
 
             if (effect.ComparedField != PartyFieldKind.Unknown)
                 parts.Add($"ComparedField={effect.ComparedField}");
 
             if (effect.ComparedMemberIndex.HasValue)
-                parts.Add($"ComparedMember=#{effect.ComparedMemberIndex.Value}");
+                parts.Add($"ComparedMember={FormatMemberDisplay(effect.ComparedMemberIndex.Value)}");
 
             if (IsLoopDerived(effect))
                 parts.Add("LoopDerived=True");
@@ -166,7 +171,7 @@ namespace MMMapEditor
                     return $"У выбранного члена партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
-                    return $"У персонажа #{effect.MemberIndex.Value} {verb} {amount} {statLabel}";
+                    return $"У персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} {verb} {amount} {statLabel}";
 
                 return operation == PartyEffectOperation.Increment
                     ? $"{statLabel} персонажа увеличивается на {amount}"
@@ -895,9 +900,9 @@ namespace MMMapEditor
             return scope switch
             {
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
-                    ? $"У персонажа #{effect.MemberIndex.Value} "
+                    ? $"У персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} "
                     : effect.ObservedMemberIndex.HasValue
-                        ? $"У персонажа #{effect.ObservedMemberIndex.Value} "
+                        ? $"У персонажа {FormatMemberDisplay(effect.ObservedMemberIndex.Value)} "
                         : string.Empty,
                 PartyEffectScope.RandomMember => "У случайного члена партии ",
                 PartyEffectScope.SelectedMember => "У выбранного члена партии ",
@@ -910,7 +915,7 @@ namespace MMMapEditor
                 },
                 PartyEffectScope.WholeParty => "У всех персонажей партии ",
                 _ => effect.ObservedMemberIndex.HasValue
-                    ? $"У персонажа #{effect.ObservedMemberIndex.Value} "
+                    ? $"У персонажа {FormatMemberDisplay(effect.ObservedMemberIndex.Value)} "
                     : string.Empty
             };
         }
@@ -953,7 +958,7 @@ namespace MMMapEditor
                     effect.MemberIndex.HasValue &&
                     effect.ComparedMemberIndex.Value != effect.MemberIndex.Value)
                 {
-                    return $"ПРОВЕРКА УСЛОВИЯ: Сравнивается {fieldLabel} персонажа #{effect.MemberIndex.Value} с {comparedFieldLabel} персонажа #{effect.ComparedMemberIndex.Value}";
+                    return $"ПРОВЕРКА УСЛОВИЯ: Сравнивается {fieldLabel} персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} с {comparedFieldLabel} персонажа {FormatMemberDisplay(effect.ComparedMemberIndex.Value)}";
                 }
 
                 return $"ПРОВЕРКА УСЛОВИЯ: Проверяется, совпадают ли {fieldLabel} и {comparedFieldLabel} {subject}";
@@ -984,7 +989,7 @@ namespace MMMapEditor
             return scope switch
             {
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
-                    ? $"Персонаж #{effect.MemberIndex.Value}"
+                    ? $"Персонаж {FormatMemberDisplay(effect.MemberIndex.Value)}"
                     : "Персонаж",
                 PartyEffectScope.RandomMember => "Случайный член партии",
                 PartyEffectScope.SelectedMember => "Выбранный член партии",
@@ -1062,8 +1067,8 @@ namespace MMMapEditor
             if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
             {
                 return isZero
-                    ? $"{statLabel} персонажа #{effect.MemberIndex.Value} обнуляется"
-                    : $"{statLabel} персонажа #{effect.MemberIndex.Value} становится равным {value}";
+                    ? $"{statLabel} персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} обнуляется"
+                    : $"{statLabel} персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} становится равным {value}";
             }
 
             return isZero
@@ -1076,7 +1081,7 @@ namespace MMMapEditor
             return scope switch
             {
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
-                    ? $"персонажа #{effect.MemberIndex.Value}"
+                    ? $"персонажа {FormatMemberDisplay(effect.MemberIndex.Value)}"
                     : "персонажа партии",
                 PartyEffectScope.RandomMember => IsScalarPartyStatField(field)
                     ? "случайного члена партии"

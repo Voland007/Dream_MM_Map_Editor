@@ -610,6 +610,13 @@ namespace MMMapEditor
             public VariantRenderItem DirectVariant { get; set; }
         }
 
+        private sealed class SharedPartyHoistBranch
+        {
+            public VariantTreeNode ChildNode { get; set; }
+            public VariantRenderItem DirectVariant { get; set; }
+            public List<string> Lines { get; set; } = new List<string>();
+        }
+
         private static string BuildHierarchicalVariantNotes(
     OvrObject obj,
     byte defaultMonsterPower,
@@ -727,7 +734,7 @@ namespace MMMapEditor
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
-                HoistSharedGuardLikePartyNotes(root);
+                HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 group.TreeRoot = SimplifyGenericChoiceTree(CompressVariantTree(root));
             }
@@ -1683,35 +1690,260 @@ namespace MMMapEditor
             return result;
         }
 
-        private static void HoistSharedGuardLikePartyNotes(VariantTreeNode node)
+        private static void HoistSharedCommonPartyNotes(VariantTreeNode node)
         {
             if (node == null)
                 return;
 
             foreach (var child in node.Children)
-                HoistSharedGuardLikePartyNotes(child);
+                HoistSharedCommonPartyNotes(child);
 
             var renderableVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
                 .Where(variant => variant != null && HasMeaningfulLines(variant.Lines))
                 .ToList();
 
             if (renderableVariants.Count < 2)
+            {
+                HoistSharedCommonPartyNotesAcrossChildren(node);
+                return;
+            }
+
+            // Если битва уже находится в общем префиксе узла, то общий подъём
+            // party-заметок нужно отложить до этапа PromoteConditionalPartyNotesBeforeBattle,
+            // иначе битва остаётся в CommonLines и узел может схлопнуться обратно
+            // в плоский вид (как в PORTSMIT (11,8)).
+            if (FindFirstBattleLineIndex(node.CommonLines) >= 0)
                 return;
 
-            var sharedGuardLines = GetSharedPartyEffectLines(
+            // Поднимаем наверх только те party-заметки, которые действительно
+            // общие для всех листьев этого узла и должны жить в общем корне:
+            // guard-like проверки и технические квестовые флаги лордов.
+            var sharedPartyLines = GetSharedPartyEffectLines(
                     renderableVariants,
-                    effect => effect != null && PartyEffectSemantics.IsGuardLike(effect))
+                    effect => effect != null && IsHoistableSharedPartyEffect(effect))
                 .Where(line => !string.IsNullOrWhiteSpace(line))
                 .Where(line => !(node.CommonLines ?? new List<string>()).Contains(line, StringComparer.Ordinal))
                 .ToList();
 
-            if (sharedGuardLines.Count == 0)
+            if (sharedPartyLines.Count == 0)
+            {
+                HoistSharedCommonPartyNotesAcrossChildren(node);
                 return;
+            }
 
-            InsertCommonLinesBeforeBattle(node, sharedGuardLines);
+            InsertCommonLinesBeforeBattle(node, sharedPartyLines);
 
             foreach (var variant in renderableVariants)
-                variant.Lines = RemoveLineOccurrences(variant.Lines, sharedGuardLines);
+                variant.Lines = RemoveLineOccurrences(variant.Lines, sharedPartyLines);
+
+            HoistSharedCommonPartyNotesAcrossChildren(node);
+        }
+
+        private static bool IsHoistableSharedPartyEffect(PartyEffect effect)
+        {
+            if (effect == null)
+                return false;
+
+            if (PartyEffectSemantics.IsGuardLike(effect))
+                return true;
+
+            return PartyQuestLordFieldSemantics.IsQuestField(PartyEffectSemantics.GetEffectiveField(effect)) &&
+                   PartyEffectSemantics.IsStateChanging(effect);
+        }
+
+        private static void HoistSharedCommonPartyNotesAcrossChildren(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            if (FindFirstBattleLineIndex(node.CommonLines) >= 0)
+                return;
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+
+            var renderableDirectVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null && HasMeaningfulLines(variant.Lines))
+                .ToList();
+
+            var branches = new List<SharedPartyHoistBranch>();
+            branches.AddRange(renderableChildren.Select(child => new SharedPartyHoistBranch
+            {
+                ChildNode = child,
+                Lines = GetImmediateBranchHoistableLines(child)
+            }));
+            branches.AddRange(renderableDirectVariants.Select(variant => new SharedPartyHoistBranch
+            {
+                DirectVariant = variant,
+                Lines = GetRenderedHoistablePartyEffectLines(variant)
+            }));
+
+            if (branches.Count < 2)
+                return;
+
+            if (branches.Any(branch => branch.Lines.Count == 0))
+                return;
+
+            var orderedSource = branches
+                .OrderBy(branch => branch.Lines.Count)
+                .Select(branch => branch.Lines)
+                .FirstOrDefault();
+
+            if (orderedSource == null || orderedSource.Count == 0)
+                return;
+
+            var sharedCounts = BuildLineCounts(orderedSource);
+            foreach (var branch in branches)
+            {
+                var branchCounts = BuildLineCounts(branch.Lines);
+                foreach (var key in sharedCounts.Keys.ToList())
+                {
+                    int branchCount = branchCounts.TryGetValue(key, out int count) ? count : 0;
+                    int mergedCount = Math.Min(sharedCounts[key], branchCount);
+                    if (mergedCount <= 0)
+                        sharedCounts.Remove(key);
+                    else
+                        sharedCounts[key] = mergedCount;
+                }
+            }
+
+            var sharedLines = new List<string>();
+            foreach (var line in orderedSource)
+            {
+                string key = line ?? string.Empty;
+                if (!sharedCounts.TryGetValue(key, out int remaining) || remaining <= 0)
+                    continue;
+
+                sharedLines.Add(line);
+                if (remaining == 1)
+                    sharedCounts.Remove(key);
+                else
+                    sharedCounts[key] = remaining - 1;
+            }
+
+            sharedLines = sharedLines
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Where(line => !(node.CommonLines ?? new List<string>()).Contains(line, StringComparer.Ordinal))
+                .ToList();
+
+            if (sharedLines.Count == 0)
+                return;
+
+            InsertCommonLinesBeforeBattle(node, sharedLines);
+
+            foreach (var branch in branches)
+            {
+                if (branch.ChildNode != null)
+                    RemoveImmediateBranchLineOccurrences(branch.ChildNode, sharedLines);
+                else if (branch.DirectVariant != null)
+                    RemoveImmediateBranchLineOccurrences(branch.DirectVariant, sharedLines);
+            }
+        }
+
+        private static List<string> GetImmediateBranchHoistableLines(VariantTreeNode node)
+        {
+            if (node == null)
+                return new List<string>();
+
+            var result = new List<string>();
+            var descendantHoistableLines = BuildDescendantHoistablePartyLineSet(node);
+
+            foreach (var line in node.CommonLines ?? new List<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(line) && descendantHoistableLines.Contains(line))
+                    result.Add(line);
+            }
+
+            if ((node.Children?.Count ?? 0) == 0 && (node.DirectVariants?.Count ?? 0) == 1)
+                result.AddRange(GetRenderedHoistablePartyEffectLines(node.DirectVariants[0]));
+
+            return result;
+        }
+
+        private static HashSet<string> BuildDescendantHoistablePartyLineSet(VariantTreeNode node)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var variant in GetAllVariants(node))
+            {
+                foreach (var line in GetVariantPartyEffectLines(
+                    variant,
+                    effect => effect != null && IsHoistableSharedPartyEffect(effect)))
+                {
+                    if (!string.IsNullOrWhiteSpace(line))
+                        result.Add(line);
+                }
+            }
+
+            return result;
+        }
+
+        private static List<string> GetRenderedHoistablePartyEffectLines(VariantRenderItem item)
+        {
+            if (item?.Lines == null || item.Lines.Count == 0)
+                return new List<string>();
+
+            var candidateCounts = BuildLineCounts(
+                GetVariantPartyEffectLines(
+                    item,
+                    effect => effect != null && IsHoistableSharedPartyEffect(effect)));
+
+            if (candidateCounts.Count == 0)
+                return new List<string>();
+
+            var result = new List<string>();
+            foreach (var line in item.Lines)
+            {
+                string key = line ?? string.Empty;
+                if (!candidateCounts.TryGetValue(key, out int remaining) || remaining <= 0)
+                    continue;
+
+                result.Add(line);
+                if (remaining == 1)
+                    candidateCounts.Remove(key);
+                else
+                    candidateCounts[key] = remaining - 1;
+            }
+
+            return result;
+        }
+
+        private static void RemoveImmediateBranchLineOccurrences(VariantTreeNode node, IEnumerable<string> linesToRemove)
+        {
+            if (node == null)
+                return;
+
+            foreach (var line in linesToRemove ?? Enumerable.Empty<string>())
+            {
+                if (RemoveFirstLineOccurrence(node.CommonLines, line))
+                    continue;
+
+                if ((node.Children?.Count ?? 0) == 0 && (node.DirectVariants?.Count ?? 0) == 1)
+                    RemoveFirstLineOccurrence(node.DirectVariants[0]?.Lines, line);
+            }
+        }
+
+        private static void RemoveImmediateBranchLineOccurrences(VariantRenderItem item, IEnumerable<string> linesToRemove)
+        {
+            if (item?.Lines == null)
+                return;
+
+            foreach (var line in linesToRemove ?? Enumerable.Empty<string>())
+                RemoveFirstLineOccurrence(item.Lines, line);
+        }
+
+        private static bool RemoveFirstLineOccurrence(List<string> lines, string line)
+        {
+            if (lines == null || lines.Count == 0)
+                return false;
+
+            string key = line ?? string.Empty;
+            int index = lines.FindIndex(item => string.Equals(item ?? string.Empty, key, StringComparison.Ordinal));
+            if (index < 0)
+                return false;
+
+            lines.RemoveAt(index);
+            return true;
         }
 
         private static void InsertCommonLinesBeforeBattle(VariantTreeNode node, IEnumerable<string> linesToInsert)

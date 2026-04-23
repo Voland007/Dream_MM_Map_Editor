@@ -461,7 +461,7 @@ namespace MMMapEditor
                 return $"{statLabel} выбранного члена партии уменьшается вдвое";
 
             if (member?.MemberIndex.HasValue == true)
-                return $"{statLabel} персонажа #{member.MemberIndex.Value} уменьшается вдвое";
+                return $"{statLabel} персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)} уменьшается вдвое";
 
             return $"{statLabel} персонажа уменьшается вдвое";
         }
@@ -493,7 +493,7 @@ namespace MMMapEditor
                 return $"У выбранного члена партии {verb} {amount} {statLabel}";
 
             if (member?.MemberIndex.HasValue == true)
-                return $"У персонажа #{member.MemberIndex.Value} {verb} {amount} {statLabel}";
+                return $"У персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)} {verb} {amount} {statLabel}";
 
             return operation == PartyEffectOperation.Increment
                 ? $"{statLabel} персонажа увеличивается на {amount}"
@@ -594,7 +594,7 @@ namespace MMMapEditor
                 return "Выбранный член партии";
 
             if (member?.MemberIndex.HasValue == true)
-                return $"Персонаж #{member.MemberIndex.Value}";
+                return $"Персонаж {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)}";
 
             return "Персонаж";
         }

@@ -68,9 +68,14 @@ namespace MMMapEditor
             };
         }
 
+        public static string FormatDisplayIndex(int memberIndex)
+        {
+            return $"#{memberIndex + 1}";
+        }
+
         public override string ToString()
         {
-            string memberText = MemberIndex.HasValue ? $"#{MemberIndex.Value}" : "?";
+            string memberText = MemberIndex.HasValue ? FormatDisplayIndex(MemberIndex.Value) : "?";
             string ptrText = PointerAddress.HasValue ? $"0x{PointerAddress.Value:X4}" : "?";
             string tableText = PointerTableAddress.HasValue ? $"0x{PointerTableAddress.Value:X4}" : "?";
             string structText = StructureAddress.HasValue ? $"0x{StructureAddress.Value:X4}" : "?";
