@@ -174,10 +174,10 @@ namespace MMMapEditor
                 return $"Изменяется {GetScalarPartyStatLabel(field)} {subject}";
             }
 
-            if (field == PartyFieldKind.Gender && operation == PartyEffectOperation.Write)
+            if (field == PartyFieldKind.sex && operation == PartyEffectOperation.Write)
                 return $"Меняется пол {subject}";
 
-            if (field == PartyFieldKind.Gender && operation == PartyEffectOperation.Compare)
+            if (field == PartyFieldKind.sex && operation == PartyEffectOperation.Compare)
                 return $"Проверяется пол {subject}";
 
             if (field == PartyFieldKind.Status && effect.ImmediateValue.HasValue)
@@ -302,8 +302,8 @@ namespace MMMapEditor
 
             return effect.Kind == PartyEffectKind.HpHalved || effect.Kind == PartyEffectKind.HpWritten
                 ? PartyFieldKind.Hp
-                : effect.Kind == PartyEffectKind.GenderWritten || effect.Kind == PartyEffectKind.GenderCompared
-                    ? PartyFieldKind.Gender
+                : effect.Kind == PartyEffectKind.sexWritten || effect.Kind == PartyEffectKind.sexCompared
+                    ? PartyFieldKind.sex
                     : effect.Kind == PartyEffectKind.StatusWritten
                         ? PartyFieldKind.Status
                         : effect.Kind == PartyEffectKind.TechnicalFieldRead ||
@@ -325,8 +325,8 @@ namespace MMMapEditor
             {
                 PartyEffectKind.HpHalved => PartyEffectOperation.Halve,
                 PartyEffectKind.HpWritten => PartyEffectOperation.Write,
-                PartyEffectKind.GenderWritten => PartyEffectOperation.Write,
-                PartyEffectKind.GenderCompared => PartyEffectOperation.Compare,
+                PartyEffectKind.sexWritten => PartyEffectOperation.Write,
+                PartyEffectKind.sexCompared => PartyEffectOperation.Compare,
                 PartyEffectKind.StatusWritten => PartyEffectOperation.Write,
                 PartyEffectKind.TechnicalFieldRead => PartyEffectOperation.Read,
                 PartyEffectKind.TechnicalFieldWritten => PartyEffectOperation.Write,
@@ -498,7 +498,7 @@ namespace MMMapEditor
             if (!IsGuardLike(effect))
                 return false;
 
-            if (GetEffectiveField(effect) != PartyFieldKind.Gender)
+            if (GetEffectiveField(effect) != PartyFieldKind.sex)
                 return false;
 
             var condition = GetEffectiveCondition(effect);
@@ -924,7 +924,7 @@ namespace MMMapEditor
                 PartyFieldKind.Sp => "SP",
                 PartyFieldKind.SpHigh => "старший байт SP",
                 PartyFieldKind.SpLow => "младший байт SP",
-                PartyFieldKind.Gender => "пол",
+                PartyFieldKind.sex => "пол",
                 PartyFieldKind.Status => "status",
                 PartyFieldKind.Technical77 => PartyTechnicalField77Semantics.FieldLabel,
                 _ => field.ToString()

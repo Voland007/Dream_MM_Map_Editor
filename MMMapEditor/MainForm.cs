@@ -1565,7 +1565,7 @@ namespace MMMapEditor
             }
         }
 
-        private void FormatRainbowPartyGenderNotes(RichTextBox rt, string noteText)
+        private void FormatRainbowPartysexNotes(RichTextBox rt, string noteText)
         {
             if (string.IsNullOrEmpty(noteText))
                 return;
@@ -2087,7 +2087,7 @@ namespace MMMapEditor
                 FormatLootBlocks(notesTextBox, noteText);
 
                 // Радужный фон для заметок о смене пола в партии
-                FormatRainbowPartyGenderNotes(notesTextBox, noteText);
+                FormatRainbowPartysexNotes(notesTextBox, noteText);
             }
         }
 

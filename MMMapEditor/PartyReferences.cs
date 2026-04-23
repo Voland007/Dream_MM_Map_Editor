@@ -22,7 +22,7 @@ namespace MMMapEditor
     public enum PartyFieldKind
     {
         Unknown = 0,
-        Gender = 1,
+        sex = 1,
         Hp = 2,
         HpLow = 3,
         HpHigh = 4,

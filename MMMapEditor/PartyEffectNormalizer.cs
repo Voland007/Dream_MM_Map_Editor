@@ -119,7 +119,7 @@ namespace MMMapEditor
                 if (effect == null || !PartyEffectSemantics.IsGuardLike(effect))
                     continue;
 
-                if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Gender)
+                if (PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.sex)
                     continue;
 
                 var condition = PartyEffectSemantics.GetEffectiveCondition(effect);

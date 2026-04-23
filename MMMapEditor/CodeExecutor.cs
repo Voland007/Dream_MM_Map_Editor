@@ -42,7 +42,9 @@ namespace MMMapEditor
         private const ushort PARTY_COUNT_ADDRESS = 0x3BC0;
         private const ushort BATTLE_MONSTER_COUNT_ADDRESS = 0x3C1D;
         private const int PARTY_MEMBER_COUNT = 6;
-        private const int PARTY_GENDER_OFFSET = 0x10;
+        private const int PARTY_sex_OFFSET = 0x10;
+        private const byte PARTY_sex_MALE_VALUE = 0x01;
+        private const byte PARTY_sex_FEMALE_VALUE = 0x02;
         private const int PARTY_SP_LOW_OFFSET = 0x2B;
         private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
@@ -341,7 +343,7 @@ namespace MMMapEditor
                 : new List<uint>(exitPendingReturnAddresses);
             result.ExitCallDepth = exitCallDepth;
             CaptureExitEmulatedState(result);
-            FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode);
+            FinalizeResult(result, registerTracker, instructionCount, currentAddress, fileLength, debugMode, exitCallDepth);
             return result;
         }
 
@@ -877,7 +879,7 @@ namespace MMMapEditor
 
             PartyFieldKind field = offset switch
             {
-                PARTY_GENDER_OFFSET => PartyFieldKind.Gender,
+                PARTY_sex_OFFSET => PartyFieldKind.sex,
                 PARTY_SP_LOW_OFFSET => PartyFieldKind.SpLow,
                 PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
@@ -1553,16 +1555,16 @@ namespace MMMapEditor
 
         private PartyConditionKind InferPartyConditionForPredicate(PartyPredicate predicate)
         {
-            if (predicate?.Field != PartyFieldKind.Gender || !predicate.ImmediateValue.HasValue)
+            if (predicate?.Field != PartyFieldKind.sex || !predicate.ImmediateValue.HasValue)
                 return PartyConditionKind.None;
 
             ushort immediateValue = predicate.ImmediateValue.Value;
             return predicate.Comparison switch
             {
-                PartyPredicateComparison.Equal when immediateValue == 1 => PartyConditionKind.MaleOnly,
-                PartyPredicateComparison.NotEqual when immediateValue == 1 => PartyConditionKind.FemaleOnly,
-                PartyPredicateComparison.Equal when immediateValue == 2 => PartyConditionKind.FemaleOnly,
-                PartyPredicateComparison.NotEqual when immediateValue == 2 => PartyConditionKind.MaleOnly,
+                PartyPredicateComparison.Equal when immediateValue == PARTY_sex_MALE_VALUE => PartyConditionKind.MaleOnly,
+                PartyPredicateComparison.NotEqual when immediateValue == PARTY_sex_MALE_VALUE => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.Equal when immediateValue == PARTY_sex_FEMALE_VALUE => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.NotEqual when immediateValue == PARTY_sex_FEMALE_VALUE => PartyConditionKind.MaleOnly,
                 _ => PartyConditionKind.None
             };
         }
@@ -1571,7 +1573,7 @@ namespace MMMapEditor
         {
             string fieldText = field switch
             {
-                PartyFieldKind.Gender => "Gender",
+                PartyFieldKind.sex => "sex",
                 PartyFieldKind.Hp => "HP",
                 PartyFieldKind.HpLow => "HP low",
                 PartyFieldKind.HpHigh => "HP high",
@@ -1701,12 +1703,12 @@ namespace MMMapEditor
             var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var currentPredicates = GetCurrentPartyPredicates(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var effects = new List<PartyEffect>();
-            if (fieldRef.Field == PartyFieldKind.Gender)
+            if (fieldRef.Field == PartyFieldKind.sex)
             {
                 var effect = new PartyEffect
                 {
-                    Kind = PartyEffectKind.GenderWritten,
-                    Field = PartyFieldKind.Gender,
+                    Kind = PartyEffectKind.sexWritten,
+                    Field = PartyFieldKind.sex,
                     Operation = PartyEffectOperation.Write,
                     ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
                     ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
@@ -2354,6 +2356,85 @@ namespace MMMapEditor
             return minValue == maxValue
                 ? $"{minValue} {suffix}"
                 : $"{minValue}-{maxValue} {suffix}";
+        }
+
+        private void MaterializePendingExactLootTexts(PathAnalysisResult result, uint instructionAddress,
+            int callDepth, bool debugMode)
+        {
+            if (result == null)
+                return;
+
+            MaterializePendingExactGoldText(result, instructionAddress, callDepth, debugMode);
+        }
+
+        private void MaterializePendingExactGoldText(PathAnalysisResult result, uint instructionAddress,
+            int callDepth, bool debugMode)
+        {
+            bool hasLowByte = _emulatedMemory8.TryGetValue(0x3C7D, out byte lowByte);
+            bool hasHighByte = _emulatedMemory8.TryGetValue(0x3C7E, out byte highByte);
+
+            if (!hasLowByte && !hasHighByte)
+                return;
+
+            ushort rawGoldValue = (ushort)((hasLowByte ? lowByte : (byte)0x00) |
+                                           ((hasHighByte ? highByte : (byte)0x00) << 8));
+            if (rawGoldValue == 0)
+                return;
+
+            if (HasRecognizedGoldOutcomeText(result))
+                return;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Финализация GOLD по tracked-state: low={(hasLowByte ? $"0x{lowByte:X2}" : "0x00 (default)")}, high={(hasHighByte ? $"0x{highByte:X2}" : "0x00 (default)")} -> {rawGoldValue >> 1} GOLD");
+            }
+
+            int textOrderCounter = result.OrderedTexts.Count == 0
+                ? 0
+                : result.OrderedTexts.Max(t => t.Order) + 1;
+
+            AddImplicitContainerIntroForSyntheticLoot(
+                result,
+                instructionAddress,
+                callDepth,
+                debugMode,
+                ref textOrderCounter);
+
+            AddSyntheticOutcomeText(
+                result,
+                FormatGoldRangeText(rawGoldValue, rawGoldValue),
+                callDepth,
+                instructionAddress,
+                debugMode,
+                ref textOrderCounter);
+        }
+
+        private static bool HasRecognizedGoldOutcomeText(PathAnalysisResult result)
+        {
+            if (result?.OrderedTexts == null || result.OrderedTexts.Count == 0)
+                return false;
+
+            return result.OrderedTexts.Any(entry => IsGoldOutcomeText(entry?.Text));
+        }
+
+        private static bool IsGoldOutcomeText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            string trimmed = text.Trim();
+            if (trimmed.Equals("!!! GOLD уничтожено !!!", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (!trimmed.EndsWith(" GOLD", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string numericPart = trimmed.Substring(0, trimmed.Length - " GOLD".Length).Trim();
+            if (numericPart.Length == 0)
+                return false;
+
+            return numericPart.All(ch => char.IsDigit(ch) || ch == '-');
         }
 
         private void MergeOrderedTextsFromSubroutine(PathAnalysisResult result, PathAnalysisResult subroutineResult)
@@ -5160,8 +5241,8 @@ namespace MMMapEditor
                 bool hasKnownAlForCompare = registerTracker.TryGetByteRegisterValue("AL", out byte alValue);
                 bool hasComparedPartyField = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
                     comparedPartyField != null;
-                bool hasPartyGenderCompare = hasComparedPartyField &&
-                    comparedPartyField.Field == PartyFieldKind.Gender;
+                bool hasPartysexCompare = hasComparedPartyField &&
+                    comparedPartyField.Field == PartyFieldKind.sex;
                 bool hasTechnicalFieldCompare = hasComparedPartyField &&
                     comparedPartyField.Field == PartyFieldKind.Technical77;
 
@@ -5176,7 +5257,7 @@ namespace MMMapEditor
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                 }
-                else if (hasPartyGenderCompare || hasTechnicalFieldCompare)
+                else if (hasPartysexCompare || hasTechnicalFieldCompare)
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.CompareImmediate, address);
@@ -5185,7 +5266,7 @@ namespace MMMapEditor
                 registerTracker.LastCompareImmediate = immediateValue;
                 registerTracker.LastComparedMemoryAddress = null;
 
-                if (hasPartyGenderCompare)
+                if (hasPartysexCompare)
                 {
                     result.PartyFieldAccesses.Add(new PartyFieldReference
                     {
@@ -5197,18 +5278,18 @@ namespace MMMapEditor
                         IsCompare = true
                     });
 
-                    if (immediateValue == 1 || immediateValue == 2)
+                    if (immediateValue == PARTY_sex_MALE_VALUE || immediateValue == PARTY_sex_FEMALE_VALUE)
                     {
                         var compareEffect = new PartyEffect
                         {
-                            Kind = PartyEffectKind.GenderCompared,
-                            Field = PartyFieldKind.Gender,
+                            Kind = PartyEffectKind.sexCompared,
+                            Field = PartyFieldKind.sex,
                             Operation = PartyEffectOperation.Compare,
                             ValueKnowledge = PartyValueKnowledge.ExactImmediate,
                             ImmediateValue = immediateValue,
                             InstructionAddress = address
                         };
-                        PartyConditionKind compareCondition = immediateValue == 1
+                        PartyConditionKind compareCondition = immediateValue == PARTY_sex_MALE_VALUE
                             ? PartyConditionKind.MaleOnly
                             : PartyConditionKind.FemaleOnly;
 
@@ -6454,7 +6535,7 @@ namespace MMMapEditor
         /// Завершает анализ и устанавливает флаг наличия значимого кода
         /// </summary>
         private void FinalizeResult(PathAnalysisResult result, RegisterTracker registerTracker, int instructionCount,
-            uint currentAddress, long fileLength, bool debugMode)
+            uint currentAddress, long fileLength, bool debugMode, int exitCallDepth)
         {
             if (instructionCount >= MAX_INSTRUCTIONS_PER_PATH)
             {
@@ -6468,6 +6549,11 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"      Достигнут конец оверлея - конец пути");
                 result.IsTerminated = true;
             }
+
+            // Однобайтовый GOLD вроде [3C7D]=0x78 может остаться без текста на
+            // per-instruction стадии, если старший байт явно не записывается.
+            // К моменту выхода из leaf-пути финальное значение уже определено.
+            MaterializePendingExactLootTexts(result, currentAddress, exitCallDepth, debugMode);
 
             result.UsesInitialCoordinates =
                 result.UsesInitialCoordinates ||
