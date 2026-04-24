@@ -211,32 +211,9 @@ namespace MMMapEditor
         private List<TextEntry> BuildPathTexts(PathAnalysisResult pathResult,
             List<TextEntry> inheritedDisplayTexts)
         {
-            var pathTexts = new List<TextEntry>();
-            int nextOrder = 0;
-
-            foreach (var text in inheritedDisplayTexts ?? Enumerable.Empty<TextEntry>())
-            {
-                pathTexts.Add(new TextEntry
-                {
-                    Text = text.Text,
-                    Order = nextOrder++,
-                    IsContextual = text.IsContextual,
-                    Address = text.Address
-                });
-            }
-
-            foreach (var text in ConvertSegmentTextsToDisplayOrder(pathResult?.OrderedTexts))
-            {
-                pathTexts.Add(new TextEntry
-                {
-                    Text = text.Text,
-                    Order = nextOrder++,
-                    IsContextual = text.IsContextual,
-                    Address = text.Address
-                });
-            }
-
-            return pathTexts;
+            return ComposeDisplayTexts(
+                inheritedDisplayTexts,
+                ConvertSegmentTextsToDisplayOrder(pathResult?.OrderedTexts));
         }
 
         private List<TextEntry> BuildInheritedTexts(
@@ -245,13 +222,127 @@ namespace MMMapEditor
         {
             var result = new List<TextEntry>();
 
-            foreach (var text in inheritedDisplayTexts ?? Enumerable.Empty<TextEntry>())
-                result.Add(text.Clone());
+            return ComposeDisplayTexts(
+                inheritedDisplayTexts,
+                ConvertSegmentTextsToDisplayOrder(pathResult?.OrderedTexts));
+        }
 
-            foreach (var text in ConvertSegmentTextsToDisplayOrder(pathResult?.OrderedTexts))
-                result.Add(text.Clone());
+        private List<TextEntry> ComposeDisplayTexts(params IEnumerable<TextEntry>[] textGroups)
+        {
+            var result = new List<TextEntry>();
+
+            foreach (var group in textGroups ?? Array.Empty<IEnumerable<TextEntry>>())
+            {
+                foreach (var text in group ?? Enumerable.Empty<TextEntry>())
+                    AppendMergedDisplayText(result, text);
+            }
+
+            for (int i = 0; i < result.Count; i++)
+                result[i].Order = i;
 
             return result;
+        }
+
+        private void AppendMergedDisplayText(List<TextEntry> result, TextEntry text)
+        {
+            if (result == null || text == null || string.IsNullOrEmpty(text.Text))
+                return;
+
+            var candidate = text.Clone();
+            var existingExact = result.FirstOrDefault(entry =>
+                entry != null &&
+                entry.IsContextual == candidate.IsContextual &&
+                string.Equals(entry.Text, candidate.Text, StringComparison.Ordinal));
+
+            if (existingExact != null)
+            {
+                PromoteDisplayTextMetadata(existingExact, candidate);
+                return;
+            }
+
+            if (TryReplacePendingInferredLootContainerIntro(result, candidate))
+                return;
+
+            result.Add(candidate);
+        }
+
+        private static bool PromoteDisplayTextMetadata(TextEntry existing, TextEntry candidate)
+        {
+            if (existing == null || candidate == null)
+                return false;
+
+            bool updated = false;
+            bool upgradedSemantic = existing.SemanticKind == TextSemanticKind.Unknown &&
+                candidate.SemanticKind != TextSemanticKind.Unknown;
+            bool upgradedEvidence = existing.IsInferred && !candidate.IsInferred;
+
+            if (upgradedSemantic)
+            {
+                existing.SemanticKind = candidate.SemanticKind;
+                updated = true;
+            }
+
+            if (upgradedEvidence)
+            {
+                existing.IsInferred = false;
+                updated = true;
+            }
+
+            if ((upgradedSemantic || upgradedEvidence) && candidate.Address != 0)
+            {
+                existing.Address = candidate.Address;
+                updated = true;
+            }
+
+            return updated;
+        }
+
+        private static bool TryReplacePendingInferredLootContainerIntro(List<TextEntry> result, TextEntry candidate)
+        {
+            if (result == null || candidate == null)
+                return false;
+
+            if (candidate.SemanticKind != TextSemanticKind.LootContainerIntro || candidate.IsInferred)
+                return false;
+
+            for (int i = result.Count - 1; i >= 0; i--)
+            {
+                var existing = result[i];
+                if (existing == null)
+                    continue;
+
+                if (existing.IsContextual != candidate.IsContextual)
+                    continue;
+
+                if (IsLootContainerIntroEntry(existing))
+                {
+                    if (!existing.IsInferred)
+                        return false;
+
+                    existing.Text = candidate.Text;
+                    existing.Address = candidate.Address != 0 ? candidate.Address : existing.Address;
+                    existing.SemanticKind = candidate.SemanticKind != TextSemanticKind.Unknown
+                        ? candidate.SemanticKind
+                        : existing.SemanticKind;
+                    existing.IsInferred = false;
+                    return true;
+                }
+
+                if (!IsLootPayloadEntry(existing))
+                    return false;
+            }
+
+            return false;
+        }
+
+        private static bool IsLootContainerIntroEntry(TextEntry entry)
+        {
+            return entry?.SemanticKind == TextSemanticKind.LootContainerIntro;
+        }
+
+        private static bool IsLootPayloadEntry(TextEntry entry)
+        {
+            return entry?.SemanticKind == TextSemanticKind.LootPayload;
         }
 
         private List<TextEntry> ConvertSegmentTextsToDisplayOrder(IEnumerable<TextEntry> segmentTexts)

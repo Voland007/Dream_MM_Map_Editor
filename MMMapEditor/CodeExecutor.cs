@@ -227,7 +227,7 @@ namespace MMMapEditor
                             foundTextsInThisPath, result, insn, debugMode, ref textOrderCounter);
 
                         // Поиск прямых текстов
-                        var newTexts = new HashSet<string>();
+                        var newTexts = new List<TextEntry>();
                         _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts, TryGetEmulatedMemory8Value);
                         ProcessFoundTexts(newTexts, foundTextsInThisPath, result, currentCallDepth, insn, debugMode, ref textOrderCounter);
 
@@ -2403,50 +2403,239 @@ namespace MMMapEditor
             else
                 pending.HighByteArithmetic = byteArithmetic;
         }
-
-
-        private void AddOrderedText(PathAnalysisResult result, string text, bool isContextual, uint instructionAddress, ref int textOrderCounter)
+        private enum OrderedTextMergeOutcome
         {
-            if (string.IsNullOrEmpty(text))
+            UnchangedExisting = 0,
+            UpdatedExisting = 1,
+            Added = 2
+        }
+
+        private static void AddLegacyText(PathAnalysisResult result, string text, bool isContextual)
+        {
+            if (result == null || string.IsNullOrEmpty(text))
                 return;
 
             if (isContextual)
                 result.ContextTexts.Add(text);
             else
                 result.FoundTexts.Add(text);
+        }
 
-            if (!result.OrderedTexts.Any(t => t.Text == text && t.IsContextual == isContextual))
+        private static void RemoveLegacyText(PathAnalysisResult result, string text, bool isContextual)
+        {
+            if (result == null || string.IsNullOrEmpty(text))
+                return;
+
+            if (isContextual)
+                result.ContextTexts.Remove(text);
+            else
+                result.FoundTexts.Remove(text);
+        }
+
+        private static bool IsLootContainerIntroEntry(TextEntry entry)
+        {
+            if (entry == null || string.IsNullOrWhiteSpace(entry.Text))
+                return false;
+
+            if (entry.SemanticKind == TextSemanticKind.LootContainerIntro)
+                return true;
+
+            string trimmed = entry.Text.Trim();
+            return trimmed.StartsWith("На ячейке находится ", StringComparison.OrdinalIgnoreCase) &&
+                   trimmed.EndsWith("в котором лежит:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLootPayloadEntry(TextEntry entry)
+        {
+            return entry != null && entry.SemanticKind == TextSemanticKind.LootPayload;
+        }
+
+        private static bool PromoteOrderedTextMetadata(TextEntry existing, TextEntry candidate)
+        {
+            if (existing == null || candidate == null)
+                return false;
+
+            bool upgradedSemantic = existing.SemanticKind == TextSemanticKind.Unknown &&
+                                    candidate.SemanticKind != TextSemanticKind.Unknown;
+            bool upgradedEvidence = existing.IsInferred && !candidate.IsInferred;
+            bool updated = false;
+
+            if (upgradedSemantic)
             {
-                result.OrderedTexts.Add(new TextEntry
-                {
-                    Text = text,
-                    IsContextual = isContextual,
-                    Address = instructionAddress,
-                    Order = textOrderCounter++
-                });
+                existing.SemanticKind = candidate.SemanticKind;
+                updated = true;
             }
+
+            if (upgradedEvidence)
+            {
+                existing.IsInferred = false;
+                updated = true;
+            }
+
+            if ((upgradedSemantic || upgradedEvidence) && candidate.Address != 0)
+            {
+                existing.Address = candidate.Address;
+                updated = true;
+            }
+
+            return updated;
+        }
+
+        private static void ReplaceOrderedTextEntry(PathAnalysisResult result, TextEntry existing, TextEntry replacement,
+            HashSet<string> foundTextsInThisPath)
+        {
+            if (result == null || existing == null || replacement == null)
+                return;
+
+            string previousText = existing.Text;
+            RemoveLegacyText(result, previousText, existing.IsContextual);
+            foundTextsInThisPath?.Remove(previousText);
+
+            existing.Text = replacement.Text;
+            existing.Address = replacement.Address != 0 ? replacement.Address : existing.Address;
+            existing.SemanticKind = replacement.SemanticKind != TextSemanticKind.Unknown
+                ? replacement.SemanticKind
+                : existing.SemanticKind;
+            existing.IsInferred = replacement.IsInferred;
+
+            AddLegacyText(result, existing.Text, existing.IsContextual);
+            foundTextsInThisPath?.Add(existing.Text);
+        }
+
+        private bool TryReplacePendingInferredLootContainerIntro(PathAnalysisResult result, TextEntry candidate,
+            HashSet<string> foundTextsInThisPath, bool debugMode)
+        {
+            if (result?.OrderedTexts == null || candidate == null)
+                return false;
+
+            if (candidate.SemanticKind != TextSemanticKind.LootContainerIntro || candidate.IsInferred)
+                return false;
+
+            for (int i = result.OrderedTexts.Count - 1; i >= 0; i--)
+            {
+                var existing = result.OrderedTexts[i];
+                if (existing == null)
+                    continue;
+
+                if (existing.IsContextual != candidate.IsContextual)
+                    continue;
+
+                if (IsLootContainerIntroEntry(existing))
+                {
+                    if (!existing.IsInferred)
+                        return false;
+
+                    string previousText = existing.Text;
+                    ReplaceOrderedTextEntry(result, existing, candidate, foundTextsInThisPath);
+
+                    if (debugMode)
+                    {
+                        AnalysisDebug.WriteLine(
+                            $"        Явный контейнер заменил ранее выведенный неявный контейнер: {previousText} -> {candidate.Text}");
+                    }
+
+                    return true;
+                }
+
+                if (!IsLootPayloadEntry(existing))
+                    return false;
+            }
+
+            return false;
+        }
+
+        private OrderedTextMergeOutcome UpsertOrderedText(PathAnalysisResult result, string text, bool isContextual,
+            uint instructionAddress, ref int textOrderCounter, TextSemanticKind semanticKind = TextSemanticKind.Unknown,
+            bool isInferred = false, HashSet<string> foundTextsInThisPath = null, bool debugMode = false)
+        {
+            if (result == null || string.IsNullOrEmpty(text))
+                return OrderedTextMergeOutcome.UnchangedExisting;
+
+            var candidate = new TextEntry
+            {
+                Text = text,
+                IsContextual = isContextual,
+                Address = instructionAddress,
+                SemanticKind = semanticKind,
+                IsInferred = isInferred
+            };
+
+            var existingExact = result.OrderedTexts.FirstOrDefault(entry =>
+                entry != null &&
+                entry.IsContextual == isContextual &&
+                string.Equals(entry.Text, text, StringComparison.Ordinal));
+
+            if (existingExact != null)
+            {
+                bool updated = PromoteOrderedTextMetadata(existingExact, candidate);
+                AddLegacyText(result, text, isContextual);
+                foundTextsInThisPath?.Add(text);
+                return updated ? OrderedTextMergeOutcome.UpdatedExisting : OrderedTextMergeOutcome.UnchangedExisting;
+            }
+
+            if (TryReplacePendingInferredLootContainerIntro(result, candidate, foundTextsInThisPath, debugMode))
+                return OrderedTextMergeOutcome.UpdatedExisting;
+
+            AddLegacyText(result, text, isContextual);
+            AddOrderedText(result, text, isContextual, instructionAddress, ref textOrderCounter, semanticKind, isInferred);
+            foundTextsInThisPath?.Add(text);
+            return OrderedTextMergeOutcome.Added;
+        }
+
+        private void AddOrderedText(PathAnalysisResult result, string text, bool isContextual, uint instructionAddress, ref int textOrderCounter)
+        {
+            AddOrderedText(result, text, isContextual, instructionAddress, ref textOrderCounter,
+                TextSemanticKind.Unknown, isInferred: false);
+        }
+
+        private void AddOrderedText(PathAnalysisResult result, string text, bool isContextual, uint instructionAddress,
+            ref int textOrderCounter, TextSemanticKind semanticKind, bool isInferred)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+
+            result.OrderedTexts.Add(new TextEntry
+            {
+                Text = text,
+                IsContextual = isContextual,
+                Address = instructionAddress,
+                Order = textOrderCounter++,
+                SemanticKind = semanticKind,
+                IsInferred = isInferred
+            });
         }
 
         private void AddSyntheticOutcomeText(PathAnalysisResult result, string text, int callDepth,
-            uint instructionAddress, bool debugMode, ref int textOrderCounter)
+            uint instructionAddress, bool debugMode, ref int textOrderCounter,
+            TextSemanticKind semanticKind = TextSemanticKind.Unknown, bool isInferred = false)
         {
             if (result == null || string.IsNullOrEmpty(text))
                 return;
 
             bool isContextual = callDepth > 0;
-            bool alreadyPresent = result.OrderedTexts.Any(t => t.Text == text && t.IsContextual == isContextual);
+            var mergeOutcome = UpsertOrderedText(
+                result,
+                text,
+                isContextual,
+                instructionAddress,
+                ref textOrderCounter,
+                semanticKind,
+                isInferred,
+                foundTextsInThisPath: null,
+                debugMode: debugMode);
 
-            AddOrderedText(result, text, isContextual, instructionAddress, ref textOrderCounter);
             result.HasSignificantCode = true;
 
-            if (!isContextual && result.FirstLocalTextAddress == uint.MaxValue)
+            if (mergeOutcome == OrderedTextMergeOutcome.Added &&
+                !isContextual &&
+                result.FirstLocalTextAddress == uint.MaxValue)
             {
                 result.FirstLocalTextAddress = instructionAddress;
                 if (debugMode)
                     AnalysisDebug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
             }
 
-            if (debugMode && !alreadyPresent)
+            if (debugMode && mergeOutcome == OrderedTextMergeOutcome.Added)
             {
                 string scope = isContextual ? "контекстный" : "локальный";
                 AnalysisDebug.WriteLine($"        Синтетически добавлен {scope} outcome-текст: {text}");
@@ -2506,7 +2695,8 @@ namespace MMMapEditor
                 debugMode,
                 ref textOrderCounter);
 
-            AddSyntheticOutcomeText(result, syntheticText, callDepth, instructionAddress, debugMode, ref textOrderCounter);
+            AddSyntheticOutcomeText(result, syntheticText, callDepth, instructionAddress, debugMode, ref textOrderCounter,
+                TextSemanticKind.LootPayload);
             return true;
         }
 
@@ -2526,7 +2716,8 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(containerText))
                 return;
 
-            AddSyntheticOutcomeText(result, containerText, callDepth, instructionAddress, debugMode, ref textOrderCounter);
+            AddSyntheticOutcomeText(result, containerText, callDepth, instructionAddress, debugMode, ref textOrderCounter,
+                TextSemanticKind.LootContainerIntro, isInferred: true);
         }
 
         private static bool HasContainerIntroText(PathAnalysisResult result)
@@ -2534,11 +2725,7 @@ namespace MMMapEditor
             if (result?.OrderedTexts == null)
                 return false;
 
-            return result.OrderedTexts.Any(textEntry =>
-                textEntry != null &&
-                !string.IsNullOrWhiteSpace(textEntry.Text) &&
-                textEntry.Text.StartsWith("На ячейке находится ", StringComparison.OrdinalIgnoreCase) &&
-                textEntry.Text.EndsWith("в котором лежит:", StringComparison.OrdinalIgnoreCase));
+            return result.OrderedTexts.Any(IsLootContainerIntroEntry);
         }
 
         private static string BuildImplicitContainerIntroText()
@@ -2612,7 +2799,8 @@ namespace MMMapEditor
                 callDepth,
                 instructionAddress,
                 debugMode,
-                ref textOrderCounter);
+                ref textOrderCounter,
+                TextSemanticKind.LootPayload);
         }
 
         private static bool HasRecognizedGoldOutcomeText(PathAnalysisResult result)
@@ -2651,17 +2839,14 @@ namespace MMMapEditor
                 if (entry == null || string.IsNullOrEmpty(entry.Text))
                     continue;
 
-                if (result.OrderedTexts.Any(t => t.Text == entry.Text && t.IsContextual == entry.IsContextual))
-                    continue;
-
-                var clone = entry.Clone();
-                clone.Order = nextOrder++;
-                result.OrderedTexts.Add(clone);
-
-                if (clone.IsContextual)
-                    result.ContextTexts.Add(clone.Text);
-                else
-                    result.FoundTexts.Add(clone.Text);
+                UpsertOrderedText(
+                    result,
+                    entry.Text,
+                    entry.IsContextual,
+                    entry.Address,
+                    ref nextOrder,
+                    entry.SemanticKind,
+                    entry.IsInferred);
             }
         }
 
@@ -2682,11 +2867,17 @@ namespace MMMapEditor
                     if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                     {
                         string textEntry = $"Text at 0x{combinedAddr:X4}: {text}";
-                        if (!foundTextsInThisPath.Contains(textEntry))
-                        {
-                            foundTextsInThisPath.Add(textEntry);
-                            AddOrderedText(result, textEntry, false, (uint)insn.Address, ref textOrderCounter);
+                        var mergeOutcome = UpsertOrderedText(
+                            result,
+                            textEntry,
+                            false,
+                            (uint)insn.Address,
+                            ref textOrderCounter,
+                            foundTextsInThisPath: foundTextsInThisPath,
+                            debugMode: debugMode);
 
+                        if (mergeOutcome == OrderedTextMergeOutcome.Added)
+                        {
                             if (result.FirstLocalTextAddress == uint.MaxValue)
                             {
                                 result.FirstLocalTextAddress = (uint)insn.Address;
@@ -2705,32 +2896,43 @@ namespace MMMapEditor
         /// <summary>
         /// Обрабатывает найденные прямые тексты
         /// </summary>
-        private void ProcessFoundTexts(HashSet<string> newTexts, HashSet<string> foundTextsInThisPath,
+        private void ProcessFoundTexts(List<TextEntry> newTexts, HashSet<string> foundTextsInThisPath,
             PathAnalysisResult result, int callDepth, X86Instruction insn, bool debugMode, ref int textOrderCounter)
         {
-            foreach (var text in newTexts)
+            foreach (var entry in newTexts ?? Enumerable.Empty<TextEntry>())
             {
-                if (!foundTextsInThisPath.Contains(text))
+                if (entry == null || string.IsNullOrEmpty(entry.Text))
+                    continue;
+
+                bool isContextual = callDepth > 0;
+                uint sourceAddress = entry.Address != 0 ? entry.Address : (uint)insn.Address;
+                var mergeOutcome = UpsertOrderedText(
+                    result,
+                    entry.Text,
+                    isContextual,
+                    sourceAddress,
+                    ref textOrderCounter,
+                    entry.SemanticKind,
+                    entry.IsInferred,
+                    foundTextsInThisPath,
+                    debugMode);
+
+                if (mergeOutcome != OrderedTextMergeOutcome.Added)
+                    continue;
+
+                if (!isContextual && result.FirstLocalTextAddress == uint.MaxValue)
                 {
-                    foundTextsInThisPath.Add(text);
-
-                    bool isContextual = callDepth > 0;
-                    AddOrderedText(result, text, isContextual, (uint)insn.Address, ref textOrderCounter);
-
-                    if (!isContextual && result.FirstLocalTextAddress == uint.MaxValue)
-                    {
-                        result.FirstLocalTextAddress = (uint)insn.Address;
-                        if (debugMode)
-                            AnalysisDebug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
-                    }
-
+                    result.FirstLocalTextAddress = sourceAddress;
                     if (debugMode)
-                    {
-                        if (isContextual)
-                            AnalysisDebug.WriteLine($"        Найден контекстный текст (из CALL): {text}");
-                        else
-                            AnalysisDebug.WriteLine($"        Найден прямой текст: {text}");
-                    }
+                        AnalysisDebug.WriteLine($"        ЗАПОМИНАЕМ адрес первого локального текста: 0x{result.FirstLocalTextAddress:X4}");
+                }
+
+                if (debugMode)
+                {
+                    if (isContextual)
+                        AnalysisDebug.WriteLine($"        Найден контекстный текст (из CALL): {entry.Text}");
+                    else
+                        AnalysisDebug.WriteLine($"        Найден прямой текст: {entry.Text}");
                 }
             }
         }

@@ -18,6 +18,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Gee.External.Capstone.X86;
 
@@ -36,7 +37,7 @@ namespace MMMapEditor
         }
 
         public void FindTextsInInstruction(X86Instruction insn, BinaryReader br,
-            RegisterTracker registerTracker, int depth, HashSet<string> output,
+            RegisterTracker registerTracker, int depth, List<TextEntry> output,
             Func<ushort, byte?> tryReadMemory8 = null)
         {
             byte[] instructionBytes = insn.Bytes;
@@ -60,7 +61,7 @@ namespace MMMapEditor
                 if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                 {
                     string textEntry = $"Text at 0x{textAddr:X4}: {text}";
-                    output.Add(textEntry);
+                    AddOutputText(output, address, textEntry);
                 }
             }
             // MOV [0x3BD4], reg
@@ -78,7 +79,7 @@ namespace MMMapEditor
                     if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                     {
                         string textEntry = $"Text at 0x{value:X4} (via {regNames[regField]}): {text}";
-                        output.Add(textEntry);
+                        AddOutputText(output, address, textEntry);
                     }
                 }
             }
@@ -100,7 +101,7 @@ namespace MMMapEditor
                         string regName = regIndex < regNames.Length ? regNames[regIndex] : "?";
 
                         string textEntry = $"Text at 0x{immediateValue:X4} (via {regName}): {text}";
-                        output.Add(textEntry);
+                        AddOutputText(output, address, textEntry);
                     }
                 }
             }
@@ -115,7 +116,7 @@ namespace MMMapEditor
                     if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
                     {
                         string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
-                        output.Add(textEntry);
+                        AddOutputText(output, address, textEntry);
                     }
                 }
             }
@@ -123,13 +124,37 @@ namespace MMMapEditor
             if (output.Count > initialCount)
             {
                 AnalysisDebug.WriteLine($"        FindTextsInInstruction: instruction 0x{address:X4} добавила {output.Count - initialCount} текст(ов)");
-                foreach (var text in output)
-                    AnalysisDebug.WriteLine($"          -> {text}");
+                foreach (var text in output.Skip(initialCount))
+                    AnalysisDebug.WriteLine($"          -> {text.Text}");
             }
         }
 
+        private static void AddOutputText(List<TextEntry> output, uint instructionAddress, string text,
+            TextSemanticKind semanticKind = TextSemanticKind.Unknown, bool isInferred = false)
+        {
+            if (output == null || string.IsNullOrEmpty(text))
+                return;
+
+            if (output.Any(entry =>
+                    entry != null &&
+                    entry.Text == text &&
+                    entry.SemanticKind == semanticKind &&
+                    entry.IsInferred == isInferred))
+            {
+                return;
+            }
+
+            output.Add(new TextEntry
+            {
+                Text = text,
+                Address = instructionAddress,
+                SemanticKind = semanticKind,
+                IsInferred = isInferred
+            });
+        }
+
         private void ProcessContainerTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
-            HashSet<string> output)
+            List<TextEntry> output)
         {
             // MOV byte ptr [0x3C79], imm8
             if (instructionBytes.Length >= 5 &&
@@ -170,34 +195,34 @@ namespace MMMapEditor
             }
         }
 
-        private void AddContainerText(uint instructionAddress, HashSet<string> output, byte containerIndex)
+        private void AddContainerText(uint instructionAddress, List<TextEntry> output, byte containerIndex)
         {
-            AddContainerText(instructionAddress, output, containerIndex, treatZeroAsDestroyed: true);
+            AddContainerText(instructionAddress, output, containerIndex, treatZeroAsDestroyed: true, isInferred: false);
         }
 
-        private void AddContainerText(uint instructionAddress, HashSet<string> output, byte containerIndex, bool treatZeroAsDestroyed)
+        private void AddContainerText(uint instructionAddress, List<TextEntry> output, byte containerIndex, bool treatZeroAsDestroyed, bool isInferred)
         {
             if (containerIndex == 0 && treatZeroAsDestroyed)
             {
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР УНИЧТОЖЕН: [3C79] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                output.Add("!!! Контейнер с лутом уничтожен !!!");
+                AddOutputText(output, instructionAddress, "!!! Контейнер с лутом уничтожен !!!", TextSemanticKind.LootPayload);
                 return;
             }
 
             if (ContainerDatabase.TryGetContainerName(containerIndex, out string containerName))
             {
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР РАСПОЗНАН: индекс 0x{containerIndex:X2} -> {containerName} (инструкция 0x{instructionAddress:X4})");
-                output.Add($"На ячейке находится {containerName} в котором лежит:");
+                AddOutputText(output, instructionAddress, $"На ячейке находится {containerName} в котором лежит:", TextSemanticKind.LootContainerIntro, isInferred);
             }
             else
             {
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР НЕ РАСПОЗНАН: индекс 0x{containerIndex:X2} (инструкция 0x{instructionAddress:X4})");
-                output.Add($"На ячейке находится контейнер #{containerIndex} в котором лежит:");
+                AddOutputText(output, instructionAddress, $"На ячейке находится контейнер #{containerIndex} в котором лежит:", TextSemanticKind.LootContainerIntro, isInferred);
             }
         }
 
         private void ProcessImplicitContainerTextForLoot(uint instructionAddress, byte[] instructionBytes,
-            HashSet<string> output, Func<ushort, byte?> tryReadMemory8)
+            List<TextEntry> output, Func<ushort, byte?> tryReadMemory8)
         {
             if (tryReadMemory8 == null)
                 return;
@@ -248,9 +273,9 @@ namespace MMMapEditor
             return false;
         }
 
-        private void AddImplicitContainerText(uint instructionAddress, HashSet<string> output)
+        private void AddImplicitContainerText(uint instructionAddress, List<TextEntry> output)
         {
-            AddContainerText(instructionAddress, output, 0x00, treatZeroAsDestroyed: false);
+            AddContainerText(instructionAddress, output, 0x00, treatZeroAsDestroyed: false, isInferred: true);
         }
 
         private static bool IsItemAddress(ushort address)
@@ -259,7 +284,7 @@ namespace MMMapEditor
         }
 
         private void ProcessItemTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
-            HashSet<string> output)
+            List<TextEntry> output)
         {
             // MOV byte ptr [disp16], imm8
             if (instructionBytes.Length >= 5 &&
@@ -323,7 +348,7 @@ namespace MMMapEditor
             }
         }
 
-        private void AddSingleItemText(uint instructionAddress, HashSet<string> output, byte itemIndex, ushort itemAddress)
+        private void AddSingleItemText(uint instructionAddress, List<TextEntry> output, byte itemIndex, ushort itemAddress)
         {
             string itemText = ResolveItemText(itemIndex, out int databaseIndex, out string debugStatus);
 
@@ -340,10 +365,10 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН: индекс 0x{itemIndex:X2} -> запись #{databaseIndex} -> {itemText} через [0x{itemAddress:X4}] (инструкция 0x{instructionAddress:X4})");
             }
 
-            output.Add(itemText);
+            AddOutputText(output, instructionAddress, itemText, TextSemanticKind.LootPayload);
         }
 
-        private void AddItemRangeText(uint instructionAddress, HashSet<string> output, ValueRange8 range, ushort itemAddress)
+        private void AddItemRangeText(uint instructionAddress, List<TextEntry> output, ValueRange8 range, ushort itemAddress)
         {
             int totalValues = range.Max - range.Min + 1;
             var counts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -365,12 +390,12 @@ namespace MMMapEditor
 
             AnalysisDebug.WriteLine($"    ПРЕДМЕТ РАСПОЗНАН ПО ДИАПАЗОНУ: [0x{itemAddress:X4}] 0x{range.Min:X2}-0x{range.Max:X2} -> {counts.Count} итоговых вариантов (инструкция 0x{instructionAddress:X4})");
 
-            output.Add("Случайный предмет:");
+            AddOutputText(output, instructionAddress, "Случайный предмет:", TextSemanticKind.LootPayload);
 
             foreach (var pair in counts.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal))
             {
                 double probability = totalValues > 0 ? pair.Value * 100.0 / totalValues : 0.0;
-                output.Add($"{pair.Key} ({FormatProbability(probability)})");
+                AddOutputText(output, instructionAddress, $"{pair.Key} ({FormatProbability(probability)})", TextSemanticKind.LootPayload);
             }
         }
 
@@ -400,7 +425,7 @@ namespace MMMapEditor
         }
 
         private void ProcessGemsTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
-            HashSet<string> output)
+            List<TextEntry> output)
         {
             // MOV byte ptr [0x3C7F], imm8
             if (instructionBytes.Length >= 5 &&
@@ -442,21 +467,21 @@ namespace MMMapEditor
             }
         }
 
-        private void AddGemsText(uint instructionAddress, HashSet<string> output, byte gemsValue)
+        private void AddGemsText(uint instructionAddress, List<TextEntry> output, byte gemsValue)
         {
             if (gemsValue == 0)
             {
                 AnalysisDebug.WriteLine($"    GEMS УНИЧТОЖЕНЫ: [3C7F] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                output.Add("!!! GEMS уничтожены !!!");
+                AddOutputText(output, instructionAddress, "!!! GEMS уничтожены !!!", TextSemanticKind.LootPayload);
                 return;
             }
 
             AnalysisDebug.WriteLine($"    GEMS РАСПОЗНАНЫ: {gemsValue} GEMS (инструкция 0x{instructionAddress:X4})");
-            output.Add($"{gemsValue} GEMS");
+            AddOutputText(output, instructionAddress, $"{gemsValue} GEMS", TextSemanticKind.LootPayload);
         }
 
         private void ProcessGoldTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
-            HashSet<string> output, Func<ushort, byte?> tryReadMemory8 = null)
+            List<TextEntry> output, Func<ushort, byte?> tryReadMemory8 = null)
         {
             if (TryGetDirectByteMemoryWrite(instructionBytes, registerTracker, out ushort memAddr, out byte writtenValue) &&
                 (memAddr == 0x3C7D || memAddr == 0x3C7E))
@@ -497,7 +522,7 @@ namespace MMMapEditor
             }
         }
 
-        private void AddGoldText(uint instructionAddress, HashSet<string> output, byte lowByte, byte highByte)
+        private void AddGoldText(uint instructionAddress, List<TextEntry> output, byte lowByte, byte highByte)
         {
             ushort rawGoldValue = (ushort)(lowByte | (highByte << 8));
             int goldValue = rawGoldValue >> 1;
@@ -505,12 +530,12 @@ namespace MMMapEditor
             if (rawGoldValue == 0)
             {
                 AnalysisDebug.WriteLine($"    GOLD УНИЧТОЖЕНО: [3C7D:3C7E] = 0x0000 (инструкция 0x{instructionAddress:X4})");
-                output.Add("!!! GOLD уничтожено !!!");
+                AddOutputText(output, instructionAddress, "!!! GOLD уничтожено !!!", TextSemanticKind.LootPayload);
                 return;
             }
 
             AnalysisDebug.WriteLine($"    GOLD РАСПОЗНАНО: raw=0x{rawGoldValue:X4} -> {goldValue} GOLD (инструкция 0x{instructionAddress:X4})");
-            output.Add($"{goldValue} GOLD");
+            AddOutputText(output, instructionAddress, $"{goldValue} GOLD", TextSemanticKind.LootPayload);
         }
 
         private bool TryGetDirectByteMemoryWrite(byte[] instructionBytes, RegisterTracker registerTracker,
@@ -711,7 +736,7 @@ namespace MMMapEditor
 
 
         private void ProcessLootDestructionPatterns(uint instructionAddress, byte[] instructionBytes,
-            RegisterTracker registerTracker, HashSet<string> output)
+            RegisterTracker registerTracker, List<TextEntry> output)
         {
             // MOV byte ptr [BX+3C77], AL / reg8
             if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x88 && instructionBytes[2] == 0x77 && instructionBytes[3] == 0x3C)
@@ -770,27 +795,27 @@ namespace MMMapEditor
                    registerTracker.TryGetByteRegisterValue(regNames[regField], out value);
         }
 
-        private void AddLootDestructionByAddress(uint instructionAddress, HashSet<string> output, ushort address)
+        private void AddLootDestructionByAddress(uint instructionAddress, List<TextEntry> output, ushort address)
         {
             switch (address)
             {
                 case 0x3C79:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C79] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    output.Add("!!! Контейнер с лутом уничтожен !!!");
+                    AddOutputText(output, instructionAddress, "!!! Контейнер с лутом уничтожен !!!", TextSemanticKind.LootPayload);
                     break;
                 case 0x3C7A:
                 case 0x3C7B:
                 case 0x3C7C:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [0x{address:X4}] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    output.Add("!!! Предмет уничтожен !!!");
+                    AddOutputText(output, instructionAddress, "!!! Предмет уничтожен !!!", TextSemanticKind.LootPayload);
                     break;
                 case 0x3C7D:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C7D] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    output.Add("!!! GOLD уничтожено !!!");
+                    AddOutputText(output, instructionAddress, "!!! GOLD уничтожено !!!", TextSemanticKind.LootPayload);
                     break;
                 case 0x3C7F:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C7F] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    output.Add("!!! GEMS уничтожены !!!");
+                    AddOutputText(output, instructionAddress, "!!! GEMS уничтожены !!!", TextSemanticKind.LootPayload);
                     break;
             }
         }

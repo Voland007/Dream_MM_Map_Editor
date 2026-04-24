@@ -266,12 +266,21 @@ namespace MMMapEditor
         public uint MacroEntryAddress { get; set; }
     }
 
+    public enum TextSemanticKind
+    {
+        Unknown = 0,
+        LootContainerIntro = 1,
+        LootPayload = 2
+    }
+
     public class TextEntry
     {
         public string Text { get; set; }
         public int Order { get; set; }
         public bool IsContextual { get; set; }
         public uint Address { get; set; }
+        public TextSemanticKind SemanticKind { get; set; } = TextSemanticKind.Unknown;
+        public bool IsInferred { get; set; } = false;
 
         public TextEntry Clone()
         {
@@ -280,7 +289,9 @@ namespace MMMapEditor
                 Text = Text,
                 Order = Order,
                 IsContextual = IsContextual,
-                Address = Address
+                Address = Address,
+                SemanticKind = SemanticKind,
+                IsInferred = IsInferred
             };
         }
     }
