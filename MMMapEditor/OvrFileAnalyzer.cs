@@ -574,6 +574,7 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"  RepeatedState: {scheduledState.Key}");
                 }
 
+                var canonicalVariantsForOccurrence = new List<PathVariantInfo>();
                 foreach (var currentStateInfo in currentStates.Values)
                 {
                     OvrAnalysisPerfStats.RecordSingleOccurrencePass(perfKey);
@@ -594,6 +595,7 @@ namespace MMMapEditor
                     {
                         MarkVariantOccurrenceRange(variant, occurrence, occurrence);
                         collectedVariants.Add(variant);
+                        canonicalVariantsForOccurrence.Add(variant);
                     }
 
                     usesInitialCoordinates |= passResult.UsesInitialCoordinates;
@@ -690,6 +692,19 @@ namespace MMMapEditor
                             continue;
                         }
 
+                        if (TryApplyStableConstraintStateOptimization(
+                            occurrence,
+                            currentStateInfo,
+                            carryOverState,
+                            nextConstraints,
+                            canonicalVariant,
+                            stableStatePatterns,
+                            stableStatePatternKeys))
+                        {
+                            usedRepeatedEventAcceleration = true;
+                            continue;
+                        }
+
                         if (TryApplyStoredStableStatePattern(
                             stableStatePatterns,
                             occurrence,
@@ -762,6 +777,20 @@ namespace MMMapEditor
 
                     if (analysisTruncated)
                         break;
+                }
+
+                if (!analysisTruncated &&
+                    TryApplyStableRepeatedStateSetOptimization(
+                        occurrence,
+                        currentStates,
+                        scheduledStates,
+                        canonicalVariantsForOccurrence,
+                        debugMode))
+                {
+                    usedRepeatedEventAcceleration = true;
+                    maxAnalyzedOccurrence = Math.Max(maxAnalyzedOccurrence, occurrence + 1);
+                    finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
+                    break;
                 }
 
                 finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
@@ -1097,6 +1126,87 @@ namespace MMMapEditor
                 carryOverState,
                 new Dictionary<ushort, StateValueConstraintInfo>(),
                 canonicalVariant);
+            return true;
+        }
+
+        private bool TryApplyStableConstraintStateOptimization(
+            int occurrence,
+            RepeatedEventStateInfo currentStateInfo,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            PathVariantInfo canonicalVariant,
+            List<RepeatedEventStableStatePattern> stableStatePatterns,
+            HashSet<string> stableStatePatternKeys)
+        {
+            if (occurrence <= 0 ||
+                currentStateInfo == null ||
+                canonicalVariant == null)
+            {
+                return false;
+            }
+
+            string currentStateKey = BuildMemoryStateKey(
+                currentStateInfo.Memory,
+                currentStateInfo.StateValueConstraints);
+            string nextStateKey = BuildMemoryStateKey(carryOverState, nextConstraints);
+
+            if (!string.Equals(currentStateKey, nextStateKey, StringComparison.Ordinal))
+                return false;
+
+            AddOccurrenceCoverage(canonicalVariant, occurrence + 1, occurrence + 1, isOpenEnded: true);
+            RegisterRepeatedEventStableStatePattern(
+                stableStatePatterns,
+                stableStatePatternKeys,
+                carryOverState,
+                nextConstraints,
+                canonicalVariant);
+            return true;
+        }
+
+        private bool TryApplyStableRepeatedStateSetOptimization(
+            int occurrence,
+            Dictionary<string, RepeatedEventStateInfo> currentStates,
+            SortedDictionary<int, Dictionary<string, RepeatedEventStateInfo>> scheduledStates,
+            IEnumerable<PathVariantInfo> canonicalVariantsForOccurrence,
+            bool debugMode)
+        {
+            if (occurrence <= 0 ||
+                currentStates == null ||
+                currentStates.Count == 0 ||
+                scheduledStates == null ||
+                scheduledStates.Count != 1)
+            {
+                return false;
+            }
+
+            var nextOccurrence = scheduledStates.First();
+            if (nextOccurrence.Key != occurrence + 1 ||
+                nextOccurrence.Value == null ||
+                nextOccurrence.Value.Count != currentStates.Count)
+            {
+                return false;
+            }
+
+            foreach (string stateKey in currentStates.Keys)
+            {
+                if (!nextOccurrence.Value.ContainsKey(stateKey))
+                    return false;
+            }
+
+            foreach (var variant in canonicalVariantsForOccurrence
+                .Where(variant => variant != null))
+            {
+                AddOccurrenceCoverage(variant, occurrence + 1, occurrence + 1, isOpenEnded: true);
+            }
+
+            scheduledStates.Clear();
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Обнаружен стабильный цикл набора состояний, прекращаем повторный прогон после наступления #{occurrence}");
+            }
+
             return true;
         }
 
@@ -1905,24 +2015,62 @@ namespace MMMapEditor
 
         private string BuildConstraintOnlyToken(StateValueConstraintInfo constraintInfo)
         {
-            if (constraintInfo == null || constraintInfo.IsEmpty)
+            var normalizedConstraint = NormalizeConstraintInfoForStateKey(constraintInfo);
+            if (normalizedConstraint == null || normalizedConstraint.IsEmpty)
                 return "??";
 
             var parts = new List<string>();
 
-            if (constraintInfo.ExactValues != null && constraintInfo.ExactValues.Count > 0)
-                parts.Add("EQ:" + string.Join(",", constraintInfo.ExactValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+            if (normalizedConstraint.ExactValues != null && normalizedConstraint.ExactValues.Count > 0)
+                parts.Add("EQ:" + string.Join(",", normalizedConstraint.ExactValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
 
-            if (constraintInfo.LowerInclusiveValues != null && constraintInfo.LowerInclusiveValues.Count > 0)
-                parts.Add("GE:" + string.Join(",", constraintInfo.LowerInclusiveValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+            if (normalizedConstraint.LowerInclusiveValues != null && normalizedConstraint.LowerInclusiveValues.Count > 0)
+                parts.Add("GE:" + normalizedConstraint.LowerInclusiveValues.Max().ToString("X2"));
 
-            if (constraintInfo.UpperInclusiveValues != null && constraintInfo.UpperInclusiveValues.Count > 0)
-                parts.Add("LE:" + string.Join(",", constraintInfo.UpperInclusiveValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+            if (normalizedConstraint.UpperInclusiveValues != null && normalizedConstraint.UpperInclusiveValues.Count > 0)
+                parts.Add("LE:" + normalizedConstraint.UpperInclusiveValues.Min().ToString("X2"));
 
-            if (constraintInfo.ExcludedValues != null && constraintInfo.ExcludedValues.Count > 0)
-                parts.Add("NE:" + string.Join(",", constraintInfo.ExcludedValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
+            if (normalizedConstraint.ExcludedValues != null && normalizedConstraint.ExcludedValues.Count > 0)
+                parts.Add("NE:" + string.Join(",", normalizedConstraint.ExcludedValues.OrderBy(value => value).Select(value => value.ToString("X2"))));
 
             return parts.Count == 0 ? "??" : string.Join("|", parts);
+        }
+
+        private StateValueConstraintInfo NormalizeConstraintInfoForStateKey(StateValueConstraintInfo constraintInfo)
+        {
+            if (constraintInfo == null || constraintInfo.IsEmpty)
+                return null;
+
+            var normalized = constraintInfo.Clone();
+
+            if (normalized.LowerInclusiveValues.Count > 1)
+            {
+                byte lowerBound = normalized.LowerInclusiveValues.Max();
+                normalized.LowerInclusiveValues.Clear();
+                normalized.LowerInclusiveValues.Add(lowerBound);
+            }
+
+            if (normalized.UpperInclusiveValues.Count > 1)
+            {
+                byte upperBound = normalized.UpperInclusiveValues.Min();
+                normalized.UpperInclusiveValues.Clear();
+                normalized.UpperInclusiveValues.Add(upperBound);
+            }
+
+            if (normalized.ExactValues.Count > 0)
+            {
+                if (normalized.LowerInclusiveValues.Count == 0 &&
+                    normalized.UpperInclusiveValues.Count == 0)
+                {
+                    normalized.ExcludedValues.Clear();
+                }
+                else if (normalized.ExcludedValues.Count > 0)
+                {
+                    normalized.ExcludedValues.ExceptWith(normalized.ExactValues);
+                }
+            }
+
+            return normalized;
         }
 
         private void ApplyOccurrenceDescriptions(
