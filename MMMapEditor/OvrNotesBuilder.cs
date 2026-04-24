@@ -2873,6 +2873,9 @@ namespace MMMapEditor
                 result.Add(current);
                 i++;
 
+                bool shouldNumberEntries = CountLootEntriesInBlock(lines, i) > 1;
+                const string singleEntryIndent = "   ";
+                bool hasLootPayloadEntries = false;
                 int entryNumber = 1;
 
                 while (i < lines.Count)
@@ -2891,8 +2894,13 @@ namespace MMMapEditor
 
                     if (IsProbabilityLootHeader(line))
                     {
-                        result.Add($"{entryNumber}) {RemoveExistingLootNumbering(line)}");
-                        entryNumber++;
+                        string headerLine = RemoveExistingLootNumbering(line);
+                        result.Add(shouldNumberEntries
+                            ? $"{entryNumber}) {headerLine}"
+                            : singleEntryIndent + headerLine);
+                        hasLootPayloadEntries = true;
+                        if (shouldNumberEntries)
+                            entryNumber++;
                         i++;
 
                         while (i < lines.Count && IsProbabilityLootItemLine(lines[i]))
@@ -2906,17 +2914,99 @@ namespace MMMapEditor
 
                     if (IsExplicitLootValueLine(line) || IsPlainLootItemLine(line))
                     {
-                        result.Add($"{entryNumber}) {RemoveExistingLootNumbering(line)}");
-                        entryNumber++;
+                        string lootLine = RemoveExistingLootNumbering(line);
+                        result.Add(shouldNumberEntries
+                            ? $"{entryNumber}) {lootLine}"
+                            : singleEntryIndent + lootLine);
+                        hasLootPayloadEntries = true;
+                        if (shouldNumberEntries)
+                            entryNumber++;
                         i++;
                         continue;
                     }
 
                     break;
                 }
+
+                AppendBlankLineAfterLootBlockIfNeeded(result, lines, i, hasLootPayloadEntries);
+
             }
 
             return result;
+        }
+
+        private static void AppendBlankLineAfterLootBlockIfNeeded(
+            List<string> result,
+            List<string> lines,
+            int nextIndex,
+            bool hasLootPayloadEntries)
+        {
+            if (!hasLootPayloadEntries || result == null || lines == null)
+                return;
+
+            if (nextIndex < 0 || nextIndex >= lines.Count)
+                return;
+
+            string nextLine = lines[nextIndex] ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(nextLine))
+                return;
+
+            if (!IsBattleDescriptionLine(nextLine))
+                return;
+
+            if (result.Count > 0 && string.IsNullOrWhiteSpace(result[result.Count - 1]))
+                return;
+
+            result.Add(string.Empty);
+        }
+
+        private static bool IsBattleDescriptionLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.TrimStart();
+            return trimmed.StartsWith("Битва с группой монстров:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("Частично определённая битва", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static int CountLootEntriesInBlock(List<string> lines, int startIndex)
+        {
+            if (lines == null || startIndex < 0 || startIndex >= lines.Count)
+                return 0;
+
+            int entryCount = 0;
+            int i = startIndex;
+
+            while (i < lines.Count)
+            {
+                string line = lines[i] ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(line) || IsContainerLootIntroLine(line))
+                    break;
+
+                if (IsProbabilityLootHeader(line))
+                {
+                    entryCount++;
+                    i++;
+
+                    while (i < lines.Count && IsProbabilityLootItemLine(lines[i]))
+                        i++;
+
+                    continue;
+                }
+
+                if (IsExplicitLootValueLine(line) || IsPlainLootItemLine(line))
+                {
+                    entryCount++;
+                    i++;
+                    continue;
+                }
+
+                break;
+            }
+
+            return entryCount;
         }
 
         private static List<string> NormalizeLootBlockOrder(List<string> lines)

@@ -38,6 +38,8 @@ namespace MMMapEditor
     {
         private const int GridSize = 16;
         private const int CellSize = 40;
+        private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
+            new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
         private bool[,] highlightedCells; // Массив для подсветки
         private Pen highlightPen = new Pen(Color.White, 2); // Пен для выделения
@@ -1897,35 +1899,58 @@ namespace MMMapEditor
                 if (startsWithNumbering)
                     continue;
 
-                Color singleLootColor = Regex.IsMatch(match.Value, @"GEMS?", RegexOptions.IgnoreCase)
-                    ? Color.FromArgb(245, 208, 155)
-                    : Color.FromArgb(255, 232, 105);
-
                 rt.Select(match.Index, match.Length);
-                rt.SelectionColor = singleLootColor;
+                rt.SelectionColor = Color.FromArgb(255, 236, 139);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                string body = match.Value.TrimStart();
+                int bodyStart = match.Index + (match.Value.Length - body.Length);
+
+                var valueMatch = Regex.Match(body, @"\b(\d+(?:-\d+)?\s+GEMS?|GEMS?[:\s]+\d+(?:-\d+)?|\d+(?:-\d+)?\s+GOLD|GOLD[:\s]+\d+(?:-\d+)?)\b", RegexOptions.IgnoreCase);
+                if (valueMatch.Success)
+                {
+                    string valueText = valueMatch.Value;
+                    Color lootValueColor = Regex.IsMatch(valueText, @"GEMS?", RegexOptions.IgnoreCase)
+                        ? Color.FromArgb(105, 228, 185)
+                        : Color.FromArgb(165, 235, 120);
+
+                    rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
+                    rt.SelectionColor = lootValueColor;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                var itemMatch = Regex.Match(body, @"^(предмет\b|ITEM\b[:\s]*)", RegexOptions.IgnoreCase);
+                if (itemMatch.Success)
+                {
+                    rt.Select(bodyStart + itemMatch.Index, itemMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+                }
             }
 
             var probabilityHeaderMatches = Regex.Matches(
                 noteText,
-                @"^(\s*\d+[\)\.]\s+)(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:|Случайный предмет:)$",
+                @"^(\s*)(\d+[\)\.]\s+)?(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:|Случайный предмет:)$",
                 RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
             foreach (Match match in probabilityHeaderMatches)
             {
-                if (!match.Success || match.Groups.Count < 3)
+                if (!match.Success || match.Groups.Count < 4)
                     continue;
 
                 rt.Select(match.Index, match.Length);
                 rt.SelectionColor = Color.FromArgb(255, 236, 139);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
 
-                Group numberGroup = match.Groups[1];
-                rt.Select(numberGroup.Index, numberGroup.Length);
-                rt.SelectionColor = Color.FromArgb(255, 170, 0);
-                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                Group numberGroup = match.Groups[2];
+                if (numberGroup.Success && numberGroup.Length > 0)
+                {
+                    rt.Select(numberGroup.Index, numberGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 170, 0);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
 
-                Group headerGroup = match.Groups[2];
+                Group headerGroup = match.Groups[3];
                 rt.Select(headerGroup.Index, headerGroup.Length);
                 rt.SelectionColor = Color.Black;
                 rt.SelectionBackColor = Color.FromArgb(180, 230, 255);
@@ -1961,6 +1986,241 @@ namespace MMMapEditor
                 rt.SelectionColor = Color.FromArgb(165, 235, 120);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
             }
+
+            FormatUnnumberedLootPayloadsInsideContainerBlocks(rt, noteText);
+        }
+
+        private void FormatUnnumberedLootPayloadsInsideContainerBlocks(RichTextBox rt, string noteText)
+        {
+            bool insideLootBlock = false;
+            int lineStart = 0;
+            string[] lines = noteText.Split('\n');
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string rawLine = lines[i];
+                string line = rawLine.TrimEnd('\r');
+
+                if (IsFormattingContainerLootIntroLine(line))
+                {
+                    insideLootBlock = true;
+                }
+                else if (insideLootBlock)
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        insideLootBlock = false;
+                    }
+                    else if (Regex.IsMatch(line, @"^\s*\d+[\)\.]\s+"))
+                    {
+                        // Уже отформатировано как нумерованная запись выше.
+                    }
+                    else if (IsFormattingProbabilityLootHeader(line))
+                    {
+                        ApplyStandaloneProbabilityHeaderStyle(rt, lineStart, line);
+                    }
+                    else if (IsFormattingExplicitLootValueLine(line) || IsFormattingPlainLootItemLine(line))
+                    {
+                        ApplyStandaloneLootPayloadStyle(rt, lineStart, line);
+                    }
+                    else if (!IsFormattingProbabilityLootItemLine(line))
+                    {
+                        insideLootBlock = false;
+                    }
+                }
+
+                lineStart += rawLine.Length;
+                if (i < lines.Length - 1)
+                    lineStart++;
+            }
+        }
+
+        private void ApplyStandaloneProbabilityHeaderStyle(RichTextBox rt, int lineStart, string line)
+        {
+            rt.Select(lineStart, line.Length);
+            rt.SelectionColor = Color.FromArgb(255, 236, 139);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+            string header = line.TrimStart();
+            int headerStart = lineStart + (line.Length - header.Length);
+
+            rt.Select(headerStart, header.Length);
+            rt.SelectionColor = Color.Black;
+            rt.SelectionBackColor = Color.FromArgb(180, 230, 255);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+        }
+
+        private void ApplyStandaloneLootPayloadStyle(RichTextBox rt, int lineStart, string line)
+        {
+            rt.Select(lineStart, line.Length);
+            rt.SelectionColor = Color.FromArgb(255, 236, 139);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+            string body = line.TrimStart();
+            int bodyStart = lineStart + (line.Length - body.Length);
+
+            var valueMatch = Regex.Match(
+                body,
+                @"\b(\d+(?:-\d+)?\s+GEMS?|GEMS?[:\s]+\d+(?:-\d+)?|\d+(?:-\d+)?\s+GOLD|GOLD[:\s]+\d+(?:-\d+)?)\b",
+                RegexOptions.IgnoreCase);
+            if (valueMatch.Success)
+            {
+                string valueText = valueMatch.Value;
+                Color lootValueColor = Regex.IsMatch(valueText, @"GEMS?", RegexOptions.IgnoreCase)
+                    ? Color.FromArgb(105, 228, 185)
+                    : Color.FromArgb(165, 235, 120);
+
+                rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
+                rt.SelectionColor = lootValueColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var itemMatch = Regex.Match(body, @"^(предмет\b|ITEM\b[:\s]*)", RegexOptions.IgnoreCase);
+            if (itemMatch.Success)
+            {
+                rt.Select(bodyStart + itemMatch.Index, itemMatch.Length);
+                rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+            }
+        }
+
+        private static bool IsFormattingContainerLootIntroLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.Trim();
+            return trimmed.StartsWith("На ячейке находится ", StringComparison.OrdinalIgnoreCase)
+                && trimmed.EndsWith("в котором лежит:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsFormattingProbabilityLootHeader(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingLootNumbering(line.Trim());
+            return trimmed.Equals("Возможный предмет:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Случайный предмет:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Возможные предметы:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Possible item:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Possible items:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsFormattingProbabilityLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingProbabilityBullet(RemoveFormattingLootNumbering(line.Trim()));
+            return Regex.IsMatch(
+                trimmed,
+                @"^[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 '\-\+\.]{1,60}\s+\(\d+(?:[.,]\d+)?%\)$",
+                RegexOptions.CultureInvariant);
+        }
+
+        private static bool IsFormattingExplicitLootValueLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingLootNumbering(line.Trim());
+            string upper = trimmed.ToUpperInvariant();
+
+            if (trimmed.StartsWith("предмет", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (upper.StartsWith("ITEM ") || upper.StartsWith("ITEM:"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^\d+(?:-\d+)?\s+GEMS?$"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^GEMS?[:\s]+\d+(?:-\d+)?$"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^\d+(?:-\d+)?\s+GOLD$"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^GOLD[:\s]+\d+(?:-\d+)?$"))
+                return true;
+
+            return false;
+        }
+
+        private static bool IsFormattingPlainLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingLootNumbering(line.Trim());
+            if (trimmed.Length == 0)
+                return false;
+
+            if (IsFormattingContainerLootIntroLine(trimmed) || IsFormattingProbabilityLootHeader(trimmed))
+                return false;
+
+            if (IsFormattingExplicitLootValueLine(trimmed) || IsFormattingProbabilityLootItemLine(trimmed))
+                return false;
+
+            if (trimmed.Length > 60)
+                return false;
+
+            if (trimmed.Contains("\"") || trimmed.Contains("...") || trimmed.Contains("! ") || trimmed.Contains("? "))
+                return false;
+
+            if (trimmed.Contains(":") || trimmed.Contains(";") || trimmed.Contains(",") || trimmed.Contains("(") || trimmed.Contains(")"))
+                return false;
+
+            string normalized = NormalizeFormattingLootItemIdentity(trimmed);
+            return normalized.Length > 0 && KnownLootItemNamesForFormatting.Value.Contains(normalized);
+        }
+
+        private static HashSet<string> BuildKnownLootItemNamesForFormatting()
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in ItemDatabase.Items)
+            {
+                string normalized = NormalizeFormattingLootItemIdentity(item?.Name);
+                if (!string.IsNullOrEmpty(normalized))
+                    result.Add(normalized);
+            }
+
+            return result;
+        }
+
+        private static string NormalizeFormattingLootItemIdentity(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            string normalized = RemoveFormattingProbabilityBullet(RemoveFormattingLootNumbering(value.Trim()));
+            if (normalized.Length == 0)
+                return string.Empty;
+
+            normalized = Regex.Replace(normalized, @"\s+", " ");
+            return normalized.ToUpperInvariant();
+        }
+
+        private static string RemoveFormattingLootNumbering(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+            Match match = Regex.Match(trimmed, @"^\d+[\)\.]\s+");
+            return match.Success ? trimmed.Substring(match.Length) : trimmed;
+        }
+
+        private static string RemoveFormattingProbabilityBullet(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+            Match match = Regex.Match(trimmed, @"^•\s+");
+            return match.Success ? trimmed.Substring(match.Length) : trimmed;
         }
 
         /// <summary>
