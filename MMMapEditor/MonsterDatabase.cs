@@ -41,6 +41,9 @@ namespace MMMapEditor
 
     public static class MonsterDatabase
     {
+        private const int MonsterEntrySize = 32;
+        private const int MonsterNameFieldLength = 15;
+
         private static List<MonsterInfo> _monsters = null;
         private static Dictionary<int, MonsterInfo> _monstersById = null;
 
@@ -87,16 +90,16 @@ namespace MMMapEditor
             int index = 0;
             int monsterId = 0;
 
-            while (index + 32 <= allBytes.Length)
+            while (index + MonsterEntrySize <= allBytes.Length)
             {
-                byte[] monsterEntry = new byte[32];
-                Array.Copy(allBytes, index, monsterEntry, 0, 32);
+                byte[] monsterEntry = new byte[MonsterEntrySize];
+                Array.Copy(allBytes, index, monsterEntry, 0, MonsterEntrySize);
 
                 var monster = ParseMonsterEntry(monsterEntry, monsterId);
                 _monsters.Add(monster);
                 _monstersById[monsterId] = monster;
 
-                index += 32;
+                index += MonsterEntrySize;
                 monsterId++;
             }
         }
@@ -111,7 +114,8 @@ namespace MMMapEditor
 
             // Имя монстра - первые 20 байт (или до первого нуля)
             int nameLength = 0;
-            for (int i = 0; i < 20; i++)
+            int maxNameLength = Math.Min(MonsterNameFieldLength, data.Length);
+            for (int i = 0; i < maxNameLength; i++)
             {
                 if (data[i] == 0)
                     break;
@@ -120,7 +124,7 @@ namespace MMMapEditor
 
             if (nameLength > 0)
             {
-                monster.Name = Encoding.ASCII.GetString(data, 0, nameLength).Trim();
+                monster.Name = CleanMonsterName(Encoding.ASCII.GetString(data, 0, nameLength));
             }
             else
             {
@@ -128,16 +132,32 @@ namespace MMMapEditor
             }
 
             // Дополнительные характеристики (можно добавить при необходимости)
-            // Level: data[20]
-            // Attack: data[22]?
-            // Defense: data[23]?
-            // HP: data[24]?
-            // Experience: data[26]?
+            // Level: data[15]
+            // Attack: data[17]?
+            // Defense: data[18]?
+            // HP: data[19]?
+            // Experience: data[21]?
 
-            if (data.Length > 20)
-                monster.Level = data[20];
+            if (data.Length > MonsterNameFieldLength)
+                monster.Level = data[MonsterNameFieldLength];
 
             return monster;
+        }
+
+        private static string CleanMonsterName(string rawName)
+        {
+            if (string.IsNullOrWhiteSpace(rawName))
+                return null;
+
+            var cleanName = new StringBuilder(rawName.Length);
+            foreach (char c in rawName)
+            {
+                if (!char.IsControl(c))
+                    cleanName.Append(c);
+            }
+
+            string result = cleanName.ToString().Trim();
+            return string.IsNullOrEmpty(result) ? null : result;
         }
     }
 }
