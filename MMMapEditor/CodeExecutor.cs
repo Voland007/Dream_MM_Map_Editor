@@ -52,6 +52,7 @@ namespace MMMapEditor
         private const int PARTY_HP_LOW_OFFSET = 0x33;
         private const int PARTY_HP_HIGH_OFFSET = 0x34;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
+        private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
         private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
         private const int PARTY_QUEST_LORD2_OFFSET = PartyQuestLordFieldSemantics.Lord2FieldOffset;
         private const int PARTY_QUEST_LORD3_OFFSET = PartyQuestLordFieldSemantics.Lord3FieldOffset;
@@ -891,6 +892,7 @@ namespace MMMapEditor
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
                 PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
+                PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
                 PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
                 PARTY_QUEST_LORD3_OFFSET => PartyFieldKind.Technical77,
@@ -1596,8 +1598,8 @@ namespace MMMapEditor
                 PartyFieldKind.SpLow => "SP low",
                 PartyFieldKind.SpHigh => "SP high",
                 PartyFieldKind.Status => "Status",
-                PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
-                    => PartyQuestLordFieldSemantics.GetFieldLabel(field),
+                PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
+                    => PartyTechnicalFieldSemantics.GetFieldLabel(field),
                 _ => field.ToString()
             };
 
@@ -1691,11 +1693,11 @@ namespace MMMapEditor
                     ApplyPartyPredicatesToPending(pending, currentPredicates);
                 }
             }
-            else if (PartyQuestLordFieldSemantics.IsQuestField(fieldRef.Field))
+            else if (PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
             {
                 AddResolvedPartyEffect(
                     result,
-                    PartyEffectFactory.CreateQuestLordFieldReadEffect(
+                    PartyEffectFactory.CreateTrackedTechnicalFieldReadEffect(
                         fieldRef.Member,
                         fieldRef.Field,
                         instructionAddress,
@@ -1814,14 +1816,14 @@ namespace MMMapEditor
                     effects.Add(PartyEffectFactory.CreateStatusWriteEffect(fieldRef.Member, instructionAddress));
                 }
             }
-            else if (PartyQuestLordFieldSemantics.IsQuestField(fieldRef.Field))
+            else if (PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
             {
                 if (sourceFieldValue != null &&
                     sourceFieldValue.Field == fieldRef.Field &&
                     sourceFieldValue.BitTransform != null &&
                     !sourceFieldValue.BitTransform.IsIdentity)
                 {
-                    effects.AddRange(BuildQuestLordFieldEffectsFromBitTransform(
+                    effects.AddRange(BuildTrackedTechnicalFieldEffectsFromBitTransform(
                         fieldRef.Member,
                         fieldRef.Field,
                         sourceFieldValue.BitTransform,
@@ -1832,7 +1834,7 @@ namespace MMMapEditor
                           bitOperation == PartyEffectOperation.BitClear ||
                           bitOperation == PartyEffectOperation.BitToggle))
                 {
-                    effects.Add(PartyEffectFactory.CreateQuestLordFieldBitEffect(
+                    effects.Add(PartyEffectFactory.CreateTrackedTechnicalFieldBitEffect(
                         fieldRef.Member,
                         fieldRef.Field,
                         bitOperation,
@@ -1841,7 +1843,7 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    effects.Add(PartyEffectFactory.CreateQuestLordFieldWriteEffect(
+                    effects.Add(PartyEffectFactory.CreateTrackedTechnicalFieldWriteEffect(
                         fieldRef.Member,
                         fieldRef.Field,
                         instructionAddress,
@@ -1856,7 +1858,7 @@ namespace MMMapEditor
                     PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                     PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                     PartyFieldKind.Status => "Статус персонажа",
-                    PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
+                    PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
                         => GetPartyFieldLabel(fieldRef.Field),
                     _ => null
                 };
@@ -1896,10 +1898,10 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"        {debugPrefix}: {effect.Description}");
         }
 
-        private void RegisterQuestLordFieldCompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
+        private void RegisterTrackedTechnicalFieldCompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
             RegisterTracker registerTracker, uint instructionAddress, byte compareValue, bool isBitMask, bool debugMode)
         {
-            if (result == null || fieldRef == null || !PartyQuestLordFieldSemantics.IsQuestField(fieldRef.Field))
+            if (result == null || fieldRef == null || !PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
                 return;
 
             result.PartyFieldAccesses.Add(new PartyFieldReference
@@ -1914,7 +1916,7 @@ namespace MMMapEditor
 
             AddResolvedPartyEffect(
                 result,
-                PartyEffectFactory.CreateQuestLordFieldCompareEffect(
+                PartyEffectFactory.CreateTrackedTechnicalFieldCompareEffect(
                     fieldRef.Member,
                     fieldRef.Field,
                     instructionAddress,
@@ -1933,9 +1935,9 @@ namespace MMMapEditor
             if (result == null || fieldRef == null || !IsComparablePartyField(fieldRef.Field))
                 return;
 
-            if (PartyQuestLordFieldSemantics.IsQuestField(fieldRef.Field))
+            if (PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
             {
-                RegisterQuestLordFieldCompareEffect(
+                RegisterTrackedTechnicalFieldCompareEffect(
                     result,
                     fieldRef,
                     registerTracker,
@@ -2106,7 +2108,7 @@ namespace MMMapEditor
         private static bool IsComparablePartyField(PartyFieldKind field)
         {
             return field == PartyFieldKind.sex ||
-                   PartyQuestLordFieldSemantics.IsQuestField(field) ||
+                   PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyAlignmentSemantics.IsAlignmentField(field);
         }
 
@@ -2116,8 +2118,8 @@ namespace MMMapEditor
             {
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
-                PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
-                    => PartyQuestLordFieldSemantics.GetFieldLabel(field),
+                PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
+                    => PartyTechnicalFieldSemantics.GetFieldLabel(field),
                 _ => null
             };
         }
@@ -2154,11 +2156,11 @@ namespace MMMapEditor
             return effects;
         }
 
-        private List<PartyEffect> BuildQuestLordFieldEffectsFromBitTransform(PartyMemberReference member,
+        private List<PartyEffect> BuildTrackedTechnicalFieldEffectsFromBitTransform(PartyMemberReference member,
             PartyFieldKind field, PartyFieldBitTransform bitTransform, uint instructionAddress)
         {
             var effects = new List<PartyEffect>();
-            if (!PartyQuestLordFieldSemantics.IsQuestField(field) ||
+            if (!PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                 bitTransform == null ||
                 bitTransform.IsIdentity)
             {
@@ -2170,7 +2172,7 @@ namespace MMMapEditor
                 if (mask == 0)
                     return;
 
-                PartyEffect effect = PartyEffectFactory.CreateQuestLordFieldBitEffect(
+                PartyEffect effect = PartyEffectFactory.CreateTrackedTechnicalFieldBitEffect(
                     member,
                     field,
                     operation,
@@ -2186,7 +2188,7 @@ namespace MMMapEditor
 
             if (effects.Count == 0)
             {
-                PartyEffect unknownEffect = PartyEffectFactory.CreateQuestLordFieldWriteEffect(
+                PartyEffect unknownEffect = PartyEffectFactory.CreateTrackedTechnicalFieldWriteEffect(
                     member,
                     field,
                     instructionAddress);
@@ -6057,9 +6059,9 @@ namespace MMMapEditor
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xA8)
             {
                 byte immediateValue = instructionBytes[1];
-                bool hasQuestLordFieldCompare = registerTracker.TryGetPartyFieldValue("AL", out var testedPartyField) &&
+                bool hasTrackedTechnicalFieldCompare = registerTracker.TryGetPartyFieldValue("AL", out var testedPartyField) &&
                     testedPartyField != null &&
-                    PartyQuestLordFieldSemantics.IsQuestField(testedPartyField.Field);
+                    PartyTechnicalFieldSemantics.IsTrackedField(testedPartyField.Field);
 
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
@@ -6076,15 +6078,15 @@ namespace MMMapEditor
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
                 }
-                else if (hasQuestLordFieldCompare)
+                else if (hasTrackedTechnicalFieldCompare)
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
                 }
 
-                if (hasQuestLordFieldCompare)
+                if (hasTrackedTechnicalFieldCompare)
                 {
-                    RegisterQuestLordFieldCompareEffect(
+                    RegisterTrackedTechnicalFieldCompareEffect(
                         result,
                         testedPartyField,
                         registerTracker,
@@ -6235,7 +6237,7 @@ namespace MMMapEditor
 
                         if (hasPartyFieldRef &&
                             (partyFieldRef.Field == PartyFieldKind.Status ||
-                             PartyQuestLordFieldSemantics.IsQuestField(partyFieldRef.Field)))
+                             PartyTechnicalFieldSemantics.IsTrackedField(partyFieldRef.Field)))
                         {
                             byte? exactByteValue = null;
                             byte? currentByteValue = null;
@@ -6249,9 +6251,9 @@ namespace MMMapEditor
 
                             byte relevantMask = partyFieldRef.Field == PartyFieldKind.Status
                                 ? GetRelevantStatusMask(memoryOperation, immediateValue)
-                                : PartyQuestLordFieldSemantics.GetRelevantMask(memoryOperation, immediateValue);
+                                : PartyTechnicalFieldSemantics.GetRelevantMask(partyFieldRef.Field, memoryOperation, immediateValue);
 
-                            if (PartyQuestLordFieldSemantics.IsQuestField(partyFieldRef.Field))
+                            if (PartyTechnicalFieldSemantics.IsTrackedField(partyFieldRef.Field))
                                 RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address, currentByteValue);
 
                             RegisterPartyFieldWrite(
@@ -6294,10 +6296,10 @@ namespace MMMapEditor
                         string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
                         string regName = rm < regNames8.Length ? regNames8[rm] : null;
                         PartyFieldReference comparedPartyField = null;
-                        bool hasQuestLordFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
+                        bool hasTrackedTechnicalFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
                             registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
                             comparedPartyField != null &&
-                            PartyQuestLordFieldSemantics.IsQuestField(comparedPartyField.Field);
+                            PartyTechnicalFieldSemantics.IsTrackedField(comparedPartyField.Field);
 
                         if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
                         {
@@ -6314,15 +6316,15 @@ namespace MMMapEditor
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
                         }
-                        else if (hasQuestLordFieldCompare)
+                        else if (hasTrackedTechnicalFieldCompare)
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
                         }
 
-                        if (hasQuestLordFieldCompare)
+                        if (hasTrackedTechnicalFieldCompare)
                         {
-                            RegisterQuestLordFieldCompareEffect(
+                            RegisterTrackedTechnicalFieldCompareEffect(
                                 result,
                                 comparedPartyField,
                                 registerTracker,
@@ -6355,7 +6357,7 @@ namespace MMMapEditor
                         }
                         else if (hasPartyFieldRef &&
                                  testedFieldRef != null &&
-                                 PartyQuestLordFieldSemantics.IsQuestField(testedFieldRef.Field))
+                                 PartyTechnicalFieldSemantics.IsTrackedField(testedFieldRef.Field))
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
@@ -6363,9 +6365,9 @@ namespace MMMapEditor
 
                         if (hasPartyFieldRef &&
                             testedFieldRef != null &&
-                            PartyQuestLordFieldSemantics.IsQuestField(testedFieldRef.Field))
+                            PartyTechnicalFieldSemantics.IsTrackedField(testedFieldRef.Field))
                         {
-                            RegisterQuestLordFieldCompareEffect(
+                            RegisterTrackedTechnicalFieldCompareEffect(
                                 result,
                                 testedFieldRef,
                                 registerTracker,

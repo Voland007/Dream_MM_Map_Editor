@@ -114,8 +114,8 @@ namespace MMMapEditor
             var scope = GetEffectiveScope(effect);
             var condition = GetEffectiveCondition(effect);
 
-            if (PartyQuestLordFieldSemantics.IsQuestField(field))
-                return BuildQuestLordFieldDescription(effect, field, scope, condition);
+            if (PartyTechnicalFieldSemantics.IsTrackedField(field))
+                return BuildTrackedTechnicalFieldDescription(effect, field, scope, condition);
 
             if (PartyAlignmentSemantics.IsAlignmentField(field))
                 return BuildAlignmentDescription(effect, field, operation, scope, condition);
@@ -272,7 +272,7 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            if (PartyQuestLordFieldSemantics.IsQuestField(GetEffectiveField(effect)))
+            if (PartyTechnicalFieldSemantics.IsTrackedField(GetEffectiveField(effect)))
                 return IsStateChanging(effect);
 
             if (IsStructuralFieldComparison(effect))
@@ -286,7 +286,7 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            if (PartyQuestLordFieldSemantics.IsQuestField(GetEffectiveField(effect)))
+            if (PartyTechnicalFieldSemantics.IsTrackedField(GetEffectiveField(effect)))
                 return IsStateChanging(effect);
 
             if (IsStructuralFieldComparison(effect))
@@ -332,7 +332,7 @@ namespace MMMapEditor
                         : effect.Kind == PartyEffectKind.TechnicalFieldRead ||
                           effect.Kind == PartyEffectKind.TechnicalFieldWritten ||
                           effect.Kind == PartyEffectKind.TechnicalFieldCompared
-                            ? PartyFieldKind.Technical77
+                            ? PartyFieldKind.Unknown
                         : PartyFieldKind.Unknown;
         }
 
@@ -758,6 +758,21 @@ namespace MMMapEditor
             };
         }
 
+        private static string BuildTrackedTechnicalFieldDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || !PartyTechnicalFieldSemantics.IsTrackedField(field))
+                return null;
+
+            if (PartyQuestLordFieldSemantics.IsQuestField(field))
+                return BuildQuestLordFieldDescription(effect, field, scope, condition);
+
+            return BuildRanalouQuestLineDescription(effect, field, scope, condition);
+        }
+
         private static string BuildQuestLordFieldDescription(
             PartyEffect effect,
             PartyFieldKind field,
@@ -807,6 +822,131 @@ namespace MMMapEditor
             };
 
             return WrapTechnicalQuestLordNote(body);
+        }
+
+        private static string BuildRanalouQuestLineDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || field != PartyFieldKind.Technical71)
+                return null;
+
+            const string fieldLabel = "прогресс линейки квестов волшебника RANALOU (+0x71)";
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            string body = operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})",
+                        $"читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})")
+                    : ComposeQuestLordSentence(targetPrefix, $"Читается {fieldLabel}", $"читается {fieldLabel}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? BuildRanalouBitCompareDescription(
+                            targetPrefix,
+                            fieldLabel,
+                            (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}",
+                            $"проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Проверяется {fieldLabel}", $"проверяется {fieldLabel}"),
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? BuildRanalouBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "устанавливается",
+                        "устанавливаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? BuildRanalouBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "сбрасывается",
+                        "сбрасываются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? BuildRanalouBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "переключается",
+                        "переключаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}",
+                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+
+            return WrapTechnicalQuestLordNote(body);
+        }
+
+        private static string BuildRanalouBitCompareDescription(string targetPrefix, string fieldLabel, byte mask)
+        {
+            int? bitIndex = TryGetSingleBitIndex(mask);
+            if (bitIndex.HasValue)
+            {
+                return string.IsNullOrWhiteSpace(targetPrefix)
+                    ? $"Проверяется бит {bitIndex.Value} (маска 0x{mask:X2}) в {fieldLabel}"
+                    : $"{targetPrefix}проверяется бит {bitIndex.Value} (маска 0x{mask:X2}) в {fieldLabel}";
+            }
+
+            return string.IsNullOrWhiteSpace(targetPrefix)
+                ? $"Проверяются биты маски 0x{mask:X2} в {fieldLabel}"
+                : $"{targetPrefix}проверяются биты маски 0x{mask:X2} в {fieldLabel}";
+        }
+
+        private static string BuildRanalouBitOperationDescription(
+            string targetPrefix,
+            string fieldLabel,
+            string singularVerb,
+            string pluralVerb,
+            byte mask)
+        {
+            if (mask == 0x01 && string.Equals(pluralVerb, "устанавливаются", StringComparison.Ordinal))
+            {
+                return string.IsNullOrWhiteSpace(targetPrefix)
+                    ? $"В {fieldLabel} устанавливаются биты 0x{mask:X2} (линейка квестов RANALOU стартовала)"
+                    : $"{targetPrefix}в {fieldLabel} устанавливаются биты 0x{mask:X2} (линейка квестов RANALOU стартовала)";
+            }
+
+            int? bitIndex = TryGetSingleBitIndex(mask);
+            if (bitIndex.HasValue)
+            {
+                return string.IsNullOrWhiteSpace(targetPrefix)
+                    ? $"В {fieldLabel} {singularVerb} бит {bitIndex.Value} (маска 0x{mask:X2})"
+                    : $"{targetPrefix}в {fieldLabel} {singularVerb} бит {bitIndex.Value} (маска 0x{mask:X2})";
+            }
+
+            return string.IsNullOrWhiteSpace(targetPrefix)
+                ? $"В {fieldLabel} {pluralVerb} биты маски 0x{mask:X2}"
+                : $"{targetPrefix}в {fieldLabel} {pluralVerb} биты маски 0x{mask:X2}";
+        }
+
+        private static int? TryGetSingleBitIndex(byte mask)
+        {
+            if (mask == 0 || (mask & (mask - 1)) != 0)
+                return null;
+
+            int bitIndex = 0;
+            while ((mask >>= 1) != 0)
+                bitIndex++;
+
+            return bitIndex;
         }
 
         private static string BuildQuestLordCompareDescription(string targetPrefix, string lordLabel, byte mask)
@@ -1115,8 +1255,8 @@ namespace MMMapEditor
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 PartyFieldKind.Status => "status",
-                PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
-                    => PartyQuestLordFieldSemantics.GetFieldLabel(field),
+                PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
+                    => PartyTechnicalFieldSemantics.GetFieldLabel(field),
                 _ => field.ToString()
             };
         }

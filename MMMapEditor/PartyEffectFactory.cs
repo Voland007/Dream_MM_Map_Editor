@@ -285,10 +285,10 @@ namespace MMMapEditor
             return effect;
         }
 
-        public static PartyEffect CreateQuestLordFieldReadEffect(PartyMemberReference member,
+        public static PartyEffect CreateTrackedTechnicalFieldReadEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
         {
-            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return null;
 
             var effect = new PartyEffect
@@ -308,10 +308,10 @@ namespace MMMapEditor
             return effect;
         }
 
-        public static PartyEffect CreateQuestLordFieldCompareEffect(PartyMemberReference member,
+        public static PartyEffect CreateTrackedTechnicalFieldCompareEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte compareValue, bool isBitMask)
         {
-            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return null;
 
             var effect = new PartyEffect
@@ -331,10 +331,10 @@ namespace MMMapEditor
             return effect;
         }
 
-        public static PartyEffect CreateQuestLordFieldWriteEffect(PartyMemberReference member,
+        public static PartyEffect CreateTrackedTechnicalFieldWriteEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
         {
-            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return null;
 
             var effect = new PartyEffect
@@ -354,10 +354,10 @@ namespace MMMapEditor
             return effect;
         }
 
-        public static PartyEffect CreateQuestLordFieldBitEffect(PartyMemberReference member,
+        public static PartyEffect CreateTrackedTechnicalFieldBitEffect(PartyMemberReference member,
             PartyFieldKind field, PartyEffectOperation operation, byte mask, uint instructionAddress)
         {
-            if (!PartyQuestLordFieldSemantics.IsQuestField(field))
+            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return null;
 
             if ((operation != PartyEffectOperation.BitSet &&
@@ -385,16 +385,40 @@ namespace MMMapEditor
             return effect;
         }
 
+        public static PartyEffect CreateQuestLordFieldReadEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
+        {
+            return CreateTrackedTechnicalFieldReadEffect(member, field, instructionAddress, exactValue);
+        }
+
+        public static PartyEffect CreateQuestLordFieldCompareEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte compareValue, bool isBitMask)
+        {
+            return CreateTrackedTechnicalFieldCompareEffect(member, field, instructionAddress, compareValue, isBitMask);
+        }
+
+        public static PartyEffect CreateQuestLordFieldWriteEffect(PartyMemberReference member,
+            PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
+        {
+            return CreateTrackedTechnicalFieldWriteEffect(member, field, instructionAddress, exactValue);
+        }
+
+        public static PartyEffect CreateQuestLordFieldBitEffect(PartyMemberReference member,
+            PartyFieldKind field, PartyEffectOperation operation, byte mask, uint instructionAddress)
+        {
+            return CreateTrackedTechnicalFieldBitEffect(member, field, operation, mask, instructionAddress);
+        }
+
         public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
             uint instructionAddress, byte? exactValue = null)
         {
-            return CreateQuestLordFieldReadEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
+            return CreateTrackedTechnicalFieldReadEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
         }
 
         public static PartyEffect CreateTechnicalField77CompareEffect(PartyMemberReference member,
             uint instructionAddress, byte compareValue, bool isBitMask)
         {
-            return CreateQuestLordFieldCompareEffect(
+            return CreateTrackedTechnicalFieldCompareEffect(
                 member,
                 PartyFieldKind.Technical77,
                 instructionAddress,
@@ -405,13 +429,13 @@ namespace MMMapEditor
         public static PartyEffect CreateTechnicalField77WriteEffect(PartyMemberReference member,
             uint instructionAddress, byte? exactValue = null)
         {
-            return CreateQuestLordFieldWriteEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
+            return CreateTrackedTechnicalFieldWriteEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
         }
 
         public static PartyEffect CreateTechnicalField77BitEffect(PartyMemberReference member,
             PartyEffectOperation operation, byte mask, uint instructionAddress)
         {
-            return CreateQuestLordFieldBitEffect(member, PartyFieldKind.Technical77, operation, mask, instructionAddress);
+            return CreateTrackedTechnicalFieldBitEffect(member, PartyFieldKind.Technical77, operation, mask, instructionAddress);
         }
 
         private static PartyEffectScope ResolveScope(PartyMemberReference member, LoopSemanticKind loopSemantic, PartyConditionKind condition)

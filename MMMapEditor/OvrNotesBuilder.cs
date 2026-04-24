@@ -1743,7 +1743,7 @@ namespace MMMapEditor
 
             // Поднимаем наверх только те party-заметки, которые действительно
             // общие для всех листьев этого узла и должны жить в общем корне:
-            // guard-like проверки и технические квестовые флаги лордов.
+            // guard-like проверки и tracked technical-поля персонажей.
             var sharedPartyLines = GetSharedPartyEffectLines(
                     renderableVariants,
                     effect => effect != null && IsHoistableSharedPartyEffect(effect))
@@ -1773,7 +1773,7 @@ namespace MMMapEditor
             if (PartyEffectSemantics.IsGuardLike(effect))
                 return true;
 
-            return PartyQuestLordFieldSemantics.IsQuestField(PartyEffectSemantics.GetEffectiveField(effect)) &&
+            return PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) &&
                    PartyEffectSemantics.IsStateChanging(effect);
         }
 
