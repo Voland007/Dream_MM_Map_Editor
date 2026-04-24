@@ -288,6 +288,8 @@ namespace MMMapEditor
             if (currentState == null)
                 return ClonePathAnalysisResult(inheritedState);
 
+            currentState = RebaseSpecialEventOrders(currentState, inheritedState.NextSpecialEventOrder);
+
             var merged = ClonePathAnalysisResult(inheritedState);
 
             if (currentState.MonsterPower.HasValue)
@@ -469,6 +471,39 @@ namespace MMMapEditor
                 merged.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(currentState.ExitEmulatedMemory8);
 
             return merged;
+        }
+
+        private PathAnalysisResult RebaseSpecialEventOrders(PathAnalysisResult source, int baseExecutionOrder)
+        {
+            var rebased = ClonePathAnalysisResult(source);
+            if (rebased == null || baseExecutionOrder <= 0)
+                return rebased;
+
+            if (rebased.RandomEncounterExecutionOrder > 0)
+                rebased.RandomEncounterExecutionOrder += baseExecutionOrder;
+
+            if (rebased.PendingPartyHpOperation != null &&
+                rebased.PendingPartyHpOperation.ExecutionOrder > 0)
+            {
+                rebased.PendingPartyHpOperation.ExecutionOrder += baseExecutionOrder;
+            }
+
+            if (rebased.PendingPartySpOperation != null &&
+                rebased.PendingPartySpOperation.ExecutionOrder > 0)
+            {
+                rebased.PendingPartySpOperation.ExecutionOrder += baseExecutionOrder;
+            }
+
+            foreach (var effect in rebased.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+            {
+                if (effect != null && effect.ExecutionOrder > 0)
+                    effect.ExecutionOrder += baseExecutionOrder;
+            }
+
+            if (rebased.NextSpecialEventOrder > 0)
+                rebased.NextSpecialEventOrder += baseExecutionOrder;
+
+            return rebased;
         }
 
         private PendingPartyStatOperation MergePendingPartyStatOperation(
@@ -1001,7 +1036,7 @@ namespace MMMapEditor
 
                 var existingExact = uniqueVariants[exactKey];
                 MergeVariantOccurrences(existingExact, result);
-                if (GetVariantPrecisionScore(result) > GetVariantPrecisionScore(existingExact))
+                if (ShouldPreferVariant(result, existingExact))
                 {
                     MergeVariantOccurrences(result, existingExact);
                     uniqueVariants[exactKey] = result;
@@ -1022,7 +1057,7 @@ namespace MMMapEditor
                 }
 
                 MergeVariantOccurrences(existing, variant);
-                if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
+                if (ShouldPreferVariant(variant, existing))
                 {
                     MergeVariantOccurrences(variant, existing);
                     semanticallyUnique[semanticKey] = variant;
@@ -1043,7 +1078,7 @@ namespace MMMapEditor
                 }
 
                 MergeVariantOccurrences(existing, variant);
-                if (GetVariantPrecisionScore(variant) > GetVariantPrecisionScore(existing))
+                if (ShouldPreferVariant(variant, existing))
                 {
                     MergeVariantOccurrences(variant, existing);
                     branchInsensitiveUnique[key] = variant;
@@ -1942,6 +1977,26 @@ namespace MMMapEditor
 
             return score;
         }
+
+        private bool ShouldPreferVariant(PathVariantInfo candidate, PathVariantInfo existing)
+        {
+            if (candidate == null)
+                return false;
+
+            if (existing == null)
+                return true;
+
+            int candidateScore = GetVariantPrecisionScore(candidate);
+            int existingScore = GetVariantPrecisionScore(existing);
+            if (candidateScore != existingScore)
+                return candidateScore > existingScore;
+
+            if (candidate.HasProbabilityInfo != existing.HasProbabilityInfo)
+                return candidate.HasProbabilityInfo;
+
+            return false;
+        }
+
         private string BuildVariantIdentityKey(PathVariantInfo variant)
         {
             string textKey = variant.Texts != null && variant.Texts.Count > 0

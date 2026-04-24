@@ -1428,7 +1428,8 @@ namespace MMMapEditor
                 if (distinctNarrativeRoots.Count <= 1)
                 {
                     var commonLines = GetCommonPrefix(descendants.Select(v => v.Lines).ToList());
-                    if (commonLines.Count > 0)
+                    if (commonLines.Count > 0 &&
+                        !ShouldKeepSharedPartyEffectPrefixInline(descendants, commonLines))
                     {
                         node.CommonLines = commonLines;
                         foreach (var item in descendants)
@@ -1439,6 +1440,30 @@ namespace MMMapEditor
 
             foreach (var child in node.Children)
                 ComputeCommonLines(child);
+        }
+
+        private static bool ShouldKeepSharedPartyEffectPrefixInline(
+            List<VariantRenderItem> descendants,
+            List<string> commonLines)
+        {
+            if (descendants == null || descendants.Count < 2 || commonLines == null || commonLines.Count == 0)
+                return false;
+
+            var sharedPartyLines = GetSharedPartyEffectLines(descendants);
+            if (sharedPartyLines.Count == 0)
+                return false;
+
+            if (commonLines.Any(line => !sharedPartyLines.Contains(line, StringComparer.Ordinal)))
+                return false;
+
+            return descendants.Any(item =>
+            {
+                var remainingLines = (item?.Lines ?? new List<string>())
+                    .Skip(commonLines.Count)
+                    .ToList();
+
+                return !remainingLines.Any(line => !string.IsNullOrWhiteSpace(line));
+            });
         }
 
         private static void IntroduceSharedLineHierarchy(VariantTreeNode node)
@@ -1474,7 +1499,8 @@ namespace MMMapEditor
             foreach (var group in candidateGroups)
             {
                 var commonLines = GetCommonPrefix(group.Select(variant => variant.Lines).ToList());
-                if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)) ||
+                    ShouldKeepSharedPartyEffectPrefixInline(group, commonLines))
                     continue;
 
                 var childVariants = new List<VariantRenderItem>();

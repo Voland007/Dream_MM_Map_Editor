@@ -3150,6 +3150,7 @@ namespace MMMapEditor
                     result.PartialBattleInfo.Add(info);
 
                 result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
+                MergeSubroutineAnalysisState(result, subroutineResult);
 
                 foreach (var altPath in subroutineResult.AlternativePaths)
                 {
@@ -3184,6 +3185,7 @@ namespace MMMapEditor
                             EmulatedPartyPointerBytes = altPath.EmulatedPartyPointerBytes == null
                                 ? new Dictionary<ushort, PartyPointerByteReference>()
                                 : altPath.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                            BranchStateValueConstraints = CloneStateValueConstraints(altPath.BranchStateValueConstraints),
                             BranchPartyCondition = altPath.BranchPartyCondition,
                             BranchPartyPredicate = altPath.BranchPartyPredicate?.Clone()
                         });
@@ -3219,6 +3221,319 @@ namespace MMMapEditor
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+        }
+
+        private void MergeSubroutineAnalysisState(PathAnalysisResult target, PathAnalysisResult source)
+        {
+            if (target == null || source == null)
+                return;
+
+            if (source.MonsterBatchCount.HasValue && !target.MonsterBatchCount.HasValue)
+                target.MonsterBatchCount = source.MonsterBatchCount;
+
+            if (source.DarkeningLevel.HasValue && !target.DarkeningLevel.HasValue)
+                target.DarkeningLevel = source.DarkeningLevel;
+
+            if (source.RandomEncounterChance.HasValue && !target.RandomEncounterChance.HasValue)
+                target.RandomEncounterChance = source.RandomEncounterChance;
+
+            target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
+
+            if (source.RandomEncounterInstructionAddress != 0 &&
+                (target.RandomEncounterInstructionAddress == 0 ||
+                 source.RandomEncounterInstructionAddress < target.RandomEncounterInstructionAddress))
+            {
+                target.RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress;
+            }
+
+            if (source.RandomEncounterExecutionOrder != 0 &&
+                (target.RandomEncounterExecutionOrder == 0 ||
+                 source.RandomEncounterExecutionOrder < target.RandomEncounterExecutionOrder))
+            {
+                target.RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder;
+            }
+
+            if (source.NextSpecialEventOrder > target.NextSpecialEventOrder)
+                target.NextSpecialEventOrder = source.NextSpecialEventOrder;
+
+            if (source.TeleportTargetX.HasValue && !target.TeleportTargetX.HasValue)
+                target.TeleportTargetX = source.TeleportTargetX;
+
+            if (source.TeleportTargetY.HasValue && !target.TeleportTargetY.HasValue)
+                target.TeleportTargetY = source.TeleportTargetY;
+
+            if (source.TeleportTargetXRange != null && target.TeleportTargetXRange == null)
+                target.TeleportTargetXRange = new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max);
+
+            if (source.TeleportTargetYRange != null && target.TeleportTargetYRange == null)
+                target.TeleportTargetYRange = new ValueRange8(source.TeleportTargetYRange.Min, source.TeleportTargetYRange.Max);
+
+            foreach (var access in source.PartyFieldAccesses ?? Enumerable.Empty<PartyFieldReference>())
+            {
+                if (access == null)
+                    continue;
+
+                bool exists = target.PartyFieldAccesses.Any(a =>
+                    a != null &&
+                    a.Field == access.Field &&
+                    a.Offset == access.Offset &&
+                    a.EffectiveAddress == access.EffectiveAddress &&
+                    a.IsRead == access.IsRead &&
+                    a.IsWrite == access.IsWrite &&
+                    a.IsCompare == access.IsCompare &&
+                    ((a.Member?.MemberIndex) == (access.Member?.MemberIndex)) &&
+                    ((a.Member?.PointerAddress) == (access.Member?.PointerAddress)));
+
+                if (!exists)
+                    target.PartyFieldAccesses.Add(access.Clone());
+            }
+
+            target.PendingPartyHpOperation = MergePendingPartyStatOperation(
+                target.PendingPartyHpOperation,
+                source.PendingPartyHpOperation);
+            target.PendingPartySpOperation = MergePendingPartyStatOperation(
+                target.PendingPartySpOperation,
+                source.PendingPartySpOperation);
+
+            foreach (var effect in source.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+            {
+                if (effect == null)
+                    continue;
+
+                string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
+                bool exists = target.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
+                if (!exists)
+                    target.PartyEffects.Add(effect.Clone());
+            }
+
+            if (target.LoopSemantic == LoopSemanticKind.None)
+                target.LoopSemantic = source.LoopSemantic;
+            else if (source.LoopSemantic != LoopSemanticKind.None)
+                target.LoopSemantic = source.LoopSemantic;
+
+            if (source.IsInLoop)
+                target.IsInLoop = true;
+
+            if (source.LoopStartAddress != 0 &&
+                (target.LoopStartAddress == 0 || source.LoopStartAddress < target.LoopStartAddress))
+            {
+                target.LoopStartAddress = source.LoopStartAddress;
+            }
+
+            if (source.LoopEndAddress > target.LoopEndAddress)
+                target.LoopEndAddress = source.LoopEndAddress;
+
+            if (source.LoopIterationCount > target.LoopIterationCount)
+                target.LoopIterationCount = source.LoopIterationCount;
+
+            if (source.LoopIteration > target.LoopIteration)
+                target.LoopIteration = source.LoopIteration;
+
+            target.IsIndeterminateLoop = target.IsIndeterminateLoop || source.IsIndeterminateLoop;
+
+            if (source.FirstLocalTextAddress < target.FirstLocalTextAddress)
+                target.FirstLocalTextAddress = source.FirstLocalTextAddress;
+
+            target.MemoryReadAddresses.UnionWith(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
+            target.MemoryWrittenAddresses.UnionWith(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+            target.MemoryReadBeforeWriteAddresses.UnionWith(source.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+
+            foreach (var kvp in source.PersistentMemoryFirstAccessKinds ?? Enumerable.Empty<KeyValuePair<ushort, PersistentMemoryFirstAccessKind>>())
+            {
+                if (!target.PersistentMemoryFirstAccessKinds.ContainsKey(kvp.Key))
+                    target.PersistentMemoryFirstAccessKinds[kvp.Key] = kvp.Value;
+            }
+
+            MergeStateValueConstraints(target.StateValueConstraints, source.StateValueConstraints);
+
+            if (source.ExitEmulatedMemory8 != null && source.ExitEmulatedMemory8.Count > 0)
+                target.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(source.ExitEmulatedMemory8);
+        }
+
+        private PendingPartyStatOperation MergePendingPartyStatOperation(
+            PendingPartyStatOperation inheritedPending,
+            PendingPartyStatOperation currentPending)
+        {
+            if (inheritedPending == null)
+                return currentPending?.Clone();
+
+            if (currentPending == null)
+                return inheritedPending.Clone();
+
+            if (!MatchesPendingPartyTarget(inheritedPending.Member, currentPending.Member))
+                return currentPending.Clone();
+
+            var merged = inheritedPending.Clone();
+            merged.Member = MergePartyMemberReference(inheritedPending.Member, currentPending.Member);
+
+            merged.MaleOnly = inheritedPending.MaleOnly || currentPending.MaleOnly;
+            merged.FemaleOnly = inheritedPending.FemaleOnly || currentPending.FemaleOnly;
+            merged.GuardPredicates = (inheritedPending.GuardPredicates ?? new List<PartyPredicate>())
+                .Concat(currentPending.GuardPredicates ?? Enumerable.Empty<PartyPredicate>())
+                .Where(predicate => predicate != null)
+                .Select(predicate => predicate.Clone())
+                .GroupBy(PartyEffectSemantics.BuildPredicateKey)
+                .Select(group => group.First())
+                .OrderBy(PartyEffectSemantics.BuildPredicateKey)
+                .ToList();
+
+            if ((inheritedPending.MaleOnly && currentPending.FemaleOnly) ||
+                (inheritedPending.FemaleOnly && currentPending.MaleOnly))
+            {
+                merged.MaleOnly = false;
+                merged.FemaleOnly = false;
+            }
+
+            merged.SawReadHigh = inheritedPending.SawReadHigh || currentPending.SawReadHigh;
+            merged.SawReadLow = inheritedPending.SawReadLow || currentPending.SawReadLow;
+            merged.SawWriteHigh = inheritedPending.SawWriteHigh || currentPending.SawWriteHigh;
+            merged.SawWriteLow = inheritedPending.SawWriteLow || currentPending.SawWriteLow;
+            merged.FinalWriteHighByteValue = currentPending.SawWriteHigh
+                ? currentPending.FinalWriteHighByteValue
+                : inheritedPending.FinalWriteHighByteValue;
+            merged.FinalWriteLowByteValue = currentPending.SawWriteLow
+                ? currentPending.FinalWriteLowByteValue
+                : inheritedPending.FinalWriteLowByteValue;
+            merged.SawClc = inheritedPending.SawClc || currentPending.SawClc;
+            merged.SawShrHigh = inheritedPending.SawShrHigh || currentPending.SawShrHigh;
+            merged.SawRcrLow = inheritedPending.SawRcrLow || currentPending.SawRcrLow;
+            merged.LowByteArithmetic = MergePendingPartyByteArithmetic(
+                inheritedPending.LowByteArithmetic,
+                currentPending.LowByteArithmetic);
+            merged.HighByteArithmetic = MergePendingPartyByteArithmetic(
+                inheritedPending.HighByteArithmetic,
+                currentPending.HighByteArithmetic);
+
+            if (merged.StartAddress == 0 ||
+                (currentPending.StartAddress != 0 && currentPending.StartAddress < merged.StartAddress))
+            {
+                merged.StartAddress = currentPending.StartAddress;
+            }
+
+            if (merged.ExecutionOrder <= 0 ||
+                (currentPending.ExecutionOrder > 0 && currentPending.ExecutionOrder < merged.ExecutionOrder))
+            {
+                merged.ExecutionOrder = currentPending.ExecutionOrder;
+            }
+
+            return merged;
+        }
+
+        private PartyMemberReference MergePartyMemberReference(
+            PartyMemberReference inheritedMember,
+            PartyMemberReference currentMember)
+        {
+            if (inheritedMember == null)
+                return currentMember?.Clone();
+
+            if (currentMember == null)
+                return inheritedMember.Clone();
+
+            var merged = inheritedMember.Clone();
+
+            if (!merged.MemberIndex.HasValue)
+                merged.MemberIndex = currentMember.MemberIndex;
+            if (!merged.PointerAddress.HasValue)
+                merged.PointerAddress = currentMember.PointerAddress;
+            if (!merged.PointerTableAddress.HasValue)
+                merged.PointerTableAddress = currentMember.PointerTableAddress;
+            if (!merged.StructureAddress.HasValue)
+                merged.StructureAddress = currentMember.StructureAddress;
+            if (string.IsNullOrWhiteSpace(merged.Source))
+                merged.Source = currentMember.Source;
+
+            merged.IsPartyLoopMember = merged.IsPartyLoopMember || currentMember.IsPartyLoopMember;
+            merged.SelectionKind = MergeSelectionKind(merged.SelectionKind, currentMember.SelectionKind);
+            return merged;
+        }
+
+        private PartyMemberSelectionKind MergeSelectionKind(
+            PartyMemberSelectionKind left,
+            PartyMemberSelectionKind right)
+        {
+            if (left == PartyMemberSelectionKind.Random || right == PartyMemberSelectionKind.Random)
+                return PartyMemberSelectionKind.Random;
+
+            if (left == PartyMemberSelectionKind.Dynamic || right == PartyMemberSelectionKind.Dynamic)
+                return PartyMemberSelectionKind.Dynamic;
+
+            return PartyMemberSelectionKind.Exact;
+        }
+
+        private PendingPartyByteArithmetic MergePendingPartyByteArithmetic(
+            PendingPartyByteArithmetic inheritedArithmetic,
+            PendingPartyByteArithmetic currentArithmetic)
+        {
+            if (inheritedArithmetic == null)
+                return currentArithmetic?.Clone();
+
+            if (currentArithmetic == null)
+                return inheritedArithmetic.Clone();
+
+            int inheritedScore = GetPendingPartyByteArithmeticPrecisionScore(inheritedArithmetic);
+            int currentScore = GetPendingPartyByteArithmeticPrecisionScore(currentArithmetic);
+
+            if (currentScore > inheritedScore)
+                return currentArithmetic.Clone();
+
+            if (inheritedScore > currentScore)
+                return inheritedArithmetic.Clone();
+
+            return inheritedArithmetic.InstructionAddress != 0 &&
+                   (currentArithmetic.InstructionAddress == 0 ||
+                    inheritedArithmetic.InstructionAddress <= currentArithmetic.InstructionAddress)
+                ? inheritedArithmetic.Clone()
+                : currentArithmetic.Clone();
+        }
+
+        private int GetPendingPartyByteArithmeticPrecisionScore(PendingPartyByteArithmetic arithmetic)
+        {
+            if (arithmetic == null)
+                return -1;
+
+            int score = 0;
+            if (arithmetic.Operation != PartyEffectOperation.Unknown)
+                score += 4;
+            if (arithmetic.EffectiveImmediateValue.HasValue)
+                score += 8;
+            if (arithmetic.UsesCarryOpcode)
+                score += 2;
+            if (arithmetic.CarryInKnown)
+                score += 1;
+            if (arithmetic.InstructionAddress != 0)
+                score += 1;
+
+            return score;
+        }
+
+        private Dictionary<ushort, StateValueConstraintInfo> CloneStateValueConstraints(
+            Dictionary<ushort, StateValueConstraintInfo> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, StateValueConstraintInfo>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value?.Clone() ?? new StateValueConstraintInfo());
+        }
+
+        private void MergeStateValueConstraints(
+            Dictionary<ushort, StateValueConstraintInfo> target,
+            Dictionary<ushort, StateValueConstraintInfo> source)
+        {
+            if (target == null || source == null || source.Count == 0)
+                return;
+
+            foreach (var kvp in source)
+            {
+                if (!target.TryGetValue(kvp.Key, out var existing))
+                {
+                    target[kvp.Key] = kvp.Value?.Clone() ?? new StateValueConstraintInfo();
+                    continue;
+                }
+
+                existing.MergeFrom(kvp.Value);
+            }
         }
 
         /// <summary>
