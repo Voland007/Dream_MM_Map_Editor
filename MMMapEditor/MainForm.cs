@@ -2585,7 +2585,7 @@ namespace MMMapEditor
 
             var lootWarningMatches = Regex.Matches(
                 noteText,
-                @"!!! (Контейнер с лутом уничтожен|Предмет уничтожен|GOLD уничтожено|GEMS уничтожены) !!!",
+                @"!!! (Контейнер с лутом(?: на полу)? уничтожен|Предмет(?: на полу)? уничтожен|GOLD(?: на полу)? уничтожено|GEMS(?: на полу)? уничтожены) !!!",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in lootWarningMatches)
