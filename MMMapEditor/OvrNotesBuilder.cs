@@ -622,6 +622,7 @@ namespace MMMapEditor
         private sealed class OrderedRenderEntry
         {
             public int OccurrenceOrderKey { get; set; }
+            public int DisplayPriority { get; set; }
             public int PathOrderKey { get; set; }
             public VariantTreeNode ChildNode { get; set; }
             public VariantRenderItem DirectVariant { get; set; }
@@ -707,7 +708,7 @@ namespace MMMapEditor
                 groups.Count > 1 ||
                 groups.Any(group =>
                     (group?.TreeRoot?.Children?.Any(IsRenderableStructuralNode) ?? false) ||
-                    ((group?.TreeRoot?.DirectVariants?.Count(v => v != null && IsRenderableDirectVariant(v)) ?? 0) > 1));
+                    (CountRenderableDirectVariants(group?.TreeRoot) > 1));
 
             if (!hasRealMultiplicity)
                 return null;
@@ -800,6 +801,43 @@ namespace MMMapEditor
                 return true;
 
             return false;
+        }
+
+        private static bool IsEmptyOrNoOpVariant(VariantRenderItem item)
+        {
+            if (item == null)
+                return false;
+
+            return item.Lines == null || item.Lines.Count == 0 || IsNoOpOnly(item.Lines);
+        }
+
+        private static bool ShouldRenderDirectVariant(
+            VariantRenderItem item,
+            int siblingDirectVariantCount,
+            int renderableChildCount)
+        {
+            if (item == null)
+                return false;
+
+            if (IsRenderableDirectVariant(item))
+                return true;
+
+            if (!IsEmptyOrNoOpVariant(item))
+                return false;
+
+            return renderableChildCount > 0 || siblingDirectVariantCount > 1;
+        }
+
+        private static int CountRenderableDirectVariants(VariantTreeNode node)
+        {
+            if (node == null)
+                return 0;
+
+            int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
+            int renderableChildCount = node.Children?.Count(IsRenderableStructuralNode) ?? 0;
+
+            return (node.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+                .Count(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildCount));
         }
 
         private static bool IsNoOpTopLevelGroup(TopLevelVariantGroup group)
@@ -2246,6 +2284,7 @@ namespace MMMapEditor
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
+                    DisplayPriority = 0,
                     PathOrderKey = GetNodeRenderOrderKey(child),
                     ChildNode = child
                 });
@@ -2259,6 +2298,7 @@ namespace MMMapEditor
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetVariantOccurrenceOrderKey(variant),
+                    DisplayPriority = IsEmptyOrNoOpVariant(variant) ? 1 : 0,
                     PathOrderKey = GetVariantRenderOrderKey(variant),
                     DirectVariant = variant
                 });
@@ -2266,6 +2306,7 @@ namespace MMMapEditor
 
             return result
                 .OrderBy(entry => entry.OccurrenceOrderKey)
+                .ThenBy(entry => entry.DisplayPriority)
                 .ThenBy(entry => entry.PathOrderKey)
                 .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
                 .ToList();
@@ -2300,11 +2341,11 @@ namespace MMMapEditor
             var renderableChildren = (group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
                 .Where(IsRenderableStructuralNode)
                 .ToList();
+            int siblingDirectVariantCount = group.TreeRoot?.DirectVariants?.Count(v => v != null) ?? 0;
 
             var directVariants = (group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
-                .Where(v => v != null &&
-                (IsRenderableDirectVariant(v) || (renderableChildren.Count > 0 && ShouldRenderAsNoChoiceVariant(v))) &&
-                !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
+                .Where(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildren.Count) &&
+                    !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
                 .ToList();
 
             bool needGapAfterCommon = (group.TreeRoot?.CommonLines?.Count ?? 0) > 0 &&
@@ -2403,9 +2444,9 @@ namespace MMMapEditor
             var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
                 .Where(IsRenderableStructuralNode)
                 .ToList();
+            int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
             var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
-                .Where(v => v != null &&
-                (IsRenderableDirectVariant(v) || (renderableChildren.Count > 0 && ShouldRenderAsNoChoiceVariant(v))))
+                .Where(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildren.Count))
                 .ToList();
 
             string indent = new string(' ', depth * 3);
