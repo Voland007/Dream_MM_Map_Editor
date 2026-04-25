@@ -334,6 +334,7 @@ namespace MMMapEditor
         public List<PartyFieldReference> PartyFieldAccesses { get; set; } = new List<PartyFieldReference>();
         public PendingPartyStatOperation PendingPartyHpOperation { get; set; }
         public PendingPartyStatOperation PendingPartySpOperation { get; set; }
+        public List<PendingPartyStatOperation> CompletedPartyStatOperations { get; set; } = new List<PendingPartyStatOperation>();
         public PartyConditionKind ActivePartyCondition { get; set; } = PartyConditionKind.None;
         public bool IsInLoop { get; set; } = false;
         public uint LoopStartAddress { get; set; } = 0;
@@ -609,6 +610,7 @@ namespace MMMapEditor
         public ValueRange8 ImmediateRange { get; set; }
         public uint InstructionAddress { get; set; }
         public int ExecutionOrder { get; set; }
+        public int ApplicationCount { get; set; } = 1;
         public string Description { get; set; }
 
         public PartyEffect Clone()
@@ -632,6 +634,7 @@ namespace MMMapEditor
                 ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
                 InstructionAddress = InstructionAddress,
                 ExecutionOrder = ExecutionOrder,
+                ApplicationCount = ApplicationCount,
                 Description = Description
             };
         }

@@ -1194,7 +1194,8 @@ namespace MMMapEditor
         }
 
         private PendingPartyStatOperation EnsurePendingPartyStatOperation(PathAnalysisResult result,
-            PartyFieldReference fieldRef, uint instructionAddress)
+            PartyFieldReference fieldRef, uint instructionAddress, int callDepth = 0,
+            List<uint> pendingReturnAddresses = null)
         {
             if (result == null || fieldRef == null)
                 return null;
@@ -1204,24 +1205,35 @@ namespace MMMapEditor
                 return null;
 
             var pending = GetPendingPartyStatOperation(result, statField);
-            if (pending != null &&
-                !MatchesPendingPartyTarget(pending.Member, fieldRef.Member))
+            if (pending != null)
             {
-                pending = null;
-                SetPendingPartyStatOperation(result, statField, null);
+                pending.Field = statField;
+
+                if (!MatchesPendingPartyTarget(pending.Member, fieldRef.Member) ||
+                    ShouldRotateCompletedPendingPartyStatOperation(pending, instructionAddress))
+                {
+                    ArchiveCompletedPendingPartyStatOperation(result, pending, statField);
+                    pending = null;
+                    SetPendingPartyStatOperation(result, statField, null);
+                }
             }
 
             if (pending == null)
             {
                 pending = new PendingPartyStatOperation
                 {
+                    Field = statField,
                     Member = fieldRef.Member?.Clone(),
                     StartAddress = instructionAddress
                 };
+                CapturePendingPartyStatReturnBoundary(pending, callDepth, pendingReturnAddresses);
                 SetPendingPartyStatOperation(result, statField, pending);
             }
             else
             {
+                pending.Field = statField;
+                CapturePendingPartyStatReturnBoundary(pending, callDepth, pendingReturnAddresses);
+
                 if (pending.Member == null)
                     pending.Member = fieldRef.Member?.Clone();
 
@@ -1235,6 +1247,24 @@ namespace MMMapEditor
             return pending;
         }
 
+        private static void CapturePendingPartyStatReturnBoundary(
+            PendingPartyStatOperation pending,
+            int callDepth,
+            List<uint> pendingReturnAddresses)
+        {
+            if (pending == null ||
+                pending.AwaitingReturnAddress.HasValue ||
+                callDepth <= 0 ||
+                pendingReturnAddresses == null ||
+                pendingReturnAddresses.Count == 0)
+            {
+                return;
+            }
+
+            pending.AwaitingReturnAddress = pendingReturnAddresses[pendingReturnAddresses.Count - 1];
+            pending.AwaitingCallDepth = callDepth;
+        }
+
         private int EnsurePendingPartyStatExecutionOrder(PathAnalysisResult result, PendingPartyStatOperation pending)
         {
             if (result == null || pending == null)
@@ -1244,6 +1274,64 @@ namespace MMMapEditor
                 pending.ExecutionOrder = ++result.NextSpecialEventOrder;
 
             return pending.ExecutionOrder;
+        }
+
+        private static bool ShouldRotateCompletedPendingPartyStatOperation(
+            PendingPartyStatOperation pending,
+            uint instructionAddress)
+        {
+            if (pending == null || instructionAddress == 0)
+                return false;
+
+            if (pending.Member?.IsPartyLoopMember == true)
+                return false;
+
+            PartyFieldKind field = pending.Field;
+            return field != PartyFieldKind.Unknown &&
+                   PartyEffectNormalizer.CanCreateNormalizedStatEffect(pending, field);
+        }
+
+        private static void ArchiveCompletedPendingPartyStatOperation(
+            PathAnalysisResult result,
+            PendingPartyStatOperation pending,
+            PartyFieldKind fallbackField)
+        {
+            if (result == null || pending == null)
+                return;
+
+            PartyFieldKind field = pending.Field != PartyFieldKind.Unknown
+                ? pending.Field
+                : fallbackField;
+            if (field == PartyFieldKind.Unknown ||
+                !PartyEffectNormalizer.CanCreateNormalizedStatEffect(pending, field))
+            {
+                return;
+            }
+
+            var archived = pending.Clone();
+            archived.Field = field;
+            result.CompletedPartyStatOperations.Add(archived);
+        }
+
+        private static PendingPartyStatOperation MoveCompletedPendingPartyStatOperationToHistory(
+            PathAnalysisResult result,
+            PendingPartyStatOperation pending,
+            PartyFieldKind fallbackField)
+        {
+            if (pending == null)
+                return null;
+
+            PartyFieldKind field = pending.Field != PartyFieldKind.Unknown
+                ? pending.Field
+                : fallbackField;
+            if (field == PartyFieldKind.Unknown ||
+                !PartyEffectNormalizer.CanCreateNormalizedStatEffect(pending, field))
+            {
+                return pending;
+            }
+
+            ArchiveCompletedPendingPartyStatOperation(result, pending, field);
+            return null;
         }
 
         private bool IsPartyLoopTarget(PartyMemberReference member, LoopSemanticKind loopSemantic)
@@ -1660,7 +1748,8 @@ namespace MMMapEditor
         }
 
         private void RegisterPartyFieldRead(PathAnalysisResult result, PartyFieldReference fieldRef,
-            RegisterTracker registerTracker, uint instructionAddress = 0, byte? exactValue = null)
+            RegisterTracker registerTracker, int callDepth, List<uint> pendingReturnAddresses,
+            uint instructionAddress = 0, byte? exactValue = null)
         {
             if (result == null || fieldRef == null)
                 return;
@@ -1681,7 +1770,12 @@ namespace MMMapEditor
             {
                 var pendingFieldRef = fieldRef.Clone();
                 pendingFieldRef.Member = NormalizeMemberForLoopAggregation(fieldRef.Member, result.LoopSemantic);
-                var pending = EnsurePendingPartyStatOperation(result, pendingFieldRef, instructionAddress);
+                var pending = EnsurePendingPartyStatOperation(
+                    result,
+                    pendingFieldRef,
+                    instructionAddress,
+                    callDepth,
+                    pendingReturnAddresses);
                 if (pending != null)
                 {
                     if (IsPartyStatHighField(fieldRef.Field))
@@ -1710,7 +1804,8 @@ namespace MMMapEditor
         }
 
         private void RegisterPartyFieldWrite(PathAnalysisResult result, PartyFieldReference fieldRef,
-            RegisterTracker registerTracker, uint instructionAddress, bool debugMode,
+            RegisterTracker registerTracker, int callDepth, List<uint> pendingReturnAddresses,
+            uint instructionAddress, bool debugMode,
             byte? exactValue = null, PartyEffectOperation bitOperation = PartyEffectOperation.Unknown,
             byte? bitMask = null, PartyFieldReference sourceFieldValue = null)
         {
@@ -1773,7 +1868,12 @@ namespace MMMapEditor
 
                 var pendingFieldRef = fieldRef.Clone();
                 pendingFieldRef.Member = NormalizeMemberForLoopAggregation(fieldRef.Member, result.LoopSemantic);
-                var pending = EnsurePendingPartyStatOperation(result, pendingFieldRef, instructionAddress);
+                var pending = EnsurePendingPartyStatOperation(
+                    result,
+                    pendingFieldRef,
+                    instructionAddress,
+                    callDepth,
+                    pendingReturnAddresses);
                 if (pending != null)
                 {
                     effect.ExecutionOrder = EnsurePendingPartyStatExecutionOrder(result, pending);
@@ -2291,7 +2391,8 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"        Обновили регистр {regName} как байт поля персонажа {partyField.Field} через {operation} 0x{immediateValue:X2}");
         }
 
-        private void TrackPartyArithmeticInstruction(X86Instruction insn, RegisterTracker registerTracker, PathAnalysisResult result)
+        private void TrackPartyArithmeticInstruction(X86Instruction insn, RegisterTracker registerTracker,
+            PathAnalysisResult result, int callDepth, List<uint> pendingReturnAddresses)
         {
             if (result == null || insn?.Bytes == null || insn.Bytes.Length == 0)
                 return;
@@ -2385,7 +2486,12 @@ namespace MMMapEditor
             var pendingField = statFieldRef.Clone();
             pendingField.Member = NormalizeMemberForLoopAggregation(statFieldRef.Member, result.LoopSemantic);
 
-            var pending = EnsurePendingPartyStatOperation(result, pendingField, (uint)insn.Address);
+            var pending = EnsurePendingPartyStatOperation(
+                result,
+                pendingField,
+                (uint)insn.Address,
+                callDepth,
+                pendingReturnAddresses);
             if (pending == null)
                 return;
 
@@ -2992,6 +3098,8 @@ namespace MMMapEditor
                     uint returnAddress = pendingReturnAddresses[pendingReturnAddresses.Count - 1];
                     pendingReturnAddresses.RemoveAt(pendingReturnAddresses.Count - 1);
 
+                    CompletePendingPartyStatOperationsForReturnAddress(result, returnAddress, callDepth);
+
                     if (debugMode)
                         AnalysisDebug.WriteLine($"      RET на 0x{insn.Address:X4} - возвращаемся к 0x{returnAddress:X4}");
 
@@ -3354,7 +3462,12 @@ namespace MMMapEditor
                     result.PartialBattleInfo.Add(info);
 
                 result.HasPartialBattlePattern = result.HasPartialBattlePattern || subroutineResult.HasPartialBattlePattern;
-                MergeSubroutineAnalysisState(result, subroutineResult);
+                bool subroutineReturnedToCaller = HasReturnedFromCurrentCall(
+                    subroutineResult,
+                    pendingReturnAddresses,
+                    nextAddress,
+                    callDepth);
+                MergeSubroutineAnalysisState(result, subroutineResult, subroutineReturnedToCaller);
 
                 foreach (var altPath in subroutineResult.AlternativePaths)
                 {
@@ -3427,7 +3540,73 @@ namespace MMMapEditor
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
         }
 
-        private void MergeSubroutineAnalysisState(PathAnalysisResult target, PathAnalysisResult source)
+        private static bool HasReturnedFromCurrentCall(
+            PathAnalysisResult subroutineResult,
+            List<uint> callerPendingReturnAddresses,
+            uint currentReturnAddress,
+            int callerCallDepth)
+        {
+            if (subroutineResult == null)
+                return false;
+
+            bool currentReturnStillPending =
+                subroutineResult.ExitPendingReturnAddresses?.Contains(currentReturnAddress) == true;
+            bool callDepthStillNested = subroutineResult.ExitCallDepth > callerCallDepth;
+
+            return !currentReturnStillPending && !callDepthStillNested;
+        }
+
+        private void CompletePendingPartyStatOperationsForReturnAddress(
+            PathAnalysisResult result,
+            uint returnAddress,
+            int callDepth)
+        {
+            if (result == null)
+                return;
+
+            result.PendingPartyHpOperation = CompletePendingPartyStatOperationForReturnAddress(
+                result,
+                result.PendingPartyHpOperation,
+                PartyFieldKind.Hp,
+                returnAddress,
+                callDepth);
+
+            result.PendingPartySpOperation = CompletePendingPartyStatOperationForReturnAddress(
+                result,
+                result.PendingPartySpOperation,
+                PartyFieldKind.Sp,
+                returnAddress,
+                callDepth);
+        }
+
+        private PendingPartyStatOperation CompletePendingPartyStatOperationForReturnAddress(
+            PathAnalysisResult result,
+            PendingPartyStatOperation pending,
+            PartyFieldKind fallbackField,
+            uint returnAddress,
+            int callDepth)
+        {
+            if (pending == null ||
+                pending.AwaitingReturnAddress != returnAddress ||
+                pending.AwaitingCallDepth != callDepth)
+            {
+                return pending;
+            }
+
+            var completedOrPending = MoveCompletedPendingPartyStatOperationToHistory(result, pending, fallbackField);
+            if (completedOrPending != null)
+            {
+                completedOrPending.AwaitingReturnAddress = null;
+                completedOrPending.AwaitingCallDepth = 0;
+            }
+
+            return completedOrPending;
+        }
+
+        private void MergeSubroutineAnalysisState(
+            PathAnalysisResult target,
+            PathAnalysisResult source,
+            bool subroutineReturnedToCaller)
         {
             if (target == null || source == null)
                 return;
@@ -3492,12 +3671,35 @@ namespace MMMapEditor
                     target.PartyFieldAccesses.Add(access.Clone());
             }
 
-            target.PendingPartyHpOperation = MergePendingPartyStatOperation(
-                target.PendingPartyHpOperation,
+            var mergedPendingHp = target.PendingPartyHpOperation;
+            var mergedPendingSp = target.PendingPartySpOperation;
+            var completedPartyStatOperations = PendingPartyStatOperationMerger.MergeCompletedContinuations(
+                source.CompletedPartyStatOperations,
+                ref mergedPendingHp,
+                ref mergedPendingSp,
+                MergePendingPartyStatOperation,
+                MatchesPendingPartyTarget);
+            target.CompletedPartyStatOperations.AddRange(completedPartyStatOperations);
+
+            mergedPendingHp = MergePendingPartyStatOperation(
+                mergedPendingHp,
                 source.PendingPartyHpOperation);
-            target.PendingPartySpOperation = MergePendingPartyStatOperation(
-                target.PendingPartySpOperation,
+            target.PendingPartyHpOperation = subroutineReturnedToCaller
+                ? MoveCompletedPendingPartyStatOperationToHistory(
+                    target,
+                    mergedPendingHp,
+                    PartyFieldKind.Hp)
+                : mergedPendingHp;
+
+            mergedPendingSp = MergePendingPartyStatOperation(
+                mergedPendingSp,
                 source.PendingPartySpOperation);
+            target.PendingPartySpOperation = subroutineReturnedToCaller
+                ? MoveCompletedPendingPartyStatOperationToHistory(
+                    target,
+                    mergedPendingSp,
+                    PartyFieldKind.Sp)
+                : mergedPendingSp;
 
             foreach (var effect in source.PartyEffects ?? Enumerable.Empty<PartyEffect>())
             {
@@ -3568,6 +3770,9 @@ namespace MMMapEditor
                 return currentPending.Clone();
 
             var merged = inheritedPending.Clone();
+            merged.Field = inheritedPending.Field != PartyFieldKind.Unknown
+                ? inheritedPending.Field
+                : currentPending.Field;
             merged.Member = MergePartyMemberReference(inheritedPending.Member, currentPending.Member);
 
             merged.MaleOnly = inheritedPending.MaleOnly || currentPending.MaleOnly;
@@ -3619,6 +3824,12 @@ namespace MMMapEditor
             {
                 merged.ExecutionOrder = currentPending.ExecutionOrder;
             }
+
+            if (currentPending.AwaitingReturnAddress.HasValue)
+                merged.AwaitingReturnAddress = currentPending.AwaitingReturnAddress;
+
+            if (currentPending.AwaitingCallDepth > 0)
+                merged.AwaitingCallDepth = currentPending.AwaitingCallDepth;
 
             return merged;
         }
@@ -4818,7 +5029,7 @@ namespace MMMapEditor
                     InvalidateFlags(registerTracker);
             }
 
-            TrackPartyArithmeticInstruction(insn, registerTracker, result);
+            TrackPartyArithmeticInstruction(insn, registerTracker, result, callDepth, pendingReturnAddresses);
 
             // Сохраняем изменения в эмулируемую память (runtime state)
             if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA3)
@@ -4960,7 +5171,15 @@ namespace MMMapEditor
 
                         if (hasPartyFieldRef)
                         {
-                            RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode, immValue);
+                            RegisterPartyFieldWrite(
+                                result,
+                                partyFieldRef,
+                                registerTracker,
+                                callDepth,
+                                pendingReturnAddresses,
+                                address,
+                                debugMode,
+                                immValue);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Распознана прямая запись поля персонажа {partyFieldRef.Field} = 0x{immValue:X2} через {eaText}");
@@ -5044,7 +5263,16 @@ namespace MMMapEditor
                     {
                         if (hasPartyFieldRef)
                         {
-                            RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode, regValue, sourceFieldValue: sourcePartyFieldValue);
+                            RegisterPartyFieldWrite(
+                                result,
+                                partyFieldRef,
+                                registerTracker,
+                                callDepth,
+                                pendingReturnAddresses,
+                                address,
+                                debugMode,
+                                regValue,
+                                sourceFieldValue: sourcePartyFieldValue);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Распознана запись поля персонажа {partyFieldRef.Field} из {regName} через {eaText} (сырую эмулируемую память не обновляем)");
@@ -5059,7 +5287,15 @@ namespace MMMapEditor
                     }
                     else if (hasPartyFieldRef)
                     {
-                        RegisterPartyFieldWrite(result, partyFieldRef, registerTracker, address, debugMode, sourceFieldValue: sourcePartyFieldValue);
+                        RegisterPartyFieldWrite(
+                            result,
+                            partyFieldRef,
+                            registerTracker,
+                            callDepth,
+                            pendingReturnAddresses,
+                            address,
+                            debugMode,
+                            sourceFieldValue: sourcePartyFieldValue);
 
                         if (debugMode)
                         {
@@ -5341,7 +5577,14 @@ namespace MMMapEditor
                                 {
                                     registerTracker.SetPartyFieldValue(regName, partyFieldRef);
                                     registerTracker.ClearPartyPointerByteValue(regName);
-                                    RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address, value);
+                                    RegisterPartyFieldRead(
+                                        result,
+                                        partyFieldRef,
+                                        registerTracker,
+                                        callDepth,
+                                        pendingReturnAddresses,
+                                        address,
+                                        value);
                                 }
                                 else if (hasPointerByteSemantic8A)
                                 {
@@ -5360,7 +5603,13 @@ namespace MMMapEditor
                         registerTracker.ClearConcreteByteRegisterValueKeepSemantic(regName);
                         registerTracker.SetPartyFieldValue(regName, partyFieldRef);
                         registerTracker.ClearPartyPointerByteValue(regName);
-                        RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address);
+                        RegisterPartyFieldRead(
+                            result,
+                            partyFieldRef,
+                            registerTracker,
+                            callDepth,
+                            pendingReturnAddresses,
+                            address);
 
                         if (debugMode)
                         {
@@ -6254,12 +6503,21 @@ namespace MMMapEditor
                                 : PartyTechnicalFieldSemantics.GetRelevantMask(partyFieldRef.Field, memoryOperation, immediateValue);
 
                             if (PartyTechnicalFieldSemantics.IsTrackedField(partyFieldRef.Field))
-                                RegisterPartyFieldRead(result, partyFieldRef, registerTracker, address, currentByteValue);
+                                RegisterPartyFieldRead(
+                                    result,
+                                    partyFieldRef,
+                                    registerTracker,
+                                    callDepth,
+                                    pendingReturnAddresses,
+                                    address,
+                                    currentByteValue);
 
                             RegisterPartyFieldWrite(
                                 result,
                                 partyFieldRef,
                                 registerTracker,
+                                callDepth,
+                                pendingReturnAddresses,
                                 address,
                                 debugMode,
                                 exactByteValue,

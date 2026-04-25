@@ -31,8 +31,8 @@ namespace MMMapEditor
         public static bool EnableGlobalLogs { get; private set; } = false;
         public static bool DisableCacheForTargetCell { get; private set; } = true;
         public static bool Enabled { get; private set; } = true;
-        public static byte? TargetX { get; private set; } = 2;
-        public static byte? TargetY { get; private set; } = 4;
+        public static byte? TargetX { get; private set; } = 5;
+        public static byte? TargetY { get; private set; } = 5;
 
 
         public static void Configure(

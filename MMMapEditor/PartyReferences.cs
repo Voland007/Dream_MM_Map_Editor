@@ -282,7 +282,10 @@ namespace MMMapEditor
 
     public sealed class PendingPartyStatOperation
     {
+        public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
         public PartyMemberReference Member { get; set; }
+        public uint? AwaitingReturnAddress { get; set; }
+        public int AwaitingCallDepth { get; set; }
         public bool MaleOnly { get; set; }
         public bool FemaleOnly { get; set; }
         public List<PartyPredicate> GuardPredicates { get; set; } = new List<PartyPredicate>();
@@ -304,7 +307,10 @@ namespace MMMapEditor
         {
             return new PendingPartyStatOperation
             {
+                Field = Field,
                 Member = Member?.Clone(),
+                AwaitingReturnAddress = AwaitingReturnAddress,
+                AwaitingCallDepth = AwaitingCallDepth,
                 MaleOnly = MaleOnly,
                 FemaleOnly = FemaleOnly,
                 GuardPredicates = GuardPredicates?
@@ -331,7 +337,8 @@ namespace MMMapEditor
         {
             string finalLow = FinalWriteLowByteValue.HasValue ? $"0x{FinalWriteLowByteValue.Value:X2}" : "?";
             string finalHigh = FinalWriteHighByteValue.HasValue ? $"0x{FinalWriteHighByteValue.Value:X2}" : "?";
-            return $"PendingPartyStat(Member={Member}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, FinalLow={finalLow}, FinalHigh={finalHigh}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, LowArith={LowByteArithmetic}, HighArith={HighByteArithmetic}, Start=0x{StartAddress:X4}, Order={ExecutionOrder})";
+            string awaitReturn = AwaitingReturnAddress.HasValue ? $"0x{AwaitingReturnAddress.Value:X4}" : "-";
+            return $"PendingPartyStat(Field={Field}, Member={Member}, AwaitRet={awaitReturn}, AwaitDepth={AwaitingCallDepth}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, FinalLow={finalLow}, FinalHigh={finalHigh}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, LowArith={LowByteArithmetic}, HighArith={HighByteArithmetic}, Start=0x{StartAddress:X4}, Order={ExecutionOrder})";
         }
     }
 

@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace MMMapEditor
@@ -28,6 +29,21 @@ namespace MMMapEditor
 
         public static string BuildSemanticKey(PartyEffect effect)
         {
+            return BuildSemanticKeyCore(effect, includeApplicationCount: true);
+        }
+
+        public static string BuildAggregationKey(PartyEffect effect)
+        {
+            return BuildSemanticKeyCore(effect, includeApplicationCount: false);
+        }
+
+        public static int GetEffectiveApplicationCount(PartyEffect effect)
+        {
+            return effect?.ApplicationCount > 0 ? effect.ApplicationCount : 1;
+        }
+
+        private static string BuildSemanticKeyCore(PartyEffect effect, bool includeApplicationCount)
+        {
             if (effect == null)
                 return "<NULL_PARTY_EFFECT>";
 
@@ -39,6 +55,9 @@ namespace MMMapEditor
             string memberKey = scope == PartyEffectScope.SingleMember
                 ? effect.MemberIndex?.ToString() ?? "-"
                 : "-";
+            string applicationCountKey = includeApplicationCount && IsApplicationCountSemanticallyRelevant(effect)
+                ? GetEffectiveApplicationCount(effect).ToString(CultureInfo.InvariantCulture)
+                : "1";
 
             return string.Join("|",
                 effect.Kind,
@@ -53,7 +72,8 @@ namespace MMMapEditor
                 IsLoopDerived(effect) ? "Loop" : "Direct",
                 GetEffectiveValueKnowledge(effect),
                 effect.ImmediateValue?.ToString() ?? "-",
-                range);
+                range,
+                applicationCountKey);
         }
 
         public static string BuildDebugLine(PartyEffect effect)
@@ -95,6 +115,9 @@ namespace MMMapEditor
             if (knowledge != PartyValueKnowledge.Unknown)
                 parts.Add($"Value={FormatValue(effect, knowledge)}");
 
+            if (GetEffectiveApplicationCount(effect) > 1)
+                parts.Add($"Count={GetEffectiveApplicationCount(effect)}");
+
             if (effect.InstructionAddress != 0)
                 parts.Add($"At=0x{effect.InstructionAddress:X4}");
 
@@ -113,6 +136,7 @@ namespace MMMapEditor
             var operation = GetEffectiveOperation(effect);
             var scope = GetEffectiveScope(effect);
             var condition = GetEffectiveCondition(effect);
+            int applicationCount = GetEffectiveApplicationCount(effect);
 
             if (PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return BuildTrackedTechnicalFieldDescription(effect, field, scope, condition);
@@ -123,28 +147,29 @@ namespace MMMapEditor
             if (IsScalarPartyStatField(field) && operation == PartyEffectOperation.Halve)
             {
                 string statLabel = GetScalarPartyStatLabel(field);
+                string effectText = BuildRepeatedHalveOutcomeText(applicationCount);
                 if (condition == PartyConditionKind.MaleOnly)
-                    return $"! {statLabel} каждого мужчины в партии уменьшается вдвое !";
+                    return $"! {statLabel} каждого мужчины в партии {effectText} !";
                 if (condition == PartyConditionKind.FemaleOnly)
-                    return $"{statLabel} женщин в партии уменьшается вдвое";
+                    return $"{statLabel} женщин в партии {effectText}";
                 if (scope == PartyEffectScope.WholeParty)
-                    return $"! {statLabel} каждого персонажа партии уменьшается вдвое !";
+                    return $"! {statLabel} каждого персонажа партии {effectText} !";
                 if (scope == PartyEffectScope.PartySubset)
-                    return $"{statLabel} части партии уменьшается вдвое";
+                    return $"{statLabel} части партии {effectText}";
                 if (scope == PartyEffectScope.CurrentLoopMember)
-                    return $"{statLabel} текущего члена партии уменьшается вдвое";
+                    return $"{statLabel} текущего члена партии {effectText}";
                 if (scope == PartyEffectScope.RandomMember)
-                    return $"{statLabel} случайного члена партии уменьшается вдвое";
+                    return $"{statLabel} случайного члена партии {effectText}";
                 if (scope == PartyEffectScope.SelectedMember)
-                    return $"{statLabel} выбранного члена партии уменьшается вдвое";
-                return $"{statLabel} персонажа уменьшается вдвое";
+                    return $"{statLabel} выбранного члена партии {effectText}";
+                return $"{statLabel} персонажа {effectText}";
             }
 
             if (IsScalarPartyStatField(field) &&
                 (operation == PartyEffectOperation.Increment || operation == PartyEffectOperation.Decrement) &&
                 effect.ImmediateValue.HasValue)
             {
-                ushort amount = effect.ImmediateValue.Value;
+                string amount = FormatScaledImmediateAmount(effect.ImmediateValue.Value, applicationCount);
                 string verb = operation == PartyEffectOperation.Increment ? "добавляется" : "отнимается";
                 string statLabel = GetScalarPartyStatLabel(field);
 
@@ -737,6 +762,42 @@ namespace MMMapEditor
                 return $"range {effect.ImmediateRange.Min}-{effect.ImmediateRange.Max}";
 
             return knowledge.ToString();
+        }
+
+        private static bool IsApplicationCountSemanticallyRelevant(PartyEffect effect)
+        {
+            return effect != null && GetEffectiveOperation(effect) switch
+            {
+                PartyEffectOperation.Halve => true,
+                PartyEffectOperation.Increment => true,
+                PartyEffectOperation.Decrement => true,
+                PartyEffectOperation.BitToggle => true,
+                _ => false
+            };
+        }
+
+        private static string BuildRepeatedHalveOutcomeText(int applicationCount)
+        {
+            if (applicationCount <= 1)
+                return "уменьшается вдвое";
+
+            if (applicationCount == 2)
+                return "уменьшается до четверти от исходного значения";
+
+            double remainingPercent = 100.0 / Math.Pow(2.0, applicationCount);
+            if (remainingPercent >= 0.001)
+            {
+                return $"уменьшается до {remainingPercent.ToString("0.###", CultureInfo.CurrentCulture)}% от исходного значения";
+            }
+
+            double factor = Math.Pow(2.0, applicationCount);
+            return $"уменьшается в {factor.ToString("0.###", CultureInfo.CurrentCulture)} раз";
+        }
+
+        private static string FormatScaledImmediateAmount(ushort amount, int applicationCount)
+        {
+            ulong scaledAmount = (ulong)amount * (ulong)Math.Max(1, applicationCount);
+            return scaledAmount.ToString(CultureInfo.InvariantCulture);
         }
 
         private static string FormatStatusNames(ushort rawValue)

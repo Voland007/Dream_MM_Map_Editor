@@ -498,11 +498,22 @@ namespace MMMapEditor
                     merged.PartyFieldAccesses.Add(access.Clone());
             }
 
+            var mergedPendingHp = merged.PendingPartyHpOperation;
+            var mergedPendingSp = merged.PendingPartySpOperation;
+            var completedPartyStatOperations = PendingPartyStatOperationMerger.MergeCompletedContinuations(
+                currentState.CompletedPartyStatOperations,
+                ref mergedPendingHp,
+                ref mergedPendingSp,
+                MergePendingPartyStatOperation,
+                MatchesPendingPartyTarget);
+            merged.CompletedPartyStatOperations.AddRange(completedPartyStatOperations);
+
             merged.PendingPartyHpOperation = MergePendingPartyStatOperation(
-                merged.PendingPartyHpOperation,
+                mergedPendingHp,
                 currentState.PendingPartyHpOperation);
+
             merged.PendingPartySpOperation = MergePendingPartyStatOperation(
-                merged.PendingPartySpOperation,
+                mergedPendingSp,
                 currentState.PendingPartySpOperation);
 
             foreach (var effect in currentState.PartyEffects ?? Enumerable.Empty<PartyEffect>())
@@ -585,6 +596,12 @@ namespace MMMapEditor
                 rebased.PendingPartySpOperation.ExecutionOrder += baseExecutionOrder;
             }
 
+            foreach (var pending in rebased.CompletedPartyStatOperations ?? Enumerable.Empty<PendingPartyStatOperation>())
+            {
+                if (pending != null && pending.ExecutionOrder > 0)
+                    pending.ExecutionOrder += baseExecutionOrder;
+            }
+
             foreach (var effect in rebased.PartyEffects ?? Enumerable.Empty<PartyEffect>())
             {
                 if (effect != null && effect.ExecutionOrder > 0)
@@ -611,6 +628,9 @@ namespace MMMapEditor
                 return currentPending.Clone();
 
             var merged = inheritedPending.Clone();
+            merged.Field = inheritedPending.Field != PartyFieldKind.Unknown
+                ? inheritedPending.Field
+                : currentPending.Field;
             merged.Member = MergePartyMemberReference(inheritedPending.Member, currentPending.Member);
 
             merged.MaleOnly = inheritedPending.MaleOnly || currentPending.MaleOnly;
@@ -858,6 +878,8 @@ namespace MMMapEditor
             clone.PartyFieldAccesses = source.PartyFieldAccesses?.Select(a => a?.Clone()).Where(a => a != null).ToList() ?? new List<PartyFieldReference>();
             clone.PendingPartyHpOperation = source.PendingPartyHpOperation?.Clone();
             clone.PendingPartySpOperation = source.PendingPartySpOperation?.Clone();
+            clone.CompletedPartyStatOperations = source.CompletedPartyStatOperations?.Select(p => p?.Clone()).Where(p => p != null).ToList()
+                ?? new List<PendingPartyStatOperation>();
             clone.PartyEffects = source.PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>();
 
             foreach (var alt in source.AlternativePaths)

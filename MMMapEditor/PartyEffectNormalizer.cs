@@ -34,26 +34,25 @@ namespace MMMapEditor
             PromotePartyScanLoopEffects(source, allPartyEffects);
             result.AddRange(allPartyEffects);
 
+            var pendingStatOperations = CollectPendingStatOperations(source);
             PartyConditionKind inferredCondition = InferPartyCondition(
                 allPartyEffects,
-                source.PendingPartyHpOperation,
-                source.PendingPartySpOperation);
+                pendingStatOperations.ToArray());
 
-            var normalizedHpEffect = CreateNormalizedStatEffect(
-                source.PendingPartyHpOperation,
-                source.LoopSemantic,
-                inferredCondition,
-                PartyFieldKind.Hp);
-            if (normalizedHpEffect != null)
-                result.Add(normalizedHpEffect);
-
-            var normalizedSpEffect = CreateNormalizedStatEffect(
-                source.PendingPartySpOperation,
-                source.LoopSemantic,
-                inferredCondition,
-                PartyFieldKind.Sp);
-            if (normalizedSpEffect != null)
-                result.Add(normalizedSpEffect);
+            foreach (var pending in pendingStatOperations
+                         .Where(p => p != null && p.Field != PartyFieldKind.Unknown)
+                         .OrderBy(p => p.ExecutionOrder > 0 ? 0 : 1)
+                         .ThenBy(p => p.ExecutionOrder > 0 ? p.ExecutionOrder : int.MaxValue)
+                         .ThenBy(p => p.StartAddress))
+            {
+                var normalizedEffect = CreateNormalizedStatEffect(
+                    pending,
+                    source.LoopSemantic,
+                    inferredCondition,
+                    pending.Field);
+                if (normalizedEffect != null)
+                    result.Add(normalizedEffect);
+            }
 
             // Если есть loop-derived эффект с условием, он относится к части партии, а не ко всей партии.
             foreach (var effect in result)
@@ -77,12 +76,18 @@ namespace MMMapEditor
             result = RemoveRedundantStatWrittenEffects(result);
             result = RemoveLoopGuardEffects(result);
 
-            return result
-                .Where(e => e != null)
-                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
-                .Select(g => g.First())
+            return AggregateEquivalentEffects(result)
                 .OrderBy(PartyEffectSemantics.BuildSemanticKey)
                 .ToList();
+        }
+
+        public static bool CanCreateNormalizedStatEffect(PendingPartyStatOperation pending, PartyFieldKind field)
+        {
+            return CreateNormalizedStatEffect(
+                       pending,
+                       LoopSemanticKind.None,
+                       PartyConditionKind.None,
+                       field) != null;
         }
 
         public static PartyEffect CreateNormalizedStatEffect(PendingPartyStatOperation pending,
@@ -243,6 +248,77 @@ namespace MMMapEditor
                         !ReferenceEquals(h, effect) &&
                         PartyEffectSemantics.GetEffectiveField(h) == field &&
                         MatchesSameTarget(effect, h));
+                })
+                .ToList();
+        }
+
+        private static List<PendingPartyStatOperation> CollectPendingStatOperations(PathAnalysisResult source)
+        {
+            var pendingOperations = new List<PendingPartyStatOperation>();
+            if (source == null)
+                return pendingOperations;
+
+            AddPendingStatOperation(pendingOperations, source.CompletedPartyStatOperations);
+            AddPendingStatOperation(pendingOperations, source.PendingPartyHpOperation, PartyFieldKind.Hp);
+            AddPendingStatOperation(pendingOperations, source.PendingPartySpOperation, PartyFieldKind.Sp);
+            return pendingOperations;
+        }
+
+        private static void AddPendingStatOperation(
+            List<PendingPartyStatOperation> target,
+            IEnumerable<PendingPartyStatOperation> pendingOperations)
+        {
+            if (target == null || pendingOperations == null)
+                return;
+
+            foreach (var pending in pendingOperations)
+            {
+                if (pending == null)
+                    continue;
+
+                var clone = pending.Clone();
+                if (clone.Field == PartyFieldKind.Unknown)
+                    continue;
+
+                target.Add(clone);
+            }
+        }
+
+        private static void AddPendingStatOperation(
+            List<PendingPartyStatOperation> target,
+            PendingPartyStatOperation pending,
+            PartyFieldKind fallbackField)
+        {
+            if (target == null || pending == null)
+                return;
+
+            var clone = pending.Clone();
+            if (clone.Field == PartyFieldKind.Unknown)
+                clone.Field = fallbackField;
+
+            if (clone.Field == PartyFieldKind.Unknown)
+                return;
+
+            target.Add(clone);
+        }
+
+        private static List<PartyEffect> AggregateEquivalentEffects(IEnumerable<PartyEffect> effects)
+        {
+            return (effects ?? Enumerable.Empty<PartyEffect>())
+                .Where(effect => effect != null)
+                .GroupBy(PartyEffectSemantics.BuildAggregationKey)
+                .Select(group =>
+                {
+                    var aggregated = group
+                        .OrderBy(effect => effect.ExecutionOrder > 0 ? 0 : 1)
+                        .ThenBy(effect => effect.ExecutionOrder > 0 ? effect.ExecutionOrder : int.MaxValue)
+                        .ThenBy(effect => effect.InstructionAddress == 0 ? uint.MaxValue : effect.InstructionAddress)
+                        .First()
+                        .Clone();
+
+                    aggregated.ApplicationCount = group.Sum(effect => effect?.ApplicationCount > 0 ? effect.ApplicationCount : 1);
+                    aggregated.Description = PartyEffectSemantics.BuildHumanDescription(aggregated);
+                    return aggregated;
                 })
                 .ToList();
         }
