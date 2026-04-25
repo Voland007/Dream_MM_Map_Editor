@@ -205,7 +205,7 @@ namespace MMMapEditor
             if (containerIndex == 0 && treatZeroAsDestroyed)
             {
                 AnalysisDebug.WriteLine($"    КОНТЕЙНЕР УНИЧТОЖЕН: [3C79] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                AddOutputText(output, instructionAddress, "!!! Контейнер с лутом уничтожен !!!", TextSemanticKind.LootPayload);
+                AddOutputText(output, instructionAddress, "!!! Контейнер с лутом на полу уничтожен !!!", TextSemanticKind.LootPayload);
                 return;
             }
 
@@ -405,7 +405,7 @@ namespace MMMapEditor
             {
                 databaseIndex = -1;
                 debugStatus = "destroyed";
-                return "!!! Предмет уничтожен !!!";
+                return "!!! Предмет на полу уничтожен !!!";
             }
 
             databaseIndex = itemIndex - 1;
@@ -472,7 +472,7 @@ namespace MMMapEditor
             if (gemsValue == 0)
             {
                 AnalysisDebug.WriteLine($"    GEMS УНИЧТОЖЕНЫ: [3C7F] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                AddOutputText(output, instructionAddress, "!!! GEMS уничтожены !!!", TextSemanticKind.LootPayload);
+                AddOutputText(output, instructionAddress, "!!! GEMS на полу уничтожены !!!", TextSemanticKind.LootPayload);
                 return;
             }
 
@@ -530,7 +530,7 @@ namespace MMMapEditor
             if (rawGoldValue == 0)
             {
                 AnalysisDebug.WriteLine($"    GOLD УНИЧТОЖЕНО: [3C7D:3C7E] = 0x0000 (инструкция 0x{instructionAddress:X4})");
-                AddOutputText(output, instructionAddress, "!!! GOLD уничтожено !!!", TextSemanticKind.LootPayload);
+                AddOutputText(output, instructionAddress, "!!! GOLD на полу уничтожено !!!", TextSemanticKind.LootPayload);
                 return;
             }
 
@@ -801,21 +801,21 @@ namespace MMMapEditor
             {
                 case 0x3C79:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C79] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    AddOutputText(output, instructionAddress, "!!! Контейнер с лутом уничтожен !!!", TextSemanticKind.LootPayload);
+                    AddOutputText(output, instructionAddress, "!!! Контейнер с лутом на полу уничтожен !!!", TextSemanticKind.LootPayload);
                     break;
                 case 0x3C7A:
                 case 0x3C7B:
                 case 0x3C7C:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [0x{address:X4}] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    AddOutputText(output, instructionAddress, "!!! Предмет уничтожен !!!", TextSemanticKind.LootPayload);
+                    AddOutputText(output, instructionAddress, "!!! Предмет на полу уничтожен !!!", TextSemanticKind.LootPayload);
                     break;
                 case 0x3C7D:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C7D] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    AddOutputText(output, instructionAddress, "!!! GOLD уничтожено !!!", TextSemanticKind.LootPayload);
+                    AddOutputText(output, instructionAddress, "!!! GOLD на полу уничтожено !!!", TextSemanticKind.LootPayload);
                     break;
                 case 0x3C7F:
                     AnalysisDebug.WriteLine($"    ОБНАРУЖЕНО УНИЧТОЖЕНИЕ ЛУТА: [3C7F] = 0x00 (инструкция 0x{instructionAddress:X4})");
-                    AddOutputText(output, instructionAddress, "!!! GEMS уничтожены !!!", TextSemanticKind.LootPayload);
+                    AddOutputText(output, instructionAddress, "!!! GEMS на полу уничтожены !!!", TextSemanticKind.LootPayload);
                     break;
             }
         }

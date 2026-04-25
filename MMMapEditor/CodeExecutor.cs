@@ -2925,7 +2925,7 @@ namespace MMMapEditor
                 return false;
 
             string trimmed = text.Trim();
-            if (trimmed.Equals("!!! GOLD уничтожено !!!", StringComparison.OrdinalIgnoreCase))
+            if (trimmed.Equals("!!! GOLD на полу уничтожено !!!", StringComparison.OrdinalIgnoreCase))
                 return true;
 
             if (!trimmed.EndsWith(" GOLD", StringComparison.OrdinalIgnoreCase))
