@@ -3045,6 +3045,33 @@ namespace MMMapEditor
             }
         }
 
+        private static int GetPrintedCharTemplateInsertionIndex(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return -1;
+
+            int payloadStart = 0;
+            if (text.StartsWith("Text at 0x", StringComparison.Ordinal))
+            {
+                int colonIndex = text.IndexOf(": ", StringComparison.Ordinal);
+                if (colonIndex >= 0)
+                    payloadStart = colonIndex + 2;
+            }
+
+            for (int i = payloadStart; i < text.Length - 1; i++)
+            {
+                if (text[i] != '#')
+                    continue;
+
+                if (!char.IsWhiteSpace(text[i + 1]))
+                    continue;
+
+                return i + 1;
+            }
+
+            return -1;
+        }
+
         private void AppendPrintedCharToLastText(PathAnalysisResult result, RegisterTracker registerTracker,
             uint instructionAddress, bool debugMode)
         {
@@ -3066,16 +3093,28 @@ namespace MMMapEditor
                 return;
 
             string previousText = lastText.Text;
-            string appendedText = previousText + (char)charValue;
-            lastText.Text = appendedText;
+            int insertionIndex = GetPrintedCharTemplateInsertionIndex(previousText);
+            string updatedText = insertionIndex >= 0
+                ? previousText.Insert(insertionIndex, ((char)charValue).ToString())
+                : previousText + (char)charValue;
+
+            lastText.Text = updatedText;
             lastText.Address = instructionAddress;
 
             if (result.FoundTexts.Contains(previousText))
                 result.FoundTexts.Remove(previousText);
-            result.FoundTexts.Add(appendedText);
+            result.FoundTexts.Add(updatedText);
 
             if (debugMode)
-                AnalysisDebug.WriteLine($"        Дописали символ '{(char)charValue}' к последнему тексту -> {appendedText}");
+            {
+                string action = insertionIndex >= 0
+                    ? "Вставили символ"
+                    : "Дописали символ";
+                string target = insertionIndex >= 0
+                    ? "в шаблон последнего текста"
+                    : "к последнему тексту";
+                AnalysisDebug.WriteLine($"        {action} '{(char)charValue}' {target} -> {updatedText}");
+            }
         }
 
         /// <summary>
