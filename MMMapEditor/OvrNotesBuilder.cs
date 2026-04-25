@@ -506,7 +506,20 @@ namespace MMMapEditor
             return variant.GetOccurrenceDescription();
         }
 
-        private static List<string> BuildVariantHeaderAnnotations(PathVariantInfo variant)
+        private static string BuildProbabilityHeaderAnnotation(string probabilityLine)
+        {
+            if (string.IsNullOrWhiteSpace(probabilityLine))
+                return null;
+
+            if (probabilityLine.StartsWith("Вероятность: ", StringComparison.Ordinal))
+                probabilityLine = probabilityLine.Substring("Вероятность: ".Length);
+
+            return PrefixProbabilityWordInParentheses(probabilityLine);
+        }
+
+        private static List<string> BuildVariantHeaderAnnotations(
+            PathVariantInfo variant,
+            string suppressedProbabilityLine = null)
         {
             var annotations = new List<string>();
 
@@ -515,11 +528,15 @@ namespace MMMapEditor
                 annotations.Add(occurrence);
 
             string probability = BuildProbabilityLine(variant);
-            if (!string.IsNullOrEmpty(probability) && probability.StartsWith("Вероятность: ", StringComparison.Ordinal))
+            if (!string.IsNullOrEmpty(suppressedProbabilityLine) &&
+                string.Equals(probability, suppressedProbabilityLine, StringComparison.Ordinal))
             {
-                probability = probability.Substring("Вероятность: ".Length);
-                annotations.Add(PrefixProbabilityWordInParentheses(probability));
+                probability = null;
             }
+
+            string probabilityAnnotation = BuildProbabilityHeaderAnnotation(probability);
+            if (!string.IsNullOrWhiteSpace(probabilityAnnotation))
+                annotations.Add(probabilityAnnotation);
 
             return annotations;
         }
@@ -1411,6 +1428,40 @@ namespace MMMapEditor
             return result;
         }
 
+        private static string GetSharedProbabilityLine(
+            VariantTreeNode node,
+            string inheritedProbabilityLine = null)
+        {
+            if (node == null)
+                return null;
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant?.Variant != null)
+                .ToList();
+
+            if (variants.Count < 2)
+                return null;
+
+            var probabilityLines = variants
+                .Select(variant => BuildProbabilityLine(variant.Variant))
+                .ToList();
+
+            string firstProbability = probabilityLines.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstProbability))
+                return null;
+
+            if (probabilityLines.Any(line => !string.Equals(line, firstProbability, StringComparison.Ordinal)))
+                return null;
+
+            if (!string.IsNullOrEmpty(inheritedProbabilityLine) &&
+                string.Equals(firstProbability, inheritedProbabilityLine, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return firstProbability;
+        }
+
         private static void ComputeCommonLines(VariantTreeNode node)
         {
             if (node == null)
@@ -2223,18 +2274,24 @@ namespace MMMapEditor
         private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
         {
             string header = $"Вариант {groupNumber}";
+            string sharedProbabilityLine = GetSharedProbabilityLine(group?.TreeRoot);
+            string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(sharedProbabilityLine);
+            if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
+                header += $" ({sharedProbabilityAnnotation})";
+
             if (!string.IsNullOrWhiteSpace(group?.Label))
                 header += $": {group.Label}";
             else
                 header += ":";
 
             sb.AppendLine(header);
+            bool headerContainsProbability = VariantHeaderContainsProbability(header);
 
             AppendIndentedDisplayLines(
                 sb,
                 "   ",
                 group.TreeRoot?.CommonLines,
-                false);
+                headerContainsProbability);
 
             bool isPureTopLevelNoOp = IsPureTopLevelNoOpGroup(group);
             if (isPureTopLevelNoOp)
@@ -2277,7 +2334,12 @@ namespace MMMapEditor
 
                 if (entry.ChildNode != null)
                 {
-                    RenderVariantTreeNode(entry.ChildNode, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                    RenderVariantTreeNode(
+                        entry.ChildNode,
+                        sb,
+                        new List<int> { groupNumber, childIndex++ },
+                        1,
+                        sharedProbabilityLine);
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -2289,7 +2351,12 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    RenderLooseVariant(entry.DirectVariant, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                    RenderLooseVariant(
+                        entry.DirectVariant,
+                        sb,
+                        new List<int> { groupNumber, childIndex++ },
+                        1,
+                        sharedProbabilityLine);
                 }
 
                 wroteAnyChild = true;
@@ -2323,7 +2390,12 @@ namespace MMMapEditor
                    ShouldRenderAsNoChoiceVariant(item);
         }
 
-        private static void RenderVariantTreeNode(VariantTreeNode node, StringBuilder sb, List<int> numbering, int depth)
+        private static void RenderVariantTreeNode(
+            VariantTreeNode node,
+            StringBuilder sb,
+            List<int> numbering,
+            int depth,
+            string inheritedProbabilityLine = null)
         {
             if (!IsRenderableStructuralNode(node))
                 return;
@@ -2341,13 +2413,21 @@ namespace MMMapEditor
             var singleLeaf = renderableDirectVariants.Count == 1 && renderableChildren.Count == 0
                 ? renderableDirectVariants[0].Variant
                 : null;
+            string sharedProbabilityLine = singleLeaf == null
+                ? GetSharedProbabilityLine(node, inheritedProbabilityLine)
+                : null;
+            string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(sharedProbabilityLine);
 
             string header = $"{indent}Вариант {variantNumber}";
             if (singleLeaf != null)
             {
-                var annotations = BuildVariantHeaderAnnotations(singleLeaf);
+                var annotations = BuildVariantHeaderAnnotations(singleLeaf, inheritedProbabilityLine);
                 if (annotations.Count > 0)
                     header += $" ({string.Join("; ", annotations)})";
+            }
+            else if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
+            {
+                header += $" ({sharedProbabilityAnnotation})";
             }
 
             if (!string.IsNullOrWhiteSpace(node.Label))
@@ -2356,12 +2436,13 @@ namespace MMMapEditor
                 header += ":";
 
             sb.AppendLine(header);
+            bool headerContainsProbability = VariantHeaderContainsProbability(header);
 
             AppendIndentedDisplayLines(
                 sb,
                 indent + "   ",
                 node.CommonLines,
-                singleLeaf != null && singleLeaf.HasProbabilityInfo);
+                headerContainsProbability);
 
             if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
             {
@@ -2369,7 +2450,7 @@ namespace MMMapEditor
                     sb,
                     indent + "   ",
                     renderableDirectVariants[0].Lines,
-                    singleLeaf != null && singleLeaf.HasProbabilityInfo);
+                    headerContainsProbability);
                 return;
             }
 
@@ -2392,6 +2473,7 @@ namespace MMMapEditor
 
             int nestedIndex = 1;
             bool wroteAny = false;
+            string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
 
             foreach (var entry in BuildOrderedRenderEntries(renderableChildren, renderableDirectVariants))
             {
@@ -2400,7 +2482,12 @@ namespace MMMapEditor
 
                 if (entry.ChildNode != null)
                 {
-                    RenderVariantTreeNode(entry.ChildNode, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                    RenderVariantTreeNode(
+                        entry.ChildNode,
+                        sb,
+                        new List<int>(numbering) { nestedIndex++ },
+                        depth + 1,
+                        descendantSuppressedProbabilityLine);
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -2412,7 +2499,12 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    RenderLooseVariant(entry.DirectVariant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                    RenderLooseVariant(
+                        entry.DirectVariant,
+                        sb,
+                        new List<int>(numbering) { nestedIndex++ },
+                        depth + 1,
+                        descendantSuppressedProbabilityLine);
                 }
 
                 wroteAny = true;
@@ -2460,21 +2552,27 @@ namespace MMMapEditor
                 .ThenBy(v => v?.Variant?.PathId ?? int.MaxValue);
         }
 
-        private static void RenderLooseVariant(VariantRenderItem item, StringBuilder sb, List<int> numbering, int depth)
+        private static void RenderLooseVariant(
+            VariantRenderItem item,
+            StringBuilder sb,
+            List<int> numbering,
+            int depth,
+            string inheritedProbabilityLine = null)
         {
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
-            var annotations = BuildVariantHeaderAnnotations(item?.Variant);
+            var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine);
             if (annotations.Count > 0)
                 header += $" ({string.Join("; ", annotations)})";
             header += ":";
             sb.AppendLine(header);
+            bool headerContainsProbability = VariantHeaderContainsProbability(header);
 
             AppendIndentedDisplayLines(
                 sb,
                 indent + "   ",
                 item?.Lines,
-                item?.Variant?.HasProbabilityInfo == true);
+                headerContainsProbability);
         }
 
         private static void AppendLineToFirstMeaningfulVariant(
