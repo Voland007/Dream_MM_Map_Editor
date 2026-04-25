@@ -148,12 +148,14 @@ namespace MMMapEditor
             {
                 string statLabel = GetScalarPartyStatLabel(field);
                 string effectText = BuildRepeatedHalveOutcomeText(applicationCount);
+                string warningPrefix = applicationCount == 2 ? "!!" : "!";
+                string warningSuffix = applicationCount == 2 ? "!!" : "!";
                 if (condition == PartyConditionKind.MaleOnly)
-                    return $"! {statLabel} каждого мужчины в партии {effectText} !";
+                    return $"{warningPrefix} {statLabel} каждого мужчины в партии {effectText} {warningSuffix}";
                 if (condition == PartyConditionKind.FemaleOnly)
                     return $"{statLabel} женщин в партии {effectText}";
                 if (scope == PartyEffectScope.WholeParty)
-                    return $"! {statLabel} каждого персонажа партии {effectText} !";
+                    return $"{warningPrefix} {statLabel} каждого персонажа партии {effectText} {warningSuffix}";
                 if (scope == PartyEffectScope.PartySubset)
                     return $"{statLabel} части партии {effectText}";
                 if (scope == PartyEffectScope.CurrentLoopMember)
@@ -782,7 +784,7 @@ namespace MMMapEditor
                 return "уменьшается вдвое";
 
             if (applicationCount == 2)
-                return "уменьшается до четверти от исходного значения";
+                return "уменьшается ДО ЧЕТВЕРТИ от исходного значения";
 
             double remainingPercent = 100.0 / Math.Pow(2.0, applicationCount);
             if (remainingPercent >= 0.001)

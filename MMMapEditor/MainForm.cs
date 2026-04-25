@@ -2477,7 +2477,7 @@ namespace MMMapEditor
 
             var serviceWarningMatches = Regex.Matches(
                 noteText,
-                @"⚠Вызывается random encounter ⚠|! (?:HP|SP) (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается вдвое !|! У каждого персонажа партии отнимается \d+ (?:HP|SP) !|! (?:HP|SP) (?:каждого мужчины в партии|каждого персонажа партии) обнуляется !",
+                @"⚠Вызывается random encounter ⚠|!{1,2} (?:HP|SP) (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается [^\r\n!]+ !{1,2}|! У каждого персонажа партии отнимается \d+ (?:HP|SP) !|! (?:HP|SP) (?:каждого мужчины в партии|каждого персонажа партии) обнуляется !",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in serviceWarningMatches)
@@ -2495,6 +2495,19 @@ namespace MMMapEditor
                     ? Color.FromArgb(120, 0, 0)
                     : Color.FromArgb(70, 0, 0);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var quarterMatches = Regex.Matches(
+                noteText,
+                @"ДО ЧЕТВЕРТИ",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in quarterMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 205, 205);
+                rt.SelectionBackColor = Color.FromArgb(120, 18, 32);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
             }
 
             var conditionStatusMatches = Regex.Matches(
