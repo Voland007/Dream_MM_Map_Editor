@@ -2598,7 +2598,7 @@ namespace MMMapEditor
 
             var spoilerPasswordMatches = Regex.Matches(
                 noteText,
-                @"!!! ВНИМАНИЕ СПОЙЛЕР !!! ТРЕБУЕМЫЙ ПАРОЛЬ:\s*(?<password>[^\r\n]+)",
+                @"(?:\[\s*!!! ВНИМАНИЕ СПОЙЛЕР !!!\s*\]\s*ПРАВИЛЬНЫЙ ОТВЕТ:\s*(?<answer>[^\r\n]+)|!!! ВНИМАНИЕ СПОЙЛЕР !!! ТРЕБУЕМЫЙ ПАРОЛЬ:\s*(?<answer>[^\r\n]+))",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in spoilerPasswordMatches)
@@ -2608,7 +2608,7 @@ namespace MMMapEditor
                 rt.SelectionBackColor = Color.FromArgb(150, 0, 0);
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
 
-                Group passwordGroup = match.Groups["password"];
+                Group passwordGroup = match.Groups["answer"];
                 if (!passwordGroup.Success || passwordGroup.Length == 0)
                     continue;
 

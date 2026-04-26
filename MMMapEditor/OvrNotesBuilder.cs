@@ -21,6 +21,8 @@ namespace MMMapEditor
     {
         private static readonly Lazy<HashSet<string>> KnownLootItemNames =
             new Lazy<HashSet<string>>(BuildKnownLootItemNames);
+        private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
+        private const string RiddleAnswerPrompt = "ANSWER:>";
 
         public static OvrNotesBuildResult BuildNotes(
             string filename,
@@ -133,6 +135,12 @@ namespace MMMapEditor
                     config,
                     obj);
 
+                string inlineSpecialSpoilerLine = TryBuildInlineSpecialSpoilerLine(
+                    filename,
+                    fileNameOnly,
+                    config,
+                    obj);
+
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
                         obj,
@@ -141,7 +149,8 @@ namespace MMMapEditor
                         defaultMonsterBatchCount,
                         defaultDarkeningLevel,
                         defaultRandomEncounterChance,
-                        specialSpoilerLine)
+                        specialSpoilerLine,
+                        inlineSpecialSpoilerLine)
                     : string.Empty;
 
                 StringBuilder newNotes = new StringBuilder();
@@ -158,7 +167,8 @@ namespace MMMapEditor
                         defaultMonsterLevel,
                         defaultMonsterBatchCount,
                         defaultDarkeningLevel,
-                        defaultRandomEncounterChance);
+                        defaultRandomEncounterChance,
+                        inlineSpecialSpoilerLine);
 
                     foreach (var key in variantContents.Keys.ToList())
                         variantContents[key] = NumberLootBlockIfNeeded(variantContents[key]);
@@ -215,7 +225,8 @@ namespace MMMapEditor
             byte defaultMonsterLevel,
             byte defaultMonsterBatchCount,
             byte defaultDarkeningLevel,
-            byte defaultRandomEncounterChance)
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
         {
             if (obj.PathVariants != null && obj.PathVariants.Count > 0)
             {
@@ -225,7 +236,8 @@ namespace MMMapEditor
                     defaultMonsterLevel,
                     defaultMonsterBatchCount,
                     defaultDarkeningLevel,
-                    defaultRandomEncounterChance);
+                    defaultRandomEncounterChance,
+                    inlineSpecialSpoilerLine);
             }
 
             return BuildVariantContentsFromObjectTexts(
@@ -234,7 +246,8 @@ namespace MMMapEditor
                 defaultMonsterLevel,
                 defaultMonsterBatchCount,
                 defaultDarkeningLevel,
-                defaultRandomEncounterChance);
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
         }
 
         private static Dictionary<int, List<string>> BuildVariantContentsFromPathVariants(
@@ -243,7 +256,8 @@ namespace MMMapEditor
             byte defaultMonsterLevel,
             byte defaultMonsterBatchCount,
             byte defaultDarkeningLevel,
-            byte defaultRandomEncounterChance)
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
         {
             var variantContents = new Dictionary<int, List<string>>();
 
@@ -263,7 +277,8 @@ namespace MMMapEditor
                     defaultMonsterLevel,
                     defaultMonsterBatchCount,
                     defaultDarkeningLevel,
-                    defaultRandomEncounterChance);
+                    defaultRandomEncounterChance,
+                    inlineSpecialSpoilerLine);
 
                 if (lines.Count == 0)
                     lines.Add("Ничего не происходит (не выполнены условия для наступления ни одного варианта)");
@@ -280,9 +295,16 @@ namespace MMMapEditor
             byte defaultMonsterLevel,
             byte defaultMonsterBatchCount,
             byte defaultDarkeningLevel,
-            byte defaultRandomEncounterChance)
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
         {
             var variantContents = BuildVariantContentsFromRawTexts(obj);
+            if (!string.IsNullOrWhiteSpace(inlineSpecialSpoilerLine))
+            {
+                foreach (var key in variantContents.Keys.ToList())
+                    InsertInlineSpoilerAfterAnswerPrompt(variantContents[key], inlineSpecialSpoilerLine);
+            }
+
             var monsterStatLines = GetMonsterStatLines(
                 obj,
                 defaultMonsterPower,
@@ -333,10 +355,12 @@ namespace MMMapEditor
             byte defaultMonsterLevel,
             byte defaultMonsterBatchCount,
             byte defaultDarkeningLevel,
-            byte defaultRandomEncounterChance)
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
         {
             var lines = new List<string>();
             var narrativeLines = DecodeNoteTexts(rawTexts);
+            InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
             var monsterStatLines = GetMonsterStatLines(
                 variantObject,
                 defaultMonsterPower,
@@ -390,11 +414,14 @@ namespace MMMapEditor
             byte defaultMonsterLevel,
             byte defaultMonsterBatchCount,
             byte defaultDarkeningLevel,
-            byte defaultRandomEncounterChance)
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
         {
             var lines = new List<string>();
+            var narrativeLines = DecodeNoteTexts(rawTexts);
+            InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
 
-            lines.AddRange(DecodeNoteTexts(rawTexts));
+            lines.AddRange(narrativeLines);
             lines.AddRange(GetMonsterStatLines(
                 variantObject,
                 defaultMonsterPower,
@@ -635,14 +662,15 @@ namespace MMMapEditor
             public List<string> Lines { get; set; } = new List<string>();
         }
 
-        private static string BuildHierarchicalVariantNotes(
+private static string BuildHierarchicalVariantNotes(
     OvrObject obj,
     byte defaultMonsterPower,
     byte defaultMonsterLevel,
     byte defaultMonsterBatchCount,
     byte defaultDarkeningLevel,
     byte defaultRandomEncounterChance,
-    string specialSpoilerLine)
+    string specialSpoilerLine,
+    string inlineSpecialSpoilerLine)
         {
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
@@ -661,7 +689,8 @@ namespace MMMapEditor
                     defaultMonsterLevel,
                     defaultMonsterBatchCount,
                     defaultDarkeningLevel,
-                    defaultRandomEncounterChance);
+                    defaultRandomEncounterChance,
+                    inlineSpecialSpoilerLine);
 
                 lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
 
@@ -2700,16 +2729,51 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(password))
                 return null;
 
-            return $"!!! ВНИМАНИЕ СПОЙЛЕР !!! ТРЕБУЕМЫЙ ПАРОЛЬ: {password}";
+            return BuildSpoilerAnswerLine(password);
+        }
+
+        private static string TryBuildInlineSpecialSpoilerLine(
+            string filename,
+            string fileNameOnly,
+            OvrFileConfig config,
+            OvrObject obj)
+        {
+            if (!string.Equals(fileNameOnly, "CAVE7.OVR", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            if (obj?.PatchAddress != 0x005C)
+                return null;
+
+            string answer = TryReadCave7RiddleAnswer(filename, config);
+            if (string.IsNullOrWhiteSpace(answer))
+                return null;
+
+            return BuildSpoilerAnswerLine(answer);
         }
 
         private static string TryReadCave4AccessCode(string filename, OvrFileConfig config)
         {
+            // В CAVE4 патч 0x0092 проверяет пароль как storedByte + 0x1F
+            // (последовательность CLC / ADC AL, 1Fh перед сравнением с вводом).
+            return TryReadShiftedOverlayText(filename, config, 0xC9D3, 32, 0x1F);
+        }
+
+        private static string TryReadCave7RiddleAnswer(string filename, OvrFileConfig config)
+        {
+            // В CAVE7 правильный ответ лежит в оверлее в зашифрованном виде:
+            // к каждому байту нужно прибавить 0x1E до сравнения с введённым символом.
+            return TryReadShiftedOverlayText(filename, config, 0xCBBC, 32, 0x1E);
+        }
+
+        private static string TryReadShiftedOverlayText(
+            string filename,
+            OvrFileConfig config,
+            ushort startAddress,
+            int maxLength,
+            byte addValue)
+        {
             if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
                 return null;
-
-            const ushort accessCodeAddress = 0xC9D3;
-            const int maxPasswordLength = 32;
 
             try
             {
@@ -2717,18 +2781,16 @@ namespace MMMapEditor
                 using var br = new BinaryReader(fs);
 
                 var decodedBytes = new List<byte>();
-                for (int i = 0; i < maxPasswordLength; i++)
+                for (int i = 0; i < maxLength; i++)
                 {
-                    ushort currentAddress = unchecked((ushort)(accessCodeAddress + i));
+                    ushort currentAddress = unchecked((ushort)(startAddress + i));
                     if (!OvrOverlayAddressReader.TryReadByte(br, config, currentAddress, out byte encodedByte))
                         break;
 
                     if (encodedByte == 0)
                         break;
 
-                    // В CAVE4 патч 0x0092 проверяет пароль как storedByte + 0x1F
-                    // (последовательность CLC / ADC AL, 1Fh перед сравнением с вводом).
-                    decodedBytes.Add(unchecked((byte)(encodedByte + 0x1F)));
+                    decodedBytes.Add(unchecked((byte)(encodedByte + addValue)));
                 }
 
                 return decodedBytes.Count == 0
@@ -2739,6 +2801,14 @@ namespace MMMapEditor
             {
                 return null;
             }
+        }
+
+        private static string BuildSpoilerAnswerLine(string answer)
+        {
+            if (string.IsNullOrWhiteSpace(answer))
+                return null;
+
+            return $"{SpoilerAnswerLinePrefix}{answer}";
         }
 
         private static List<string> DecodeNoteTexts(IEnumerable<string> rawTexts)
@@ -3072,6 +3142,25 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static void InsertInlineSpoilerAfterAnswerPrompt(List<string> narrativeLines, string spoilerLine)
+        {
+            if (string.IsNullOrWhiteSpace(spoilerLine) || narrativeLines == null || narrativeLines.Count == 0)
+                return;
+
+            if (narrativeLines.Contains(spoilerLine, StringComparer.Ordinal))
+                return;
+
+            for (int i = 0; i < narrativeLines.Count; i++)
+            {
+                string line = narrativeLines[i];
+                if (line?.IndexOf(RiddleAnswerPrompt, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                narrativeLines.Insert(i + 1, spoilerLine);
+                return;
+            }
         }
 
         private static void AppendBlankLineAfterLootBlockIfNeeded(
