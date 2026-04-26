@@ -783,7 +783,9 @@ private static string BuildHierarchicalVariantNotes(
                 IntroduceSharedLineHierarchy(root);
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
-                group.TreeRoot = SimplifyGenericChoiceTree(CompressVariantTree(root));
+                group.TreeRoot = PruneDecorativeSingleChoiceLeaves(
+                    SimplifyGenericChoiceTree(
+                        CompressVariantTree(root)));
             }
 
             groups = groups
@@ -1187,6 +1189,42 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return node;
+        }
+
+        private static VariantTreeNode PruneDecorativeSingleChoiceLeaves(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            for (int i = 0; i < node.Children.Count; i++)
+                node.Children[i] = PruneDecorativeSingleChoiceLeaves(node.Children[i]);
+
+            node.Children = node.Children
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+
+            while (node.Children.Count == 1 &&
+                   CountRenderableDirectVariants(node) == 0 &&
+                   IsDecorativeChoicePlaceholderLeaf(node.Children[0]))
+            {
+                node.Children.Clear();
+            }
+
+            return node;
+        }
+
+        private static bool IsDecorativeChoicePlaceholderLeaf(VariantTreeNode node)
+        {
+            if (node == null || string.IsNullOrWhiteSpace(node.Label))
+                return false;
+
+            if ((node.CommonLines?.Count ?? 0) > 0)
+                return false;
+
+            if (node.Children != null && node.Children.Any(IsRenderableStructuralNode))
+                return false;
+
+            return CountRenderableDirectVariants(node) == 0;
         }
 
         private static bool MergeRedundantSameLabelChildren(VariantTreeNode node)
