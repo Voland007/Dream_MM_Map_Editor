@@ -273,6 +273,28 @@ namespace MMMapEditor
         LootPayload = 2
     }
 
+    public enum NoteInlineStyleKind
+    {
+        InverseVideo = 0
+    }
+
+    public sealed class NoteInlineStyleSpan
+    {
+        public int Start { get; set; }
+        public int Length { get; set; }
+        public NoteInlineStyleKind Kind { get; set; }
+
+        public NoteInlineStyleSpan Clone()
+        {
+            return new NoteInlineStyleSpan
+            {
+                Start = Start,
+                Length = Length,
+                Kind = Kind
+            };
+        }
+    }
+
     public class TextEntry
     {
         public string Text { get; set; }

@@ -3072,6 +3072,21 @@ namespace MMMapEditor
             return -1;
         }
 
+        private static bool ShouldInsertSpaceBeforePrintedChar(string previousText, char visibleChar, int insertionIndex)
+        {
+            if (insertionIndex >= 0 || !char.IsDigit(visibleChar) || string.IsNullOrEmpty(previousText))
+                return false;
+
+            int lastVisibleIndex = previousText.Length - 1;
+            while (lastVisibleIndex >= 0 && char.IsWhiteSpace(previousText[lastVisibleIndex]))
+                lastVisibleIndex--;
+
+            if (lastVisibleIndex < 0)
+                return false;
+
+            return char.IsLetter(previousText[lastVisibleIndex]);
+        }
+
         private void AppendPrintedCharToLastText(PathAnalysisResult result, RegisterTracker registerTracker,
             uint instructionAddress, bool debugMode)
         {
@@ -3081,7 +3096,7 @@ namespace MMMapEditor
             if (!registerTracker.TryGetByteRegisterValue("AL", out byte charValue))
                 return;
 
-            if (charValue < 0x20 || charValue > 0x7E)
+            if (!InlineNoteStyleCodec.TryDecodePrintableOverlayChar(charValue, out char visibleChar, out bool isInverse))
                 return;
 
             var lastText = result.OrderedTexts
@@ -3094,9 +3109,11 @@ namespace MMMapEditor
 
             string previousText = lastText.Text;
             int insertionIndex = GetPrintedCharTemplateInsertionIndex(previousText);
+            string encodedChar = InlineNoteStyleCodec.EncodePrintableChar(visibleChar, isInverse);
+            string prefix = ShouldInsertSpaceBeforePrintedChar(previousText, visibleChar, insertionIndex) ? " " : string.Empty;
             string updatedText = insertionIndex >= 0
-                ? previousText.Insert(insertionIndex, ((char)charValue).ToString())
-                : previousText + (char)charValue;
+                ? previousText.Insert(insertionIndex, encodedChar)
+                : previousText + prefix + encodedChar;
 
             lastText.Text = updatedText;
             lastText.Address = instructionAddress;
@@ -3113,7 +3130,8 @@ namespace MMMapEditor
                 string target = insertionIndex >= 0
                     ? "в шаблон последнего текста"
                     : "к последнему тексту";
-                AnalysisDebug.WriteLine($"        {action} '{(char)charValue}' {target} -> {updatedText}");
+                string inverseSuffix = isInverse ? " [inverse]" : string.Empty;
+                AnalysisDebug.WriteLine($"        {action} '{visibleChar}'{inverseSuffix} {target} -> {updatedText}");
             }
         }
 

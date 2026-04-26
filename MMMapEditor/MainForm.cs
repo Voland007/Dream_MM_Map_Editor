@@ -100,6 +100,7 @@ namespace MMMapEditor
         private CheckBox topMessageCheck, bottomMessageCheck, leftMessageCheck, rightMessageCheck;
         private RichTextBox notesTextBox;
         private Dictionary<Point, string> notesPerCell = new Dictionary<Point, string>();
+        private Dictionary<Point, List<NoteInlineStyleSpan>> noteStyleSpansPerCell = new Dictionary<Point, List<NoteInlineStyleSpan>>();
         private PictureBox cellImageBox;
         private Button bufferPasteImageButton;
         private Button deleteImageButton;
@@ -1192,6 +1193,7 @@ namespace MMMapEditor
 
             centralOptions = loadResult.CentralOptions;
             notesPerCell = loadResult.NotesPerCell;
+            noteStyleSpansPerCell = loadResult.NoteStyleSpansPerCell ?? new Dictionary<Point, List<NoteInlineStyleSpan>>();
             messageStates = loadResult.MessageStates;
 
             this.mostDangerousCell = loadResult.MostDangerousCell;
@@ -1495,6 +1497,7 @@ namespace MMMapEditor
 
                 centralOptions = buildResult.CentralOptions;
                 notesPerCell = buildResult.NotesPerCell;
+                noteStyleSpansPerCell = buildResult.NoteStyleSpansPerCell ?? new Dictionary<Point, List<NoteInlineStyleSpan>>();
                 messageStates = buildResult.MessageStates;
 
                 foreach (var button in gridButtons)
@@ -2348,7 +2351,38 @@ namespace MMMapEditor
 
                 // Радужный фон для заметок о смене пола в партии
                 FormatRainbowPartysexNotes(notesTextBox, noteText);
+
+                if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
+                    ApplyInlineNoteStyles(notesTextBox, noteText, inlineSpans);
             }
+        }
+
+        private void ApplyInlineNoteStyles(RichTextBox rt, string noteText, List<NoteInlineStyleSpan> inlineSpans)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText) || inlineSpans == null || inlineSpans.Count == 0)
+                return;
+
+            foreach (var span in inlineSpans)
+            {
+                if (span == null ||
+                    span.Kind != NoteInlineStyleKind.InverseVideo ||
+                    span.Length <= 0 ||
+                    span.Start < 0 ||
+                    span.Start >= noteText.Length)
+                {
+                    continue;
+                }
+
+                int length = Math.Min(span.Length, noteText.Length - span.Start);
+                if (length <= 0)
+                    continue;
+
+                rt.Select(span.Start, length);
+                rt.SelectionColor = Color.Black;
+                rt.SelectionBackColor = Color.White;
+            }
+
+            rt.Select(0, 0);
         }
 
         /// <summary>
@@ -4296,7 +4330,10 @@ namespace MMMapEditor
                 bool hasChanged = previousNote != notesPerCell[pos];
 
                 if (hasChanged)
+                {
+                    noteStyleSpansPerCell.Remove(pos);
                     isMapModified = true;
+                }
             }
         }
 

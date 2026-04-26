@@ -39,6 +39,8 @@ namespace MMMapEditor
     public sealed class OvrOverlayLoadResult
     {
         public Dictionary<Point, string> NotesPerCell { get; set; } = new Dictionary<Point, string>();
+        public Dictionary<Point, List<NoteInlineStyleSpan>> NoteStyleSpansPerCell { get; set; }
+            = new Dictionary<Point, List<NoteInlineStyleSpan>>();
         public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
         public Dictionary<Point, MainForm.SideValues<bool>> MessageStates { get; set; }
             = new Dictionary<Point, MainForm.SideValues<bool>>();
@@ -90,6 +92,8 @@ namespace MMMapEditor
             var result = new OvrOverlayLoadResult
             {
                 NotesPerCell = buildResult.NotesPerCell,
+                NoteStyleSpansPerCell = buildResult.NoteStyleSpansPerCell
+                    ?? new Dictionary<Point, List<NoteInlineStyleSpan>>(),
                 CentralOptions = buildResult.CentralOptions,
                 MessageStates = buildResult.MessageStates,
                 TotalObjects = buildResult.TotalObjects,
@@ -100,9 +104,9 @@ namespace MMMapEditor
             result.MostDangerousCell = ReadCell(fileData, config.MostDangerousCell);
             result.MostPeacefulCell = ReadCell(fileData, config.MostPeacefulCell);
 
-            PrependNote(result.NotesPerCell, result.MostDangerousCell,
+            PrependNote(result.NotesPerCell, result.NoteStyleSpansPerCell, result.MostDangerousCell,
                 "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
-            PrependNote(result.NotesPerCell, result.MostPeacefulCell,
+            PrependNote(result.NotesPerCell, result.NoteStyleSpansPerCell, result.MostPeacefulCell,
                 "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
 
             result.RandomEncounterChanceRaw = ReadByte(fileData, config.RandomEncounterChance);
@@ -117,7 +121,11 @@ namespace MMMapEditor
             return result;
         }
 
-        private static void PrependNote(Dictionary<Point, string> notesPerCell, Point? cell, string text)
+        private static void PrependNote(
+            Dictionary<Point, string> notesPerCell,
+            Dictionary<Point, List<NoteInlineStyleSpan>> noteStyleSpansPerCell,
+            Point? cell,
+            string text)
         {
             if (!cell.HasValue)
                 return;
@@ -126,12 +134,43 @@ namespace MMMapEditor
                 !string.IsNullOrWhiteSpace(currentNotes))
             {
                 if (!currentNotes.StartsWith(text))
+                {
                     notesPerCell[cell.Value] = text + "\n" + currentNotes;
+                    ShiftNoteStyleSpans(noteStyleSpansPerCell, cell.Value, text.Length + 1);
+                }
             }
             else
             {
                 notesPerCell[cell.Value] = text;
             }
+        }
+
+        private static void ShiftNoteStyleSpans(
+            Dictionary<Point, List<NoteInlineStyleSpan>> noteStyleSpansPerCell,
+            Point cell,
+            int delta)
+        {
+            if (delta == 0 ||
+                noteStyleSpansPerCell == null ||
+                !noteStyleSpansPerCell.TryGetValue(cell, out var styles) ||
+                styles == null ||
+                styles.Count == 0)
+            {
+                return;
+            }
+
+            var shifted = new List<NoteInlineStyleSpan>(styles.Count);
+            foreach (var style in styles)
+            {
+                if (style == null)
+                    continue;
+
+                var clone = style.Clone();
+                clone.Start += delta;
+                shifted.Add(clone);
+            }
+
+            noteStyleSpansPerCell[cell] = shifted;
         }
 
         private static Point? ReadCell(byte[] fileData, int address)

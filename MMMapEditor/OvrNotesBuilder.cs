@@ -8,6 +8,8 @@ namespace MMMapEditor
     public sealed class OvrNotesBuildResult
     {
         public Dictionary<Point, string> NotesPerCell { get; set; } = new Dictionary<Point, string>();
+        public Dictionary<Point, List<NoteInlineStyleSpan>> NoteStyleSpansPerCell { get; set; }
+            = new Dictionary<Point, List<NoteInlineStyleSpan>>();
         public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
         public Dictionary<Point, MainForm.SideValues<bool>> MessageStates { get; set; }
             = new Dictionary<Point, MainForm.SideValues<bool>>();
@@ -154,10 +156,11 @@ namespace MMMapEditor
                     : string.Empty;
 
                 StringBuilder newNotes = new StringBuilder();
+                var inlineStyles = new List<NoteInlineStyleSpan>();
 
                 if (useHierarchical && !string.IsNullOrWhiteSpace(hierarchicalNotes))
                 {
-                    newNotes.Append(hierarchicalNotes);
+                    AppendRenderedText(newNotes, inlineStyles, hierarchicalNotes);
                 }
                 else
                 {
@@ -182,17 +185,17 @@ namespace MMMapEditor
 
                     if (variantContents.Count == 0)
                     {
-                        newNotes.Append(existingCellNotes);
+                        AppendRenderedText(newNotes, inlineStyles, existingCellNotes);
                     }
                     else if (variantContents.Count == 1)
                     {
                         var singleVariant = variantContents.First().Value;
                         foreach (var line in singleVariant)
-                            newNotes.Append(line + "\n");
+                            AppendRenderedText(newNotes, inlineStyles, line + "\n");
                     }
                     else
                     {
-                        newNotes.AppendLine("Эта ячейка содержит различные варианты текста:");
+                        AppendRenderedText(newNotes, inlineStyles, "Эта ячейка содержит различные варианты текста:\n");
 
                         var sortedVariants = variantContents.OrderBy(v => v.Key).ToList();
                         for (int i = 0; i < sortedVariants.Count; i++)
@@ -200,13 +203,13 @@ namespace MMMapEditor
                             var variant = sortedVariants[i];
                             string variantHeader = BuildVariantHeader(obj, variant.Key, i + 1);
                             bool headerContainsProbability = VariantHeaderContainsProbability(variantHeader);
-                            newNotes.Append($"{variantHeader}:\n");
+                            AppendRenderedText(newNotes, inlineStyles, $"{variantHeader}:\n");
 
                             foreach (var line in variant.Value)
-                                newNotes.Append(FormatVariantLine(line, headerContainsProbability) + "\n");
+                                AppendRenderedText(newNotes, inlineStyles, FormatVariantLine(line, headerContainsProbability) + "\n");
 
                             if (i < sortedVariants.Count - 1)
-                                newNotes.AppendLine();
+                                AppendRenderedText(newNotes, inlineStyles, "\n");
                         }
                     }
                 }
@@ -214,9 +217,42 @@ namespace MMMapEditor
                 result.NotesPerCell[pos] = newNotes.Length > 0
                     ? newNotes.ToString().TrimEnd('\n')
                     : existingCellNotes;
+                result.NoteStyleSpansPerCell[pos] = inlineStyles
+                    .Where(span => span != null && span.Length > 0 && span.Start >= 0)
+                    .Select(span => span.Clone())
+                    .ToList();
             }
 
             return result;
+        }
+
+        private static void AppendRenderedText(
+            StringBuilder target,
+            List<NoteInlineStyleSpan> inlineStyles,
+            string rawText)
+        {
+            if (target == null || string.IsNullOrEmpty(rawText))
+                return;
+
+            var rendered = InlineNoteStyleCodec.RenderTextWithStyles(rawText);
+            int startIndex = target.Length;
+            target.Append(rendered.Text);
+
+            if (inlineStyles == null || rendered.Styles == null || rendered.Styles.Count == 0)
+                return;
+
+            foreach (var span in rendered.Styles)
+            {
+                if (span == null || span.Length <= 0)
+                    continue;
+
+                inlineStyles.Add(new NoteInlineStyleSpan
+                {
+                    Start = startIndex + span.Start,
+                    Length = span.Length,
+                    Kind = span.Kind
+                });
+            }
         }
 
         private static Dictionary<int, List<string>> BuildVariantContents(
