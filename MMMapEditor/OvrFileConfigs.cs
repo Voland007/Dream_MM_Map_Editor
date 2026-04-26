@@ -65,8 +65,6 @@ namespace MMMapEditor
                 "11 10 45 10 69 6C 6C 2C 78 81 44 84 14 11 C5 10",
                 "D1 41 D4 51 C1 C4 44 44 54 51 54 41 50 41 54 51"
             },
-                TextBaseAddr = 0xC5EC,
-                PatchBase = 0x0B7F
             },
 
             ["PORTSMIT.OVR"] = new OvrFileConfig
@@ -111,8 +109,6 @@ namespace MMMapEditor
 "11 01 44 04 44 80 C0 04 44 80 44 04 C0 80 00 54",
 "D1 D1 45 40 54 51 45 40 54 51 45 40 54 51 C1 54"
             },
-                TextBaseAddr = 0xC560,
-                PatchBase = 0x0B7F
             },
 
             ["ERLIQUIN.OVR"] = new OvrFileConfig
@@ -157,8 +153,6 @@ namespace MMMapEditor
                 "05 11 C5 D0 01 04 00 40 04 04 00 10 C5 D0 01 50",
                 "51 41 44 44 40 40 50 D1 41 40 40 40 44 44 50 D1"
             },
-                TextBaseAddr = 0xC4E9,
-                PatchBase = 0x0B7F
             },
 
             ["ALGARY.OVR"] = new OvrFileConfig
@@ -203,8 +197,6 @@ namespace MMMapEditor
                 "FF 10 45 00 54 C5 10 15 11 15 41 C0 84 14 51 31",
                 "FF 50 45 40 54 45 50 51 D1 41 44 54 41 40 60 70"
             },
-                TextBaseAddr = 0xC555,
-                PatchBase = 0x0B7F
             },
             ["DUSK.OVR"] = new OvrFileConfig
             {
@@ -248,8 +240,6 @@ namespace MMMapEditor
                 "89 8A 8A 8A 8A DC 89 1C 19 11 45 44 10 05 50 11",
                 "5B 5B 5B 5B 5B 4F 48 48 D9 41 44 44 50 51 45 50"
             },
-                TextBaseAddr = 0xC59A,
-                PatchBase = 0x0B7F
             },
             ["CAVE1.OVR"] = new OvrFileConfig
             {
@@ -293,8 +283,6 @@ namespace MMMapEditor
                 "49 08 58 11 11 D1 05 14 05 44 00 54 11 11 45 54",
                 "45 C0 44 50 41 44 40 50 D1 55 D1 45 50 41 44 D4"
             },
-                TextBaseAddr = 0xC555,
-                PatchBase = 0x0B7F
             },
             ["CAVE2.OVR"] = new OvrFileConfig
             {
@@ -338,8 +326,6 @@ namespace MMMapEditor
                 "05 14 41 44 44 44 44 44 44 40 44 44 44 44 54 11",
                 "41 C0 44 44 44 C4 44 44 44 C4 44 44 C4 44 44 D0"
             },
-                TextBaseAddr = 0xC664,
-                PatchBase = 0x0B7F
             },
             ["CAVE3.OVR"] = new OvrFileConfig
             {
@@ -383,8 +369,6 @@ namespace MMMapEditor
                 "11 51 11 41 44 54 11 51 11 51 05 14 95 11 41 50",
                 "41 44 40 44 44 44 40 44 C0 44 50 41 50 41 C4 54"
             },
-                TextBaseAddr = 0xC5BE,
-                PatchBase = 0x0B7F
             },
             ["CAVE4.OVR"] = new OvrFileConfig
             {
@@ -428,8 +412,6 @@ namespace MMMapEditor
                 "45 44 00 44 44 44 00 54 45 00 44 44 44 00 44 54",
                 "45 54 51 45 44 54 41 54 45 50 45 44 54 51 45 54"
             },
-                TextBaseAddr = 0xC659,
-                PatchBase = 0x0B7F
             },
             ["CAVE5.OVR"] = new OvrFileConfig
             {
@@ -473,8 +455,6 @@ namespace MMMapEditor
                 "05 14 11 05 14 11 41 84 C0 84 C0 84 C0 84 C0 14",
                 "C1 40 C0 C0 50 41 54 51 55 51 55 51 55 51 55 D1"
             },
-                TextBaseAddr = 0xC551,
-                PatchBase = 0x0B7F
             },
             ["CAVE6.OVR"] = new OvrFileConfig
             {
@@ -518,8 +498,6 @@ namespace MMMapEditor
                 "41 00 00 00 00 10 01 40 50 51 D1 D1 D1 D1 D1 11",
                 "DD C1 40 40 40 C0 C0 44 44 44 44 C4 C4 44 44 50"
             },
-                TextBaseAddr = 0xC68E,
-                PatchBase = 0x0B7F
             },
             ["CAVE7.OVR"] = new OvrFileConfig
             {
@@ -563,8 +541,6 @@ namespace MMMapEditor
                 "45 44 44 91 44 44 44 14 11 41 10 81 44 50 51 11",
                 "45 44 44 C0 44 44 54 51 41 54 51 51 44 54 45 50"
             },
-                TextBaseAddr = 0xC635,
-                PatchBase = 0x0B7F
             },
             ["CAVE8.OVR"] = new OvrFileConfig
             {
@@ -608,8 +584,6 @@ namespace MMMapEditor
                 "11 91 D5 11 11 91 D5 11 11 91 D5 11 11 91 D5 11",
                 "D1 41 44 50 D1 41 44 50 D1 41 44 50 D1 41 44 50"
             },
-                TextBaseAddr = 0xC691,
-                PatchBase = 0x0B7F
             },
             ["CAVE9.OVR"] = new OvrFileConfig
             {
@@ -653,22 +627,22 @@ namespace MMMapEditor
                 "11 41 50 19 41 50 01 DC 11 11 61 30 05 10 21 34",
                 "41 44 44 40 44 44 50 45 50 51 F5 71 41 50 E1 70"
             },
-                TextBaseAddr = 0xC691,
-                PatchBase = 0x0B7F
             },
 
             // Другие файлы
         };
     }
 
-        public class OvrFileConfig
-        {
-            public string OverlayType { get; set; } = "town";
-            public int StartAddress { get; set; }
-            public string[] First16Lines { get; set; }
-            public string[] Second16Lines { get; set; }
-            public int TextBaseAddr { get; set; } 
-            public int PatchBase { get; set; }
+    public class OvrFileConfig
+    {
+        public const int OverlayTextStartAddress = 0xC972;
+        public const int PatchBase = 0x0B7F;
+
+        public string OverlayType { get; set; } = "town";
+        public int StartAddress { get; set; }
+        public string[] First16Lines { get; set; }
+        public string[] Second16Lines { get; set; }
+        public int TextBaseAddr => OverlayTextStartAddress - StartAddress;
         public int MostDangerousCell => StartAddress - 24;
         public int MostPeacefulCell => StartAddress - 27;
         public int RandomEncounterChance => StartAddress - 21;
@@ -679,7 +653,7 @@ namespace MMMapEditor
         public int SurfaceX => StartAddress - 8;
         public int SurfaceY => StartAddress - 7;
         public int SectorMapLetter => StartAddress - 15;
-        public int SectorMapDigit => StartAddress - 14; 
+        public int SectorMapDigit => StartAddress - 14;
     }
 
 }

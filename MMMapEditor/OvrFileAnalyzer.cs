@@ -2798,8 +2798,7 @@ namespace MMMapEditor
             if (br == null)
                 return false;
 
-            long fileOffset = memAddr - _config.TextBaseAddr;
-            if (fileOffset < 0 || fileOffset >= br.BaseStream.Length)
+            if (!OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, memAddr, out long fileOffset))
                 return false;
 
             long originalPosition = br.BaseStream.Position;
@@ -3013,7 +3012,7 @@ namespace MMMapEditor
             }
             return keys;
         }
-        private uint CalculatePatchAddress(ushort key) => (uint)(key + _config.PatchBase) & 0xFFFF;
+        private uint CalculatePatchAddress(ushort key) => (uint)(key + OvrFileConfig.PatchBase) & 0xFFFF;
 
         private List<X86Instruction> DisassembleAll(BinaryReader br)
         {

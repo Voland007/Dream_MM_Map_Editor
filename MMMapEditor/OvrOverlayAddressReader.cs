@@ -40,16 +40,6 @@ namespace MMMapEditor
                 return true;
             }
 
-            if (memAddr >= 0xC972)
-            {
-                long overlayMappedOffset = (long)config.StartAddress + (memAddr - 0xC972);
-                if (overlayMappedOffset >= 0 && overlayMappedOffset < br.BaseStream.Length)
-                {
-                    fileOffset = overlayMappedOffset;
-                    return true;
-                }
-            }
-
             return false;
         }
 
