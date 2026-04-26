@@ -817,6 +817,7 @@ private static string BuildHierarchicalVariantNotes(
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
+                IntroduceSharedPromptHierarchyAcrossChoiceChildren(root);
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 group.TreeRoot = PruneDecorativeSingleChoiceLeaves(
@@ -1351,6 +1352,9 @@ private static string BuildHierarchicalVariantNotes(
             if (optionLabels.Count == 0)
                 return result;
 
+            if (ShouldSuppressSyntheticPromptChoiceLabels(node, optionLabels))
+                return result;
+
             var consumedDirectLabels = new HashSet<string>(
                 (syntheticDirectLabels ?? new Dictionary<VariantRenderItem, string>())
                     .Values
@@ -1432,6 +1436,15 @@ private static string BuildHierarchicalVariantNotes(
                 return result;
 
             var optionLabels = ExtractPromptOptionLabels(promptText);
+            var normalizedOptionLabels = optionLabels
+                .Select(NormalizeChoiceLabel)
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (ShouldSuppressSyntheticPromptChoiceLabels(node, normalizedOptionLabels))
+                return result;
+
             bool hasEscOption = promptText.IndexOf("ESC", StringComparison.OrdinalIgnoreCase) >= 0;
 
             var ordered = directVariants
@@ -1469,6 +1482,28 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return new Dictionary<VariantRenderItem, string>();
+        }
+
+        private static bool ShouldSuppressSyntheticPromptChoiceLabels(
+            VariantTreeNode node,
+            IEnumerable<string> promptOptionLabels)
+        {
+            if (node == null || string.IsNullOrWhiteSpace(node.Label))
+                return false;
+
+            string normalizedNodeLabel = NormalizeChoiceLabel(node.Label);
+            if (string.IsNullOrWhiteSpace(normalizedNodeLabel))
+                return false;
+
+            // Если текущий узел уже помечен как выбранный ответ из prompt'а
+            // (например, Y)/N)/ESC)), то дочерние исходы принадлежат этой ветке,
+            // а не самому prompt'у. Повторная синтетическая маркировка иначе
+            // создаёт ложный вложенный уровень выбора.
+            return (promptOptionLabels ?? Enumerable.Empty<string>())
+                .Select(NormalizeChoiceLabel)
+                .Any(label =>
+                    !string.IsNullOrWhiteSpace(label) &&
+                    string.Equals(label, normalizedNodeLabel, StringComparison.OrdinalIgnoreCase));
         }
 
         private static List<string> ExtractPromptOptionLabels(string promptText)
@@ -1723,6 +1758,136 @@ private static string BuildHierarchicalVariantNotes(
                 .ToList();
 
             node.Children.AddRange(syntheticChildren);
+        }
+
+        private static void IntroduceSharedPromptHierarchyAcrossChoiceChildren(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children)
+                IntroduceSharedPromptHierarchyAcrossChoiceChildren(child);
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+
+            if (renderableChildren.Count < 2)
+                return;
+
+            var candidateGroups = renderableChildren
+                .Where(IsEligibleSharedPromptChoiceChild)
+                .GroupBy(child => BuildCommonLinesKey(child.CommonLines), StringComparer.Ordinal)
+                .Select(group => group.ToList())
+                .Where(group => ShouldCreateSharedPromptParent(group))
+                .ToList();
+
+            if (candidateGroups.Count == 0)
+                return;
+
+            var childToSyntheticParent = new Dictionary<VariantTreeNode, VariantTreeNode>();
+
+            foreach (var group in candidateGroups)
+            {
+                var sharedLines = group[0].CommonLines?.ToList() ?? new List<string>();
+                if (sharedLines.Count == 0)
+                    continue;
+
+                var syntheticParent = new VariantTreeNode
+                {
+                    CommonLines = new List<string>(sharedLines)
+                };
+
+                foreach (var child in group)
+                {
+                    child.CommonLines = child.CommonLines
+                        .Skip(sharedLines.Count)
+                        .ToList();
+                    syntheticParent.Children.Add(child);
+                    childToSyntheticParent[child] = syntheticParent;
+                }
+            }
+
+            if (childToSyntheticParent.Count == 0)
+                return;
+
+            var emittedParents = new HashSet<VariantTreeNode>();
+            var rebuiltChildren = new List<VariantTreeNode>();
+
+            foreach (var child in node.Children)
+            {
+                if (child != null && childToSyntheticParent.TryGetValue(child, out var syntheticParent))
+                {
+                    if (emittedParents.Add(syntheticParent))
+                        rebuiltChildren.Add(syntheticParent);
+
+                    continue;
+                }
+
+                rebuiltChildren.Add(child);
+            }
+
+            node.Children = rebuiltChildren;
+        }
+
+        private static bool IsEligibleSharedPromptChoiceChild(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(node.Label) || !IsChoiceLikeLabel(node.Label))
+                return false;
+
+            return node.CommonLines != null && node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        private static bool ShouldCreateSharedPromptParent(List<VariantTreeNode> group)
+        {
+            if (group == null || group.Count < 2)
+                return false;
+
+            var sharedLines = group[0]?.CommonLines;
+            if (sharedLines == null || !sharedLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return false;
+
+            string promptText = string.Join("\n", sharedLines);
+            var optionLabels = ExtractPromptOptionLabels(promptText)
+                .Select(NormalizeChoiceLabel)
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (optionLabels.Count < 2)
+                return false;
+
+            var childLabels = group
+                .Select(child => NormalizeChoiceLabel(child?.Label))
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (childLabels.Count < 2)
+                return false;
+
+            return childLabels.All(label => optionLabels.Contains(label, StringComparer.OrdinalIgnoreCase));
+        }
+
+        private static bool IsChoiceLikeLabel(string label)
+        {
+            string normalized = NormalizeChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(normalized) || !normalized.EndsWith(")", StringComparison.Ordinal))
+                return false;
+
+            string token = normalized.Substring(0, normalized.Length - 1).Trim();
+            if (string.IsNullOrWhiteSpace(token))
+                return false;
+
+            return Regex.IsMatch(token, @"^[A-Za-z0-9]+$");
+        }
+
+        private static string BuildCommonLinesKey(IEnumerable<string> lines)
+        {
+            return string.Join("\n---\n", (lines ?? Enumerable.Empty<string>()).Select(line => line ?? string.Empty));
         }
 
         private static void PromoteConditionalPartyNotesBeforeBattle(VariantTreeNode node)
