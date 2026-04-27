@@ -456,6 +456,7 @@ namespace MMMapEditor
             var lines = new List<string>();
             var narrativeLines = DecodeNoteTexts(rawTexts);
             InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
+            var specialNoteLines = GetSpecialNoteLines(variantObject);
 
             lines.AddRange(narrativeLines);
             lines.AddRange(GetMonsterStatLines(
@@ -465,8 +466,8 @@ namespace MMMapEditor
                 defaultMonsterBatchCount,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance));
+            lines.AddRange(specialNoteLines);
             lines.AddRange(GetBattleLines(variantObject));
-            lines.AddRange(GetSpecialNoteLines(variantObject));
 
             if (lines.Count == 0)
                 lines.Add("Ничего не происходит");
