@@ -459,6 +459,9 @@ namespace MMMapEditor
                     i.SourceTableAddr == info.SourceTableAddr &&
                     i.SourceTableBaseAddr == info.SourceTableBaseAddr &&
                     i.SourceTable == info.SourceTable &&
+                    i.OriginalSourceIndex == info.OriginalSourceIndex &&
+                    i.SourceIndexProviderAddr == info.SourceIndexProviderAddr &&
+                    i.SourceIndexBehavior == info.SourceIndexBehavior &&
                     i.SourceIndexExternallyDerived == info.SourceIndexExternallyDerived))
                 {
                     merged.PartialBattleInfo.Add(new PartialBattleInfo
@@ -471,6 +474,9 @@ namespace MMMapEditor
                         SourceTableAddr = info.SourceTableAddr,
                         SourceTableBaseAddr = info.SourceTableBaseAddr,
                         SourceTable = info.SourceTable,
+                        OriginalSourceIndex = info.OriginalSourceIndex,
+                        SourceIndexProviderAddr = info.SourceIndexProviderAddr,
+                        SourceIndexBehavior = info.SourceIndexBehavior,
                         SourceIndexExternallyDerived = info.SourceIndexExternallyDerived
                     });
                 }
@@ -556,6 +562,7 @@ namespace MMMapEditor
             merged.UsesInitialCoordinates = merged.UsesInitialCoordinates || inheritedState.UsesInitialCoordinates || currentState.UsesInitialCoordinates;
             merged.MemoryReadAddresses.UnionWith(currentState.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             merged.MemoryWrittenAddresses.UnionWith(currentState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+            merged.AdjustedMemoryAddresses.UnionWith(currentState.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
 
             var currentReadBeforeWrite = new HashSet<ushort>(
                 currentState.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
@@ -849,6 +856,9 @@ namespace MMMapEditor
                     SourceTableAddr = info.SourceTableAddr,
                     SourceTableBaseAddr = info.SourceTableBaseAddr,
                     SourceTable = info.SourceTable,
+                    OriginalSourceIndex = info.OriginalSourceIndex,
+                    SourceIndexProviderAddr = info.SourceIndexProviderAddr,
+                    SourceIndexBehavior = info.SourceIndexBehavior,
                     SourceIndexExternallyDerived = info.SourceIndexExternallyDerived
                 });
             }
@@ -858,6 +868,7 @@ namespace MMMapEditor
             clone.OrderedTexts = source.OrderedTexts.Select(t => t.Clone()).ToList();
             clone.MemoryReadAddresses = new HashSet<ushort>(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             clone.MemoryWrittenAddresses = new HashSet<ushort>(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+            clone.AdjustedMemoryAddresses = new HashSet<ushort>(source.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
             clone.MemoryReadBeforeWriteAddresses = new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
             clone.PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
                 ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()

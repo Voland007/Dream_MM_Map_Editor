@@ -87,11 +87,68 @@ namespace MMMapEditor.Tests
             var sb = new StringBuilder();
             sb.AppendLine($"=== ТРАССИРОВКА АНАЛИЗА ДЛЯ КЛЕТКИ ({x},{y}) ===");
 
-            var relevantLogs = GetCapturedLogsSnapshot().Where(l =>
-                l.Contains($"({x},{y})") ||
-                (l.Contains($"X={x}") && l.Contains($"Y={y}")) ||
-                l.Contains($"для клетки ({x},{y})") ||
-                (l.Contains("Анализ пути") && l.Contains($"{x},{y}"))).ToList();
+            var logs = GetCapturedLogsSnapshot();
+            string fullTraceSetting = Environment.GetEnvironmentVariable("MMMAPEDITOR_TEST_FULL_ANALYSIS_TRACE");
+            if (string.Equals(fullTraceSetting, "1", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var log in logs)
+                    sb.AppendLine(log);
+
+                return sb.ToString();
+            }
+
+            var relevantLogs = new List<string>();
+            var targetMarkers = new[]
+            {
+                $"({x},{y})",
+                $"для клетки ({x},{y})"
+            };
+
+            bool IsTargetLine(string line)
+            {
+                if (string.IsNullOrEmpty(line))
+                    return false;
+
+                return targetMarkers.Any(marker => line.Contains(marker)) ||
+                       (line.Contains($"X={x}") && line.Contains($"Y={y}")) ||
+                       (line.Contains("Анализ пути") && line.Contains($"{x},{y}"));
+            }
+
+            bool IsCellAnchor(string line)
+            {
+                if (string.IsNullOrEmpty(line))
+                    return false;
+
+                return line.Contains("для клетки (") ||
+                       line.Contains("=== ОБРАБОТКА ОБЪЕКТА (") ||
+                       line.Contains("Проверка клетки (");
+            }
+
+            for (int i = 0; i < logs.Count; i++)
+            {
+                if (!IsTargetLine(logs[i]))
+                    continue;
+
+                int end = i;
+                while (end + 1 < logs.Count)
+                {
+                    string nextLine = logs[end + 1];
+                    if (IsCellAnchor(nextLine) && !IsTargetLine(nextLine))
+                        break;
+
+                    end++;
+                }
+
+                for (int j = i; j <= end; j++)
+                    relevantLogs.Add(logs[j]);
+
+                i = end;
+            }
+
+            if (relevantLogs.Count == 0)
+            {
+                relevantLogs = logs.Where(IsTargetLine).ToList();
+            }
 
             foreach (var log in relevantLogs)
                 sb.AppendLine(log);

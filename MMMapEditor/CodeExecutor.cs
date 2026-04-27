@@ -3575,6 +3575,9 @@ namespace MMMapEditor
                     i.SourceTableAddr == info.SourceTableAddr &&
                     i.SourceTableBaseAddr == info.SourceTableBaseAddr &&
                     i.SourceTable == info.SourceTable &&
+                    i.OriginalSourceIndex == info.OriginalSourceIndex &&
+                    i.SourceIndexProviderAddr == info.SourceIndexProviderAddr &&
+                    i.SourceIndexBehavior == info.SourceIndexBehavior &&
                     i.SourceIndexExternallyDerived == info.SourceIndexExternallyDerived))
                     result.PartialBattleInfo.Add(info);
 
@@ -3859,6 +3862,7 @@ namespace MMMapEditor
 
             target.MemoryReadAddresses.UnionWith(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             target.MemoryWrittenAddresses.UnionWith(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
+            target.AdjustedMemoryAddresses.UnionWith(source.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
             target.MemoryReadBeforeWriteAddresses.UnionWith(source.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
 
             foreach (var kvp in source.PersistentMemoryFirstAccessKinds ?? Enumerable.Empty<KeyValuePair<ushort, PersistentMemoryFirstAccessKind>>())
@@ -5441,6 +5445,7 @@ namespace MMMapEditor
             {
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
                 int delta = instructionBytes[1] == 0x06 ? 1 : -1;
+                result?.AdjustedMemoryAddresses.Add(memAddr);
                 if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentValue))
                 {
                     byte newValue = unchecked((byte)(currentValue + delta));
@@ -5532,7 +5537,8 @@ namespace MMMapEditor
                         value,
                         memAddr,
                         address,
-                        $"MOV AL, [0x{memAddr:X4}]"
+                        $"MOV AL, [0x{memAddr:X4}]",
+                        sourceIndexProviderAddr: memAddr
                     );
 
                     if (hasPointerByteSemanticA0)
@@ -5675,6 +5681,9 @@ namespace MMMapEditor
                                 TryGetOverlayTableSourceFromBxIndexedOperand(instructionBytes, registerTracker, memAddr, out indexedTableBx);
                             bool indexedTableUsesExternalIndex = isIndexedTableLoad &&
                                 (registerTracker.HasPendingExternalCallResult("BX") || registerTracker.IsRegisterExternallyDerived("BX"));
+                            ushort? sourceIndexProviderAddr = isIndexedTableLoad
+                                ? registerTracker.GetSourceIndexProviderAddress("BX") ?? registerTracker.GetSourceAddress("BX")
+                                : memAddr;
 
                             if (!string.IsNullOrEmpty(fullReg))
                             {
@@ -5687,7 +5696,8 @@ namespace MMMapEditor
                                     $"MOV {regName}, byte ptr {eaText}",
                                     isIndexedTableLoad,
                                     isIndexedTableLoad ? indexedTableBx : (ushort)0,
-                                    sourceIndexExternallyDerived: indexedTableUsesExternalIndex
+                                    sourceIndexExternallyDerived: indexedTableUsesExternalIndex,
+                                    sourceIndexProviderAddr: sourceIndexProviderAddr
                                 );
 
                                 if (hasPartyFieldRef)
@@ -5834,6 +5844,9 @@ namespace MMMapEditor
                                 out ushort indexedTableBx);
                             bool indexedTableUsesExternalIndex = isIndexedTableLoad &&
                                 (registerTracker.HasPendingExternalCallResult("BX") || registerTracker.IsRegisterExternallyDerived("BX"));
+                            ushort? sourceIndexProviderAddr = isIndexedTableLoad
+                                ? registerTracker.GetSourceIndexProviderAddress("BX") ?? registerTracker.GetSourceAddress("BX")
+                                : memAddr;
 
                             if (isIndexedTableLoad)
                             {
@@ -5845,7 +5858,8 @@ namespace MMMapEditor
                                     fromTable: true,
                                     address,
                                     $"MOV {regName}, word ptr {eaText}",
-                                    sourceIndexExternallyDerived: indexedTableUsesExternalIndex);
+                                    sourceIndexExternallyDerived: indexedTableUsesExternalIndex,
+                                    sourceIndexProviderAddr: sourceIndexProviderAddr);
                             }
                             else
                             {
@@ -6971,24 +6985,73 @@ namespace MMMapEditor
             return observation.FirstOffset == observation.SecondOffset;
         }
 
-        private static int GetSourceTableGap(PartialBattleTemplateObservation? observation)
+        private static ushort? GetSharedSourceIndexProviderAddress(PartialBattleTemplateObservation? observation)
         {
             if (observation == null)
-                return 0;
+                return null;
 
-            return Math.Abs(observation.SecondBaseAddr - observation.FirstBaseAddr);
+            ushort? firstProvider = observation.Entry58?.SourceIndexProviderAddr;
+            ushort? secondProvider = observation.Entry29?.SourceIndexProviderAddr;
+
+            if (firstProvider.HasValue && secondProvider.HasValue && firstProvider.Value != secondProvider.Value)
+                return null;
+
+            return firstProvider ?? secondProvider;
         }
 
-        private static bool CanExpandSequentialBattleCopy(PartialBattleTemplateObservation? observation)
+        private static void ApplySourceIndexBehavior(PartialBattleTemplateObservation? observation, BattleSourceIndexBehavior behavior)
+        {
+            if (observation == null)
+                return;
+
+            if (observation.Entry58 != null)
+                observation.Entry58.SourceIndexBehavior = behavior;
+
+            if (observation.Entry29 != null)
+                observation.Entry29.SourceIndexBehavior = behavior;
+        }
+
+        private static BattleSourceIndexBehavior InferSourceIndexBehavior(
+            PathAnalysisResult result,
+            PartialBattleTemplateObservation? observation)
+        {
+            if (observation == null)
+                return BattleSourceIndexBehavior.Unknown;
+
+            if (observation.Entry58?.SourceIndexBehavior == BattleSourceIndexBehavior.ExternalRandom ||
+                observation.Entry29?.SourceIndexBehavior == BattleSourceIndexBehavior.ExternalRandom ||
+                IsTemplateSelectionExternallyDerived(observation))
+            {
+                return BattleSourceIndexBehavior.ExternalRandom;
+            }
+
+            ushort? sharedProviderAddr = GetSharedSourceIndexProviderAddress(observation);
+            if (sharedProviderAddr.HasValue &&
+                result?.AdjustedMemoryAddresses?.Contains(sharedProviderAddr.Value) == true)
+            {
+                return BattleSourceIndexBehavior.AdvancesWithLoop;
+            }
+
+            if (observation.Entry58?.SourceIndexBehavior == BattleSourceIndexBehavior.Fixed ||
+                observation.Entry29?.SourceIndexBehavior == BattleSourceIndexBehavior.Fixed ||
+                sharedProviderAddr.HasValue ||
+                observation.Entry58?.OriginalSourceIndex.HasValue == true ||
+                observation.Entry29?.OriginalSourceIndex.HasValue == true)
+            {
+                return BattleSourceIndexBehavior.Fixed;
+            }
+
+            return BattleSourceIndexBehavior.Unknown;
+        }
+
+        private static bool CanExpandSequentialBattleCopy(
+            PathAnalysisResult result,
+            PartialBattleTemplateObservation? observation)
         {
             if (observation == null)
                 return false;
 
-            // Компактные пары таблиц обычно кодируют выбор одного типа монстров
-            // и его параметров по фиксированному индексу. В таких циклах растёт
-            // только индекс назначения, поэтому разворачивать их в последовательный
-            // набор разных монстров нельзя.
-            return GetSourceTableGap(observation) > 0x20;
+            return InferSourceIndexBehavior(result, observation) == BattleSourceIndexBehavior.AdvancesWithLoop;
         }
 
         private static bool IsTemplateSelectionExternallyDerived(PartialBattleTemplateObservation? observation)
@@ -7158,7 +7221,7 @@ namespace MMMapEditor
                 .Where(observation =>
                     observation != null &&
                     HasAlignedSourceOffsets(observation) &&
-                    CanExpandSequentialBattleCopy(observation) &&
+                    CanExpandSequentialBattleCopy(result, observation) &&
                     !IsKnownPartialBattleTemplateSource(observation.Entry58?.SourceTable) &&
                     !IsKnownPartialBattleTemplateSource(observation.Entry29?.SourceTable) &&
                     !IsTemplateSelectionExternallyDerived(observation))
@@ -7176,6 +7239,9 @@ namespace MMMapEditor
                 if (observation == null || !HasAlignedSourceOffsets(observation))
                     continue;
 
+                BattleSourceIndexBehavior sourceIndexBehavior = InferSourceIndexBehavior(result, observation);
+                ApplySourceIndexBehavior(observation, sourceIndexBehavior);
+
                 if (IsKnownPartialBattleTemplateSource(observation.Entry58?.SourceTable) ||
                     IsTemplateSelectionExternallyDerived(observation) ||
                     IsKnownPartialBattleTemplateSource(observation.Entry29?.SourceTable))
@@ -7184,7 +7250,7 @@ namespace MMMapEditor
                 }
 
                 string patternKey = BuildSequentialTableCopyPatternKey(observation);
-                if (CanExpandSequentialBattleCopy(observation) &&
+                if (sourceIndexBehavior == BattleSourceIndexBehavior.AdvancesWithLoop &&
                     sequentialPatternGroups.TryGetValue(patternKey, out var patternObservations) &&
                     patternObservations.Count > 0 &&
                     patternObservations[0].SaveBxIndex == observation.SaveBxIndex &&

@@ -133,7 +133,12 @@ namespace MMMapEditor
                     JumpTarget = jumpTarget,
                     JumpType = nextInsn.Mnemonic.ToUpper(),
                     IsLinear = false,
-                    MacroEntryAddress = rootAddress
+                    MacroEntryAddress = rootAddress,
+                    HasPrecedingCondition = precedingInfo.hasPreceding,
+                    PrecedingCoordType = precedingInfo.coordType,
+                    PrecedingValue = precedingInfo.value,
+                    PrecedingJumpType = precedingInfo.jumpType,
+                    PrecedingViaJumpTarget = precedingInfo.viaJumpTarget
                 });
 
                 AnalysisDebug.WriteLine($"  Найдено сравнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={firstImmValue} -> 0x{jumpTarget:X4} ({nextInsn.Mnemonic}) [{coordType}]");
@@ -169,7 +174,12 @@ namespace MMMapEditor
                         IsLinear = true,
                         LinearStart = linearRange.Value.start,
                         LinearEnd = linearRange.Value.end,
-                        MacroEntryAddress = rootAddress
+                        MacroEntryAddress = rootAddress,
+                        HasPrecedingCondition = precedingInfo.hasPreceding,
+                        PrecedingCoordType = precedingInfo.coordType,
+                        PrecedingValue = precedingInfo.value,
+                        PrecedingJumpType = precedingInfo.jumpType,
+                        PrecedingViaJumpTarget = precedingInfo.viaJumpTarget
                     });
 
                     AnalysisDebug.WriteLine($"  Найдено линейное выполнение: 0x{firstInsn.Address:X4} [{sourceAddr:X4}]={lastCompareValue} -> 0x{allInstructions[j].Address:X4} для значений [{linearRange.Value.start}-{linearRange.Value.end}] [{coordType}]");
@@ -179,9 +189,11 @@ namespace MMMapEditor
             return result;
         }
 
-        private (bool hasPreceding, byte value, string jumpType) FindPrecedingCondition(
+        private (bool hasPreceding, byte value, string jumpType, bool viaJumpTarget, CoordType coordType) FindPrecedingCondition(
             List<X86Instruction> instructions, int currentIndex, string reg)
         {
+            uint currentAddress = (uint)instructions[currentIndex].Address;
+
             for (int k = currentIndex - 1; k >= Math.Max(0, currentIndex - 10); k--)
             {
                 var prevInsn = instructions[k];
@@ -190,15 +202,30 @@ namespace MMMapEditor
                     if (k + 1 < instructions.Count)
                     {
                         var nextAfterPrev = instructions[k + 1];
-                        if (IsConditionalJump(nextAfterPrev, out uint _))
+                        if (IsConditionalJump(nextAfterPrev, out uint jumpTarget))
                         {
-                            return (true, prevValue, nextAfterPrev.Mnemonic.ToUpper());
+                            uint fallthrough = (uint)(nextAfterPrev.Address + nextAfterPrev.Bytes.Length);
+                            bool viaJumpTarget =
+                                jumpTarget > fallthrough &&
+                                currentAddress >= jumpTarget;
+                            bool viaFallthrough =
+                                currentAddress >= fallthrough &&
+                                (!viaJumpTarget || currentAddress < jumpTarget);
+
+                            if (viaJumpTarget || viaFallthrough)
+                            {
+                                ushort? prevSourceAddr = FindMemorySourceForRegister(instructions, k, reg);
+                                CoordType prevCoordType = prevSourceAddr.HasValue
+                                    ? GetCoordType(prevSourceAddr.Value)
+                                    : CoordType.Unknown;
+                                return (true, prevValue, nextAfterPrev.Mnemonic.ToUpper(), viaJumpTarget, prevCoordType);
+                            }
                         }
                     }
                     break;
                 }
             }
-            return (false, 0, null);
+            return (false, 0, null, false, CoordType.Unknown);
         }
 
         private uint DetermineMacroEntryAddress(List<X86Instruction> instructions, int compareIndex, string compareRegister)
@@ -425,7 +452,7 @@ namespace MMMapEditor
         /// Рассчитывает диапазон для линейного выполнения
         /// </summary>
         private (byte start, byte end)? CalculateLinearRange(byte compareValue, string jumpType,
-            (bool hasPreceding, byte value, string jumpType) preceding)
+            (bool hasPreceding, byte value, string jumpType, bool viaJumpTarget, CoordType coordType) preceding)
         {
             byte linearStart = 0;
             byte linearEnd = 255;
@@ -447,6 +474,21 @@ namespace MMMapEditor
 
             if (preceding.hasPreceding)
             {
+                if (preceding.viaJumpTarget)
+                {
+                    if (preceding.jumpType == "JB" || preceding.jumpType == "JC")
+                    {
+                        linearEnd = Math.Min(linearEnd, (byte)(preceding.value - 1));
+                        goto linearRangeAdjusted;
+                    }
+
+                    if (preceding.jumpType == "JAE" || preceding.jumpType == "JNB" || preceding.jumpType == "JNC")
+                    {
+                        linearStart = Math.Max(linearStart, preceding.value);
+                        goto linearRangeAdjusted;
+                    }
+                }
+
                 if (preceding.jumpType == "JB" || preceding.jumpType == "JC")
                 {
                     linearStart = Math.Max(linearStart, preceding.value);
@@ -467,6 +509,7 @@ namespace MMMapEditor
             }
 
             // Проверяем, что диапазон корректен
+        linearRangeAdjusted:
             if (linearStart <= linearEnd)
             {
                 return (linearStart, linearEnd); // Возвращаем кортеж

@@ -264,6 +264,11 @@ namespace MMMapEditor
         /// доминирующие guard-условия (например, внешний флаг, который отсекает весь блок).
         /// </summary>
         public uint MacroEntryAddress { get; set; }
+        public bool HasPrecedingCondition { get; set; }
+        public CoordType PrecedingCoordType { get; set; } = CoordType.Unknown;
+        public byte PrecedingValue { get; set; }
+        public string PrecedingJumpType { get; set; }
+        public bool PrecedingViaJumpTarget { get; set; }
     }
 
     public enum TextSemanticKind
@@ -332,6 +337,7 @@ namespace MMMapEditor
         public List<TextEntry> OrderedTexts { get; set; } = new List<TextEntry>();
         public HashSet<ushort> MemoryReadAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> MemoryWrittenAddresses { get; set; } = new HashSet<ushort>();
+        public HashSet<ushort> AdjustedMemoryAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> MemoryReadBeforeWriteAddresses { get; set; } = new HashSet<ushort>();
         public Dictionary<ushort, PersistentMemoryFirstAccessKind> PersistentMemoryFirstAccessKinds { get; set; }
             = new Dictionary<ushort, PersistentMemoryFirstAccessKind>();
@@ -662,6 +668,14 @@ namespace MMMapEditor
         }
     }
 
+    public enum BattleSourceIndexBehavior
+    {
+        Unknown = 0,
+        Fixed = 1,
+        AdvancesWithLoop = 2,
+        ExternalRandom = 3
+    }
+
     public class PartialBattleInfo
     {
         public int BxIndex { get; set; }           // Индекс в массиве сохранения
@@ -672,6 +686,9 @@ namespace MMMapEditor
         public ushort? SourceTableAddr { get; set; } // Адрес в таблице-источнике
         public ushort? SourceTableBaseAddr { get; set; } // Базовый адрес семейства таблицы (адрес первой записи)
         public string SourceTable { get; set; }    // Тип таблицы ("CDA9", "CDB1", "CDBD", "CDB5", "CA7F", "CA84")
+        public ushort? OriginalSourceIndex { get; set; } // Значение индексного BX в момент чтения из таблицы
+        public ushort? SourceIndexProviderAddr { get; set; } // Адрес памяти, из которого был загружен индекс источника (если известен)
+        public BattleSourceIndexBehavior SourceIndexBehavior { get; set; } = BattleSourceIndexBehavior.Unknown;
         public bool SourceIndexExternallyDerived { get; set; } // Индекс таблицы зависит от внешнего случайного вызова
     }
 }

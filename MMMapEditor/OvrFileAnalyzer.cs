@@ -400,6 +400,7 @@ namespace MMMapEditor
                         }
 
                         objects.Add(obj);
+                        processedMacroCells.Add(macroCellKey);
                         objectsCreated++;
                     }
                 }
@@ -504,6 +505,8 @@ namespace MMMapEditor
                 TryGetCachedObjectVariants(
                     analysisCacheScopeKey,
                     startAddress,
+                    targetX,
+                    targetY,
                     reachableAddresses,
                     out var cachedVariants))
             {
@@ -2232,6 +2235,8 @@ namespace MMMapEditor
         private bool TryGetCachedObjectVariants(
             string analysisCacheScopeKey,
             uint startAddress,
+            byte targetX,
+            byte targetY,
             HashSet<uint> reachableAddresses,
             out Dictionary<int, PathVariantInfo> cachedVariants)
         {
@@ -2252,6 +2257,8 @@ namespace MMMapEditor
             if (reachableAddresses != null)
                 reachableAddresses.UnionWith(entry.ReusableVisitedAddresses ?? Enumerable.Empty<uint>());
 
+            AnalysisDebug.WriteLine(
+                $"    CACHE HIT object-variants для клетки ({targetX},{targetY}): {cacheKey}");
             cachedVariants = CloneFinalVariants(entry.ReusableVariants);
             return true;
         }
@@ -2275,6 +2282,9 @@ namespace MMMapEditor
             {
                 return;
             }
+
+            if (ShouldSkipReusableObjectVariantCache(analysisCacheScopeKey, finalVariants))
+                return;
 
             string cacheKey = $"{analysisCacheScopeKey}|{startAddress:X4}";
             string signature = BuildFinalVariantsCacheSignature(finalVariants);
@@ -2347,6 +2357,31 @@ namespace MMMapEditor
                     .Concat(visitedAddresses ?? Enumerable.Empty<uint>()));
         }
 
+        private static bool ShouldSkipReusableObjectVariantCache(
+            string analysisCacheScopeKey,
+            Dictionary<int, PathVariantInfo> finalVariants)
+        {
+            if (string.IsNullOrWhiteSpace(analysisCacheScopeKey) ||
+                finalVariants == null ||
+                finalVariants.Count == 0)
+            {
+                return false;
+            }
+
+            return finalVariants.Values.Any(IsCoordinateSensitiveBattleTableVariant);
+        }
+
+        private static bool IsCoordinateSensitiveBattleTableVariant(PathVariantInfo variant)
+        {
+            if (variant == null || !variant.UsesInitialCoordinates)
+                return false;
+
+            return ((variant.BattleMonsters?.Count ?? 0) > 0) ||
+                   ((variant.PartiallyDefinedBattles?.Count ?? 0) > 0) ||
+                   variant.HasAnyTableLoad ||
+                   ((variant.LoadedValues?.Count ?? 0) > 0);
+        }
+
         private string BuildCoordinatePairKey(byte x, byte y)
         {
             return $"{x},{y}";
@@ -2397,7 +2432,7 @@ namespace MMMapEditor
                 ? $"linear:{comparison.LinearStart:X2}-{comparison.LinearEnd:X2}"
                 : $"value:{comparison.Value:X2}";
 
-            return string.Join("|", new[]
+            var parts = new List<string>
             {
                 "macro",
                 comparison.CoordType.ToString(),
@@ -2406,7 +2441,19 @@ namespace MMMapEditor
                 $"src:{comparison.MemAddr:X4}",
                 $"kind:{comparison.JumpType ?? "<NULL>"}",
                 branchDescriptor
-            });
+            };
+
+            if (comparison.HasPrecedingCondition &&
+                comparison.PrecedingCoordType != CoordType.Unknown &&
+                !string.IsNullOrWhiteSpace(comparison.PrecedingJumpType))
+            {
+                parts.Add($"prev:{comparison.PrecedingCoordType}");
+                parts.Add($"prevcmp:{comparison.PrecedingValue:X2}");
+                parts.Add($"prevkind:{comparison.PrecedingJumpType}");
+                parts.Add(comparison.PrecedingViaJumpTarget ? "prevmode:jump" : "prevmode:fall");
+            }
+
+            return string.Join("|", parts);
         }
 
         private bool TryGetCachedSingleOccurrenceAnalysis(
@@ -2422,6 +2469,20 @@ namespace MMMapEditor
             if (AnalysisDebug.ShouldDisableCacheFor(targetX, targetY))
                 return false;
 
+            if (TryBuildExactSingleOccurrenceCacheKey(
+                    analysisCacheScopeKey,
+                    startAddress,
+                    targetX,
+                    targetY,
+                    initialEmulatedMemory8,
+                    out string exactCacheKey) &&
+                TryGetReusableSingleOccurrenceAnalysis(exactCacheKey, allowCoordinateSensitive: true, out cachedResult))
+            {
+                AnalysisDebug.WriteLine(
+                    $"    CACHE HIT single-occurrence exact для клетки ({targetX},{targetY}): {exactCacheKey}");
+                return true;
+            }
+
             if (!TryBuildSingleOccurrenceCacheKey(
                     analysisCacheScopeKey,
                     startAddress,
@@ -2434,15 +2495,11 @@ namespace MMMapEditor
                 return false;
             }
 
-            if (!_singleOccurrenceAnalysisCache.TryGetValue(cacheKey, out var entry) ||
-                entry == null ||
-                !entry.IsVerified ||
-                entry.ReusableResult == null)
-            {
+            if (!TryGetReusableSingleOccurrenceAnalysis(cacheKey, allowCoordinateSensitive: false, out cachedResult))
                 return false;
-            }
 
-            cachedResult = CloneSingleOccurrenceAnalysisResult(entry.ReusableResult);
+            AnalysisDebug.WriteLine(
+                $"    CACHE HIT single-occurrence для клетки ({targetX},{targetY}): {cacheKey}");
             return true;
         }
 
@@ -2457,6 +2514,30 @@ namespace MMMapEditor
             if (AnalysisDebug.ShouldDisableCacheFor(targetX, targetY) || result == null)
                 return;
 
+            string signature = BuildSingleOccurrenceAnalysisSignature(result);
+            var reusableResult = CloneSingleOccurrenceAnalysisResult(result);
+
+            if (TryBuildExactSingleOccurrenceCacheKey(
+                    analysisCacheScopeKey,
+                    startAddress,
+                    targetX,
+                    targetY,
+                    initialEmulatedMemory8,
+                    out string exactCacheKey))
+            {
+                _singleOccurrenceAnalysisCache[exactCacheKey] = new SingleOccurrenceAnalysisCacheEntry
+                {
+                    SampleSignature = signature,
+                    IsVerified = true,
+                    ReusableResult = CloneSingleOccurrenceAnalysisResult(reusableResult)
+                };
+            }
+
+            // Широкое переиспользование на уровне macro X/Y-scope разрешаем
+            // только для результатов, не зависящих от стартовых координат.
+            if (result.UsesInitialCoordinates)
+                return;
+
             if (!TryBuildSingleOccurrenceCacheKey(
                     analysisCacheScopeKey,
                     startAddress,
@@ -2468,8 +2549,6 @@ namespace MMMapEditor
             {
                 return;
             }
-
-            string signature = BuildSingleOccurrenceAnalysisSignature(result);
 
             if (!_singleOccurrenceAnalysisCache.TryGetValue(cacheKey, out var entry) || entry == null)
             {
@@ -2495,7 +2574,47 @@ namespace MMMapEditor
                 return;
 
             entry.IsVerified = true;
-            entry.ReusableResult = CloneSingleOccurrenceAnalysisResult(result);
+            entry.ReusableResult = CloneSingleOccurrenceAnalysisResult(reusableResult);
+        }
+
+        private bool TryBuildExactSingleOccurrenceCacheKey(
+            string analysisCacheScopeKey,
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            Dictionary<ushort, byte> initialEmulatedMemory8,
+            out string cacheKey)
+        {
+            cacheKey = null;
+
+            if (string.IsNullOrWhiteSpace(analysisCacheScopeKey))
+                return false;
+
+            string stateKey = BuildMemoryStateKey(initialEmulatedMemory8);
+            cacheKey = $"single-exact|{analysisCacheScopeKey}|{startAddress:X4}|x:{targetX:X2}|y:{targetY:X2}|state:{stateKey}";
+            return true;
+        }
+
+        private bool TryGetReusableSingleOccurrenceAnalysis(
+            string cacheKey,
+            bool allowCoordinateSensitive,
+            out SingleOccurrenceAnalysisResult cachedResult)
+        {
+            cachedResult = null;
+
+            if (!_singleOccurrenceAnalysisCache.TryGetValue(cacheKey, out var entry) ||
+                entry == null ||
+                !entry.IsVerified ||
+                entry.ReusableResult == null)
+            {
+                return false;
+            }
+
+            if (!allowCoordinateSensitive && entry.ReusableResult.UsesInitialCoordinates)
+                return false;
+
+            cachedResult = CloneSingleOccurrenceAnalysisResult(entry.ReusableResult);
+            return true;
         }
 
         private bool TryBuildSingleOccurrenceCacheKey(
@@ -3439,7 +3558,51 @@ namespace MMMapEditor
                 }
             }
 
-            return targetCells;
+            if (!HasPrecedingCoordinateConstraint(comparison))
+                return targetCells;
+
+            var filteredCells = targetCells
+                .Where(cell => MatchesPrecedingCondition((byte)cell.X, (byte)cell.Y, comparison))
+                .ToList();
+
+            if (filteredCells.Count != targetCells.Count)
+            {
+                AnalysisDebug.WriteLine(
+                    $"  Учтено предшествующее условие: {targetCells.Count} -> {filteredCells.Count} клеток");
+            }
+
+            return filteredCells;
+        }
+
+        private bool HasPrecedingCoordinateConstraint(CoordinateComparison comparison)
+        {
+            return comparison != null &&
+                   comparison.HasPrecedingCondition &&
+                   comparison.PrecedingCoordType != CoordType.Unknown &&
+                   !string.IsNullOrWhiteSpace(comparison.PrecedingJumpType);
+        }
+
+        private bool MatchesPrecedingCondition(byte x, byte y, CoordinateComparison comparison)
+        {
+            if (!HasPrecedingCoordinateConstraint(comparison))
+                return true;
+
+            byte coordinateValue = comparison.PrecedingCoordType switch
+            {
+                CoordType.XCoord => x,
+                CoordType.YCoord => y,
+                CoordType.FullCoord => (byte)(((y & 0x0F) << 4) | (x & 0x0F)),
+                _ => 0
+            };
+
+            bool jumpConditionMatches = CheckCondition(
+                coordinateValue,
+                comparison.PrecedingValue,
+                comparison.PrecedingJumpType);
+
+            return comparison.PrecedingViaJumpTarget
+                ? jumpConditionMatches
+                : !jumpConditionMatches;
         }
 
         private IEnumerable<Point> OrderCellsForCacheEvidence(List<Point> cells)

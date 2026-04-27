@@ -1240,7 +1240,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV AL, [BX+CDBD] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4}, val={actualValue:X2})",
-                    "CDBD"
+                    "CDBD",
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDBD+: AL = [BX+CDBD] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
@@ -1293,7 +1294,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV BP, [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
-                    "CDB5"
+                    "CDB5",
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+: BP = [BX+CDB5] (BX={bxValue}{debugInfo}, addr={sourceAddr:X4})");
@@ -1349,7 +1351,8 @@ namespace MMMapEditor
                     true,
                     address,
                     $"MOV AL, [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
-                    "CDB5"
+                    "CDB5",
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB5+ (младший байт): AL = [BX+CDB5] (BX={bxValue}{debugInfo}, effBX={effectiveBx}, addr={sourceAddr:X4})");
@@ -1397,7 +1400,8 @@ namespace MMMapEditor
                     address,
                     $"MOV AL, [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
                     "CDA9",
-                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDA9+: AL = [BX+CDA9] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1444,7 +1448,8 @@ namespace MMMapEditor
                     address,
                     $"MOV BP, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
                     "CDB1",
-                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 // УДАЛЕНО: автоматическая установка AL из младшего байта.
@@ -1494,7 +1499,8 @@ namespace MMMapEditor
                     address,
                     $"MOV AL, [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
                     "CDB1",
-                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CDB1+ (младший байт): AL = [BX+CDB1] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1542,7 +1548,8 @@ namespace MMMapEditor
                     address,
                     $"MOV AL, [BX+CA7F] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X2") : "0")})",
                     "CA7F",
-                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CA7F+: AL = [BX+CA7F] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1590,7 +1597,8 @@ namespace MMMapEditor
                     address,
                     $"MOV BP, [BX+CA84] (BX={bxValue}, addr={sourceAddr:X4}, val={(readSuccess ? actualValue.ToString("X4") : "0")})",
                     "CA84",
-                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BX") ?? tracker.GetSourceAddress("BX")
                 );
 
                 AnalysisDebug.WriteLine($"    ЗАГРУЗКА ИЗ ТАБЛИЦЫ CA84+: BP = [BX+CA84] (BX={bxValue}, addr={sourceAddr:X4})");
@@ -1619,7 +1627,8 @@ namespace MMMapEditor
                     address,
                     $"MOV CX, BP (копирование из таблицы, val={bpValue:X4})",
                     sourceTable,
-                    sourceIndexExternallyDerived: sourceIndexExternallyDerived
+                    sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr: tracker.GetSourceIndexProviderAddress("BP")
                 );
 
                 // Обновляем частичные регистры
@@ -1723,6 +1732,20 @@ namespace MMMapEditor
             return (ushort)baseAddress;
         }
 
+        private static BattleSourceIndexBehavior ResolveInitialBattleSourceIndexBehavior(
+            ushort? originalBx,
+            ushort? sourceIndexProviderAddr,
+            bool sourceIndexExternallyDerived)
+        {
+            if (sourceIndexExternallyDerived)
+                return BattleSourceIndexBehavior.ExternalRandom;
+
+            if (sourceIndexProviderAddr.HasValue || originalBx.HasValue)
+                return BattleSourceIndexBehavior.Fixed;
+
+            return BattleSourceIndexBehavior.Unknown;
+        }
+
         private void RecordPartialBattleSave(
             PathAnalysisResult result,
             int saveIndex,
@@ -1732,7 +1755,8 @@ namespace MMMapEditor
             ushort? sourceAddr,
             ushort? originalBx,
             string sourceTable,
-            bool sourceIndexExternallyDerived)
+            bool sourceIndexExternallyDerived,
+            ushort? sourceIndexProviderAddr = null)
         {
             result.PartialBattleInfo.Add(new PartialBattleInfo
             {
@@ -1744,6 +1768,9 @@ namespace MMMapEditor
                 SourceTableAddr = sourceAddr,
                 SourceTableBaseAddr = ComputeSourceTableBaseAddress(sourceAddr, originalBx),
                 SourceTable = sourceTable,
+                OriginalSourceIndex = originalBx,
+                SourceIndexProviderAddr = sourceIndexProviderAddr,
+                SourceIndexBehavior = ResolveInitialBattleSourceIndexBehavior(originalBx, sourceIndexProviderAddr, sourceIndexExternallyDerived),
                 SourceIndexExternallyDerived = sourceIndexExternallyDerived
             });
             result.HasPartialBattlePattern = true;
@@ -1805,7 +1832,7 @@ namespace MMMapEditor
                             case "CA7F":
                             case "CA84":
                             default:
-                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("AL"));
                                 AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C58] = AL (BX={bxValue}, originalBX={originalBx}, val={alValue:X2})");
                                 break;
                         }
@@ -1882,7 +1909,7 @@ namespace MMMapEditor
                             case "CA7F":
                             case "CA84":
                             default:
-                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "CL", clValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "CL", clValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("CL") ?? tracker.GetSourceIndexProviderAddress("CX"));
                                 AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C29] = CL (BX={bxValue}, originalBX={originalBx}, val={clValue:X2})");
                                 break;
                         }
@@ -1959,7 +1986,7 @@ namespace MMMapEditor
                             case "CA7F":
                             case "CA84":
                             default:
-                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "DL", dlValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "DL", dlValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("DL") ?? tracker.GetSourceIndexProviderAddress("DX"));
                                 AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C58] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                                 break;
                         }
@@ -2036,7 +2063,7 @@ namespace MMMapEditor
                             case "CA7F":
                             case "CA84":
                             default:
-                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "DL", dlValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "DL", dlValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("DL") ?? tracker.GetSourceIndexProviderAddress("DX"));
                                 AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C29] = DL (BX={bxValue}, originalBX={originalBx}, val={dlValue:X2})");
                                 break;
                         }
@@ -2113,7 +2140,7 @@ namespace MMMapEditor
                             case "CA7F":
                             case "CA84":
                             default:
-                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "BL", blValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                RecordPartialBattleSave(result, saveIndex, 0x3C58, "BL", blValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("BL") ?? tracker.GetSourceIndexProviderAddress("BX"));
                                 AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C58] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                                 break;
                         }
@@ -2190,7 +2217,7 @@ namespace MMMapEditor
                             case "CA7F":
                             case "CA84":
                             default:
-                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "BL", blValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                                RecordPartialBattleSave(result, saveIndex, 0x3C29, "BL", blValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("BL") ?? tracker.GetSourceIndexProviderAddress("BX"));
                                 AnalysisDebug.WriteLine($"    ЧАСТИЧНАЯ БИТВА ({sourceTable ?? "UNKNOWN"}): [BX+3C29] = BL (BX={bxValue}, originalBX={originalBx}, val={blValue:X2})");
                                 break;
                         }
@@ -2265,7 +2292,7 @@ namespace MMMapEditor
                         case "CA7F":
                         case "CA84":
                         default:
-                            RecordPartialBattleSave(result, saveIndex, 0x3C58, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                            RecordPartialBattleSave(result, saveIndex, 0x3C58, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("AL"));
                             AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable ?? "UNKNOWN"}+: [3C58] = AL (originalBX={originalBx}, val={alValue:X2})");
                             break;
                     }
@@ -2339,7 +2366,7 @@ namespace MMMapEditor
                         case "CA7F":
                         case "CA84":
                         default:
-                            RecordPartialBattleSave(result, saveIndex, 0x3C29, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived);
+                            RecordPartialBattleSave(result, saveIndex, 0x3C29, "AL", alValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, tracker.GetSourceIndexProviderAddress("AL"));
                             AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable ?? "UNKNOWN"}+: [3C29] = AL (originalBX={originalBx}, val={alValue:X2})");
                             break;
                     }

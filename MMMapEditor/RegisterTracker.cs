@@ -73,8 +73,8 @@ namespace MMMapEditor
     {
         private Dictionary<string, ushort> registers = new Dictionary<string, ushort>();
         private Dictionary<string, string> registerSources = new Dictionary<string, string>();
-        private Dictionary<string, (ushort addr, bool fromTable, ushort originalBx, string sourceTable, bool sourceIndexExternallyDerived)> registerSources2 =
-            new Dictionary<string, (ushort, bool, ushort, string, bool)>();
+        private Dictionary<string, (ushort addr, bool fromTable, ushort originalBx, string sourceTable, bool sourceIndexExternallyDerived, ushort? sourceIndexProviderAddr)> registerSources2 =
+            new Dictionary<string, (ushort, bool, ushort, string, bool, ushort?)>();
         private HashSet<string> externallyDerivedRegisters = new HashSet<string>();
         private HashSet<string> pendingExternalCallRegisters = new HashSet<string>();
         private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
@@ -579,7 +579,7 @@ namespace MMMapEditor
 
         public void SetRegisterValueWithSource(string reg, ushort value, ushort sourceAddr,
             ushort originalBx, bool fromTable, uint address, string instruction, string sourceTable = null,
-            bool sourceIndexExternallyDerived = false)
+            bool sourceIndexExternallyDerived = false, ushort? sourceIndexProviderAddr = null)
         {
             SetRegisterValue(reg, value, address, instruction);
 
@@ -589,7 +589,7 @@ namespace MMMapEditor
                 tableType = ResolveKnownTableType(sourceAddr);
             }
 
-            registerSources2[reg.ToUpper()] = (sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived);
+            registerSources2[reg.ToUpper()] = (sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
         }
 
         public bool IsFromTable(string reg)
@@ -712,6 +712,37 @@ namespace MMMapEditor
 
             if (regUpper == "DH" && registerSources2.TryGetValue("DX", out var dxSrc2))
                 return dxSrc2.originalBx;
+
+            return null;
+        }
+
+        public ushort? GetSourceIndexProviderAddress(string reg)
+        {
+            string regUpper = reg.ToUpper();
+
+            if (registerSources2.TryGetValue(regUpper, out var src))
+                return src.sourceIndexProviderAddr;
+
+            if (regUpper == "CL" && registerSources2.TryGetValue("CX", out var cxSrc))
+                return cxSrc.sourceIndexProviderAddr;
+
+            if (regUpper == "AL" && registerSources2.TryGetValue("AX", out var axSrc))
+                return axSrc.sourceIndexProviderAddr;
+
+            if (regUpper == "BL" && registerSources2.TryGetValue("BX", out var bxSrc))
+                return bxSrc.sourceIndexProviderAddr;
+
+            if (regUpper == "DL" && registerSources2.TryGetValue("DX", out var dxSrc))
+                return dxSrc.sourceIndexProviderAddr;
+
+            if (regUpper == "BH" && registerSources2.TryGetValue("BX", out var bxSrc2))
+                return bxSrc2.sourceIndexProviderAddr;
+
+            if (regUpper == "CH" && registerSources2.TryGetValue("CX", out var cxSrc2))
+                return cxSrc2.sourceIndexProviderAddr;
+
+            if (regUpper == "DH" && registerSources2.TryGetValue("DX", out var dxSrc2))
+                return dxSrc2.sourceIndexProviderAddr;
 
             return null;
         }
@@ -1324,7 +1355,8 @@ namespace MMMapEditor
             bool fromTable = false,
             ushort originalBx = 0,
             string sourceTable = null,
-            bool sourceIndexExternallyDerived = false)
+            bool sourceIndexExternallyDerived = false,
+            ushort? sourceIndexProviderAddr = null)
         {
             TrackPartialRegisterOperation(fullReg, partialReg, value, address, instruction);
 
@@ -1335,7 +1367,7 @@ namespace MMMapEditor
             if (tableType == null && fromTable)
                 tableType = ResolveKnownTableType(sourceAddr);
 
-            var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived);
+            var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
 
             if (!string.IsNullOrWhiteSpace(partialRegUpper))
                 registerSources2[partialRegUpper] = srcInfo;
