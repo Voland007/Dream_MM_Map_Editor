@@ -105,6 +105,7 @@ namespace MMMapEditor
         public FlagsOriginKind LastFlagsOrigin { get; set; }
         public uint? LastFlagsInstructionAddress { get; set; }
         public byte? LastCompareImmediate { get; set; }
+        public byte? LastTestMask { get; set; }
         public ushort? LastComparedMemoryAddress { get; set; }
         public PartyFieldReference LastComparedPartyField { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
@@ -116,6 +117,9 @@ namespace MMMapEditor
             LastFlagsRegister = register?.ToUpperInvariant();
             LastFlagsOrigin = origin;
             LastFlagsInstructionAddress = instructionAddress;
+            LastCompareImmediate = null;
+            LastTestMask = null;
+            LastComparedMemoryAddress = null;
             LastComparedPartyField = null;
             LastFlagsFromCoordinate = fromCoordinate ?? IsCoordinateSourceForRegister(register);
         }
@@ -126,6 +130,7 @@ namespace MMMapEditor
             LastFlagsOrigin = FlagsOriginKind.Unknown;
             LastFlagsInstructionAddress = null;
             LastCompareImmediate = null;
+            LastTestMask = null;
             LastComparedMemoryAddress = null;
             LastComparedPartyField = null;
             LastFlagsFromCoordinate = false;
@@ -1161,6 +1166,7 @@ namespace MMMapEditor
             LastFlagsOrigin = FlagsOriginKind.Unknown;
             LastFlagsInstructionAddress = null;
             LastCompareImmediate = null;
+            LastTestMask = null;
             LastComparedMemoryAddress = null;
             LastComparedPartyField = null;
             LastFlagsFromCoordinate = false;
@@ -1394,6 +1400,7 @@ namespace MMMapEditor
             clone.LastFlagsOrigin = this.LastFlagsOrigin;
             clone.LastFlagsInstructionAddress = this.LastFlagsInstructionAddress;
             clone.LastCompareImmediate = this.LastCompareImmediate;
+            clone.LastTestMask = this.LastTestMask;
             clone.LastComparedMemoryAddress = this.LastComparedMemoryAddress;
             clone.LastComparedPartyField = this.LastComparedPartyField?.Clone();
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;

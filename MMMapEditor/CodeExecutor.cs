@@ -1602,24 +1602,50 @@ namespace MMMapEditor
             if (registerTracker == null)
                 return null;
 
-            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
-                return null;
-
             string comparedRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
-            if (!registerTracker.LastCompareImmediate.HasValue)
-                return null;
+            PartyFieldReference comparedField = null;
+            ushort compareValue = 0;
 
-            PartyFieldReference comparedField = registerTracker.LastComparedPartyField?.Clone();
-            if (comparedField == null)
+            switch (registerTracker.LastFlagsOrigin)
             {
-                if (string.IsNullOrWhiteSpace(comparedRegister))
-                    return null;
+                case RegisterTracker.FlagsOriginKind.CompareImmediate:
+                    if (!registerTracker.LastCompareImmediate.HasValue)
+                        return null;
 
-                if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out comparedField) || comparedField == null)
+                    comparedField = registerTracker.LastComparedPartyField?.Clone();
+                    if (comparedField == null)
+                    {
+                        if (string.IsNullOrWhiteSpace(comparedRegister))
+                            return null;
+
+                        if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out comparedField) || comparedField == null)
+                            return null;
+                    }
+
+                    compareValue = registerTracker.LastCompareImmediate.Value;
+                    break;
+
+                case RegisterTracker.FlagsOriginKind.Test:
+                    if (!TryInferSignTestPredicateContext(
+                            registerTracker,
+                            comparedRegister,
+                            mnemonic,
+                            out comparedField,
+                            out compareValue))
+                    {
+                        return null;
+                    }
+
+                    break;
+
+                default:
                     return null;
             }
 
-            var comparison = ResolvePredicateComparisonForBranch(mnemonic, branchTaken);
+            var comparison = ResolvePredicateComparisonForBranch(
+                mnemonic,
+                branchTaken,
+                registerTracker.LastFlagsOrigin);
             if (comparison == PartyPredicateComparison.Unknown)
                 return null;
 
@@ -1628,14 +1654,44 @@ namespace MMMapEditor
                 Field = comparedField.Field,
                 Comparison = comparison,
                 ValueKnowledge = PartyValueKnowledge.ExactImmediate,
-                ImmediateValue = registerTracker.LastCompareImmediate.Value,
+                ImmediateValue = compareValue,
                 InstructionAddress = instructionAddress,
                 TargetMember = comparedField.Member?.Clone(),
-                Description = BuildPartyPredicateDescription(comparedField.Field, comparison, registerTracker.LastCompareImmediate.Value)
+                Description = BuildPartyPredicateDescription(comparedField.Field, comparison, compareValue)
             };
         }
 
-        private PartyPredicateComparison ResolvePredicateComparisonForBranch(string mnemonic, bool branchTaken)
+        private bool TryInferSignTestPredicateContext(
+            RegisterTracker registerTracker,
+            string comparedRegister,
+            string mnemonic,
+            out PartyFieldReference comparedField,
+            out ushort compareValue)
+        {
+            comparedField = null;
+            compareValue = 0;
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            if (jump != "JS" && jump != "JNS")
+                return false;
+
+            if (!registerTracker.LastTestMask.HasValue || (registerTracker.LastTestMask.Value & 0x80) == 0)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(comparedRegister))
+                return false;
+
+            if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out comparedField) || comparedField == null)
+                return false;
+
+            compareValue = 0x80;
+            return true;
+        }
+
+        private PartyPredicateComparison ResolvePredicateComparisonForBranch(
+            string mnemonic,
+            bool branchTaken,
+            RegisterTracker.FlagsOriginKind flagsOrigin)
         {
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
             return jump switch
@@ -1646,6 +1702,10 @@ namespace MMMapEditor
                 "JBE" or "JNA" => branchTaken ? PartyPredicateComparison.LessOrEqual : PartyPredicateComparison.GreaterThan,
                 "JA" or "JNBE" => branchTaken ? PartyPredicateComparison.GreaterThan : PartyPredicateComparison.LessOrEqual,
                 "JAE" or "JNB" or "JNC" => branchTaken ? PartyPredicateComparison.GreaterOrEqual : PartyPredicateComparison.LessThan,
+                "JS" when flagsOrigin == RegisterTracker.FlagsOriginKind.Test
+                    => branchTaken ? PartyPredicateComparison.GreaterOrEqual : PartyPredicateComparison.LessThan,
+                "JNS" when flagsOrigin == RegisterTracker.FlagsOriginKind.Test
+                    => branchTaken ? PartyPredicateComparison.LessThan : PartyPredicateComparison.GreaterOrEqual,
                 _ => PartyPredicateComparison.Unknown
             };
         }
@@ -6352,6 +6412,7 @@ namespace MMMapEditor
                     registerTracker.OverflowFlag = false;
                     registerTracker.FlagsKnown = true;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = 0xFF;
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _) ||
                          (registerTracker.TryGetPartyFieldValue("AL", out var alFieldForOr) && alFieldForOr != null) ||
@@ -6359,6 +6420,7 @@ namespace MMMapEditor
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = 0xFF;
                 }
             }
 
@@ -6378,16 +6440,19 @@ namespace MMMapEditor
                     registerTracker.OverflowFlag = false;
                     registerTracker.FlagsKnown = true;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = immediateValue;
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _))
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = immediateValue;
                 }
                 else if (hasTrackedTechnicalFieldCompare)
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = immediateValue;
                 }
 
                 if (hasTrackedTechnicalFieldCompare)
@@ -6413,6 +6478,7 @@ namespace MMMapEditor
                     registerTracker.OverflowFlag = false;
                     registerTracker.FlagsKnown = true;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = 0xFF;
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _) ||
                          (registerTracker.TryGetPartyFieldValue("AL", out var alFieldForTest) && alFieldForTest != null) ||
@@ -6420,6 +6486,7 @@ namespace MMMapEditor
                 {
                     registerTracker.FlagsKnown = false;
                     registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
+                    registerTracker.LastTestMask = 0xFF;
                 }
             }
 
@@ -6625,16 +6692,19 @@ namespace MMMapEditor
                             registerTracker.OverflowFlag = false;
                             registerTracker.FlagsKnown = true;
                             registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
+                            registerTracker.LastTestMask = immediateValue;
                         }
                         else if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetRegisterRange(regName, out var _))
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
+                            registerTracker.LastTestMask = immediateValue;
                         }
                         else if (hasTrackedTechnicalFieldCompare)
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Test, address);
+                            registerTracker.LastTestMask = immediateValue;
                         }
 
                         if (hasTrackedTechnicalFieldCompare)
@@ -6669,6 +6739,7 @@ namespace MMMapEditor
                             registerTracker.OverflowFlag = false;
                             registerTracker.FlagsKnown = true;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
+                            registerTracker.LastTestMask = immediateValue;
                         }
                         else if (hasPartyFieldRef &&
                                  testedFieldRef != null &&
@@ -6676,6 +6747,7 @@ namespace MMMapEditor
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
+                            registerTracker.LastTestMask = immediateValue;
                         }
 
                         if (hasPartyFieldRef &&

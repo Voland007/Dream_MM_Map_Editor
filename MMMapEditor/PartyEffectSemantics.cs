@@ -238,6 +238,9 @@ namespace MMMapEditor
                         if (condition == PartyConditionKind.FemaleOnly)
                             return $"CONDITION женщин в партии изменяется на {conditionStatusesText}";
 
+                        if (ShouldRenderStatusSubsetAsWholeParty(effect))
+                            return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
+
                         return $"CONDITION части партии изменяется на {conditionStatusesText}";
                     }
 
@@ -325,7 +328,7 @@ namespace MMMapEditor
             if (IsRedundantStatImplementationDetailForNotes(effect, allEffects))
                 return false;
 
-            if (IsStatusDerivedFromHpLossForNotes(effect, allEffects))
+            if (IsImplicitHpLossConsequenceOutcome(effect, allEffects))
                 return false;
 
             return true;
@@ -435,6 +438,27 @@ namespace MMMapEditor
         public static bool HasEffectiveGuardPredicates(PartyEffect effect)
         {
             return GetEffectiveGuardPredicates(effect).Count > 0;
+        }
+
+        private static bool ShouldRenderStatusSubsetAsWholeParty(PartyEffect effect)
+        {
+            if (effect == null)
+                return false;
+
+            if (GetEffectiveField(effect) != PartyFieldKind.Status)
+                return false;
+
+            if (GetEffectiveScope(effect) != PartyEffectScope.PartySubset)
+                return false;
+
+            if (GetEffectiveCondition(effect) != PartyConditionKind.None)
+                return false;
+
+            string guardKey = BuildGuardPredicatesKey(effect);
+            return string.Equals(
+                guardKey,
+                "Status|LessThan|ExactImmediate|128|-|Dynamic:Loop:-:-:-",
+                StringComparison.Ordinal);
         }
 
         public static bool HaveEquivalentGuardPredicates(PartyEffect left, PartyEffect right)
@@ -567,7 +591,7 @@ namespace MMMapEditor
                     IsLoopDerived(candidate) == IsLoopDerived(effect));
         }
 
-        private static bool IsStatusDerivedFromHpLossForNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
+        public static bool IsImplicitHpLossConsequenceOutcome(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
         {
             if (GetEffectiveField(effect) != PartyFieldKind.Status)
                 return false;
@@ -579,7 +603,7 @@ namespace MMMapEditor
                 .Where(candidate => candidate != null && !ReferenceEquals(candidate, effect))
                 .Any(candidate =>
                     IsHpLossEffect(candidate) &&
-                    TargetsSamePartyMembers(effect, candidate) &&
+                    TargetsImplicitHpConsequencePartyMembers(effect, candidate) &&
                     IsLikelyConsequenceByInstructionOrder(effect, candidate));
         }
 
@@ -638,6 +662,24 @@ namespace MMMapEditor
                    GetEffectiveScope(left) == GetEffectiveScope(right) &&
                    GetEffectiveCondition(left) == GetEffectiveCondition(right) &&
                    IsLoopDerived(left) == IsLoopDerived(right);
+        }
+
+        private static bool TargetsImplicitHpConsequencePartyMembers(PartyEffect statusEffect, PartyEffect hpEffect)
+        {
+            if (TargetsSamePartyMembers(statusEffect, hpEffect))
+                return true;
+
+            if (statusEffect == null || hpEffect == null)
+                return false;
+
+            if (IsPartyWideLoopEffect(statusEffect) &&
+                IsPartyWideLoopEffect(hpEffect) &&
+                GetEffectiveCondition(statusEffect) == GetEffectiveCondition(hpEffect))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static bool IsAggregatedStatSummaryForSingleMemberArtifact(PartyEffect specificEffect, PartyEffect aggregateEffect)

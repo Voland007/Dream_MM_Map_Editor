@@ -922,8 +922,10 @@ namespace MMMapEditor
 
         private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
         {
-            var semanticPartyEffects = (PartyEffectNormalizer.Normalize(source) ?? new List<PartyEffect>())
+            var normalizedPartyEffects = PartyEffectNormalizer.Normalize(source) ?? new List<PartyEffect>();
+            var semanticPartyEffects = normalizedPartyEffects
                 .Where(PartyEffectSemantics.IsSemanticOutcomeEffect)
+                .Where(effect => !PartyEffectSemantics.IsImplicitHpLossConsequenceOutcome(effect, normalizedPartyEffects))
                 .ToList();
 
             return new PathVariantInfo
@@ -1307,13 +1309,15 @@ namespace MMMapEditor
                     .Select(variant => new
                     {
                         Variant = variant,
-                        EffectKeys = BuildConditionalLoopSubsetEffectKeySet(variant)
+                        EffectKeys = BuildConditionalLoopSubsetEffectKeySet(variant),
+                        ShadowBranchHistoryKey = BuildConditionalLoopSubsetShadowBranchHistoryKey(variant)
                     })
                     .ToList();
 
                 var survivors = keyedItems
                     .Where(current => !keyedItems.Any(other =>
                         !ReferenceEquals(other, current) &&
+                        string.Equals(other.ShadowBranchHistoryKey, current.ShadowBranchHistoryKey, StringComparison.Ordinal) &&
                         StrictlyContainsConditionalLoopSubsetEffects(other.EffectKeys, current.EffectKeys)))
                     .Select(item => item.Variant)
                     .ToList();
@@ -1591,13 +1595,13 @@ namespace MMMapEditor
         }
 
 
-        private bool ShouldIgnoreBranchHistoryForIdentity(PathVariantInfo variant)
+        private bool ShouldNormalizeLoopLocalBranchHistoryForIdentity(PathVariantInfo variant)
         {
             if (variant == null)
                 return false;
 
             if (IsPureEmptyLeafVariant(variant))
-                return true;
+                return false;
 
             if (variant.PartyEffects == null || variant.PartyEffects.Count == 0)
                 return false;
@@ -1738,13 +1742,7 @@ namespace MMMapEditor
             string partyKey = BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(variant);
             string partitionFamilyKey = BuildConditionalLoopSubsetPartitionFamilyKey(variant);
 
-            string branchKey = ShouldIgnoreBranchHistoryForIdentity(variant)
-                ? "<IGNORED_BRANCHES>"
-                : (variant.BranchChoices != null && variant.BranchChoices.Count > 0
-                    ? string.Join(";", variant.BranchChoices
-                        .Where(c => c != null)
-                        .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
-                    : "<NO_BRANCHES>");
+            string branchKey = BuildBranchHistoryKeyForIdentity(variant);
 
             return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{partitionFamilyKey}||{branchKey}";
         }
@@ -1781,14 +1779,50 @@ namespace MMMapEditor
                 : "<NO_LOADS>";
 
             string partyKey = BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(variant);
-            string partitionFamilyKey = BuildConditionalLoopSubsetPartitionFamilyKey(variant);
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{partitionFamilyKey}";
+            // Для suppress-only шага нужно сравнивать варианты с одинаковой базовой семантикой
+            // даже если у части из них пока нет ни одного conditional subset effect.
+            // Иначе "пустой" outcome (без сработавшего subset-эффекта) никогда не увидит
+            // более содержательный sibling и не будет отброшен как shadowed.
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}";
         }
 
         private string BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(PathVariantInfo variant)
         {
             return BuildPartyEffectsKey(variant, effect => !IsConditionalLoopSubsetOutcomeEffect(effect));
+        }
+
+        private string BuildConditionalLoopSubsetShadowBranchHistoryKey(PathVariantInfo variant)
+        {
+            return BuildBranchHistoryKey(variant, ignorePureEmptyLeaf: false, filterLoopLocalChoices: true);
+        }
+
+        private string BuildBranchHistoryKeyForIdentity(PathVariantInfo variant)
+        {
+            bool ignorePureEmptyLeaf = IsPureEmptyLeafVariant(variant);
+            bool filterLoopLocalChoices = ShouldNormalizeLoopLocalBranchHistoryForIdentity(variant);
+            return BuildBranchHistoryKey(variant, ignorePureEmptyLeaf, filterLoopLocalChoices);
+        }
+
+        private string BuildBranchHistoryKey(PathVariantInfo variant, bool ignorePureEmptyLeaf, bool filterLoopLocalChoices)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            if (ignorePureEmptyLeaf)
+                return "<IGNORED_BRANCHES>";
+
+            if (variant.BranchChoices == null || variant.BranchChoices.Count == 0)
+                return "<NO_BRANCHES>";
+
+            var relevantChoices = variant.BranchChoices
+                .Where(choice => choice != null && (!filterLoopLocalChoices || !IsLoopLocalBranchChoiceForIdentity(choice)))
+                .Select(choice => $"{choice.Label}|{choice.Condition}|{choice.CompareRegister}|{choice.CompareValue?.ToString() ?? string.Empty}|{choice.IsLinear}")
+                .ToList();
+
+            return relevantChoices.Count == 0
+                ? "<NO_BRANCHES>"
+                : string.Join(";", relevantChoices);
         }
 
         private string BuildConditionalLoopSubsetPartitionFamilyKey(PathVariantInfo variant)
@@ -1828,6 +1862,49 @@ namespace MMMapEditor
                 .Select(PartyEffectSemantics.BuildSemanticKey)
                 .Where(key => !string.IsNullOrWhiteSpace(key))
                 .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private bool IsLoopLocalBranchChoiceForIdentity(BranchChoice choice)
+        {
+            return IsConditionalLoopSubsetLocalBranchChoice(choice) ||
+                   IsPartyLoopTraversalBranchChoice(choice);
+        }
+
+        private bool IsConditionalLoopSubsetLocalBranchChoice(BranchChoice choice)
+        {
+            string mnemonic = ExtractBranchMnemonic(choice);
+            return string.Equals(mnemonic, "JS", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNS", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsPartyLoopTraversalBranchChoice(BranchChoice choice)
+        {
+            string mnemonic = ExtractBranchMnemonic(choice);
+            if (!string.Equals(choice?.CompareRegister, "BL", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            return string.Equals(mnemonic, "JB", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JC", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNAE", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JAE", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNB", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNC", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string ExtractBranchMnemonic(BranchChoice choice)
+        {
+            string condition = choice?.Condition?.Trim();
+            if (string.IsNullOrWhiteSpace(condition))
+                return string.Empty;
+
+            const string linearPrefix = "LINEAR after ";
+            if (condition.StartsWith(linearPrefix, StringComparison.OrdinalIgnoreCase))
+                condition = condition.Substring(linearPrefix.Length).TrimStart();
+
+            int separatorIndex = condition.IndexOf(' ');
+            return separatorIndex >= 0
+                ? condition.Substring(0, separatorIndex).Trim()
+                : condition;
         }
 
         private bool StrictlyContainsConditionalLoopSubsetEffects(HashSet<string> left, HashSet<string> right)
@@ -2140,13 +2217,7 @@ namespace MMMapEditor
 
             string partyKey = BuildPartyEffectsKey(variant);
 
-            string branchKey = ShouldIgnoreBranchHistoryForIdentity(variant)
-                ? "<IGNORED_BRANCHES>"
-                : (variant.BranchChoices != null && variant.BranchChoices.Count > 0
-                    ? string.Join(";", variant.BranchChoices
-                        .Where(c => c != null)
-                        .Select(c => $"{c.Label}|{c.Condition}|{c.CompareRegister}|{c.CompareValue?.ToString() ?? string.Empty}|{c.IsLinear}"))
-                    : "<NO_BRANCHES>");
+            string branchKey = BuildBranchHistoryKeyForIdentity(variant);
 
             return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}";
         }
