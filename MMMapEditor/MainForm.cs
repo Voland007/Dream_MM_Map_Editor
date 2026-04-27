@@ -1132,10 +1132,13 @@ namespace MMMapEditor
             // Копируем вторую половину данных из конфигурации
             Array.Copy(config.Second16Lines, 0, lines, 16, 16);
 
+            byte[] fileData;
+            CellDraftContext draftContext;
+
             try
             {
                 // Читаем бинарный файл
-                byte[] fileData = File.ReadAllBytes(filename);
+                fileData = File.ReadAllBytes(filename);
 
                 // Получаем стартовый адрес данных из конфигурации
                 int startAddress = config.StartAddress;
@@ -1144,26 +1147,26 @@ namespace MMMapEditor
                 if (fileData.Length < startAddress)
                 {
                     MessageBox.Show($"Файл слишком мал. Длина файла: {fileData.Length}, требуемый адрес: {startAddress}.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    lines[32] = "";
+                    return;
                 }
-                else
+
+                draftContext = BuildDraftContext(config, fileData, fileNameOnly);
+
+                // Формируем строку данных объектов
+                StringBuilder dataLine = new StringBuilder();
+
+                for (int i = startAddress; i < fileData.Length; i++)
                 {
-                    // Формируем строку данных объектов
-                    StringBuilder dataLine = new StringBuilder();
-
-                    for (int i = startAddress; i < fileData.Length; i++)
-                    {
-                        if (i > startAddress) dataLine.Append(" ");
-                        dataLine.AppendFormat("{0:X2}", fileData[i]);
-                    }
-
-                    lines[32] = dataLine.ToString();
+                    if (i > startAddress) dataLine.Append(" ");
+                    dataLine.AppendFormat("{0:X2}", fileData[i]);
                 }
+
+                lines[32] = dataLine.ToString();
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка при чтении бинарного файла: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                lines[32] = "";
+                return;
             }
 
             // Основной цикл обработки данных карты
@@ -1179,7 +1182,7 @@ namespace MMMapEditor
                     {
                         for (int x = 0; x < 16; x++)
                         {
-                            ProcessCellDraft(x, y, cellValuesFirstLayer[x], cellValuesSecondLayer[x], config);
+                            ProcessCellDraft(x, y, cellValuesFirstLayer[x], cellValuesSecondLayer[x], draftContext);
                         }
                     }
                 }
@@ -3331,8 +3334,7 @@ namespace MMMapEditor
 
         private sealed class DirectionBits
         {
-            public bool HasWallBit { get; init; }
-            public bool HasDoorBit { get; init; }
+            public int StructureBits { get; init; }
             public bool SecondLowBit { get; init; }
             public bool SecondHighBit { get; init; }
         }
@@ -3346,8 +3348,7 @@ namespace MMMapEditor
 
         private sealed class CellDraftContext
         {
-            public bool IsDungeon { get; init; }
-            public string WallType { get; init; } = "Кирпичная стена";
+            public OvrSideLayout SideLayout { get; init; }
         }
 
         private static readonly (Direction Side, int HighBit, int LowBit)[] DraftSideMappings =
@@ -3364,23 +3365,22 @@ namespace MMMapEditor
             return (value & (1 << zeroBased)) != 0;
         }
 
-        private CellDraftContext BuildDraftContext(OvrFileConfig config)
+        private CellDraftContext BuildDraftContext(OvrFileConfig config, byte[] fileData, string fileNameOnly)
         {
-            bool isDungeon = string.Equals(config?.OverlayType, "dungeon", StringComparison.OrdinalIgnoreCase);
-
             return new CellDraftContext
             {
-                IsDungeon = isDungeon,
-                WallType = isDungeon ? "Каменная стена" : "Кирпичная стена"
+                SideLayout = OvrSideElementRegistry.ReadLayout(fileData, config, fileNameOnly)
             };
         }
 
         private DirectionBits ReadDirectionBits(int firstLayerValue, int secondLayerValue, int highBitFromRight, int lowBitFromRight)
         {
+            bool hasDoorBit = IsBitSet(firstLayerValue, highBitFromRight);
+            bool hasWallBit = IsBitSet(firstLayerValue, lowBitFromRight);
+
             return new DirectionBits
             {
-                HasDoorBit = IsBitSet(firstLayerValue, highBitFromRight),
-                HasWallBit = IsBitSet(firstLayerValue, lowBitFromRight),
+                StructureBits = (hasWallBit ? 1 : 0) | (hasDoorBit ? 2 : 0),
                 SecondHighBit = IsBitSet(secondLayerValue, highBitFromRight),
                 SecondLowBit = IsBitSet(secondLayerValue, lowBitFromRight)
             };
@@ -3388,9 +3388,7 @@ namespace MMMapEditor
 
         private DirectionState ResolveDirectionState(DirectionBits bits, CellDraftContext context)
         {
-            bool anyStructure = bits.HasWallBit || bits.HasDoorBit;
-
-            if (!anyStructure)
+            if (bits.StructureBits == 0)
             {
                 return new DirectionState
                 {
@@ -3398,66 +3396,24 @@ namespace MMMapEditor
                 };
             }
 
-            return context.IsDungeon
-                ? ResolveDungeonDirectionState(bits, context.WallType)
-                : ResolveTownDirectionState(bits, context.WallType);
-        }
+            OvrSideElementDefinition definition = context?.SideLayout?.GetDefinition(bits.StructureBits);
+            if (definition == null)
+            {
+                return new DirectionState
+                {
+                    BorderType = "Пустота"
+                };
+            }
 
-        private DirectionState ResolveTownDirectionState(DirectionBits bits, string wallType)
-        {
-            int passageType = 0;
-            bool isClosed = false;
-
-            if (bits.HasWallBit && !bits.HasDoorBit)
-            {
-                if (!bits.SecondLowBit)
-                    passageType = 3;
-            }
-            else if (!bits.HasWallBit && bits.HasDoorBit)
-            {
-                passageType = 1;
-                isClosed = bits.SecondLowBit;
-            }
-            else if (bits.HasWallBit && bits.HasDoorBit)
-            {
-                if (!bits.SecondLowBit)
-                    passageType = 3;
-            }
+            int passageType = definition.PassageType;
+            if (definition.SuppressPassageWhenSecondLowBitSet && bits.SecondLowBit)
+                passageType = 0;
 
             return new DirectionState
             {
-                BorderType = wallType,
+                BorderType = definition.BorderType,
                 PassageType = passageType,
-                IsClosed = isClosed
-            };
-        }
-
-        private DirectionState ResolveDungeonDirectionState(DirectionBits bits, string wallType)
-        {
-            int passageType = 0;
-            bool isClosed = false;
-
-            if (bits.HasWallBit && !bits.HasDoorBit)
-            {
-                if (!bits.SecondLowBit)
-                    passageType = 3;
-            }
-            else if (!bits.HasWallBit && bits.HasDoorBit)
-            {
-                passageType = 1;
-                isClosed = bits.SecondLowBit;
-            }
-            else if (bits.HasWallBit && bits.HasDoorBit)
-            {
-                passageType = 2;
-                isClosed = bits.SecondLowBit;
-            }
-
-            return new DirectionState
-            {
-                BorderType = wallType,
-                PassageType = passageType,
-                IsClosed = isClosed
+                IsClosed = definition.MarkClosedWhenSecondLowBitSet && bits.SecondLowBit
             };
         }
 
@@ -3496,13 +3452,12 @@ namespace MMMapEditor
             imagesPerCell[pos] = null;
         }
 
-        private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer, OvrFileConfig config)
+        private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer, CellDraftContext context)
         {
             int firstLayerValue = Convert.ToInt32(hexValueFirstLayer, 16);
             int secondLayerValue = Convert.ToInt32(hexValueSecondLayer, 16);
 
             Point pos = new Point(x, y);
-            CellDraftContext context = BuildDraftContext(config);
 
             var currentBorders = borders[pos];
             var currentPassages = passageDict[pos];
