@@ -6849,7 +6849,7 @@ namespace MMMapEditor
                 .OrderBy(g => g.Key)
                 .ToList();
 
-            var promotedFullBattleIndices = PromoteSequentialTableCopiesToFullyDefinedBattles(result, groupedByBx, isFinalPass);
+            var promotedFullBattleIndices = PromoteSequentialTableCopiesToFullyDefinedBattles(br, result, groupedByBx, isFinalPass);
             var partialCandidateGroups = groupedByBx
                 .Where(group => !promotedFullBattleIndices.Contains(group.Key))
                 .ToList();
@@ -6971,6 +6971,26 @@ namespace MMMapEditor
             return observation.FirstOffset == observation.SecondOffset;
         }
 
+        private static int GetSourceTableGap(PartialBattleTemplateObservation? observation)
+        {
+            if (observation == null)
+                return 0;
+
+            return Math.Abs(observation.SecondBaseAddr - observation.FirstBaseAddr);
+        }
+
+        private static bool CanExpandSequentialBattleCopy(PartialBattleTemplateObservation? observation)
+        {
+            if (observation == null)
+                return false;
+
+            // Компактные пары таблиц обычно кодируют выбор одного типа монстров
+            // и его параметров по фиксированному индексу. В таких циклах растёт
+            // только индекс назначения, поэтому разворачивать их в последовательный
+            // набор разных монстров нельзя.
+            return GetSourceTableGap(observation) > 0x20;
+        }
+
         private static bool IsTemplateSelectionExternallyDerived(PartialBattleTemplateObservation? observation)
         {
             if (observation == null)
@@ -6997,7 +7017,129 @@ namespace MMMapEditor
             return false;
         }
 
+        private static string BuildSequentialTableCopyPatternKey(PartialBattleTemplateObservation observation)
+        {
+            if (observation == null)
+                return string.Empty;
+
+            int firstDelta = observation.FirstOffset - observation.SaveBxIndex;
+            int secondDelta = observation.SecondOffset - observation.SaveBxIndex;
+            return $"{observation.FirstBaseAddr:X4}:{observation.SecondBaseAddr:X4}:{firstDelta}:{secondDelta}";
+        }
+
+        private static void UpsertBattleMonsterEntry(
+            PathAnalysisResult result,
+            int saveBxIndex,
+            byte val1,
+            byte val2,
+            bool isIndeterminate)
+        {
+            if (result == null)
+                return;
+
+            if (result.BattleMonsterEntries.TryGetValue(saveBxIndex, out var existing) &&
+                !existing.isIndeterminate &&
+                isIndeterminate)
+            {
+                return;
+            }
+
+            result.BattleMonsterEntries[saveBxIndex] = (val1, val2, isIndeterminate);
+        }
+
+        private bool TryGetSequentialBattleCopyCountRange(
+            PathAnalysisResult result,
+            out int minCount,
+            out int maxCount)
+        {
+            minCount = 0;
+            maxCount = 0;
+
+            if (result == null || result.IsBattleMonsterCountIndeterminate)
+                return false;
+
+            if (TryGetExactBattleMonsterCount(result, out byte exactCount) && exactCount > 0)
+            {
+                minCount = exactCount;
+                maxCount = exactCount;
+                return true;
+            }
+
+            if (result.BattleMonsterCountRange != null && result.BattleMonsterCountRange.Max > 0)
+            {
+                minCount = result.BattleMonsterCountRange.Min;
+                maxCount = result.BattleMonsterCountRange.Max;
+                return true;
+            }
+
+            if (result.BattleMonsterCount.HasValue && result.BattleMonsterCount.Value > 0)
+            {
+                minCount = result.BattleMonsterCount.Value;
+                maxCount = result.BattleMonsterCount.Value;
+                return true;
+            }
+
+            if (result.LoopIterationCount > 0)
+            {
+                minCount = result.LoopIterationCount;
+                maxCount = result.LoopIterationCount;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryPromoteSequentialTableCopyToBattleEntries(
+            BinaryReader br,
+            PathAnalysisResult result,
+            PartialBattleTemplateObservation observation,
+            out int expandedEntryCount,
+            out string countText)
+        {
+            expandedEntryCount = 0;
+            countText = string.Empty;
+
+            if (br == null ||
+                result == null ||
+                observation == null ||
+                !TryGetSequentialBattleCopyCountRange(result, out int minCount, out int maxCount) ||
+                maxCount <= 0)
+            {
+                return false;
+            }
+
+            var stagedEntries = new List<(int SaveBxIndex, byte Val1, byte Val2, bool IsIndeterminate)>();
+
+            for (int copyIndex = 0; copyIndex < maxCount; copyIndex++)
+            {
+                ushort firstAddr = (ushort)(observation.FirstBaseAddr + observation.FirstOffset + copyIndex);
+                ushort secondAddr = (ushort)(observation.SecondBaseAddr + observation.SecondOffset + copyIndex);
+
+                if (!TryReadOverlayByte(br, firstAddr, out byte val1) ||
+                    !TryReadOverlayByte(br, secondAddr, out byte val2))
+                {
+                    return false;
+                }
+
+                stagedEntries.Add((
+                    observation.SaveBxIndex + copyIndex,
+                    val1,
+                    val2,
+                    copyIndex >= minCount));
+            }
+
+            foreach (var entry in stagedEntries)
+            {
+                UpsertBattleMonsterEntry(result, entry.SaveBxIndex, entry.Val1, entry.Val2, entry.IsIndeterminate);
+            }
+
+            expandedEntryCount = stagedEntries.Count;
+            countText = minCount == maxCount ? minCount.ToString() : $"{minCount}-{maxCount}";
+            return expandedEntryCount > 0;
+        }
+
         private HashSet<int> PromoteSequentialTableCopiesToFullyDefinedBattles(
+            BinaryReader br,
             PathAnalysisResult result,
             List<IGrouping<int, PartialBattleInfo>> groupedByBx,
             bool isFinalPass)
@@ -7011,8 +7153,25 @@ namespace MMMapEditor
             if (!hasSequentialContext)
                 return promoted;
 
+            var sequentialPatternGroups = groupedByBx
+                .Select(CreatePartialBattleTemplateObservation)
+                .Where(observation =>
+                    observation != null &&
+                    HasAlignedSourceOffsets(observation) &&
+                    CanExpandSequentialBattleCopy(observation) &&
+                    !IsKnownPartialBattleTemplateSource(observation.Entry58?.SourceTable) &&
+                    !IsKnownPartialBattleTemplateSource(observation.Entry29?.SourceTable) &&
+                    !IsTemplateSelectionExternallyDerived(observation))
+                .GroupBy(BuildSequentialTableCopyPatternKey)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderBy(observation => observation.SaveBxIndex).ToList());
+
             foreach (var group in groupedByBx)
             {
+                if (promoted.Contains(group.Key))
+                    continue;
+
                 var observation = CreatePartialBattleTemplateObservation(group);
                 if (observation == null || !HasAlignedSourceOffsets(observation))
                     continue;
@@ -7024,6 +7183,25 @@ namespace MMMapEditor
                     continue;
                 }
 
+                string patternKey = BuildSequentialTableCopyPatternKey(observation);
+                if (CanExpandSequentialBattleCopy(observation) &&
+                    sequentialPatternGroups.TryGetValue(patternKey, out var patternObservations) &&
+                    patternObservations.Count > 0 &&
+                    patternObservations[0].SaveBxIndex == observation.SaveBxIndex &&
+                    TryPromoteSequentialTableCopyToBattleEntries(br, result, observation, out int expandedEntryCount, out string countText))
+                {
+                    foreach (var patternObservation in patternObservations)
+                    {
+                        promoted.Add(patternObservation.SaveBxIndex);
+                    }
+
+                    AnalysisDebug.WriteLine(
+                        $"        -> РАЗВЁРНУТО ПОСЛЕДОВАТЕЛЬНОЕ КОПИРОВАНИЕ ПОЛНОЙ БИТВЫ: startBX={observation.SaveBxIndex}, " +
+                        $"entries={expandedEntryCount}, count={countText}, source=[{observation.FirstBaseAddr:X4}/{observation.SecondBaseAddr:X4}], " +
+                        $"offsets={observation.FirstOffset}/{observation.SecondOffset}");
+                    continue;
+                }
+
                 if (IsFullyDefinedBattleEntry(result, observation.SaveBxIndex))
                 {
                     promoted.Add(observation.SaveBxIndex);
@@ -7031,8 +7209,7 @@ namespace MMMapEditor
                     continue;
                 }
 
-                result.BattleMonsterEntries[observation.SaveBxIndex] =
-                    (observation.Entry58.SrcRegValue, observation.Entry29.SrcRegValue, false);
+                UpsertBattleMonsterEntry(result, observation.SaveBxIndex, observation.Entry58.SrcRegValue, observation.Entry29.SrcRegValue, false);
                 promoted.Add(observation.SaveBxIndex);
 
                 AnalysisDebug.WriteLine(
