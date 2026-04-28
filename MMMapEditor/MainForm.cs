@@ -3406,7 +3406,7 @@ namespace MMMapEditor
             }
 
             int passageType = definition.PassageType;
-            if (passageType == 0 && IsOutdoorSecretPassage(bits, context))
+            if (passageType == 0 && IsImplicitSecretPassage(bits, definition))
                 passageType = 3;
 
             if (definition.SuppressPassageWhenSecondLowBitSet && bits.SecondLowBit)
@@ -3420,11 +3420,11 @@ namespace MMMapEditor
             };
         }
 
-        private static bool IsOutdoorSecretPassage(DirectionBits bits, CellDraftContext context)
+        private static bool IsImplicitSecretPassage(DirectionBits bits, OvrSideElementDefinition definition)
         {
-            return context?.SideLayout?.FamilyName == "Outdoor" &&
-                   bits.StructureBits == 2 &&
-                   !bits.SecondHighBit &&
+            return definition != null &&
+                   definition.PassageType == 0 &&
+                   bits.StructureBits != 0 &&
                    !bits.SecondLowBit;
         }
 
