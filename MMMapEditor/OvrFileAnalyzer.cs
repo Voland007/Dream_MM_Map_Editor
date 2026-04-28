@@ -58,10 +58,7 @@ namespace MMMapEditor
             using (var fs = new FileStream(filename, FileMode.Open, FileAccess.Read))
             using (var br = new BinaryReader(fs))
             {
-                if (fs.Length < 0x400)
-                {
-                    throw new InvalidOperationException("File too small to be a valid overlay");
-                }
+                ValidateOverlayStructure(br);
 
                 // Чтение табличных объектов
                 var tableReachableAddresses = new HashSet<uint>();
@@ -98,6 +95,35 @@ namespace MMMapEditor
             }
 
             return objects;
+        }
+
+        private void ValidateOverlayStructure(BinaryReader br)
+        {
+            long fileLength = br.BaseStream.Length;
+            if (fileLength <= _config.StartAddress)
+            {
+                throw new InvalidOperationException(
+                    $"File is too small for overlay start address 0x{_config.StartAddress:X3}.");
+            }
+
+            long originalPosition = br.BaseStream.Position;
+
+            try
+            {
+                br.BaseStream.Seek(_config.StartAddress, SeekOrigin.Begin);
+                byte numObjects = br.ReadByte();
+                long requiredLength = _config.StartAddress + 1L + numObjects + numObjects + (numObjects * 2L);
+
+                if (fileLength < requiredLength)
+                {
+                    throw new InvalidOperationException(
+                        $"File is too small for overlay object table. Length={fileLength}, required={requiredLength}.");
+                }
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPosition;
+            }
         }
 
         private List<CoordinateComparison> FilterComparisonsOutsideTableCode(
