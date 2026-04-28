@@ -188,36 +188,16 @@ namespace MMMapEditor
 
         public List<Direction> GetDirectionsWithMessages()
         {
-            var directions = new List<Direction>();
-            for (int i = 0; i < 4; i++)
-            {
-                int mask = 0x3 << (i * 2);
-                if ((DirectionByte & mask) == mask)
-                {
-                    directions.Add(i switch
-                    {
-                        0 => Direction.Left,
-                        1 => Direction.Bottom,
-                        2 => Direction.Right,
-                        3 => Direction.Top,
-                        _ => Direction.Top
-                    });
-                }
-            }
-            return directions;
+            return new List<Direction>(
+                DirectionUtilities.GetMessageDirections(DirectionByte, DirectionByteLayout.OvrObject));
         }
 
         public bool HasMessageInDirection(Direction direction)
         {
-            int bitPosition = direction switch
-            {
-                Direction.Bottom => 0,
-                Direction.Left => 2,
-                Direction.Right => 4,
-                Direction.Top => 6,
-                _ => 0
-            };
-            return (DirectionByte & (0x3 << bitPosition)) == (0x3 << bitPosition);
+            return DirectionUtilities.HasMessageInDirection(
+                DirectionByte,
+                direction,
+                DirectionByteLayout.OvrObject);
         }
 
         #endregion

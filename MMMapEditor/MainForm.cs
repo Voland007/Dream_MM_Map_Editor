@@ -452,10 +452,10 @@ namespace MMMapEditor
 
             // Дополнительно можно добавить восстановление дефолтных значений, если это требуется
             // Например:
-            borders[pos] = new Directions<string>("Пустота", "Пустота", "Пустота", "Пустота");
-            passageDict[pos] = new Directions<int>(0, 0, 0, 0);
-            closedStates[pos] = new Directions<bool>(false, false, false, false);
-            messageStates[pos] = new Directions<bool>(false, false, false, false);
+            borders[pos] = DirectionUtilities.Filled("Пустота");
+            passageDict[pos] = DirectionUtilities.Filled(0);
+            closedStates[pos] = DirectionUtilities.Filled(false);
+            messageStates[pos] = DirectionUtilities.Filled(false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
             isDangerStates[pos] = false;
@@ -568,11 +568,11 @@ namespace MMMapEditor
 
                 Directions<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
                     ? prevClosed.Clone()
-                    : new Directions<bool>(false, false, false, false);
+                    : DirectionUtilities.Filled(false);
 
                 Directions<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
                     ? prevMsg.Clone()
-                    : new Directions<bool>(false, false, false, false);
+                    : DirectionUtilities.Filled(false);
 
                 CheckBox checkbox = (CheckBox)sender;
                 bool checkedState = checkbox.Checked;
@@ -3040,49 +3040,24 @@ namespace MMMapEditor
 
                         Debug.WriteLine($"  Направления: 0x{dirByte:X2} (бинар: {Convert.ToString(dirByte, 2).PadLeft(8, '0')})");
 
-                        // Проверяем каждое направление (Top, Left, Bottom, Right)
-                        for (int k = 0; k < 4; k++)
+                        IReadOnlyList<Direction> messageDirections = DirectionUtilities.GetMessageDirections(
+                            dirByte,
+                            DirectionByteLayout.LegacyTextImport);
+
+                        foreach (Direction directionFlag in messageDirections)
                         {
-                            int mask = 0x3 << (k * 2);
-                            bool hasMessage = (dirByte & mask) == mask;
+                            hasAnyMessage = true;
+                            Debug.WriteLine($"    Сообщение в направлении: {directionFlag}");
+                        }
 
-                            if (hasMessage)
-                            {
-                                hasAnyMessage = true;
-                                Direction directionFlag = k switch
-                                {
-                                    0 => Direction.Bottom,
-                                    1 => Direction.Left,
-                                    2 => Direction.Right,
-                                    3 => Direction.Top,
-                                    _ => throw new Exception("Неправильный индекс направления.")
-                                };
+                        if (hasAnyMessage)
+                        {
+                            var currentMessages = messageStates.TryGetValue(pos, out var prev)
+                                ? prev
+                                : DirectionUtilities.Filled(false);
 
-                                Debug.WriteLine($"    Сообщение в направлении: {directionFlag}");
-
-                                // Устанавливаем флаг сообщения для направления
-                                var currentMessages = messageStates.TryGetValue(pos, out var prev)
-                                    ? prev
-                                    : new Directions<bool>(false, false, false, false);
-
-                                switch (directionFlag)
-                                {
-                                    case Direction.Top:
-                                        currentMessages.Top = true;
-                                        break;
-                                    case Direction.Left:
-                                        currentMessages.Left = true;
-                                        break;
-                                    case Direction.Bottom:
-                                        currentMessages.Bottom = true;
-                                        break;
-                                    case Direction.Right:
-                                        currentMessages.Right = true;
-                                        break;
-                                }
-
-                                messageStates[pos] = currentMessages;
-                            }
+                            DirectionUtilities.MergeMessages(currentMessages, messageDirections);
+                            messageStates[pos] = currentMessages;
                         }
 
                         // Добавляем текст сообщения, если объект имеет сообщение
@@ -3252,72 +3227,44 @@ namespace MMMapEditor
                             int hexDir = Convert.ToInt32(directionElements[i], 16);
                             Debug.WriteLine($"Направление {i}: 0x{hexDir:X2} (бинар: {Convert.ToString(hexDir, 2).PadLeft(8, '0')})");
 
-                            // Проверяем каждое направление (Top, Left, Bottom, Right)
-                            for (int k = 0; k < 4; k++)
+                            IReadOnlyList<Direction> messageDirections = DirectionUtilities.GetMessageDirections(
+                                (byte)hexDir,
+                                DirectionByteLayout.LegacyTextImport);
+
+                            // Получаем соответствующие координаты
+                            int coordIndex = i + 1; // +1 потому что 0-й элемент - количество пар
+                            if (coordIndex < coordinateElements.Length)
                             {
-                                int mask = 0x3 << (k * 2);
-                                bool hasMessage = (hexDir & mask) == mask;
+                                int hexCoord = Convert.ToInt32(coordinateElements[coordIndex], 16);
+                                int coordY = (hexCoord >> 4) & 0xF;
+                                int coordX = hexCoord & 0xF;
+                                Point newPos = new Point(coordX, coordY);
 
-                                if (hasMessage)
+                                Debug.WriteLine($"  Ячейка: X={coordX}, Y={coordY}");
+
+                                var currentMessages = messageStates.TryGetValue(newPos, out var prev)
+                                    ? prev
+                                    : DirectionUtilities.Filled(false);
+
+                                foreach (Direction directionFlag in messageDirections)
                                 {
-                                    Direction directionFlag = k switch
+                                    Debug.WriteLine($"  Направление {directionFlag} имеет сообщение");
+                                    currentMessages.Set(directionFlag, true);
+
+                                    // Добавляем текст сообщения, если есть
+                                    if (messageIndex < messages.Length)
                                     {
-                                        0 => Direction.Bottom,
-                                        1 => Direction.Left,
-                                        2 => Direction.Right,
-                                        3 => Direction.Top,
-                                        _ => throw new Exception("Неправильный индекс направления.")
-                                    };
+                                        if (!notesPerCell.ContainsKey(newPos))
+                                            notesPerCell[newPos] = "";
 
-                                    Debug.WriteLine($"  Направление {directionFlag} имеет сообщение (битовая маска {k})");
-
-                                    // Получаем соответствующие координаты
-                                    int coordIndex = i + 1; // +1 потому что 0-й элемент - количество пар
-                                    if (coordIndex < coordinateElements.Length)
-                                    {
-                                        int hexCoord = Convert.ToInt32(coordinateElements[coordIndex], 16);
-                                        int coordY = (hexCoord >> 4) & 0xF;
-                                        int coordX = hexCoord & 0xF;
-                                        Point newPos = new Point(coordX, coordY);
-
-                                        Debug.WriteLine($"  Ячейка: X={coordX}, Y={coordY}");
-
-                                        // Устанавливаем флаг сообщения для направления
-                                        var currentMessages = messageStates.TryGetValue(newPos, out var prev)
-                                            ? prev
-                                            : new Directions<bool>(false, false, false, false);
-
-                                        switch (directionFlag)
-                                        {
-                                            case Direction.Top:
-                                                currentMessages.Top = true;
-                                                break;
-                                            case Direction.Left:
-                                                currentMessages.Left = true;
-                                                break;
-                                            case Direction.Bottom:
-                                                currentMessages.Bottom = true;
-                                                break;
-                                            case Direction.Right:
-                                                currentMessages.Right = true;
-                                                break;
-                                        }
-
-                                        messageStates[newPos] = currentMessages;
-
-                                        // Добавляем текст сообщения, если есть
-                                        if (messageIndex < messages.Length)
-                                        {
-                                            if (!notesPerCell.ContainsKey(newPos))
-                                                notesPerCell[newPos] = "";
-
-                                            string messageToAdd = messages[messageIndex];
-                                            notesPerCell[newPos] += messageToAdd + "\n";
-                                            Debug.WriteLine($"  Добавлено сообщение: {messageToAdd}");
-                                            messageIndex++;
-                                        }
+                                        string messageToAdd = messages[messageIndex];
+                                        notesPerCell[newPos] += messageToAdd + "\n";
+                                        Debug.WriteLine($"  Добавлено сообщение: {messageToAdd}");
+                                        messageIndex++;
                                     }
                                 }
+
+                                messageStates[newPos] = currentMessages;
                             }
                         }
                         catch (Exception ex)
@@ -3462,7 +3409,7 @@ namespace MMMapEditor
 
         private void ResetDraftTransientState(Point pos)
         {
-            messageStates[pos] = new Directions<bool>(false, false, false, false);
+            messageStates[pos] = DirectionUtilities.Filled(false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
         }
@@ -4443,7 +4390,7 @@ namespace MMMapEditor
                 Point pos = selectedPosition.Value;
                 Directions<string> previousBorders = borders.TryGetValue(pos, out var prev)
                     ? prev.Clone()
-                    : new Directions<string>("Пустота", "Пустота", "Пустота", "Пустота");
+                    : DirectionUtilities.Filled("Пустота");
 
                 borders[pos] = new Directions<string>(
                     topComboBox.SelectedItem?.ToString() ?? "",
@@ -4471,7 +4418,7 @@ namespace MMMapEditor
 
                 Directions<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
                     ? prev.Clone()
-                    : new Directions<int>(0, 0, 0, 0);
+                    : DirectionUtilities.Filled(0);
 
                 passageDict[selectedPosition.Value] = new Directions<int>(
                     passTopComboBox.SelectedIndex,
@@ -5033,14 +4980,7 @@ namespace MMMapEditor
         // Функция для получения противоположённого направления
         private Direction GetOppositeDirection(Direction direction)
         {
-            switch (direction)
-            {
-                case Direction.Top: return Direction.Bottom;
-                case Direction.Bottom: return Direction.Top;
-                case Direction.Left: return Direction.Right;
-                case Direction.Right: return Direction.Left;
-                default: return direction;
-            }
+            return DirectionUtilities.Opposite(direction);
         }
 
         // Метод для отрисовки лестницы вниз
@@ -6306,14 +6246,14 @@ namespace MMMapEditor
                 centralOptions[position] = "Не исследовано";
 
                 // Инициализация состояний границ (старых чекбоксов)
-                closedStates[position] = new Directions<bool>(false, false, false, false);
+                closedStates[position] = DirectionUtilities.Filled(false);
 
                 // Инициализация состояний новых чекбоксов (текстов)
-                messageStates[position] = new Directions<bool>(false, false, false, false);
+                messageStates[position] = DirectionUtilities.Filled(false);
 
                 // Инициализация прочих необходимых данных
-                borders[position] = new Directions<string>("Пустота", "Пустота", "Пустота", "Пустота");
-                passageDict[position] = new Directions<int>(0, 0, 0, 0);
+                borders[position] = DirectionUtilities.Filled("Пустота");
+                passageDict[position] = DirectionUtilities.Filled(0);
 
                 notesPerCell[position] = "";
                 imagesPerCell[position] = null;

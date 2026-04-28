@@ -45,7 +45,7 @@ namespace MMMapEditor
                     : new Dictionary<Point, string>(),
 
                 MessageStates = existingMessageStates != null
-                    ? existingMessageStates.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone() ?? new Directions<bool>(false, false, false, false))
+                    ? existingMessageStates.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone() ?? DirectionUtilities.Filled(false))
                     : new Dictionary<Point, Directions<bool>>()
             };
 
@@ -128,12 +128,9 @@ namespace MMMapEditor
 
                 var currentMessages = result.MessageStates.TryGetValue(pos, out var prev)
                     ? prev.Clone()
-                    : new Directions<bool>(false, false, false, false);
+                    : DirectionUtilities.Filled(false);
 
-                currentMessages.Top = currentMessages.Top || directionsWithMessages.Contains(Direction.Top);
-                currentMessages.Left = currentMessages.Left || directionsWithMessages.Contains(Direction.Left);
-                currentMessages.Bottom = currentMessages.Bottom || directionsWithMessages.Contains(Direction.Bottom);
-                currentMessages.Right = currentMessages.Right || directionsWithMessages.Contains(Direction.Right);
+                DirectionUtilities.MergeMessages(currentMessages, directionsWithMessages);
 
                 result.MessageStates[pos] = currentMessages;
 
