@@ -11,8 +11,8 @@ namespace MMMapEditor
         public Dictionary<Point, List<NoteInlineStyleSpan>> NoteStyleSpansPerCell { get; set; }
             = new Dictionary<Point, List<NoteInlineStyleSpan>>();
         public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
-        public Dictionary<Point, MainForm.SideValues<bool>> MessageStates { get; set; }
-            = new Dictionary<Point, MainForm.SideValues<bool>>();
+        public Dictionary<Point, Directions<bool>> MessageStates { get; set; }
+            = new Dictionary<Point, Directions<bool>>();
 
         public int TotalObjects { get; set; }
         public int TableObjects { get; set; }
@@ -30,7 +30,7 @@ namespace MMMapEditor
             string filename,
             Dictionary<Point, string> existingCentralOptions,
             Dictionary<Point, string> existingNotes = null,
-            Dictionary<Point, MainForm.SideValues<bool>> existingMessageStates = null,
+            Dictionary<Point, Directions<bool>> existingMessageStates = null,
             bool? useHierarchicalView = null,
             IReadOnlyList<OvrObject> preAnalyzedObjects = null)
         {
@@ -45,8 +45,8 @@ namespace MMMapEditor
                     : new Dictionary<Point, string>(),
 
                 MessageStates = existingMessageStates != null
-                    ? existingMessageStates.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone() ?? new MainForm.SideValues<bool>(false, false, false, false))
-                    : new Dictionary<Point, MainForm.SideValues<bool>>()
+                    ? existingMessageStates.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone() ?? new Directions<bool>(false, false, false, false))
+                    : new Dictionary<Point, Directions<bool>>()
             };
 
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
@@ -128,7 +128,7 @@ namespace MMMapEditor
 
                 var currentMessages = result.MessageStates.TryGetValue(pos, out var prev)
                     ? prev.Clone()
-                    : new MainForm.SideValues<bool>(false, false, false, false);
+                    : new Directions<bool>(false, false, false, false);
 
                 currentMessages.Top = currentMessages.Top || directionsWithMessages.Contains(Direction.Top);
                 currentMessages.Left = currentMessages.Left || directionsWithMessages.Contains(Direction.Left);
@@ -3782,3 +3782,4 @@ private static string BuildHierarchicalVariantNotes(
         }
     }
 }
+

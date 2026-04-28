@@ -1,18 +1,3 @@
-// Copyright (c) Voland007 2026. All rights reserved.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 ﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
@@ -27,8 +12,6 @@
 //
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
-
-
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -42,8 +25,8 @@ namespace MMMapEditor
         public Dictionary<Point, List<NoteInlineStyleSpan>> NoteStyleSpansPerCell { get; set; }
             = new Dictionary<Point, List<NoteInlineStyleSpan>>();
         public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
-        public Dictionary<Point, MainForm.SideValues<bool>> MessageStates { get; set; }
-            = new Dictionary<Point, MainForm.SideValues<bool>>();
+        public Dictionary<Point, Directions<bool>> MessageStates { get; set; }
+            = new Dictionary<Point, Directions<bool>>();
 
         public int TotalObjects { get; set; }
         public int TableObjects { get; set; }
@@ -56,8 +39,8 @@ namespace MMMapEditor
         public byte MonsterLevel { get; set; }
         public byte DarkeningLevel { get; set; }
         public byte MonsterBatchCount { get; set; }
-        public byte RandomEncounterChanceRaw { get; set; } //исходное шестнадцатеричное число из оверлейного файла
-        public double RandomEncounterChancePercent { get; set; } //рассчитанный % на основании RandomEncounterChanceRaw
+        public byte RandomEncounterChanceRaw { get; set; } //РёСЃС…РѕРґРЅРѕРµ С€РµСЃС‚РЅР°РґС†Р°С‚РµСЂРёС‡РЅРѕРµ С‡РёСЃР»Рѕ РёР· РѕРІРµСЂР»РµР№РЅРѕРіРѕ С„Р°Р№Р»Р°
+        public double RandomEncounterChancePercent { get; set; } //СЂР°СЃСЃС‡РёС‚Р°РЅРЅС‹Р№ % РЅР° РѕСЃРЅРѕРІР°РЅРёРё RandomEncounterChanceRaw
 
         public Tuple<byte, byte> SurfaceCoords { get; set; }
         public string SectorMap { get; set; }
@@ -69,14 +52,14 @@ namespace MMMapEditor
             string filename,
             Dictionary<Point, string> seedCentralOptions = null,
             Dictionary<Point, string> seedNotes = null,
-            Dictionary<Point, MainForm.SideValues<bool>> seedMessageStates = null,
+            Dictionary<Point, Directions<bool>> seedMessageStates = null,
             bool? useHierarchicalView = null,
             IReadOnlyList<OvrObject> preAnalyzedObjects = null)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
-                throw new InvalidOperationException($"Конфигурация для файла {fileNameOnly} не найдена.");
+                throw new InvalidOperationException($"РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РґР»СЏ С„Р°Р№Р»Р° {fileNameOnly} РЅРµ РЅР°Р№РґРµРЅР°.");
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
             byte[] fileData = File.ReadAllBytes(filename);
@@ -105,9 +88,9 @@ namespace MMMapEditor
             result.MostPeacefulCell = ReadCell(fileData, config.MostPeacefulCell);
 
             PrependNote(result.NotesPerCell, result.NoteStyleSpansPerCell, result.MostDangerousCell,
-                "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                "Р’РќРРњРђРќРР•! Р­РўРћ РЎРђРњРђРЇ РћРџРђРЎРќРђРЇ РљР›Р•РўРљРђ РќРђ РљРђР РўР•!");
             PrependNote(result.NotesPerCell, result.NoteStyleSpansPerCell, result.MostPeacefulCell,
-                "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                "Р­РўРћ РЎРђРњРђРЇ Р‘Р•Р—РћРџРђРЎРќРђРЇ РљР›Р•РўРљРђ РќРђ РљРђР РўР•!");
 
             result.RandomEncounterChanceRaw = ReadByte(fileData, config.RandomEncounterChance);
             result.RandomEncounterChancePercent = DecodeRandomEncounterChance(ReadByte(fileData, config.RandomEncounterChance));
@@ -223,3 +206,4 @@ namespace MMMapEditor
         }
     }
 }
+

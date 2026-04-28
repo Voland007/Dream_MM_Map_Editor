@@ -61,12 +61,12 @@ namespace MMMapEditor
             "Барьер"
         };
         private ComboBox topComboBox, bottomComboBox, leftComboBox, rightComboBox; // Комбобоксы для границ
-        private Dictionary<Point, SideValues<int>> settingsDict = new Dictionary<Point, SideValues<int>>();
+        private Dictionary<Point, Directions<int>> settingsDict = new Dictionary<Point, Directions<int>>();
         private Point? selectedPosition = null; // Текущая выделенная позиция
-        private Dictionary<Point, SideValues<string>> borders = new Dictionary<Point, SideValues<string>>();
-        private Dictionary<Point, SideValues<int>> passageDict = new Dictionary<Point, SideValues<int>>();
-        private Dictionary<Point, SideValues<bool>> closedStates = new Dictionary<Point, SideValues<bool>>();
-        private Dictionary<Point, SideValues<bool>> messageStates = new Dictionary<Point, SideValues<bool>>();
+        private Dictionary<Point, Directions<string>> borders = new Dictionary<Point, Directions<string>>();
+        private Dictionary<Point, Directions<int>> passageDict = new Dictionary<Point, Directions<int>>();
+        private Dictionary<Point, Directions<bool>> closedStates = new Dictionary<Point, Directions<bool>>();
+        private Dictionary<Point, Directions<bool>> messageStates = new Dictionary<Point, Directions<bool>>();
         private Dictionary<Point, string> centralOptions = new Dictionary<Point, string>(); // Словарь для хранения значения тела каждой ячейки
         private PictureBox magnifierPictureBox; // Объявление картинки, увеличивающей выделенную ячейку
         private ComboBox passTopComboBox, passBottomComboBox, passLeftComboBox, passRightComboBox; // Комбобоксы для прохода
@@ -131,6 +131,7 @@ namespace MMMapEditor
         private string surface = "";
         private Point? mostDangerousCell; //флаг для поментки опасной клетки
         private Point? mostPeacefulCell; // флаг для пометки безопасной клетки
+        private bool showSecretPassages = true;
 
 
         public MainForm()
@@ -147,6 +148,7 @@ namespace MMMapEditor
             CreateControls(); // Функция для создания правой панели
             InitializeAllCells(); // Начальное задание свойств каждой клетки
             CreateContxtMenu();
+            showSecretPassages = GetBooleanSetting("DisplaySettings", "ShowSecretPassages", true);
 
             // Читаем файл по умолчанию из INI
             string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
@@ -248,6 +250,11 @@ namespace MMMapEditor
             _objectsData.Clear();
             LoadObjectsData(configCentralObjectFile);  // Новая загрузка данных объектов
             LoadNamesFromJson(); // Заполняем выпадающий список объектов из файла
+            InvalidateGridButtons();
+        }
+
+        private void InvalidateGridButtons()
+        {
             foreach (var button in gridButtons)
             {
                 button.Invalidate(); // вызываем перерисовку для каждой кнопки
@@ -445,10 +452,10 @@ namespace MMMapEditor
 
             // Дополнительно можно добавить восстановление дефолтных значений, если это требуется
             // Например:
-            borders[pos] = new SideValues<string>("Пустота", "Пустота", "Пустота", "Пустота");
-            passageDict[pos] = new SideValues<int>(0, 0, 0, 0);
-            closedStates[pos] = new SideValues<bool>(false, false, false, false);
-            messageStates[pos] = new SideValues<bool>(false, false, false, false);
+            borders[pos] = new Directions<string>("Пустота", "Пустота", "Пустота", "Пустота");
+            passageDict[pos] = new Directions<int>(0, 0, 0, 0);
+            closedStates[pos] = new Directions<bool>(false, false, false, false);
+            messageStates[pos] = new Directions<bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
             isDangerStates[pos] = false;
@@ -559,13 +566,13 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                SideValues<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
+                Directions<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
                     ? prevClosed.Clone()
-                    : new SideValues<bool>(false, false, false, false);
+                    : new Directions<bool>(false, false, false, false);
 
-                SideValues<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
+                Directions<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
                     ? prevMsg.Clone()
-                    : new SideValues<bool>(false, false, false, false);
+                    : new Directions<bool>(false, false, false, false);
 
                 CheckBox checkbox = (CheckBox)sender;
                 bool checkedState = checkbox.Checked;
@@ -587,8 +594,8 @@ namespace MMMapEditor
                 else if (checkbox == rightMessageCheck)
                     messageStates[pos].Right = checkedState;
 
-                SideValues<bool> currentClosedStates = closedStates[pos];
-                SideValues<bool> currentMessageStates = messageStates[pos];
+                Directions<bool> currentClosedStates = closedStates[pos];
+                Directions<bool> currentMessageStates = messageStates[pos];
 
                 bool hasChanged =
                     !previousClosedStates.Equals(currentClosedStates) ||
@@ -1005,6 +1012,10 @@ namespace MMMapEditor
             directionsMenuItem.Click += DirectionsMenuItem_Click;
             // Добавляем подпункт в меню "Настройки"
             settingMenuItem.DropDownItems.Add(directionsMenuItem);
+
+            ToolStripMenuItem displaySettingsMenuItem = new ToolStripMenuItem("Отображение");
+            displaySettingsMenuItem.Click += DisplaySettingsMenuItem_Click;
+            settingMenuItem.DropDownItems.Add(displaySettingsMenuItem);
 
             // Создаем пункт меню "Загрузка .OVR файлов"
             ToolStripMenuItem ovrLoadSettingsMenuItem = new ToolStripMenuItem("Загрузка .OVR файлов");
@@ -3052,7 +3063,7 @@ namespace MMMapEditor
                                 // Устанавливаем флаг сообщения для направления
                                 var currentMessages = messageStates.TryGetValue(pos, out var prev)
                                     ? prev
-                                    : new SideValues<bool>(false, false, false, false);
+                                    : new Directions<bool>(false, false, false, false);
 
                                 switch (directionFlag)
                                 {
@@ -3274,7 +3285,7 @@ namespace MMMapEditor
                                         // Устанавливаем флаг сообщения для направления
                                         var currentMessages = messageStates.TryGetValue(newPos, out var prev)
                                             ? prev
-                                            : new SideValues<bool>(false, false, false, false);
+                                            : new Directions<bool>(false, false, false, false);
 
                                         switch (directionFlag)
                                         {
@@ -3325,98 +3336,6 @@ namespace MMMapEditor
                 Debug.WriteLine($"Недостаточно строк или пустые данные. lines.Length={lines.Length}, lines[32]={(lines.Length > 32 ? "не пусто" : "нет")}, lines[33]={(lines.Length > 33 ? "не пусто" : "нет")}");
             }
         }
-
-        public sealed class SideValues<T> : IEquatable<SideValues<T>>
-        {
-            [JsonProperty("Item1")]
-            public T Top { get; set; }
-
-            [JsonProperty("Item2")]
-            public T Bottom { get; set; }
-
-            [JsonProperty("Item3")]
-            public T Left { get; set; }
-
-            [JsonProperty("Item4")]
-            public T Right { get; set; }
-
-            public SideValues()
-            {
-            }
-
-            public SideValues(T top, T bottom, T left, T right)
-            {
-                Top = top;
-                Bottom = bottom;
-                Left = left;
-                Right = right;
-            }
-
-            public T Get(Direction side)
-            {
-                return side switch
-                {
-                    Direction.Top => Top,
-                    Direction.Bottom => Bottom,
-                    Direction.Left => Left,
-                    Direction.Right => Right,
-                    _ => throw new ArgumentOutOfRangeException(nameof(side))
-                };
-            }
-
-            public void Set(Direction side, T value)
-            {
-                switch (side)
-                {
-                    case Direction.Top:
-                        Top = value;
-                        break;
-                    case Direction.Bottom:
-                        Bottom = value;
-                        break;
-                    case Direction.Left:
-                        Left = value;
-                        break;
-                    case Direction.Right:
-                        Right = value;
-                        break;
-                    default:
-                        throw new ArgumentOutOfRangeException(nameof(side));
-                }
-            }
-
-            public SideValues<T> Clone()
-            {
-                return new SideValues<T>(Top, Bottom, Left, Right);
-            }
-
-            public bool Equals(SideValues<T> other)
-            {
-                if (ReferenceEquals(other, null))
-                    return false;
-
-                return EqualityComparer<T>.Default.Equals(Top, other.Top)
-                    && EqualityComparer<T>.Default.Equals(Bottom, other.Bottom)
-                    && EqualityComparer<T>.Default.Equals(Left, other.Left)
-                    && EqualityComparer<T>.Default.Equals(Right, other.Right);
-            }
-
-            public override bool Equals(object obj)
-            {
-                return Equals(obj as SideValues<T>);
-            }
-
-            public override int GetHashCode()
-            {
-                int hash = 17;
-                hash = hash * 31 + (Top == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Top));
-                hash = hash * 31 + (Bottom == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Bottom));
-                hash = hash * 31 + (Left == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Left));
-                hash = hash * 31 + (Right == null ? 0 : EqualityComparer<T>.Default.GetHashCode(Right));
-                return hash;
-            }
-        }
-
         private sealed class DirectionBits
         {
             public int StructureBits { get; init; }
@@ -3516,9 +3435,9 @@ namespace MMMapEditor
         private void ApplyDirectionState(
             Direction side,
             DirectionState state,
-            SideValues<string> currentBorders,
-            SideValues<int> currentPassages,
-            SideValues<bool> currentClosedStates)
+            Directions<string> currentBorders,
+            Directions<int> currentPassages,
+            Directions<bool> currentClosedStates)
         {
             currentBorders.Set(side, state.BorderType);
 
@@ -3543,7 +3462,7 @@ namespace MMMapEditor
 
         private void ResetDraftTransientState(Point pos)
         {
-            messageStates[pos] = new SideValues<bool>(false, false, false, false);
+            messageStates[pos] = new Directions<bool>(false, false, false, false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
         }
@@ -3641,6 +3560,18 @@ namespace MMMapEditor
             using (var form = new OvrLoadSettingsForm())
             {
                 form.ShowDialog();
+            }
+        }
+
+        private void DisplaySettingsMenuItem_Click(object sender, EventArgs e)
+        {
+            using (var form = new DisplaySettingsForm())
+            {
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    showSecretPassages = form.ShowSecretPassages;
+                    InvalidateGridButtons();
+                }
             }
         }
 
@@ -3910,19 +3841,19 @@ namespace MMMapEditor
                 Point pos = new Point(i % GridSize, i / GridSize);
 
                 // Границы: приводим значения к строкам
-                borders[pos] = new SideValues<string>(
+                borders[pos] = new Directions<string>(
                     (string)cellInfo.Borders.Item1, (string)cellInfo.Borders.Item2, (string)cellInfo.Borders.Item3, (string)cellInfo.Borders.Item4);
 
                 // Проходы: приводим значения к целочисленным
-                passageDict[pos] = new SideValues<int>(
+                passageDict[pos] = new Directions<int>(
                     (int)cellInfo.Passages.Item1, (int)cellInfo.Passages.Item2, (int)cellInfo.Passages.Item3, (int)cellInfo.Passages.Item4);
 
                 // Закрытость: приводим значения к булевым
-                closedStates[pos] = new SideValues<bool>(
+                closedStates[pos] = new Directions<bool>(
                     (bool)cellInfo.ClosedStates.Item1, (bool)cellInfo.ClosedStates.Item2, (bool)cellInfo.ClosedStates.Item3, (bool)cellInfo.ClosedStates.Item4);
 
                 // Сообщения: приводим значения к булевым
-                messageStates[pos] = new SideValues<bool>(
+                messageStates[pos] = new Directions<bool>(
                     (bool)cellInfo.Messages.Item1, (bool)cellInfo.Messages.Item2, (bool)cellInfo.Messages.Item3, (bool)cellInfo.Messages.Item4);
 
                 // Центральный элемент
@@ -4510,11 +4441,11 @@ namespace MMMapEditor
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                SideValues<string> previousBorders = borders.TryGetValue(pos, out var prev)
+                Directions<string> previousBorders = borders.TryGetValue(pos, out var prev)
                     ? prev.Clone()
-                    : new SideValues<string>("Пустота", "Пустота", "Пустота", "Пустота");
+                    : new Directions<string>("Пустота", "Пустота", "Пустота", "Пустота");
 
-                borders[pos] = new SideValues<string>(
+                borders[pos] = new Directions<string>(
                     topComboBox.SelectedItem?.ToString() ?? "",
                     bottomComboBox.SelectedItem?.ToString() ?? "",
                     leftComboBox.SelectedItem?.ToString() ?? "",
@@ -4538,11 +4469,11 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                SideValues<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
+                Directions<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
                     ? prev.Clone()
-                    : new SideValues<int>(0, 0, 0, 0);
+                    : new Directions<int>(0, 0, 0, 0);
 
-                passageDict[selectedPosition.Value] = new SideValues<int>(
+                passageDict[selectedPosition.Value] = new Directions<int>(
                     passTopComboBox.SelectedIndex,
                     passBottomComboBox.SelectedIndex,
                     passLeftComboBox.SelectedIndex,
@@ -5556,6 +5487,9 @@ namespace MMMapEditor
         // Вспомогательная функция для правильного выбора метода рисования SECRET
         private void DrawCorrectSecret(Graphics g, Rectangle bounds, string wallType, Direction direction)
         {
+            if (!showSecretPassages)
+                return;
+
             if (wallType == "Кирпичная стена")
             {
                 DrawFilteredDarkPinkSecret(g, bounds, direction); // Новое условие для кирпичной стены
@@ -6372,14 +6306,14 @@ namespace MMMapEditor
                 centralOptions[position] = "Не исследовано";
 
                 // Инициализация состояний границ (старых чекбоксов)
-                closedStates[position] = new SideValues<bool>(false, false, false, false);
+                closedStates[position] = new Directions<bool>(false, false, false, false);
 
                 // Инициализация состояний новых чекбоксов (текстов)
-                messageStates[position] = new SideValues<bool>(false, false, false, false);
+                messageStates[position] = new Directions<bool>(false, false, false, false);
 
                 // Инициализация прочих необходимых данных
-                borders[position] = new SideValues<string>("Пустота", "Пустота", "Пустота", "Пустота");
-                passageDict[position] = new SideValues<int>(0, 0, 0, 0);
+                borders[position] = new Directions<string>("Пустота", "Пустота", "Пустота", "Пустота");
+                passageDict[position] = new Directions<int>(0, 0, 0, 0);
 
                 notesPerCell[position] = "";
                 imagesPerCell[position] = null;
@@ -7594,10 +7528,10 @@ namespace MMMapEditor
         // Временная структура для хранения состояния ячейки
         private struct CopiedCellInfo
         {
-            public SideValues<string> Borders;
-            public SideValues<int> Passages;
-            public SideValues<bool> ClosedStates;
-            public SideValues<bool> Messages;
+            public Directions<string> Borders;
+            public Directions<int> Passages;
+            public Directions<bool> ClosedStates;
+            public Directions<bool> Messages;
             public string CentralOption;
             public bool IsDanger;
             public bool NoMagic;
@@ -7608,3 +7542,5 @@ namespace MMMapEditor
     }
 
 }
+
+
