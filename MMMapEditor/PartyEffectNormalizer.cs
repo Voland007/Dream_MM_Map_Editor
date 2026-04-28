@@ -317,6 +317,7 @@ namespace MMMapEditor
                         .Clone();
 
                     aggregated.ApplicationCount = group.Sum(effect => effect?.ApplicationCount > 0 ? effect.ApplicationCount : 1);
+                    aggregated.IsSynchronizedTemporaryMirror = group.All(effect => effect?.IsSynchronizedTemporaryMirror == true);
                     aggregated.Description = PartyEffectSemantics.BuildHumanDescription(aggregated);
                     return aggregated;
                 })

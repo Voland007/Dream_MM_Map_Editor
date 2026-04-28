@@ -129,7 +129,8 @@ namespace MMMapEditor
     public enum RegisterValueDistribution
     {
         Unknown,
-        UniformDiscreteRange
+        UniformDiscreteRange,
+        EvenDiscreteRange
     }
 
     public enum LoopSemanticKind
@@ -280,7 +281,8 @@ namespace MMMapEditor
 
     public enum NoteInlineStyleKind
     {
-        InverseVideo = 0
+        InverseVideo = 0,
+        AggregateTemporaryStatHighlight = 1
     }
 
     public sealed class NoteInlineStyleSpan
@@ -640,6 +642,7 @@ namespace MMMapEditor
         public int ExecutionOrder { get; set; }
         public int ApplicationCount { get; set; } = 1;
         public string Description { get; set; }
+        public bool IsSynchronizedTemporaryMirror { get; set; }
 
         public PartyEffect Clone()
         {
@@ -663,7 +666,8 @@ namespace MMMapEditor
                 InstructionAddress = InstructionAddress,
                 ExecutionOrder = ExecutionOrder,
                 ApplicationCount = ApplicationCount,
-                Description = Description
+                Description = Description,
+                IsSynchronizedTemporaryMirror = IsSynchronizedTemporaryMirror
             };
         }
     }

@@ -27,6 +27,23 @@ namespace MMMapEditor
             return PartyMemberReference.FormatDisplayIndex(memberIndex);
         }
 
+        private static bool IsTrackedByteField(PartyFieldKind field)
+        {
+            return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+                   PartyTemporaryStatSemantics.IsTrackedField(field);
+        }
+
+        private static string GetTrackedFieldLabel(PartyFieldKind field)
+        {
+            if (PartyTemporaryStatSemantics.IsTrackedField(field))
+                return PartyTemporaryStatSemantics.GetFieldLabel(field);
+
+            if (PartyTechnicalFieldSemantics.IsTrackedField(field))
+                return PartyTechnicalFieldSemantics.GetFieldLabel(field);
+
+            return field.ToString();
+        }
+
         public static string BuildSemanticKey(PartyEffect effect)
         {
             return BuildSemanticKeyCore(effect, includeApplicationCount: true);
@@ -111,6 +128,9 @@ namespace MMMapEditor
             if (IsLoopDerived(effect))
                 parts.Add("LoopDerived=True");
 
+            if (effect.IsSynchronizedTemporaryMirror)
+                parts.Add("NoteSuppressed=SyncTempMirror");
+
             var knowledge = GetEffectiveValueKnowledge(effect);
             if (knowledge != PartyValueKnowledge.Unknown)
                 parts.Add($"Value={FormatValue(effect, knowledge)}");
@@ -138,7 +158,7 @@ namespace MMMapEditor
             var condition = GetEffectiveCondition(effect);
             int applicationCount = GetEffectiveApplicationCount(effect);
 
-            if (PartyTechnicalFieldSemantics.IsTrackedField(field))
+            if (IsTrackedByteField(field))
                 return BuildTrackedTechnicalFieldDescription(effect, field, scope, condition);
 
             if (PartyAlignmentSemantics.IsAlignmentField(field))
@@ -302,7 +322,10 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            if (PartyTechnicalFieldSemantics.IsTrackedField(GetEffectiveField(effect)))
+            if (effect.IsSynchronizedTemporaryMirror)
+                return false;
+
+            if (IsTrackedByteField(GetEffectiveField(effect)))
                 return IsStateChanging(effect);
 
             if (IsStructuralFieldComparison(effect))
@@ -316,7 +339,10 @@ namespace MMMapEditor
             if (effect == null)
                 return false;
 
-            if (PartyTechnicalFieldSemantics.IsTrackedField(GetEffectiveField(effect)))
+            if (effect.IsSynchronizedTemporaryMirror)
+                return false;
+
+            if (IsTrackedByteField(GetEffectiveField(effect)))
                 return IsStateChanging(effect);
 
             if (IsStructuralFieldComparison(effect))
@@ -869,13 +895,161 @@ namespace MMMapEditor
             PartyEffectScope scope,
             PartyConditionKind condition)
         {
-            if (effect == null || !PartyTechnicalFieldSemantics.IsTrackedField(field))
+            if (effect == null || !IsTrackedByteField(field))
                 return null;
 
             if (PartyQuestLordFieldSemantics.IsQuestField(field))
                 return BuildQuestLordFieldDescription(effect, field, scope, condition);
 
+            if (PartyTemporaryStatSemantics.IsTrackedField(field))
+                return BuildTemporaryStatFieldDescription(effect, field, scope, condition);
+
             return BuildRanalouQuestLineDescription(effect, field, scope, condition);
+        }
+
+        private static string BuildTemporaryStatFieldDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || !PartyTemporaryStatSemantics.IsTrackedField(field))
+                return null;
+
+            string fieldLabel = PartyTemporaryStatSemantics.GetFieldLabel(field);
+            bool isAggregateField = PartyTemporaryStatSemantics.IsAggregateField(field);
+            string fieldValuePhrase = isAggregateField
+                ? "одного из временных полей характеристик (INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL)"
+                : $"поля {fieldLabel}";
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            string body = operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается значение {fieldValuePhrase} (= {FormatTemporaryStatValue(effect.ImmediateValue.Value)})",
+                        $"читается значение {fieldValuePhrase} (= {FormatTemporaryStatValue(effect.ImmediateValue.Value)})")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается значение {fieldValuePhrase}",
+                        $"читается значение {fieldValuePhrase}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? BuildTemporaryStatMaskCompareDescription(
+                            targetPrefix,
+                            fieldValuePhrase,
+                            (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется значение {fieldValuePhrase} на {FormatTemporaryStatValue(effect.ImmediateValue.Value)}",
+                            $"проверяется значение {fieldValuePhrase} на {FormatTemporaryStatValue(effect.ImmediateValue.Value)}")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Проверяется значение {fieldValuePhrase}",
+                        $"проверяется значение {fieldValuePhrase}"),
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? BuildTemporaryStatBitOperationDescription(
+                        targetPrefix,
+                        fieldValuePhrase,
+                        "устанавливается",
+                        "устанавливаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется значение {fieldValuePhrase}",
+                        $"изменяется значение {fieldValuePhrase}"),
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? BuildTemporaryStatBitOperationDescription(
+                        targetPrefix,
+                        fieldValuePhrase,
+                        "сбрасывается",
+                        "сбрасываются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется значение {fieldValuePhrase}",
+                        $"изменяется значение {fieldValuePhrase}"),
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? BuildTemporaryStatBitOperationDescription(
+                        targetPrefix,
+                        fieldValuePhrase,
+                        "переключается",
+                        "переключаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется значение {fieldValuePhrase}",
+                        $"изменяется значение {fieldValuePhrase}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? isAggregateField
+                        ? BuildAggregateTemporaryStatWriteDescription(
+                            targetPrefix,
+                            effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Значение {fieldValuePhrase} становится равным {FormatTemporaryStatValue(effect.ImmediateValue.Value)}",
+                            $"значение {fieldValuePhrase} становится равным {FormatTemporaryStatValue(effect.ImmediateValue.Value)}")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется значение {fieldValuePhrase}",
+                        $"изменяется значение {fieldValuePhrase}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+
+            return isAggregateField && operation == PartyEffectOperation.Write
+                ? InlineNoteStyleCodec.EncodeAggregateTemporaryStatText(body)
+                : body;
+        }
+
+        private static string BuildAggregateTemporaryStatWriteDescription(string targetPrefix, ushort value)
+        {
+            return ComposeQuestLordSentence(
+                targetPrefix,
+                $"Одна из характеристик (INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL) ВРЕМЕННО становится равной {FormatTemporaryStatValue(value)}",
+                $"одна из характеристик (INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL) ВРЕМЕННО становится равной {FormatTemporaryStatValue(value)}");
+        }
+
+        private static string BuildTemporaryStatMaskCompareDescription(string targetPrefix, string fieldValuePhrase, byte mask)
+        {
+            int? bitIndex = TryGetSingleBitIndex(mask);
+            return bitIndex.HasValue
+                ? ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Проверяется бит {bitIndex.Value} (маска 0x{mask:X2}) в значении {fieldValuePhrase}",
+                    $"проверяется бит {bitIndex.Value} (маска 0x{mask:X2}) в значении {fieldValuePhrase}")
+                : ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Проверяются биты маски 0x{mask:X2} в значении {fieldValuePhrase}",
+                    $"проверяются биты маски 0x{mask:X2} в значении {fieldValuePhrase}");
+        }
+
+        private static string BuildTemporaryStatBitOperationDescription(
+            string targetPrefix,
+            string fieldValuePhrase,
+            string singularVerb,
+            string pluralVerb,
+            byte mask)
+        {
+            int? bitIndex = TryGetSingleBitIndex(mask);
+            return bitIndex.HasValue
+                ? ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"В значении {fieldValuePhrase} {singularVerb} бит {bitIndex.Value} (маска 0x{mask:X2})",
+                    $"в значении {fieldValuePhrase} {singularVerb} бит {bitIndex.Value} (маска 0x{mask:X2})")
+                : ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"В значении {fieldValuePhrase} {pluralVerb} биты маски 0x{mask:X2}",
+                    $"в значении {fieldValuePhrase} {pluralVerb} биты маски 0x{mask:X2}");
+        }
+
+        private static string FormatTemporaryStatValue(ushort value)
+        {
+            return value.ToString(CultureInfo.InvariantCulture);
         }
 
         private static string BuildQuestLordFieldDescription(
@@ -1360,8 +1534,8 @@ namespace MMMapEditor
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 PartyFieldKind.Status => "status",
-                PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
-                    => PartyTechnicalFieldSemantics.GetFieldLabel(field),
+                _ when IsTrackedByteField(field)
+                    => GetTrackedFieldLabel(field),
                 _ => field.ToString()
             };
         }

@@ -108,6 +108,12 @@ namespace MMMapEditor
                 string existingCellNotes = result.NotesPerCell.TryGetValue(pos, out var notes)
                     ? notes
                     : "";
+                var existingInlineStyles = result.NoteStyleSpansPerCell.TryGetValue(pos, out var priorInlineStyles)
+                    ? (priorInlineStyles ?? new List<NoteInlineStyleSpan>())
+                        .Where(span => span != null && span.Length > 0 && span.Start >= 0)
+                        .Select(span => span.Clone())
+                        .ToList()
+                    : new List<NoteInlineStyleSpan>();
 
                 if (obj.IsFromTable)
                 {
@@ -185,7 +191,7 @@ namespace MMMapEditor
 
                     if (variantContents.Count == 0)
                     {
-                        AppendRenderedText(newNotes, inlineStyles, existingCellNotes);
+                        AppendExistingRenderedText(newNotes, inlineStyles, existingCellNotes, existingInlineStyles);
                     }
                     else if (variantContents.Count == 1)
                     {
@@ -224,6 +230,35 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static void AppendExistingRenderedText(
+            StringBuilder target,
+            List<NoteInlineStyleSpan> inlineStyles,
+            string plainText,
+            List<NoteInlineStyleSpan> existingStyles)
+        {
+            if (target == null || string.IsNullOrEmpty(plainText))
+                return;
+
+            int startIndex = target.Length;
+            target.Append(plainText);
+
+            if (inlineStyles == null || existingStyles == null || existingStyles.Count == 0)
+                return;
+
+            foreach (var span in existingStyles)
+            {
+                if (span == null || span.Length <= 0 || span.Start < 0)
+                    continue;
+
+                inlineStyles.Add(new NoteInlineStyleSpan
+                {
+                    Start = startIndex + span.Start,
+                    Length = span.Length,
+                    Kind = span.Kind
+                });
+            }
         }
 
         private static void AppendRenderedText(
@@ -2131,7 +2166,8 @@ private static string BuildHierarchicalVariantNotes(
             if (PartyEffectSemantics.IsGuardLike(effect))
                 return true;
 
-            return PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) &&
+            return (PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) ||
+                    PartyTemporaryStatSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect))) &&
                    PartyEffectSemantics.IsStateChanging(effect);
         }
 

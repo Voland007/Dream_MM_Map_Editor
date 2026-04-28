@@ -528,9 +528,11 @@ namespace MMMapEditor
                     continue;
 
                 string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
-                bool exists = merged.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
-                if (!exists)
+                var existingEffect = merged.PartyEffects.FirstOrDefault(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
+                if (existingEffect == null)
                     merged.PartyEffects.Add(effect.Clone());
+                else if (existingEffect.IsSynchronizedTemporaryMirror && !effect.IsSynchronizedTemporaryMirror)
+                    existingEffect.IsSynchronizedTemporaryMirror = false;
             }
 
             if (merged.LoopSemantic == LoopSemanticKind.None)

@@ -2349,6 +2349,9 @@ namespace MMMapEditor
                 // Форматирование для временных технических заметок
                 FormatTemporaryTechnicalNotes(notesTextBox, noteText);
 
+                // Форматирование для агрегированной временной характеристики
+                FormatAggregateTemporaryStatNotes(notesTextBox, noteText);
+
                 // Форматирование для loot-блоков
                 FormatLootBlocks(notesTextBox, noteText);
 
@@ -2368,7 +2371,6 @@ namespace MMMapEditor
             foreach (var span in inlineSpans)
             {
                 if (span == null ||
-                    span.Kind != NoteInlineStyleKind.InverseVideo ||
                     span.Length <= 0 ||
                     span.Start < 0 ||
                     span.Start >= noteText.Length)
@@ -2381,8 +2383,73 @@ namespace MMMapEditor
                     continue;
 
                 rt.Select(span.Start, length);
-                rt.SelectionColor = Color.Black;
-                rt.SelectionBackColor = Color.White;
+                switch (span.Kind)
+                {
+                    case NoteInlineStyleKind.InverseVideo:
+                        rt.SelectionColor = Color.Black;
+                        rt.SelectionBackColor = Color.White;
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatHighlight:
+                        rt.SelectionColor = Color.FromArgb(228, 236, 238);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Italic);
+                        break;
+                }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatAggregateTemporaryStatNotes(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText))
+                return;
+
+            const string statGroupPattern = @"\(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL\)";
+            var lineMatches = Regex.Matches(
+                noteText,
+                $@"^[^\r\n]*{statGroupPattern}[^\r\n]*$",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+            foreach (Match match in lineMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                if (match.Value.IndexOf("времен", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(228, 236, 238);
+                rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Italic);
+
+                Match statGroup = Regex.Match(match.Value, statGroupPattern, RegexOptions.IgnoreCase);
+                if (statGroup.Success)
+                {
+                    rt.Select(match.Index + statGroup.Index, statGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(154, 219, 210);
+                    rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                    rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                }
+
+                foreach (Match temporaryWord in Regex.Matches(match.Value, @"\bВРЕМЕННО\b|\bвременн\w*\b", RegexOptions.IgnoreCase))
+                {
+                    rt.Select(match.Index + temporaryWord.Index, temporaryWord.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 205, 160);
+                    rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                    rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                }
+
+                Match valueMatch = Regex.Match(match.Value, @"\b\d+\b(?!.*\b\d+\b)", RegexOptions.CultureInvariant);
+                if (valueMatch.Success)
+                {
+                    rt.Select(match.Index + valueMatch.Index, valueMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 232, 176);
+                    rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                    rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                }
             }
 
             rt.Select(0, 0);

@@ -47,6 +47,14 @@ namespace MMMapEditor
         private const byte PARTY_sex_FEMALE_VALUE = 0x02;
         private const int PARTY_INNATE_ALIGNMENT_OFFSET = PartyAlignmentSemantics.InnateFieldOffset;
         private const int PARTY_CURRENT_ALIGNMENT_OFFSET = PartyAlignmentSemantics.CurrentFieldOffset;
+        private const int PARTY_TEMP_INTELLECT_OFFSET = PartyTemporaryStatSemantics.TempIntellectFieldOffset;
+        private const int PARTY_TEMP_MIGHT_OFFSET = PartyTemporaryStatSemantics.TempMightFieldOffset;
+        private const int PARTY_TEMP_PERSONALITY_OFFSET = PartyTemporaryStatSemantics.TempPersonalityFieldOffset;
+        private const int PARTY_TEMP_ENDURANCE_OFFSET = PartyTemporaryStatSemantics.TempEnduranceFieldOffset;
+        private const int PARTY_TEMP_SPEED_OFFSET = PartyTemporaryStatSemantics.TempSpeedFieldOffset;
+        private const int PARTY_TEMP_ACCURACY_OFFSET = PartyTemporaryStatSemantics.TempAccuracyFieldOffset;
+        private const int PARTY_TEMP_LUCK_OFFSET = PartyTemporaryStatSemantics.TempLuckFieldOffset;
+        private const int PARTY_TEMP_LEVEL_OFFSET = PartyTemporaryStatSemantics.TempLevelFieldOffset;
         private const int PARTY_SP_LOW_OFFSET = 0x2B;
         private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
@@ -635,7 +643,7 @@ namespace MMMapEditor
                 return false;
 
             PartyMemberSelectionKind selectionKind =
-                rangedDistribution == RegisterValueDistribution.UniformDiscreteRange
+                IsRandomLikeDistribution(rangedDistribution)
                     ? PartyMemberSelectionKind.Random
                     : PartyMemberSelectionKind.Dynamic;
 
@@ -756,7 +764,7 @@ namespace MMMapEditor
             }
 
             PartyMemberSelectionKind selectionKind =
-                rangedDistribution == RegisterValueDistribution.UniformDiscreteRange
+                IsRandomLikeDistribution(rangedDistribution)
                     ? PartyMemberSelectionKind.Random
                     : PartyMemberSelectionKind.Dynamic;
 
@@ -811,7 +819,98 @@ namespace MMMapEditor
             return false;
         }
 
+        private PartyFieldKind ResolvePartyFieldKind(int offset)
+        {
+            return offset switch
+            {
+                PARTY_sex_OFFSET => PartyFieldKind.sex,
+                PARTY_INNATE_ALIGNMENT_OFFSET => PartyFieldKind.InnateAlignment,
+                PARTY_CURRENT_ALIGNMENT_OFFSET => PartyFieldKind.CurrentAlignment,
+                PARTY_TEMP_INTELLECT_OFFSET => PartyFieldKind.TempIntellect,
+                PARTY_TEMP_MIGHT_OFFSET => PartyFieldKind.TempMight,
+                PARTY_TEMP_PERSONALITY_OFFSET => PartyFieldKind.TempPersonality,
+                PARTY_TEMP_ENDURANCE_OFFSET => PartyFieldKind.TempEndurance,
+                PARTY_TEMP_SPEED_OFFSET => PartyFieldKind.TempSpeed,
+                PARTY_TEMP_ACCURACY_OFFSET => PartyFieldKind.TempAccuracy,
+                PARTY_TEMP_LUCK_OFFSET => PartyFieldKind.TempLuck,
+                PARTY_TEMP_LEVEL_OFFSET => PartyFieldKind.TempLevel,
+                PARTY_SP_LOW_OFFSET => PartyFieldKind.SpLow,
+                PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
+                PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
+                PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
+                PARTY_STATUS_OFFSET => PartyFieldKind.Status,
+                PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
+                PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
+                PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
+                PARTY_QUEST_LORD3_OFFSET => PartyFieldKind.Technical77,
+                _ => PartyFieldKind.Unknown
+            };
+        }
+
+        private static bool IsRandomLikeDistribution(RegisterValueDistribution distribution)
+        {
+            return distribution == RegisterValueDistribution.UniformDiscreteRange ||
+                   distribution == RegisterValueDistribution.EvenDiscreteRange;
+        }
+
+        private bool TryResolvePartyFieldKindFromRange(int minOffset, int maxOffset,
+            RegisterValueDistribution distribution, out PartyFieldKind field)
+        {
+            field = PartyFieldKind.Unknown;
+            if (minOffset > maxOffset)
+                return false;
+
+            if (distribution != RegisterValueDistribution.UniformDiscreteRange &&
+                distribution != RegisterValueDistribution.EvenDiscreteRange)
+            {
+                return false;
+            }
+
+            int step = distribution == RegisterValueDistribution.EvenDiscreteRange ? 2 : 1;
+            int start = distribution == RegisterValueDistribution.EvenDiscreteRange && (minOffset & 1) != 0
+                ? minOffset + 1
+                : minOffset;
+
+            var candidateFields = new HashSet<PartyFieldKind>();
+            for (int offset = start; offset <= maxOffset; offset += step)
+            {
+                PartyFieldKind candidateField = ResolvePartyFieldKind(offset);
+                if (candidateField == PartyFieldKind.Unknown)
+                    return false;
+
+                candidateFields.Add(candidateField);
+            }
+
+            if (candidateFields.Count == 0)
+                return false;
+
+            if (candidateFields.Count == 1)
+            {
+                field = candidateFields.First();
+                return true;
+            }
+
+            if (candidateFields.All(PartyTemporaryStatSemantics.IsConcreteField))
+            {
+                field = PartyFieldKind.TempAnyStat;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryResolvePartyMemberFieldAccess(byte[] instructionBytes, RegisterTracker tracker, ushort? effectiveAddress, out PartyFieldReference fieldRef)
+        {
+            return TryResolvePartyFieldAccessCore(instructionBytes, tracker, effectiveAddress, allowUnknownField: true, out fieldRef);
+        }
+
         private bool TryResolvePartyFieldAccess(byte[] instructionBytes, RegisterTracker tracker, ushort? effectiveAddress, out PartyFieldReference fieldRef)
+        {
+            return TryResolvePartyFieldAccessCore(instructionBytes, tracker, effectiveAddress, allowUnknownField: false, out fieldRef);
+        }
+
+        private bool TryResolvePartyFieldAccessCore(byte[] instructionBytes, RegisterTracker tracker, ushort? effectiveAddress,
+            bool allowUnknownField, out PartyFieldReference fieldRef)
         {
             fieldRef = null;
             if (tracker == null)
@@ -825,40 +924,69 @@ namespace MMMapEditor
 
             PartyMemberReference member = null;
             int offset = signedDisp;
+            ValueRange8 rangedOffset = null;
+            RegisterValueDistribution rangedDistribution = RegisterValueDistribution.Unknown;
 
             bool exact(string regName, out ushort regValue) => tracker.TryGetRegisterValue(regName, out regValue);
+
+            bool ranged(string regName, out ValueRange8 rangeValue)
+            {
+                rangeValue = null;
+                if (!tracker.TryGetRegisterRange(regName, out var rawRange) || rawRange == null)
+                    return false;
+
+                rangeValue = new ValueRange8(rawRange.Min, rawRange.Max);
+                tracker.TryGetRegisterDistribution(regName, out rangedDistribution);
+                return true;
+            }
 
             switch (rm)
             {
                 case 0x00: // BX+SI
                     if (tracker.TryGetPartyMemberBase("SI", out member) && exact("BX", out ushort bx0))
                         offset += bx0;
+                    else if (tracker.TryGetPartyMemberBase("SI", out member) && ranged("BX", out var bx0Range))
+                        rangedOffset = bx0Range;
                     else if (tracker.TryGetPartyMemberBase("BX", out member) && exact("SI", out ushort si0))
                         offset += si0;
+                    else if (tracker.TryGetPartyMemberBase("BX", out member) && ranged("SI", out var si0Range))
+                        rangedOffset = si0Range;
                     else
                         return false;
                     break;
                 case 0x01: // BX+DI
                     if (tracker.TryGetPartyMemberBase("DI", out member) && exact("BX", out ushort bx1))
                         offset += bx1;
+                    else if (tracker.TryGetPartyMemberBase("DI", out member) && ranged("BX", out var bx1Range))
+                        rangedOffset = bx1Range;
                     else if (tracker.TryGetPartyMemberBase("BX", out member) && exact("DI", out ushort di1))
                         offset += di1;
+                    else if (tracker.TryGetPartyMemberBase("BX", out member) && ranged("DI", out var di1Range))
+                        rangedOffset = di1Range;
                     else
                         return false;
                     break;
                 case 0x03: // BP+DI
                     if (tracker.TryGetPartyMemberBase("DI", out member) && exact("BP", out ushort bp))
                         offset += bp;
+                    else if (tracker.TryGetPartyMemberBase("DI", out member) && ranged("BP", out var bpRange))
+                        rangedOffset = bpRange;
                     else if (tracker.TryGetPartyMemberBase("BP", out member) && exact("DI", out ushort di))
                         offset += di;
+                    else if (tracker.TryGetPartyMemberBase("BP", out member) && ranged("DI", out var diRange))
+                        rangedOffset = diRange;
                     else
                         return false;
                     break;
                 case 0x02: // BP+SI
                     if (tracker.TryGetPartyMemberBase("SI", out member) && exact("BP", out ushort bp2))
                         offset += bp2;
+                    else if (tracker.TryGetPartyMemberBase("SI", out member) && ranged("BP", out var bp2Range))
+                        rangedOffset = bp2Range;
                     else if (tracker.TryGetPartyMemberBase("BP", out member) && exact("SI", out ushort si2))
                         offset += si2;
+                    else if (tracker.TryGetPartyMemberBase("BP", out member) && ranged("SI", out var si2Range))
+                        rangedOffset = si2Range;
                     else
                         return false;
                     break;
@@ -882,34 +1010,42 @@ namespace MMMapEditor
                     return false;
             }
 
-            PartyFieldKind field = offset switch
+            PartyFieldKind field = PartyFieldKind.Unknown;
+            int resolvedOffset = offset;
+            if (rangedOffset != null)
             {
-                PARTY_sex_OFFSET => PartyFieldKind.sex,
-                PARTY_INNATE_ALIGNMENT_OFFSET => PartyFieldKind.InnateAlignment,
-                PARTY_CURRENT_ALIGNMENT_OFFSET => PartyFieldKind.CurrentAlignment,
-                PARTY_SP_LOW_OFFSET => PartyFieldKind.SpLow,
-                PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
-                PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
-                PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
-                PARTY_STATUS_OFFSET => PartyFieldKind.Status,
-                PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
-                PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
-                PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
-                PARTY_QUEST_LORD3_OFFSET => PartyFieldKind.Technical77,
-                _ => PartyFieldKind.Unknown
-            };
+                int minOffset = offset + rangedOffset.Min;
+                int maxOffset = offset + rangedOffset.Max;
+                if (!TryResolvePartyFieldKindFromRange(minOffset, maxOffset, rangedDistribution, out field))
+                {
+                    if (!allowUnknownField)
+                        return false;
+                }
+                else if (field == PartyFieldKind.TempAnyStat)
+                {
+                    resolvedOffset = -1;
+                }
+                else
+                {
+                    resolvedOffset = minOffset;
+                }
+            }
+            else
+            {
+                field = ResolvePartyFieldKind(offset);
+            }
 
-            if (field == PartyFieldKind.Unknown)
+            if (field == PartyFieldKind.Unknown && !allowUnknownField)
                 return false;
 
             fieldRef = new PartyFieldReference
             {
                 Member = member?.Clone(),
                 Field = field,
-                Offset = offset,
+                Offset = resolvedOffset,
                 EffectiveAddress = effectiveAddress,
-                FieldOffset = (byte)offset,
-                FieldName = GetPartyFieldLabel(field)
+                FieldOffset = resolvedOffset >= byte.MinValue && resolvedOffset <= byte.MaxValue ? (byte)resolvedOffset : (byte?)null,
+                FieldName = field != PartyFieldKind.Unknown ? GetPartyFieldLabel(field) : null
             };
 
             return true;
@@ -1746,8 +1882,8 @@ namespace MMMapEditor
                 PartyFieldKind.SpLow => "SP low",
                 PartyFieldKind.SpHigh => "SP high",
                 PartyFieldKind.Status => "Status",
-                PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
-                    => PartyTechnicalFieldSemantics.GetFieldLabel(field),
+                _ when IsTrackedPartyField(field)
+                    => GetPartyFieldLabel(field),
                 _ => field.ToString()
             };
 
@@ -1847,7 +1983,7 @@ namespace MMMapEditor
                     ApplyPartyPredicatesToPending(pending, currentPredicates);
                 }
             }
-            else if (PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
+            else if (IsTrackedPartyField(fieldRef.Field))
             {
                 AddResolvedPartyEffect(
                     result,
@@ -1867,7 +2003,7 @@ namespace MMMapEditor
             RegisterTracker registerTracker, int callDepth, List<uint> pendingReturnAddresses,
             uint instructionAddress, bool debugMode,
             byte? exactValue = null, PartyEffectOperation bitOperation = PartyEffectOperation.Unknown,
-            byte? bitMask = null, PartyFieldReference sourceFieldValue = null)
+            byte? bitMask = null, PartyFieldReference sourceFieldValue = null, string sourceRegisterName = null)
         {
             if (result == null || fieldRef == null)
                 return;
@@ -1884,6 +2020,12 @@ namespace MMMapEditor
             var currentCondition = GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var currentPredicates = GetCurrentPartyPredicates(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic);
             var effects = new List<PartyEffect>();
+            bool isSynchronizedTemporaryMirror = IsSynchronizedTemporaryMirrorWrite(
+                fieldRef,
+                registerTracker,
+                bitOperation,
+                sourceRegisterName,
+                exactValue);
             if (fieldRef.Field == PartyFieldKind.sex)
             {
                 var effect = new PartyEffect
@@ -1976,7 +2118,7 @@ namespace MMMapEditor
                     effects.Add(PartyEffectFactory.CreateStatusWriteEffect(fieldRef.Member, instructionAddress));
                 }
             }
-            else if (PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
+            else if (IsTrackedPartyField(fieldRef.Field))
             {
                 if (sourceFieldValue != null &&
                     sourceFieldValue.Field == fieldRef.Field &&
@@ -2013,18 +2155,29 @@ namespace MMMapEditor
 
             foreach (var effect in effects.Where(e => e != null))
             {
+                if (isSynchronizedTemporaryMirror)
+                    effect.IsSynchronizedTemporaryMirror = true;
+
                 string debugPrefix = fieldRef.Field switch
                 {
                     PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                     PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                     PartyFieldKind.Status => "Статус персонажа",
-                    PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
+                    _ when IsTrackedPartyField(fieldRef.Field)
                         => GetPartyFieldLabel(fieldRef.Field),
                     _ => null
                 };
 
                 AddResolvedPartyEffect(result, effect, fieldRef.Member, registerTracker, currentCondition, debugPrefix, debugMode);
             }
+
+            RememberPartyByteWrite(
+                registerTracker,
+                fieldRef,
+                bitOperation != PartyEffectOperation.Unknown ? bitOperation : PartyEffectOperation.Write,
+                instructionAddress,
+                sourceRegisterName,
+                exactValue);
         }
 
         private void AddResolvedPartyEffect(PathAnalysisResult result, PartyEffect effect,
@@ -2051,17 +2204,80 @@ namespace MMMapEditor
                 effect.Description = humanDescription;
 
             string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
-            if (!result.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey))
+            var existingEffect = result.PartyEffects.FirstOrDefault(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
+            if (existingEffect == null)
                 result.PartyEffects.Add(effect);
+            else if (existingEffect.IsSynchronizedTemporaryMirror && !effect.IsSynchronizedTemporaryMirror)
+                existingEffect.IsSynchronizedTemporaryMirror = false;
 
             if (debugMode && !string.IsNullOrWhiteSpace(debugPrefix) && !string.IsNullOrWhiteSpace(effect.Description))
                 AnalysisDebug.WriteLine($"        {debugPrefix}: {effect.Description}");
         }
 
+        private bool IsSynchronizedTemporaryMirrorWrite(PartyFieldReference fieldRef, RegisterTracker registerTracker,
+            PartyEffectOperation writeOperation, string sourceRegisterName, byte? exactValue)
+        {
+            if (fieldRef == null ||
+                registerTracker?.LastPartyByteWrite == null ||
+                !PartyTemporaryStatSemantics.IsConcreteField(fieldRef.Field) ||
+                fieldRef.Offset < 0)
+            {
+                return false;
+            }
+
+            if (writeOperation != PartyEffectOperation.Unknown &&
+                writeOperation != PartyEffectOperation.Write)
+            {
+                return false;
+            }
+
+            var previousWrite = registerTracker.LastPartyByteWrite;
+            if (previousWrite.Operation != PartyEffectOperation.Write)
+                return false;
+
+            if (previousWrite.Offset != fieldRef.Offset - 1)
+                return false;
+
+            if (!MatchesPendingPartyTarget(previousWrite.Member, fieldRef.Member))
+                return false;
+
+            bool sameSourceRegister =
+                !string.IsNullOrWhiteSpace(sourceRegisterName) &&
+                !string.IsNullOrWhiteSpace(previousWrite.SourceRegisterName) &&
+                string.Equals(sourceRegisterName, previousWrite.SourceRegisterName, StringComparison.OrdinalIgnoreCase);
+
+            bool sameExactValue =
+                exactValue.HasValue &&
+                previousWrite.WrittenValue.HasValue &&
+                exactValue.Value == previousWrite.WrittenValue.Value;
+
+            return sameSourceRegister || sameExactValue;
+        }
+
+        private void RememberPartyByteWrite(RegisterTracker registerTracker, PartyFieldReference fieldRef,
+            PartyEffectOperation operation, uint instructionAddress, string sourceRegisterName = null, byte? writtenValue = null)
+        {
+            if (registerTracker == null || fieldRef == null)
+                return;
+
+            registerTracker.LastPartyByteWrite = new PartyByteWriteTrace
+            {
+                Member = fieldRef.Member?.Clone(),
+                Field = fieldRef.Field,
+                Offset = fieldRef.Offset,
+                Operation = operation,
+                SourceRegisterName = string.IsNullOrWhiteSpace(sourceRegisterName)
+                    ? null
+                    : sourceRegisterName.ToUpperInvariant(),
+                WrittenValue = writtenValue,
+                InstructionAddress = instructionAddress
+            };
+        }
+
         private void RegisterTrackedTechnicalFieldCompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
             RegisterTracker registerTracker, uint instructionAddress, byte compareValue, bool isBitMask, bool debugMode)
         {
-            if (result == null || fieldRef == null || !PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
+            if (result == null || fieldRef == null || !IsTrackedPartyField(fieldRef.Field))
                 return;
 
             result.PartyFieldAccesses.Add(new PartyFieldReference
@@ -2095,7 +2311,7 @@ namespace MMMapEditor
             if (result == null || fieldRef == null || !IsComparablePartyField(fieldRef.Field))
                 return;
 
-            if (PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field))
+            if (IsTrackedPartyField(fieldRef.Field))
             {
                 RegisterTrackedTechnicalFieldCompareEffect(
                     result,
@@ -2265,10 +2481,25 @@ namespace MMMapEditor
             }
         }
 
+        private static bool IsTrackedPartyField(PartyFieldKind field)
+        {
+            return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+                   PartyTemporaryStatSemantics.IsTrackedField(field);
+        }
+
+        private static byte GetTrackedPartyFieldRelevantMask(PartyFieldKind field,
+            PartyEffectOperation operation, byte immediateValue)
+        {
+            if (PartyTemporaryStatSemantics.IsTrackedField(field))
+                return PartyTemporaryStatSemantics.GetRelevantMask(operation, immediateValue);
+
+            return PartyTechnicalFieldSemantics.GetRelevantMask(field, operation, immediateValue);
+        }
+
         private static bool IsComparablePartyField(PartyFieldKind field)
         {
             return field == PartyFieldKind.sex ||
-                   PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+                   IsTrackedPartyField(field) ||
                    PartyAlignmentSemantics.IsAlignmentField(field);
         }
 
@@ -2278,8 +2509,8 @@ namespace MMMapEditor
             {
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
-                PartyFieldKind.Technical71 or PartyFieldKind.Technical75 or PartyFieldKind.Technical76 or PartyFieldKind.Technical77
-                    => PartyTechnicalFieldSemantics.GetFieldLabel(field),
+                _ when PartyTemporaryStatSemantics.IsTrackedField(field) => PartyTemporaryStatSemantics.GetFieldLabel(field),
+                _ when PartyTechnicalFieldSemantics.IsTrackedField(field) => PartyTechnicalFieldSemantics.GetFieldLabel(field),
                 _ => null
             };
         }
@@ -2320,7 +2551,7 @@ namespace MMMapEditor
             PartyFieldKind field, PartyFieldBitTransform bitTransform, uint instructionAddress)
         {
             var effects = new List<PartyEffect>();
-            if (!PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+            if (!IsTrackedPartyField(field) ||
                 bitTransform == null ||
                 bitTransform.IsIdentity)
             {
@@ -3827,9 +4058,11 @@ namespace MMMapEditor
                     continue;
 
                 string effectKey = PartyEffectSemantics.BuildSemanticKey(effect);
-                bool exists = target.PartyEffects.Any(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
-                if (!exists)
+                var existingEffect = target.PartyEffects.FirstOrDefault(e => e != null && PartyEffectSemantics.BuildSemanticKey(e) == effectKey);
+                if (existingEffect == null)
                     target.PartyEffects.Add(effect.Clone());
+                else if (existingEffect.IsSynchronizedTemporaryMirror && !effect.IsSynchronizedTemporaryMirror)
+                    existingEffect.IsSynchronizedTemporaryMirror = false;
             }
 
             if (target.LoopSemantic == LoopSemanticKind.None)
@@ -4551,6 +4784,27 @@ namespace MMMapEditor
             }
 
             return RegisterValueDistribution.Unknown;
+        }
+
+        private RegisterValueDistribution GetShiftedRangeDistribution(RegisterValueDistribution distribution, byte operation)
+        {
+            return operation switch
+            {
+                4 when distribution == RegisterValueDistribution.UniformDiscreteRange => RegisterValueDistribution.EvenDiscreteRange,
+                4 when distribution == RegisterValueDistribution.EvenDiscreteRange => RegisterValueDistribution.EvenDiscreteRange,
+                5 when distribution == RegisterValueDistribution.EvenDiscreteRange => RegisterValueDistribution.UniformDiscreteRange,
+                _ => distribution
+            };
+        }
+
+        private RegisterValueDistribution GetAdditiveRangeDistribution(RegisterValueDistribution distribution, int delta)
+        {
+            return distribution switch
+            {
+                RegisterValueDistribution.EvenDiscreteRange when (delta & 1) == 0 => RegisterValueDistribution.EvenDiscreteRange,
+                RegisterValueDistribution.EvenDiscreteRange => RegisterValueDistribution.Unknown,
+                _ => distribution
+            };
         }
 
         private (int numerator, int denominator) EstimateBranchProbability(string mnemonic, RegisterTracker registerTracker, bool branchTaken)
@@ -5287,8 +5541,16 @@ namespace MMMapEditor
                     if (decodedLength > 0 && instructionBytes.Length > decodedLength)
                     {
                         byte immValue = instructionBytes[decodedLength];
-                        PartyFieldReference partyFieldRef = null;
-                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+                        PartyFieldReference rawPartyFieldRef = null;
+                        bool hasRawPartyFieldRef = TryResolvePartyMemberFieldAccess(
+                            instructionBytes,
+                            registerTracker,
+                            hasExactMemAddr ? memAddr : (ushort?)null,
+                            out rawPartyFieldRef);
+                        PartyFieldReference partyFieldRef = hasRawPartyFieldRef && rawPartyFieldRef?.Field != PartyFieldKind.Unknown
+                            ? rawPartyFieldRef
+                            : null;
+                        bool hasPartyFieldRef = partyFieldRef != null;
 
                         if (hasPartyFieldRef)
                         {
@@ -5304,6 +5566,10 @@ namespace MMMapEditor
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Распознана прямая запись поля персонажа {partyFieldRef.Field} = 0x{immValue:X2} через {eaText}");
+                        }
+                        else if (hasRawPartyFieldRef)
+                        {
+                            RememberPartyByteWrite(registerTracker, rawPartyFieldRef, PartyEffectOperation.Write, address, writtenValue: immValue);
                         }
                         else if (hasExactMemAddr)
                         {
@@ -5375,8 +5641,16 @@ namespace MMMapEditor
                     if (!hasExactMemAddr)
                         TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out _, out eaText);
 
-                    PartyFieldReference partyFieldRef = null;
-                    bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+                    PartyFieldReference rawPartyFieldRef = null;
+                    bool hasRawPartyFieldRef = TryResolvePartyMemberFieldAccess(
+                        instructionBytes,
+                        registerTracker,
+                        hasExactMemAddr ? memAddr : (ushort?)null,
+                        out rawPartyFieldRef);
+                    PartyFieldReference partyFieldRef = hasRawPartyFieldRef && rawPartyFieldRef?.Field != PartyFieldKind.Unknown
+                        ? rawPartyFieldRef
+                        : null;
+                    bool hasPartyFieldRef = partyFieldRef != null;
                     PartyFieldReference sourcePartyFieldValue = null;
                     if (reg < regNames8.Length)
                         registerTracker.TryGetPartyFieldValue(regNames8[reg], out sourcePartyFieldValue);
@@ -5393,10 +5667,15 @@ namespace MMMapEditor
                                 address,
                                 debugMode,
                                 regValue,
-                                sourceFieldValue: sourcePartyFieldValue);
+                                sourceFieldValue: sourcePartyFieldValue,
+                                sourceRegisterName: regName);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Распознана запись поля персонажа {partyFieldRef.Field} из {regName} через {eaText} (сырую эмулируемую память не обновляем)");
+                        }
+                        else if (hasRawPartyFieldRef)
+                        {
+                            RememberPartyByteWrite(registerTracker, rawPartyFieldRef, PartyEffectOperation.Write, address, regName, regValue);
                         }
                         else if (hasExactMemAddr)
                         {
@@ -5416,7 +5695,8 @@ namespace MMMapEditor
                             pendingReturnAddresses,
                             address,
                             debugMode,
-                            sourceFieldValue: sourcePartyFieldValue);
+                            sourceFieldValue: sourcePartyFieldValue,
+                            sourceRegisterName: regNames8[reg]);
 
                         if (debugMode)
                         {
@@ -5425,6 +5705,10 @@ namespace MMMapEditor
                                 : "без точного абсолютного адреса";
                             AnalysisDebug.WriteLine($"        Распознана запись поля персонажа {partyFieldRef.Field} через {eaText} {detail}");
                         }
+                    }
+                    else if (hasRawPartyFieldRef && reg < regNames8.Length)
+                    {
+                        RememberPartyByteWrite(registerTracker, rawPartyFieldRef, PartyEffectOperation.Write, address, regNames8[reg]);
                     }
                     else if (hasExactMemAddr &&
                              TryGetReg8ValueFromModRmRegField(modRm, registerTracker, out _, out string regNameWithoutValue) &&
@@ -6156,10 +6440,12 @@ namespace MMMapEditor
                         case 4: // SHL/SAL r/m8,1
                             newMin = Math.Min(0xFF, oldRange.Min << 1);
                             newMax = Math.Min(0xFF, oldRange.Max << 1);
+                            rangeDistribution = GetShiftedRangeDistribution(rangeDistribution, operation);
                             break;
                         case 5: // SHR r/m8,1
                             newMin = oldRange.Min >> 1;
                             newMax = oldRange.Max >> 1;
+                            rangeDistribution = GetShiftedRangeDistribution(rangeDistribution, operation);
                             break;
                         default:
                             handled = false;
@@ -6212,11 +6498,13 @@ namespace MMMapEditor
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && alRange != null)
                 {
+                    registerTracker.TryGetRegisterDistribution("AL", out var alDistribution);
                     if (isAdd)
                     {
                         int newMin = Math.Min(0xFF, alRange.Min + immediateValue + carryIn);
                         int newMax = Math.Min(0xFF, alRange.Max + immediateValue + carryIn);
-                        registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax, RegisterValueDistribution.UniformDiscreteRange);
+                        registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax,
+                            GetAdditiveRangeDistribution(alDistribution, immediateValue + carryIn));
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {mnemonic} AL, 0x{immediateValue:X2}: диапазон {alRange.Min}-{alRange.Max} -> {newMin}-{newMax}");
@@ -6225,7 +6513,8 @@ namespace MMMapEditor
                     {
                         int newMin = Math.Max(0, alRange.Min - immediateValue - carryIn);
                         int newMax = Math.Max(0, alRange.Max - immediateValue - carryIn);
-                        registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax, RegisterValueDistribution.UniformDiscreteRange);
+                        registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax,
+                            GetAdditiveRangeDistribution(alDistribution, -(immediateValue + carryIn)));
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {mnemonic} AL, 0x{immediateValue:X2}: диапазон {alRange.Min}-{alRange.Max} -> {newMin}-{newMax}");
@@ -6238,7 +6527,10 @@ namespace MMMapEditor
                 if (registerTracker.TryGetRegisterValue("AX", out ushort axValue))
                     registerTracker.SetRegisterValue("BP", axValue, address, "MOV BP, AX");
                 else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && alRange != null)
-                    registerTracker.SetRegisterRange("BP", alRange.Min, alRange.Max, RegisterValueDistribution.UniformDiscreteRange);
+                {
+                    registerTracker.TryGetRegisterDistribution("AL", out var alDistribution);
+                    registerTracker.SetRegisterRange("BP", alRange.Min, alRange.Max, alDistribution);
+                }
             }
 
             if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x81 && instructionBytes[1] == 0xE5 && instructionBytes[2] == 0xFF && instructionBytes[3] == 0x00)
@@ -6246,7 +6538,10 @@ namespace MMMapEditor
                 if (registerTracker.TryGetRegisterValue("BP", out ushort bpValue))
                     registerTracker.SetRegisterValue("BP", (ushort)(bpValue & 0x00FF), address, "AND BP, 0x00FF");
                 else if (registerTracker.TryGetRegisterRange("BP", out var bpRange) && bpRange != null)
-                    registerTracker.SetRegisterRange("BP", (byte)(bpRange.Min & 0xFF), (byte)(bpRange.Max & 0xFF), RegisterValueDistribution.UniformDiscreteRange);
+                {
+                    registerTracker.TryGetRegisterDistribution("BP", out var bpDistribution);
+                    registerTracker.SetRegisterRange("BP", (byte)(bpRange.Min & 0xFF), (byte)(bpRange.Max & 0xFF), bpDistribution);
+                }
             }
 
             if (instructionBytes.Length == 1 && instructionBytes[0] == 0xF8)
@@ -6443,7 +6738,7 @@ namespace MMMapEditor
                 byte immediateValue = instructionBytes[1];
                 bool hasTrackedTechnicalFieldCompare = registerTracker.TryGetPartyFieldValue("AL", out var testedPartyField) &&
                     testedPartyField != null &&
-                    PartyTechnicalFieldSemantics.IsTrackedField(testedPartyField.Field);
+                    IsTrackedPartyField(testedPartyField.Field);
 
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
@@ -6624,7 +6919,7 @@ namespace MMMapEditor
 
                         if (hasPartyFieldRef &&
                             (partyFieldRef.Field == PartyFieldKind.Status ||
-                             PartyTechnicalFieldSemantics.IsTrackedField(partyFieldRef.Field)))
+                             IsTrackedPartyField(partyFieldRef.Field)))
                         {
                             byte? exactByteValue = null;
                             byte? currentByteValue = null;
@@ -6638,9 +6933,9 @@ namespace MMMapEditor
 
                             byte relevantMask = partyFieldRef.Field == PartyFieldKind.Status
                                 ? GetRelevantStatusMask(memoryOperation, immediateValue)
-                                : PartyTechnicalFieldSemantics.GetRelevantMask(partyFieldRef.Field, memoryOperation, immediateValue);
+                                : GetTrackedPartyFieldRelevantMask(partyFieldRef.Field, memoryOperation, immediateValue);
 
-                            if (PartyTechnicalFieldSemantics.IsTrackedField(partyFieldRef.Field))
+                            if (IsTrackedPartyField(partyFieldRef.Field))
                                 RegisterPartyFieldRead(
                                     result,
                                     partyFieldRef,
@@ -6695,7 +6990,7 @@ namespace MMMapEditor
                         bool hasTrackedTechnicalFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
                             registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
                             comparedPartyField != null &&
-                            PartyTechnicalFieldSemantics.IsTrackedField(comparedPartyField.Field);
+                            IsTrackedPartyField(comparedPartyField.Field);
 
                         if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
                         {
@@ -6757,7 +7052,7 @@ namespace MMMapEditor
                         }
                         else if (hasPartyFieldRef &&
                                  testedFieldRef != null &&
-                                 PartyTechnicalFieldSemantics.IsTrackedField(testedFieldRef.Field))
+                                 IsTrackedPartyField(testedFieldRef.Field))
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
@@ -6766,7 +7061,7 @@ namespace MMMapEditor
 
                         if (hasPartyFieldRef &&
                             testedFieldRef != null &&
-                            PartyTechnicalFieldSemantics.IsTrackedField(testedFieldRef.Field))
+                            IsTrackedPartyField(testedFieldRef.Field))
                         {
                             RegisterTrackedTechnicalFieldCompareEffect(
                                 result,

@@ -29,6 +29,7 @@ namespace MMMapEditor
     internal static class InlineNoteStyleCodec
     {
         private const string InverseTokenPrefix = "[[INV:";
+        private const string AggregateTemporaryStatTokenPrefix = "[[TMPSTAT:";
 
         public static bool TryDecodePrintableOverlayChar(byte rawValue, out char visibleChar, out bool isInverse)
         {
@@ -45,6 +46,14 @@ namespace MMMapEditor
                 : visibleChar.ToString();
         }
 
+        public static string EncodeAggregateTemporaryStatText(string visibleText)
+        {
+            if (string.IsNullOrEmpty(visibleText))
+                return visibleText ?? string.Empty;
+
+            return $"{AggregateTemporaryStatTokenPrefix}{visibleText}]]";
+        }
+
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
         {
             var rendered = new StyledInlineNoteText();
@@ -54,6 +63,20 @@ namespace MMMapEditor
             var visibleText = new StringBuilder(rawText.Length);
             for (int i = 0; i < rawText.Length;)
             {
+                if (TryConsumeAggregateTemporaryStatToken(rawText, i, out string aggregateText, out int aggregateConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(aggregateText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = aggregateText.Length,
+                        Kind = NoteInlineStyleKind.AggregateTemporaryStatHighlight
+                    });
+                    i += aggregateConsumedLength;
+                    continue;
+                }
+
                 if (TryConsumeInverseToken(rawText, i, out char inverseChar, out int consumedLength))
                 {
                     int start = visibleText.Length;
@@ -74,6 +97,38 @@ namespace MMMapEditor
 
             rendered.Text = visibleText.ToString();
             return rendered;
+        }
+
+        private static bool TryConsumeAggregateTemporaryStatToken(
+            string rawText,
+            int startIndex,
+            out string visibleText,
+            out int consumedLength)
+        {
+            visibleText = string.Empty;
+            consumedLength = 0;
+
+            if (string.IsNullOrEmpty(rawText) ||
+                startIndex < 0 ||
+                startIndex + AggregateTemporaryStatTokenPrefix.Length + 2 > rawText.Length ||
+                string.CompareOrdinal(
+                    rawText,
+                    startIndex,
+                    AggregateTemporaryStatTokenPrefix,
+                    0,
+                    AggregateTemporaryStatTokenPrefix.Length) != 0)
+            {
+                return false;
+            }
+
+            int contentStart = startIndex + AggregateTemporaryStatTokenPrefix.Length;
+            int closingIndex = rawText.IndexOf("]]", contentStart, StringComparison.Ordinal);
+            if (closingIndex < 0)
+                return false;
+
+            visibleText = rawText.Substring(contentStart, closingIndex - contentStart);
+            consumedLength = (closingIndex - startIndex) + 2;
+            return true;
         }
 
         private static bool TryConsumeInverseToken(string rawText, int startIndex, out char inverseChar, out int consumedLength)

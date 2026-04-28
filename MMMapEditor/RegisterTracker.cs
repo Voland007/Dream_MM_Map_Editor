@@ -109,6 +109,7 @@ namespace MMMapEditor
         public ushort? LastComparedMemoryAddress { get; set; }
         public PartyFieldReference LastComparedPartyField { get; set; }
         public bool LastFlagsFromCoordinate { get; set; }
+        public PartyByteWriteTrace LastPartyByteWrite { get; set; }
         public List<PartyConditionWindow> ActivePartyConditionWindows { get; set; } = new List<PartyConditionWindow>();
         public List<PartyPredicateWindow> ActivePartyPredicateWindows { get; set; } = new List<PartyPredicateWindow>();
 
@@ -1201,6 +1202,7 @@ namespace MMMapEditor
             LastComparedMemoryAddress = null;
             LastComparedPartyField = null;
             LastFlagsFromCoordinate = false;
+            LastPartyByteWrite = null;
             ActivePartyConditionWindows.Clear();
             ActivePartyPredicateWindows.Clear();
         }
@@ -1436,6 +1438,7 @@ namespace MMMapEditor
             clone.LastComparedMemoryAddress = this.LastComparedMemoryAddress;
             clone.LastComparedPartyField = this.LastComparedPartyField?.Clone();
             clone.LastFlagsFromCoordinate = this.LastFlagsFromCoordinate;
+            clone.LastPartyByteWrite = this.LastPartyByteWrite?.Clone();
             clone.HasObservedCoordinateSeedRead = this.HasObservedCoordinateSeedRead;
             clone.ActivePartyConditionWindows = this.ActivePartyConditionWindows?
                 .Select(window => window?.Clone())

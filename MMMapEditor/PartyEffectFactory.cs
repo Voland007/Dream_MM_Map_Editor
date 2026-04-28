@@ -21,6 +21,12 @@ namespace MMMapEditor
 {
     public static class PartyEffectFactory
     {
+        private static bool IsTrackedByteField(PartyFieldKind field)
+        {
+            return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+                   PartyTemporaryStatSemantics.IsTrackedField(field);
+        }
+
         public static PartyEffect CreateHpHalvedEffect(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic)
         {
             PartyConditionKind condition = pending == null
@@ -288,7 +294,7 @@ namespace MMMapEditor
         public static PartyEffect CreateTrackedTechnicalFieldReadEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
         {
-            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
+            if (!IsTrackedByteField(field))
                 return null;
 
             var effect = new PartyEffect
@@ -311,7 +317,7 @@ namespace MMMapEditor
         public static PartyEffect CreateTrackedTechnicalFieldCompareEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte compareValue, bool isBitMask)
         {
-            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
+            if (!IsTrackedByteField(field))
                 return null;
 
             var effect = new PartyEffect
@@ -334,7 +340,7 @@ namespace MMMapEditor
         public static PartyEffect CreateTrackedTechnicalFieldWriteEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
         {
-            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
+            if (!IsTrackedByteField(field))
                 return null;
 
             var effect = new PartyEffect
@@ -357,7 +363,7 @@ namespace MMMapEditor
         public static PartyEffect CreateTrackedTechnicalFieldBitEffect(PartyMemberReference member,
             PartyFieldKind field, PartyEffectOperation operation, byte mask, uint instructionAddress)
         {
-            if (!PartyTechnicalFieldSemantics.IsTrackedField(field))
+            if (!IsTrackedByteField(field))
                 return null;
 
             if ((operation != PartyEffectOperation.BitSet &&

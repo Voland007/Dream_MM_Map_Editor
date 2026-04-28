@@ -35,7 +35,16 @@ namespace MMMapEditor
         CurrentAlignment = 11,
         Technical75 = 12,
         Technical76 = 13,
-        Technical71 = 14
+        Technical71 = 14,
+        TempIntellect = 15,
+        TempMight = 16,
+        TempPersonality = 17,
+        TempEndurance = 18,
+        TempSpeed = 19,
+        TempAccuracy = 20,
+        TempLuck = 21,
+        TempLevel = 22,
+        TempAnyStat = 23
     }
 
     public enum PartyMemberSelectionKind
@@ -339,6 +348,31 @@ namespace MMMapEditor
             string finalHigh = FinalWriteHighByteValue.HasValue ? $"0x{FinalWriteHighByteValue.Value:X2}" : "?";
             string awaitReturn = AwaitingReturnAddress.HasValue ? $"0x{AwaitingReturnAddress.Value:X4}" : "-";
             return $"PendingPartyStat(Field={Field}, Member={Member}, AwaitRet={awaitReturn}, AwaitDepth={AwaitingCallDepth}, MaleOnly={MaleOnly}, FemaleOnly={FemaleOnly}, RH={SawReadHigh}, RL={SawReadLow}, WH={SawWriteHigh}, WL={SawWriteLow}, FinalLow={finalLow}, FinalHigh={finalHigh}, CLC={SawClc}, SHR={SawShrHigh}, RCR={SawRcrLow}, LowArith={LowByteArithmetic}, HighArith={HighByteArithmetic}, Start=0x{StartAddress:X4}, Order={ExecutionOrder})";
+        }
+    }
+
+    public sealed class PartyByteWriteTrace
+    {
+        public PartyMemberReference Member { get; set; }
+        public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
+        public int Offset { get; set; }
+        public PartyEffectOperation Operation { get; set; } = PartyEffectOperation.Unknown;
+        public string SourceRegisterName { get; set; }
+        public byte? WrittenValue { get; set; }
+        public uint InstructionAddress { get; set; }
+
+        public PartyByteWriteTrace Clone()
+        {
+            return new PartyByteWriteTrace
+            {
+                Member = Member?.Clone(),
+                Field = Field,
+                Offset = Offset,
+                Operation = Operation,
+                SourceRegisterName = SourceRegisterName,
+                WrittenValue = WrittenValue,
+                InstructionAddress = InstructionAddress
+            };
         }
     }
 
