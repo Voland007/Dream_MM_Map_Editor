@@ -282,7 +282,10 @@ namespace MMMapEditor
     public enum NoteInlineStyleKind
     {
         InverseVideo = 0,
-        AggregateTemporaryStatHighlight = 1
+        AggregateTemporaryStatHighlight = 1,
+        AggregateTemporaryStatGroup = 2,
+        AggregateTemporaryStatTemporaryWord = 3,
+        AggregateTemporaryStatValue = 4
     }
 
     public sealed class NoteInlineStyleSpan

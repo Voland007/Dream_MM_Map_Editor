@@ -2395,6 +2395,24 @@ namespace MMMapEditor
                         rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
                         rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Italic);
                         break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatGroup:
+                        rt.SelectionColor = Color.FromArgb(154, 219, 210);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatTemporaryWord:
+                        rt.SelectionColor = Color.FromArgb(255, 205, 160);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatValue:
+                        rt.SelectionColor = Color.FromArgb(255, 232, 176);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                        break;
                 }
             }
 

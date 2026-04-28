@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace MMMapEditor
 {
@@ -30,6 +31,8 @@ namespace MMMapEditor
     {
         private const string InverseTokenPrefix = "[[INV:";
         private const string AggregateTemporaryStatTokenPrefix = "[[TMPSTAT:";
+        private const string AggregateTemporaryStatGroupText =
+            "(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL)";
 
         public static bool TryDecodePrintableOverlayChar(byte rawValue, out char visibleChar, out bool isInverse)
         {
@@ -73,6 +76,7 @@ namespace MMMapEditor
                         Length = aggregateText.Length,
                         Kind = NoteInlineStyleKind.AggregateTemporaryStatHighlight
                     });
+                    AppendAggregateTemporaryStatDetailStyles(rendered.Styles, start, aggregateText);
                     i += aggregateConsumedLength;
                     continue;
                 }
@@ -97,6 +101,56 @@ namespace MMMapEditor
 
             rendered.Text = visibleText.ToString();
             return rendered;
+        }
+
+        private static void AppendAggregateTemporaryStatDetailStyles(
+            List<NoteInlineStyleSpan> styles,
+            int lineStart,
+            string aggregateText)
+        {
+            if (styles == null || string.IsNullOrEmpty(aggregateText))
+                return;
+
+            int statGroupIndex = aggregateText.IndexOf(AggregateTemporaryStatGroupText, StringComparison.Ordinal);
+            if (statGroupIndex >= 0)
+            {
+                styles.Add(new NoteInlineStyleSpan
+                {
+                    Start = lineStart + statGroupIndex,
+                    Length = AggregateTemporaryStatGroupText.Length,
+                    Kind = NoteInlineStyleKind.AggregateTemporaryStatGroup
+                });
+            }
+
+            foreach (Match temporaryWord in Regex.Matches(
+                aggregateText,
+                @"\bВРЕМЕННО\b|\bвременн\w*\b",
+                RegexOptions.IgnoreCase))
+            {
+                if (!temporaryWord.Success || temporaryWord.Length <= 0)
+                    continue;
+
+                styles.Add(new NoteInlineStyleSpan
+                {
+                    Start = lineStart + temporaryWord.Index,
+                    Length = temporaryWord.Length,
+                    Kind = NoteInlineStyleKind.AggregateTemporaryStatTemporaryWord
+                });
+            }
+
+            Match valueMatch = Regex.Match(
+                aggregateText,
+                @"\b\d+\b(?!.*\b\d+\b)",
+                RegexOptions.CultureInvariant);
+            if (valueMatch.Success && valueMatch.Length > 0)
+            {
+                styles.Add(new NoteInlineStyleSpan
+                {
+                    Start = lineStart + valueMatch.Index,
+                    Length = valueMatch.Length,
+                    Kind = NoteInlineStyleKind.AggregateTemporaryStatValue
+                });
+            }
         }
 
         private static bool TryConsumeAggregateTemporaryStatToken(
