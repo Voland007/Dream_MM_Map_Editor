@@ -3532,7 +3532,7 @@ namespace MMMapEditor
                 result.BattleMonsterCount.HasValue ||
                 result.BattleMonsterCountRange != null ||
                 result.IsBattleMonsterCountIndeterminate ||
-                (result.BattleMonsterEntries != null && result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 || entry.val2 != 0 || entry.isIndeterminate)) ||
+                (result.BattleMonsterEntries != null && result.BattleMonsterEntries.Values.Any(entry => (entry.val1 != 0 && entry.val2 != 0) || entry.isIndeterminate)) ||
                 (result.PartialBattles != null && result.PartialBattles.Count > 0) ||
                 result.HasPartialBattlePattern ||
                 (result.PartialBattleInfo != null && result.PartialBattleInfo.Count > 0) ||
@@ -3802,6 +3802,8 @@ namespace MMMapEditor
                     i.DestAddr == info.DestAddr &&
                     i.SrcReg == info.SrcReg &&
                     i.SrcRegValue == info.SrcRegValue &&
+                    i.ValueMin == info.ValueMin &&
+                    i.ValueMax == info.ValueMax &&
                     i.IsFromTable == info.IsFromTable &&
                     i.SourceTableAddr == info.SourceTableAddr &&
                     i.SourceTableBaseAddr == info.SourceTableBaseAddr &&
@@ -7198,19 +7200,7 @@ namespace MMMapEditor
                     continue;
                 }
 
-                var partialBattle = new PartiallyDefinedBattle
-                {
-                    BxIndex = saveBxIndex,
-                    RepeatCount = GetPartialBattleRepeatCount(result),
-                    ExactOptions = new List<DiscreteBattleOption>
-                    {
-                        new DiscreteBattleOption
-                        {
-                            Val1 = entry58.SrcRegValue,
-                            Val2 = entry29.SrcRegValue
-                        }
-                    }
-                };
+                var partialBattle = CreateObservedPartialBattle(result, saveBxIndex, entry58, entry29);
 
                 string identityKey = partialBattle.GetIdentityKey();
                 if (result.PartialBattles.Any(p => p.GetIdentityKey() == identityKey))
@@ -7220,8 +7210,54 @@ namespace MMMapEditor
                 }
 
                 result.PartialBattles.Add(partialBattle);
-                AnalysisDebug.WriteLine($"        -> СОЗДАНА НАБЛЮДАЕМАЯ ЧАСТИЧНАЯ БИТВА: BX={saveBxIndex}, val1=0x{entry58.SrcRegValue:X2}, val2=0x{entry29.SrcRegValue:X2}");
+                AnalysisDebug.WriteLine(
+                    $"        -> СОЗДАНА НАБЛЮДАЕМАЯ ЧАСТИЧНАЯ БИТВА: BX={saveBxIndex}, " +
+                    $"val1={FormatObservedPartialBattleValue(entry58)}, val2={FormatObservedPartialBattleValue(entry29)}");
             }
+        }
+
+        private static string FormatObservedPartialBattleValue(PartialBattleInfo info)
+        {
+            if (info == null)
+                return "?";
+
+            return info.HasExactValue
+                ? $"0x{info.ValueMin:X2}"
+                : $"0x{info.ValueMin:X2}-0x{info.ValueMax:X2}";
+        }
+
+        private PartiallyDefinedBattle CreateObservedPartialBattle(
+            PathAnalysisResult result,
+            int saveBxIndex,
+            PartialBattleInfo entry58,
+            PartialBattleInfo entry29)
+        {
+            var partialBattle = new PartiallyDefinedBattle
+            {
+                BxIndex = saveBxIndex,
+                RepeatCount = GetPartialBattleRepeatCount(result)
+            };
+
+            if (entry58.HasExactValue && entry29.HasExactValue)
+            {
+                partialBattle.ExactOptions = new List<DiscreteBattleOption>
+                {
+                    new DiscreteBattleOption
+                    {
+                        Val1 = entry58.ValueMin,
+                        Val2 = entry29.ValueMin
+                    }
+                };
+            }
+            else
+            {
+                partialBattle.RangeStart1 = entry58.ValueMin;
+                partialBattle.RangeEnd1 = entry58.ValueMax;
+                partialBattle.RangeStart2 = entry29.ValueMin;
+                partialBattle.RangeEnd2 = entry29.ValueMax;
+            }
+
+            return partialBattle;
         }
 
         private sealed class PartialBattleTemplateObservation
@@ -7720,7 +7756,7 @@ namespace MMMapEditor
             if (result == null || !result.BattleMonsterEntries.TryGetValue(bxIndex, out var entry))
                 return false;
 
-            return entry.val1 != 0 || entry.val2 != 0;
+            return entry.val1 != 0 && entry.val2 != 0;
         }
 
         private int GetPartialBattleRepeatCount(PathAnalysisResult result)
@@ -8223,7 +8259,7 @@ namespace MMMapEditor
                                          result.ContextTexts.Count > 0 ||
                                          result.MonsterPower.HasValue ||
                                          result.MonsterLevel.HasValue ||
-                                         result.BattleMonsterEntries.Count > 0 ||
+                                         result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 && entry.val2 != 0) ||
                                          result.PartialBattles.Count > 0 ||
                                          result.HasPartialBattlePattern ||
                                          result.CallsRandomEncounter ||

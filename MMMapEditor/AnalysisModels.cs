@@ -688,7 +688,9 @@ namespace MMMapEditor
         public int BxIndex { get; set; }           // Индекс в массиве сохранения
         public ushort DestAddr { get; set; }       // Адрес назначения (0x3C58 или 0x3C29)
         public string SrcReg { get; set; }         // Исходный регистр (AL, CL, DL, BL)
-        public byte SrcRegValue { get; set; }      // Значение в регистре
+        public byte SrcRegValue { get; set; }      // Точное или минимальное значение в регистре
+        public byte ValueMin { get; set; }         // Нижняя граница сохранённого значения
+        public byte ValueMax { get; set; }         // Верхняя граница сохранённого значения
         public bool IsFromTable { get; set; }      // Загружено ли из таблицы
         public ushort? SourceTableAddr { get; set; } // Адрес в таблице-источнике
         public ushort? SourceTableBaseAddr { get; set; } // Базовый адрес семейства таблицы (адрес первой записи)
@@ -697,5 +699,7 @@ namespace MMMapEditor
         public ushort? SourceIndexProviderAddr { get; set; } // Адрес памяти, из которого был загружен индекс источника (если известен)
         public BattleSourceIndexBehavior SourceIndexBehavior { get; set; } = BattleSourceIndexBehavior.Unknown;
         public bool SourceIndexExternallyDerived { get; set; } // Индекс таблицы зависит от внешнего случайного вызова
+        public bool HasExactValue => ValueMin == ValueMax;
+        public bool HasRangeValue => ValueMin != ValueMax;
     }
 }

@@ -39,8 +39,8 @@ namespace MMMapEditor
         public byte MonsterLevel { get; set; }
         public byte DarkeningLevel { get; set; }
         public byte MonsterBatchCount { get; set; }
-        public byte RandomEncounterChanceRaw { get; set; } //РёСЃС…РѕРґРЅРѕРµ С€РµСЃС‚РЅР°РґС†Р°С‚РµСЂРёС‡РЅРѕРµ С‡РёСЃР»Рѕ РёР· РѕРІРµСЂР»РµР№РЅРѕРіРѕ С„Р°Р№Р»Р°
-        public double RandomEncounterChancePercent { get; set; } //СЂР°СЃСЃС‡РёС‚Р°РЅРЅС‹Р№ % РЅР° РѕСЃРЅРѕРІР°РЅРёРё RandomEncounterChanceRaw
+        public byte RandomEncounterChanceRaw { get; set; } // исходное шестнадцатеричное число из оверлейного файла
+        public double RandomEncounterChancePercent { get; set; } // рассчитанный % на основании RandomEncounterChanceRaw
 
         public Tuple<byte, byte> SurfaceCoords { get; set; }
         public string SectorMap { get; set; }
@@ -59,7 +59,7 @@ namespace MMMapEditor
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
-                throw new InvalidOperationException($"РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ РґР»СЏ С„Р°Р№Р»Р° {fileNameOnly} РЅРµ РЅР°Р№РґРµРЅР°.");
+                throw new InvalidOperationException($"Конфигурация для файла {fileNameOnly} не найдена.");
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
             byte[] fileData = File.ReadAllBytes(filename);
@@ -88,9 +88,9 @@ namespace MMMapEditor
             result.MostPeacefulCell = ReadCell(fileData, config.MostPeacefulCell);
 
             PrependNote(result.NotesPerCell, result.NoteStyleSpansPerCell, result.MostDangerousCell,
-                "Р’РќРРњРђРќРР•! Р­РўРћ РЎРђРњРђРЇ РћРџРђРЎРќРђРЇ РљР›Р•РўРљРђ РќРђ РљРђР РўР•!");
+                "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
             PrependNote(result.NotesPerCell, result.NoteStyleSpansPerCell, result.MostPeacefulCell,
-                "Р­РўРћ РЎРђРњРђРЇ Р‘Р•Р—РћРџРђРЎРќРђРЇ РљР›Р•РўРљРђ РќРђ РљРђР РўР•!");
+                "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
 
             result.RandomEncounterChanceRaw = ReadByte(fileData, config.RandomEncounterChance);
             result.RandomEncounterChancePercent = DecodeRandomEncounterChance(ReadByte(fileData, config.RandomEncounterChance));

@@ -206,7 +206,7 @@ namespace MMMapEditor
 
         public void AddBattleMonster(int index, byte val1, byte val2, bool isIndeterminate = false)
         {
-            if (val1 == 0 && val2 == 0)
+            if (val1 == 0 || val2 == 0)
                 return;
 
             var existing = BattleMonsters.FirstOrDefault(m => m.Index == index);
@@ -676,19 +676,13 @@ namespace MMMapEditor
                                     ? $"Частично определённая битва. {monsters.Count} вариант(ов), группы по x{countDisplay}:"
                                     : $"Частично определённая битва. {monsters.Count} вариант(ов):");
 
-                            int displayCount = Math.Min(monsters.Count, 10);
-                            for (int i = 0; i < displayCount; i++)
+                            for (int i = 0; i < monsters.Count; i++)
                             {
                                 string cleanName = CleanMonsterNameForDisplay(monsters[i].MonsterName);
                                 string variantText = !string.IsNullOrEmpty(countDisplay)
                                     ? $"{cleanName} x{countDisplay}"
                                     : cleanName;
                                 result += $"\n  • Вариант {i + 1}: {variantText}";
-                            }
-
-                            if (monsters.Count > displayCount)
-                            {
-                                result += $"\n  • ... и ещё {monsters.Count - displayCount} вариантов";
                             }
 
                             if (!addedDescriptions.Contains(result))
@@ -1021,7 +1015,7 @@ namespace MMMapEditor
         public int MonsterId => MonsterIndex1 + 16 * MonsterIndex2 - 17;
         public string MonsterName => MonsterDatabase.GetMonsterName(MonsterId);
         public bool IsIndeterminate { get; set; }
-        public bool IsValid => MonsterIndex1 != 0 || MonsterIndex2 != 0;
+        public bool IsValid => MonsterIndex1 != 0 && MonsterIndex2 != 0;
 
         public override string ToString()
         {
