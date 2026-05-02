@@ -52,6 +52,7 @@ namespace MMMapEditor
         public byte? MonsterBatchCount { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
+        public byte? RandomEncounterRubicon { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
@@ -70,7 +71,7 @@ namespace MMMapEditor
         public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || CallsRandomEncounter;
+        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || RandomEncounterRubicon.HasValue || CallsRandomEncounter;
 
         #endregion
 
@@ -464,6 +465,15 @@ namespace MMMapEditor
             return repeatCounts.Count == 1 ? repeatCounts[0] : (int?)null;
         }
 
+        private string GetRandomEncounterRubiconWarningDescription()
+        {
+            if (!CallsRandomEncounter || !RandomEncounterRubicon.HasValue)
+                return null;
+
+            int partyLevelSumThreshold = 2 * (RandomEncounterRubicon.Value + 1);
+            return InlineNoteStyleCodec.EncodeRandomEncounterRubiconWarning(partyLevelSumThreshold);
+        }
+
         /// <summary>
         /// Полное описание битвы (все типы)
         /// </summary>
@@ -707,6 +717,15 @@ namespace MMMapEditor
                 }
             }
 
+            string rubiconWarning = GetRandomEncounterRubiconWarningDescription();
+            if (descriptions.Count > 0 &&
+                !string.IsNullOrEmpty(rubiconWarning) &&
+                !addedDescriptions.Contains(rubiconWarning))
+            {
+                descriptions.Add(rubiconWarning);
+                addedDescriptions.Add(rubiconWarning);
+            }
+
             return descriptions.Count > 0 ? string.Join("\n", descriptions) : null;
         }
 
@@ -781,6 +800,11 @@ namespace MMMapEditor
             else
                 parts.Add("EncounterChance=none");
 
+            if (RandomEncounterRubicon.HasValue)
+                parts.Add($"EncounterRubicon={RandomEncounterRubicon.Value}");
+            else
+                parts.Add("EncounterRubicon=none");
+
             parts.Add($"BattleMonsters={BattleMonsters.Count}");
             parts.Add($"PartiallyDefined={PartiallyDefinedBattles.Count}");
             parts.Add($"TableLoad={HasAnyTableLoad}");
@@ -811,6 +835,7 @@ namespace MMMapEditor
         public byte? MonsterBatchCount { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
+        public byte? RandomEncounterRubicon { get; set; }
         public bool CallsRandomEncounter { get; set; } = false;
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
@@ -856,6 +881,7 @@ namespace MMMapEditor
             !MonsterBatchCount.HasValue &&
             !DarkeningLevel.HasValue &&
             !RandomEncounterChance.HasValue &&
+            !RandomEncounterRubicon.HasValue &&
             !HasTeleportTarget &&
             !BattleMonsterCount.HasValue &&
             BattleMonsterCountRange == null &&
@@ -884,6 +910,7 @@ namespace MMMapEditor
                 MonsterBatchCount = MonsterBatchCount,
                 DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
+                RandomEncounterRubicon = RandomEncounterRubicon,
                 CallsRandomEncounter = CallsRandomEncounter,
                 RandomEncounterInstructionAddress = RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = RandomEncounterExecutionOrder,
@@ -966,6 +993,7 @@ namespace MMMapEditor
             MonsterBatchCount.HasValue ||
             DarkeningLevel.HasValue ||
             RandomEncounterChance.HasValue ||
+            RandomEncounterRubicon.HasValue ||
             CallsRandomEncounter;
 
         public bool HasBattleInfo => BattleMonsters.Count > 0;

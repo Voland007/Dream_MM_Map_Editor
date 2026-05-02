@@ -285,7 +285,9 @@ namespace MMMapEditor
         AggregateTemporaryStatHighlight = 1,
         AggregateTemporaryStatGroup = 2,
         AggregateTemporaryStatTemporaryWord = 3,
-        AggregateTemporaryStatValue = 4
+        AggregateTemporaryStatValue = 4,
+        RandomEncounterRubiconWarning = 5,
+        RandomEncounterRubiconThreshold = 6
     }
 
     public sealed class NoteInlineStyleSpan
@@ -354,6 +356,7 @@ namespace MMMapEditor
         public byte? MonsterBatchCount { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
+        public byte? RandomEncounterRubicon { get; set; }
         public byte? MonsterIndex1 { get; set; }
         public byte? MonsterIndex2 { get; set; }
         public byte? BattleMonsterCount { get; set; }

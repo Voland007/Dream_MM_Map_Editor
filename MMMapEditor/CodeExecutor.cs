@@ -40,6 +40,7 @@ namespace MMMapEditor
         private const int MAX_DEPTH = 12;
         private const ushort PARTY_POINTER_TABLE = 0x3CA8;
         private const ushort PARTY_COUNT_ADDRESS = 0x3BC0;
+        private const ushort BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS = 0x3C1C;
         private const ushort BATTLE_MONSTER_COUNT_ADDRESS = 0x3C1D;
         private const int PARTY_MEMBER_COUNT = 6;
         private const int PARTY_sex_OFFSET = 0x10;
@@ -3528,6 +3529,7 @@ namespace MMMapEditor
                 result.MonsterBatchCount.HasValue ||
                 result.DarkeningLevel.HasValue ||
                 result.RandomEncounterChance.HasValue ||
+                result.RandomEncounterRubicon.HasValue ||
                 result.HasTeleportTarget ||
                 result.BattleMonsterCount.HasValue ||
                 result.BattleMonsterCountRange != null ||
@@ -3972,6 +3974,9 @@ namespace MMMapEditor
 
             if (source.RandomEncounterChance.HasValue && !target.RandomEncounterChance.HasValue)
                 target.RandomEncounterChance = source.RandomEncounterChance;
+
+            if (source.RandomEncounterRubicon.HasValue && !target.RandomEncounterRubicon.HasValue)
+                target.RandomEncounterRubicon = source.RandomEncounterRubicon;
 
             target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
 
@@ -8177,7 +8182,18 @@ namespace MMMapEditor
             if (result == null)
                 return;
 
-            if (memAddr == BATTLE_MONSTER_COUNT_ADDRESS)
+            if (memAddr == BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS)
+            {
+                result.RandomEncounterRubicon = value;
+                result.HasSignificantCode = true;
+
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine(
+                        $"        Семантика [0x{BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS:X4}]: рубикон добора random encounter = {value}");
+                }
+            }
+            else if (memAddr == BATTLE_MONSTER_COUNT_ADDRESS)
             {
                 result.BattleMonsterCount = value;
                 result.BattleMonsterCountRange = new ValueRange8(value, value);
@@ -8259,6 +8275,7 @@ namespace MMMapEditor
                                          result.ContextTexts.Count > 0 ||
                                          result.MonsterPower.HasValue ||
                                          result.MonsterLevel.HasValue ||
+                                         result.RandomEncounterRubicon.HasValue ||
                                          result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 && entry.val2 != 0) ||
                                          result.PartialBattles.Count > 0 ||
                                          result.HasPartialBattlePattern ||

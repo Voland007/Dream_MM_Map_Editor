@@ -2371,6 +2371,8 @@ namespace MMMapEditor
 
                 if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
                     ApplyInlineNoteStyles(notesTextBox, noteText, inlineSpans);
+
+                FormatRandomEncounterRubiconWarnings(notesTextBox, noteText);
             }
         }
 
@@ -2424,10 +2426,58 @@ namespace MMMapEditor
                         rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
                         rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
                         break;
+
+                    case NoteInlineStyleKind.RandomEncounterRubiconWarning:
+                        ApplyRandomEncounterRubiconWarningStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.RandomEncounterRubiconThreshold:
+                        ApplyRandomEncounterRubiconThresholdStyle(rt);
+                        break;
                 }
             }
 
             rt.Select(0, 0);
+        }
+
+        private void FormatRandomEncounterRubiconWarnings(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            const string pattern = @"Внимание: Если сумма уровней активной партии\s+(\d+)\s+или больше, то к битве будут ещё добавлены случайные монстры";
+
+            foreach (Match match in Regex.Matches(noteText, pattern, RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyRandomEncounterRubiconWarningStyle(rt);
+
+                Group threshold = match.Groups[1];
+                if (threshold.Success && threshold.Length > 0)
+                {
+                    rt.Select(threshold.Index, threshold.Length);
+                    ApplyRandomEncounterRubiconThresholdStyle(rt);
+                }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void ApplyRandomEncounterRubiconWarningStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 238, 220);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyRandomEncounterRubiconThresholdStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 245, 150);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
         }
 
         private void FormatAggregateTemporaryStatNotes(RichTextBox rt, string noteText)

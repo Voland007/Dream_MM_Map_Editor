@@ -31,6 +31,11 @@ namespace MMMapEditor
     {
         private const string InverseTokenPrefix = "[[INV:";
         private const string AggregateTemporaryStatTokenPrefix = "[[TMPSTAT:";
+        private const string RandomEncounterRubiconWarningTokenPrefix = "[[RERUBICON:";
+        private const string RandomEncounterRubiconWarningPrefix =
+            "Внимание: Если сумма уровней активной партии ";
+        private const string RandomEncounterRubiconWarningSuffix =
+            " или больше, то к битве будут ещё добавлены случайные монстры";
         private const string AggregateTemporaryStatGroupText =
             "(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL)";
 
@@ -57,6 +62,11 @@ namespace MMMapEditor
             return $"{AggregateTemporaryStatTokenPrefix}{visibleText}]]";
         }
 
+        public static string EncodeRandomEncounterRubiconWarning(int partyLevelSumThreshold)
+        {
+            return $"{RandomEncounterRubiconWarningTokenPrefix}{partyLevelSumThreshold.ToString(CultureInfo.InvariantCulture)}]]";
+        }
+
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
         {
             var rendered = new StyledInlineNoteText();
@@ -66,6 +76,32 @@ namespace MMMapEditor
             var visibleText = new StringBuilder(rawText.Length);
             for (int i = 0; i < rawText.Length;)
             {
+                if (TryConsumeRandomEncounterRubiconWarningToken(
+                    rawText,
+                    i,
+                    out string warningText,
+                    out int thresholdStart,
+                    out int thresholdLength,
+                    out int warningConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(warningText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = warningText.Length,
+                        Kind = NoteInlineStyleKind.RandomEncounterRubiconWarning
+                    });
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start + thresholdStart,
+                        Length = thresholdLength,
+                        Kind = NoteInlineStyleKind.RandomEncounterRubiconThreshold
+                    });
+                    i += warningConsumedLength;
+                    continue;
+                }
+
                 if (TryConsumeAggregateTemporaryStatToken(rawText, i, out string aggregateText, out int aggregateConsumedLength))
                 {
                     int start = visibleText.Length;
@@ -101,6 +137,49 @@ namespace MMMapEditor
 
             rendered.Text = visibleText.ToString();
             return rendered;
+        }
+
+        private static bool TryConsumeRandomEncounterRubiconWarningToken(
+            string rawText,
+            int startIndex,
+            out string visibleText,
+            out int thresholdStart,
+            out int thresholdLength,
+            out int consumedLength)
+        {
+            visibleText = string.Empty;
+            thresholdStart = 0;
+            thresholdLength = 0;
+            consumedLength = 0;
+
+            if (string.IsNullOrEmpty(rawText) ||
+                startIndex < 0 ||
+                startIndex + RandomEncounterRubiconWarningTokenPrefix.Length + 3 > rawText.Length ||
+                string.CompareOrdinal(
+                    rawText,
+                    startIndex,
+                    RandomEncounterRubiconWarningTokenPrefix,
+                    0,
+                    RandomEncounterRubiconWarningTokenPrefix.Length) != 0)
+            {
+                return false;
+            }
+
+            int contentStart = startIndex + RandomEncounterRubiconWarningTokenPrefix.Length;
+            int closingIndex = rawText.IndexOf("]]", contentStart, StringComparison.Ordinal);
+            if (closingIndex < 0)
+                return false;
+
+            string thresholdText = rawText.Substring(contentStart, closingIndex - contentStart);
+            if (string.IsNullOrWhiteSpace(thresholdText))
+                return false;
+
+            thresholdText = thresholdText.Trim();
+            visibleText = RandomEncounterRubiconWarningPrefix + thresholdText + RandomEncounterRubiconWarningSuffix;
+            thresholdStart = RandomEncounterRubiconWarningPrefix.Length;
+            thresholdLength = thresholdText.Length;
+            consumedLength = (closingIndex - startIndex) + 2;
+            return true;
         }
 
         private static void AppendAggregateTemporaryStatDetailStyles(
