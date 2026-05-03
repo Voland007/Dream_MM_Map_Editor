@@ -1,4 +1,4 @@
-﻿
+﻿﻿
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Text;
@@ -56,21 +56,21 @@ namespace MMMapEditor
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
 
-            byte defaultMonsterPower = 0;
-            byte defaultMonsterLevel = 0;
-            byte defaultMonsterBatchCount = 0;
+            byte defaultRandomEncounterMonsterPowerCap = 0;
+            byte defaultRandomEncounterMonsterLevelCap = 0;
+            byte defaultRandomEncounterMonsterBatchCountCap = 0;
             byte defaultDarkeningLevel = 0;
             byte defaultRandomEncounterChance = 0;
 
             try
             {
                 byte[] fileData = File.ReadAllBytes(filename);
-                if (config.MonsterPower < fileData.Length)
-                    defaultMonsterPower = fileData[config.MonsterPower];
-                if (config.MonsterLevel < fileData.Length)
-                    defaultMonsterLevel = fileData[config.MonsterLevel];
-                if (config.MonsterBatchCount < fileData.Length)
-                    defaultMonsterBatchCount = fileData[config.MonsterBatchCount];
+                if (config.RandomEncounterMonsterPowerCap < fileData.Length)
+                    defaultRandomEncounterMonsterPowerCap = fileData[config.RandomEncounterMonsterPowerCap];
+                if (config.RandomEncounterMonsterLevelCap < fileData.Length)
+                    defaultRandomEncounterMonsterLevelCap = fileData[config.RandomEncounterMonsterLevelCap];
+                if (config.RandomEncounterMonsterBatchCountCap < fileData.Length)
+                    defaultRandomEncounterMonsterBatchCountCap = fileData[config.RandomEncounterMonsterBatchCountCap];
                 if (config.DarkeningLevel < fileData.Length)
                     defaultDarkeningLevel = fileData[config.DarkeningLevel];
                 if (config.RandomEncounterChance < fileData.Length)
@@ -149,9 +149,9 @@ namespace MMMapEditor
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
                         obj,
-                        defaultMonsterPower,
-                        defaultMonsterLevel,
-                        defaultMonsterBatchCount,
+                        defaultRandomEncounterMonsterPowerCap,
+                        defaultRandomEncounterMonsterLevelCap,
+                        defaultRandomEncounterMonsterBatchCountCap,
                         defaultDarkeningLevel,
                         defaultRandomEncounterChance,
                         specialSpoilerLine,
@@ -169,9 +169,9 @@ namespace MMMapEditor
                 {
                     Dictionary<int, List<string>> variantContents = BuildVariantContents(
                         obj,
-                        defaultMonsterPower,
-                        defaultMonsterLevel,
-                        defaultMonsterBatchCount,
+                        defaultRandomEncounterMonsterPowerCap,
+                        defaultRandomEncounterMonsterLevelCap,
+                        defaultRandomEncounterMonsterBatchCountCap,
                         defaultDarkeningLevel,
                         defaultRandomEncounterChance,
                         inlineSpecialSpoilerLine);
@@ -289,9 +289,9 @@ namespace MMMapEditor
 
         private static Dictionary<int, List<string>> BuildVariantContents(
             OvrObject obj,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
@@ -300,9 +300,9 @@ namespace MMMapEditor
             {
                 return BuildVariantContentsFromPathVariants(
                     obj,
-                    defaultMonsterPower,
-                    defaultMonsterLevel,
-                    defaultMonsterBatchCount,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
                     defaultDarkeningLevel,
                     defaultRandomEncounterChance,
                     inlineSpecialSpoilerLine);
@@ -310,9 +310,9 @@ namespace MMMapEditor
 
             return BuildVariantContentsFromObjectTexts(
                 obj,
-                defaultMonsterPower,
-                defaultMonsterLevel,
-                defaultMonsterBatchCount,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance,
                 inlineSpecialSpoilerLine);
@@ -320,9 +320,9 @@ namespace MMMapEditor
 
         private static Dictionary<int, List<string>> BuildVariantContentsFromPathVariants(
             OvrObject obj,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
@@ -341,9 +341,9 @@ namespace MMMapEditor
                 var lines = BuildVariantLines(
                     variantObject,
                     variant.Texts,
-                    defaultMonsterPower,
-                    defaultMonsterLevel,
-                    defaultMonsterBatchCount,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
                     defaultDarkeningLevel,
                     defaultRandomEncounterChance,
                     inlineSpecialSpoilerLine);
@@ -359,9 +359,9 @@ namespace MMMapEditor
 
         private static Dictionary<int, List<string>> BuildVariantContentsFromObjectTexts(
             OvrObject obj,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
@@ -375,9 +375,9 @@ namespace MMMapEditor
 
             var monsterStatLines = GetMonsterStatLines(
                 obj,
-                defaultMonsterPower,
-                defaultMonsterLevel,
-                defaultMonsterBatchCount,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance);
             var battleLines = GetBattleLines(obj);
@@ -419,9 +419,9 @@ namespace MMMapEditor
         private static List<string> BuildVariantLines(
             OvrObject variantObject,
             IEnumerable<string> rawTexts,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
@@ -431,9 +431,9 @@ namespace MMMapEditor
             InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
             var monsterStatLines = GetMonsterStatLines(
                 variantObject,
-                defaultMonsterPower,
-                defaultMonsterLevel,
-                defaultMonsterBatchCount,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance);
             var specialNoteLines = GetSpecialNoteLines(variantObject);
@@ -478,9 +478,9 @@ namespace MMMapEditor
         private static List<string> BuildVariantLinesForHierarchy(
             OvrObject variantObject,
             IEnumerable<string> rawTexts,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
@@ -493,9 +493,9 @@ namespace MMMapEditor
             lines.AddRange(narrativeLines);
             lines.AddRange(GetMonsterStatLines(
                 variantObject,
-                defaultMonsterPower,
-                defaultMonsterLevel,
-                defaultMonsterBatchCount,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance));
             lines.AddRange(specialNoteLines);
@@ -733,9 +733,9 @@ namespace MMMapEditor
 
 private static string BuildHierarchicalVariantNotes(
     OvrObject obj,
-    byte defaultMonsterPower,
-    byte defaultMonsterLevel,
-    byte defaultMonsterBatchCount,
+    byte defaultRandomEncounterMonsterPowerCap,
+    byte defaultRandomEncounterMonsterLevelCap,
+    byte defaultRandomEncounterMonsterBatchCountCap,
     byte defaultDarkeningLevel,
     byte defaultRandomEncounterChance,
     string specialSpoilerLine,
@@ -754,9 +754,9 @@ private static string BuildHierarchicalVariantNotes(
                 var lines = BuildVariantLinesForHierarchy(
                     variantObject,
                     variant.Texts,
-                    defaultMonsterPower,
-                    defaultMonsterLevel,
-                    defaultMonsterBatchCount,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
                     defaultDarkeningLevel,
                     defaultRandomEncounterChance,
                     inlineSpecialSpoilerLine);
@@ -3102,9 +3102,9 @@ private static string BuildHierarchicalVariantNotes(
 
         private static List<string> GetMonsterStatLines(
             OvrObject obj,
-            byte defaultMonsterPower,
-            byte defaultMonsterLevel,
-            byte defaultMonsterBatchCount,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance)
         {
@@ -3113,13 +3113,13 @@ private static string BuildHierarchicalVariantNotes(
             if (!obj.HasMonsterStatChanges)
                 return lines;
 
-            var powerDesc = obj.GetMonsterPowerDescription(defaultMonsterPower);
+            var powerDesc = obj.GetRandomEncounterMonsterPowerCapDescription(defaultRandomEncounterMonsterPowerCap);
             if (powerDesc != null) lines.Add(powerDesc);
 
-            var levelDesc = obj.GetMonsterLevelDescription(defaultMonsterLevel);
+            var levelDesc = obj.GetRandomEncounterMonsterLevelCapDescription(defaultRandomEncounterMonsterLevelCap);
             if (levelDesc != null) lines.Add(levelDesc);
 
-            var batchCountDesc = obj.GetMonsterBatchCountDescription(defaultMonsterBatchCount);
+            var batchCountDesc = obj.GetRandomEncounterMonsterBatchCountCapDescription(defaultRandomEncounterMonsterBatchCountCap);
             if (batchCountDesc != null) lines.Add(batchCountDesc);
 
             var lightingDesc = obj.GetDarkeningLevelDescription(defaultDarkeningLevel);

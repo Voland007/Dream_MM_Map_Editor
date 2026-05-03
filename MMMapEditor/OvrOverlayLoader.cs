@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -35,10 +35,10 @@ namespace MMMapEditor
         public Point? MostDangerousCell { get; set; }
         public Point? MostPeacefulCell { get; set; }
 
-        public byte MonsterPower { get; set; }
-        public byte MonsterLevel { get; set; }
+        public byte RandomEncounterMonsterPowerCap { get; set; }
+        public byte RandomEncounterMonsterLevelCap { get; set; }
         public byte DarkeningLevel { get; set; }
-        public byte MonsterBatchCount { get; set; }
+        public byte RandomEncounterMonsterBatchCountCap { get; set; }
         public byte RandomEncounterChanceRaw { get; set; } // исходное шестнадцатеричное число из оверлейного файла
         public double RandomEncounterChancePercent { get; set; } // рассчитанный % на основании RandomEncounterChanceRaw
 
@@ -94,10 +94,10 @@ namespace MMMapEditor
 
             result.RandomEncounterChanceRaw = ReadByte(fileData, config.RandomEncounterChance);
             result.RandomEncounterChancePercent = DecodeRandomEncounterChance(ReadByte(fileData, config.RandomEncounterChance));
-            result.MonsterPower = ReadByte(fileData, config.MonsterPower);
-            result.MonsterLevel = ReadByte(fileData, config.MonsterLevel);
+            result.RandomEncounterMonsterPowerCap = ReadByte(fileData, config.RandomEncounterMonsterPowerCap);
+            result.RandomEncounterMonsterLevelCap = ReadByte(fileData, config.RandomEncounterMonsterLevelCap);
             result.DarkeningLevel = ReadByte(fileData, config.DarkeningLevel);
-            result.MonsterBatchCount = ReadByte(fileData, config.MonsterBatchCount);
+            result.RandomEncounterMonsterBatchCountCap = ReadByte(fileData, config.RandomEncounterMonsterBatchCountCap);
             result.SurfaceCoords = ReadSurface(fileData, config.SurfaceX, config.SurfaceY);
             result.SectorMap = ReadSectorMap(fileData, config.SectorMapLetter, config.SectorMapDigit);
 

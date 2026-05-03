@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1229,10 +1229,10 @@ namespace MMMapEditor
                 $"Самая опасная клетка: {loadResult.MostDangerousCell}\n" +
                 $"Самая безопасная клетка: {loadResult.MostPeacefulCell}\n\n" +
                 $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
-                $"Сила монстров: {loadResult.MonsterPower}\n" +
-                $"Уровень монстров: {loadResult.MonsterLevel}\n" +
+                $"Максимальная сила случайных монстров: {loadResult.RandomEncounterMonsterPowerCap}\n" +
+                $"Максимальный уровень случайных монстров: {loadResult.RandomEncounterMonsterLevelCap}\n" +
                 $"Уровень затемнённости: {loadResult.DarkeningLevel}\n" +
-                $"Количество монстров в группе: {loadResult.MonsterBatchCount}";
+                $"Максимальное кол-во случайных монстров в группе: {loadResult.RandomEncounterMonsterBatchCountCap}";
 
             // Перерисовываем интерфейс
             foreach (var button in gridButtons)
@@ -1252,7 +1252,7 @@ namespace MMMapEditor
             //MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private byte ReadMonsterPower(string filename)
+        private byte ReadRandomEncounterMonsterPowerCap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
@@ -1262,22 +1262,22 @@ namespace MMMapEditor
             }
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
-            int monsterPowerAddress = config.MonsterPower;
+            int randomEncounterMonsterPowerCapAddress = config.RandomEncounterMonsterPowerCap;
 
             byte[] fileData = File.ReadAllBytes(filename);
 
-            if (monsterPowerAddress >= fileData.Length)
+            if (randomEncounterMonsterPowerCapAddress >= fileData.Length)
             {
-                Console.WriteLine($"Адрес MonsterPower выходит за пределы файла.");
+                Console.WriteLine($"Адрес RandomEncounterMonsterPowerCap выходит за пределы файла.");
                 return 0;
             }
 
-            byte power = fileData[monsterPowerAddress];
-            Console.WriteLine($"Сила монстра: {power}");
+            byte power = fileData[randomEncounterMonsterPowerCapAddress];
+            Console.WriteLine($"Максимальная сила случайных монстров: {power}");
             return power;
         }
 
-        private byte ReadMonsterLevel(string filename)
+        private byte ReadRandomEncounterMonsterLevelCap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
@@ -1287,22 +1287,22 @@ namespace MMMapEditor
             }
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
-            int monsterLevelAddress = config.MonsterLevel;
+            int randomEncounterMonsterLevelCapAddress = config.RandomEncounterMonsterLevelCap;
 
             byte[] fileData = File.ReadAllBytes(filename);
 
-            if (monsterLevelAddress >= fileData.Length)
+            if (randomEncounterMonsterLevelCapAddress >= fileData.Length)
             {
-                Console.WriteLine($"Адрес MonsterLevel выходит за пределы файла.");
+                Console.WriteLine($"Адрес RandomEncounterMonsterLevelCap выходит за пределы файла.");
                 return 0;
             }
 
-            byte level = fileData[monsterLevelAddress];
-            Console.WriteLine($"Уровень монстра: {level}");
+            byte level = fileData[randomEncounterMonsterLevelCapAddress];
+            Console.WriteLine($"Максимальный уровень случайных монстров: {level}");
             return level;
         }
 
-        private byte ReadMonsterBatchCount(string filename)
+        private byte ReadRandomEncounterMonsterBatchCountCap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
             if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
@@ -1312,18 +1312,18 @@ namespace MMMapEditor
             }
 
             var config = OvrFileConfigs.Configs[fileNameOnly];
-            int batchCountAddress = config.MonsterBatchCount;
+            int batchCountAddress = config.RandomEncounterMonsterBatchCountCap;
 
             byte[] fileData = File.ReadAllBytes(filename);
 
             if (batchCountAddress >= fileData.Length)
             {
-                Console.WriteLine($"Адрес MonsterBatchCount выходит за пределы файла.");
+                Console.WriteLine($"Адрес RandomEncounterMonsterBatchCountCap выходит за пределы файла.");
                 return 0;
             }
 
             byte count = fileData[batchCountAddress];
-            Console.WriteLine($"Количество монстров в партии: {count}");
+            Console.WriteLine($"Максимальное количество случайных монстров в группе: {count}");
             return count;
         }
 
@@ -1689,15 +1689,15 @@ namespace MMMapEditor
             return brightness >= 150 ? Color.Black : Color.White;
         }
 
-        // Теперь форматируем силу, уровень, затемнённость и шанс случайной встречи
+        // Теперь форматируем максимумы случайной встречи, затемнённость и шанс случайной встречи
         private void FormatMapLevelMetaParameters(RichTextBox rt, string noteText)
         {
             if (string.IsNullOrEmpty(noteText)) return;
 
-            // Сила монстров
+            // Максимальная сила случайных монстров
             var powerMatches = Regex.Matches(
                 noteText,
-                @"Сила монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежней: \d+)"
+                @"Максимальная сила случайных монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежней: \d+)"
             );
 
             foreach (Match match in powerMatches)
@@ -1707,10 +1707,10 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
-            // Уровень монстров
+            // Максимальный уровень случайных монстров
             var levelMatches = Regex.Matches(
                 noteText,
-                @"Уровень монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+                @"Максимальный уровень случайных монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
             );
 
             foreach (Match match in levelMatches)
@@ -1720,10 +1720,10 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
-            // Количество монстров в группе
+            // Максимальное количество случайных монстров в группе
             var batchCountMatches = Regex.Matches(
                 noteText,
-                @"Количество монстров в группе (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+                @"Максимальное количество случайных монстров в группе (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
             );
 
             foreach (Match match in batchCountMatches)

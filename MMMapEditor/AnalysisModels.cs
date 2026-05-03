@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -237,9 +237,9 @@ namespace MMMapEditor
     public class CodeEmulationResult
     {
         public HashSet<string> Texts { get; set; } = new HashSet<string>();
-        public byte? MonsterPower { get; set; }
-        public byte? MonsterLevel { get; set; }
-        public byte? MonsterBatchCount { get; set; }
+        public byte? RandomEncounterMonsterPowerCap { get; set; }
+        public byte? RandomEncounterMonsterLevelCap { get; set; }
+        public byte? RandomEncounterMonsterBatchCountCap { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public List<(int Index, byte Val1, byte Val2, bool IsIndeterminate)> BattleMonsters { get; set; } = new List<(int, byte, byte, bool)>();
@@ -351,9 +351,9 @@ namespace MMMapEditor
         public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
-        public byte? MonsterPower { get; set; }
-        public byte? MonsterLevel { get; set; }
-        public byte? MonsterBatchCount { get; set; }
+        public byte? RandomEncounterMonsterPowerCap { get; set; }
+        public byte? RandomEncounterMonsterLevelCap { get; set; }
+        public byte? RandomEncounterMonsterBatchCountCap { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? RandomEncounterRubicon { get; set; }

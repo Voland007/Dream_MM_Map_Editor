@@ -383,12 +383,12 @@ namespace MMMapEditor
 
             var merged = ClonePathAnalysisResult(inheritedState);
 
-            if (currentState.MonsterPower.HasValue)
-                merged.MonsterPower = currentState.MonsterPower;
-            if (currentState.MonsterLevel.HasValue)
-                merged.MonsterLevel = currentState.MonsterLevel;
-            if (currentState.MonsterBatchCount.HasValue)
-                merged.MonsterBatchCount = currentState.MonsterBatchCount;
+            if (currentState.RandomEncounterMonsterPowerCap.HasValue)
+                merged.RandomEncounterMonsterPowerCap = currentState.RandomEncounterMonsterPowerCap;
+            if (currentState.RandomEncounterMonsterLevelCap.HasValue)
+                merged.RandomEncounterMonsterLevelCap = currentState.RandomEncounterMonsterLevelCap;
+            if (currentState.RandomEncounterMonsterBatchCountCap.HasValue)
+                merged.RandomEncounterMonsterBatchCountCap = currentState.RandomEncounterMonsterBatchCountCap;
             if (currentState.DarkeningLevel.HasValue)
                 merged.DarkeningLevel = currentState.DarkeningLevel;
             if (currentState.RandomEncounterChance.HasValue)
@@ -812,9 +812,9 @@ namespace MMMapEditor
             if (source == null)
                 return clone;
 
-            clone.MonsterPower = source.MonsterPower;
-            clone.MonsterLevel = source.MonsterLevel;
-            clone.MonsterBatchCount = source.MonsterBatchCount;
+            clone.RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap;
+            clone.RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap;
+            clone.RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap;
             clone.DarkeningLevel = source.DarkeningLevel;
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.RandomEncounterRubicon = source.RandomEncounterRubicon;
@@ -953,9 +953,9 @@ namespace MMMapEditor
                     .Select(t => t.Text)
                     .Where(t => !string.IsNullOrEmpty(t))
                     .ToList(),
-                MonsterPower = source.MonsterPower,
-                MonsterLevel = source.MonsterLevel,
-                MonsterBatchCount = source.MonsterBatchCount,
+                RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,
+                RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap,
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
@@ -1045,8 +1045,8 @@ namespace MMMapEditor
             if (variant == null)
                 return false;
 
-            if (variant.MonsterPower.HasValue || variant.MonsterLevel.HasValue ||
-                variant.MonsterBatchCount.HasValue || variant.DarkeningLevel.HasValue ||
+            if (variant.RandomEncounterMonsterPowerCap.HasValue || variant.RandomEncounterMonsterLevelCap.HasValue ||
+                variant.RandomEncounterMonsterBatchCountCap.HasValue || variant.DarkeningLevel.HasValue ||
                 variant.RandomEncounterChance.HasValue || variant.RandomEncounterRubicon.HasValue)
                 return true;
 
@@ -1478,9 +1478,9 @@ namespace MMMapEditor
             if (variant == null)
                 return false;
 
-            return !variant.MonsterPower.HasValue &&
-                   !variant.MonsterLevel.HasValue &&
-                   !variant.MonsterBatchCount.HasValue &&
+            return !variant.RandomEncounterMonsterPowerCap.HasValue &&
+                   !variant.RandomEncounterMonsterLevelCap.HasValue &&
+                   !variant.RandomEncounterMonsterBatchCountCap.HasValue &&
                    !variant.DarkeningLevel.HasValue &&
                    !variant.RandomEncounterChance.HasValue &&
                    !variant.RandomEncounterRubicon.HasValue &&
@@ -1572,7 +1572,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}";
 
             string battleSkeleton = "<NO_BATTLE>";
             if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
@@ -1647,7 +1647,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -1735,7 +1735,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -1774,7 +1774,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -1992,9 +1992,9 @@ namespace MMMapEditor
                         IsLinear = choice.IsLinear
                     })
                     .ToList() ?? new List<BranchChoice>(),
-                MonsterPower = source.MonsterPower,
-                MonsterLevel = source.MonsterLevel,
-                MonsterBatchCount = source.MonsterBatchCount,
+                RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,
+                RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap,
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
@@ -2212,7 +2212,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters

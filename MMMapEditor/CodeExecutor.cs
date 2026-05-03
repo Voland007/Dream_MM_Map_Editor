@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -3524,9 +3524,9 @@ namespace MMMapEditor
 
             bool hasOtherEffects =
                 (result.OrderedTexts != null && result.OrderedTexts.Count > 0) ||
-                result.MonsterPower.HasValue ||
-                result.MonsterLevel.HasValue ||
-                result.MonsterBatchCount.HasValue ||
+                result.RandomEncounterMonsterPowerCap.HasValue ||
+                result.RandomEncounterMonsterLevelCap.HasValue ||
+                result.RandomEncounterMonsterBatchCountCap.HasValue ||
                 result.DarkeningLevel.HasValue ||
                 result.RandomEncounterChance.HasValue ||
                 result.RandomEncounterRubicon.HasValue ||
@@ -3749,11 +3749,11 @@ namespace MMMapEditor
                 // Переносим тексты из подпрограммы с сохранением порядка и признака контекстности.
                 MergeOrderedTextsFromSubroutine(result, subroutineResult);
 
-                if (subroutineResult.MonsterPower.HasValue && !result.MonsterPower.HasValue)
-                    result.MonsterPower = subroutineResult.MonsterPower;
+                if (subroutineResult.RandomEncounterMonsterPowerCap.HasValue && !result.RandomEncounterMonsterPowerCap.HasValue)
+                    result.RandomEncounterMonsterPowerCap = subroutineResult.RandomEncounterMonsterPowerCap;
 
-                if (subroutineResult.MonsterLevel.HasValue && !result.MonsterLevel.HasValue)
-                    result.MonsterLevel = subroutineResult.MonsterLevel;
+                if (subroutineResult.RandomEncounterMonsterLevelCap.HasValue && !result.RandomEncounterMonsterLevelCap.HasValue)
+                    result.RandomEncounterMonsterLevelCap = subroutineResult.RandomEncounterMonsterLevelCap;
 
                 if (subroutineResult.BattleMonsterCountRange != null && result.BattleMonsterCountRange == null)
                     result.BattleMonsterCountRange = new ValueRange8(subroutineResult.BattleMonsterCountRange.Min, subroutineResult.BattleMonsterCountRange.Max);
@@ -3966,8 +3966,8 @@ namespace MMMapEditor
             if (target == null || source == null)
                 return;
 
-            if (source.MonsterBatchCount.HasValue && !target.MonsterBatchCount.HasValue)
-                target.MonsterBatchCount = source.MonsterBatchCount;
+            if (source.RandomEncounterMonsterBatchCountCap.HasValue && !target.RandomEncounterMonsterBatchCountCap.HasValue)
+                target.RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap;
 
             if (source.DarkeningLevel.HasValue && !target.DarkeningLevel.HasValue)
                 target.DarkeningLevel = source.DarkeningLevel;
@@ -4496,8 +4496,8 @@ namespace MMMapEditor
                 result.IsTerminated = true;
                 result.HasSignificantCode = result.FoundTexts.Count > 0 ||
                                              result.ContextTexts.Count > 0 ||
-                                             result.MonsterPower.HasValue ||
-                                             result.MonsterLevel.HasValue ||
+                                             result.RandomEncounterMonsterPowerCap.HasValue ||
+                                             result.RandomEncounterMonsterLevelCap.HasValue ||
                                              result.BattleMonsterEntries.Count > 0 ||
                                              result.PartialBattles.Count > 0 ||
                                              result.HasPartialBattlePattern ||
@@ -8273,8 +8273,8 @@ namespace MMMapEditor
                                          result.OrderedTexts.Count > 0 ||
                                          result.FoundTexts.Count > 0 ||
                                          result.ContextTexts.Count > 0 ||
-                                         result.MonsterPower.HasValue ||
-                                         result.MonsterLevel.HasValue ||
+                                         result.RandomEncounterMonsterPowerCap.HasValue ||
+                                         result.RandomEncounterMonsterLevelCap.HasValue ||
                                          result.RandomEncounterRubicon.HasValue ||
                                          result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 && entry.val2 != 0) ||
                                          result.PartialBattles.Count > 0 ||

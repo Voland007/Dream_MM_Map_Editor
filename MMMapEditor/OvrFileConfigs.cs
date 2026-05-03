@@ -715,10 +715,10 @@ namespace MMMapEditor
         public int MostDangerousCell => StartAddress - 24;
         public int MostPeacefulCell => StartAddress - 27;
         public int RandomEncounterChance => StartAddress - 21;
-        public int MonsterPower => StartAddress - 17;
-        public int MonsterLevel => StartAddress - 3;
+        public int RandomEncounterMonsterPowerCap => StartAddress - 17;
+        public int RandomEncounterMonsterLevelCap => StartAddress - 3;
         public int DarkeningLevel => StartAddress - 4;
-        public int MonsterBatchCount => StartAddress - 16;
+        public int RandomEncounterMonsterBatchCountCap => StartAddress - 16;
         public int SurfaceX => StartAddress - 8;
         public int SurfaceY => StartAddress - 7;
         public int SectorMapLetter => StartAddress - 15;

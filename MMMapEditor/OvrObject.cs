@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -47,9 +47,9 @@ namespace MMMapEditor
 
         #region Характеристики монстров (статистики)
 
-        public byte? MonsterPower { get; set; }
-        public byte? MonsterLevel { get; set; }
-        public byte? MonsterBatchCount { get; set; }
+        public byte? RandomEncounterMonsterPowerCap { get; set; }
+        public byte? RandomEncounterMonsterLevelCap { get; set; }
+        public byte? RandomEncounterMonsterBatchCountCap { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? RandomEncounterRubicon { get; set; }
@@ -71,7 +71,7 @@ namespace MMMapEditor
         public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => MonsterPower.HasValue || MonsterLevel.HasValue || MonsterBatchCount.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || RandomEncounterRubicon.HasValue || CallsRandomEncounter;
+        public bool HasMonsterStatChanges => RandomEncounterMonsterPowerCap.HasValue || RandomEncounterMonsterLevelCap.HasValue || RandomEncounterMonsterBatchCountCap.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || RandomEncounterRubicon.HasValue || CallsRandomEncounter;
 
         #endregion
 
@@ -339,31 +339,31 @@ namespace MMMapEditor
             }
         }
 
-        public string GetMonsterPowerDescription(byte defaultPower)
+        public string GetRandomEncounterMonsterPowerCapDescription(byte defaultPower)
         {
-            if (!MonsterPower.HasValue) return null;
-            byte newPower = MonsterPower.Value;
-            if (newPower > defaultPower) return $"Сила монстров увеличивается с {defaultPower} до {newPower}";
-            if (newPower < defaultPower) return $"Сила монстров уменьшается с {defaultPower} до {newPower}";
-            return $"Сила монстров остаётся прежней: {newPower}";
+            if (!RandomEncounterMonsterPowerCap.HasValue) return null;
+            byte newPower = RandomEncounterMonsterPowerCap.Value;
+            if (newPower > defaultPower) return $"Максимальная сила случайных монстров увеличивается с {defaultPower} до {newPower}";
+            if (newPower < defaultPower) return $"Максимальная сила случайных монстров уменьшается с {defaultPower} до {newPower}";
+            return $"Максимальная сила случайных монстров остаётся прежней: {newPower}";
         }
 
-        public string GetMonsterLevelDescription(byte defaultLevel)
+        public string GetRandomEncounterMonsterLevelCapDescription(byte defaultLevel)
         {
-            if (!MonsterLevel.HasValue) return null;
-            byte newLevel = MonsterLevel.Value;
-            if (newLevel > defaultLevel) return $"Уровень монстров увеличивается с {defaultLevel} до {newLevel}";
-            if (newLevel < defaultLevel) return $"Уровень монстров уменьшается с {defaultLevel} до {newLevel}";
-            return $"Уровень монстров остаётся прежним: {newLevel}";
+            if (!RandomEncounterMonsterLevelCap.HasValue) return null;
+            byte newLevel = RandomEncounterMonsterLevelCap.Value;
+            if (newLevel > defaultLevel) return $"Максимальный уровень случайных монстров увеличивается с {defaultLevel} до {newLevel}";
+            if (newLevel < defaultLevel) return $"Максимальный уровень случайных монстров уменьшается с {defaultLevel} до {newLevel}";
+            return $"Максимальный уровень случайных монстров остаётся прежним: {newLevel}";
         }
 
-        public string GetMonsterBatchCountDescription(byte defaultBatchCount)
+        public string GetRandomEncounterMonsterBatchCountCapDescription(byte defaultBatchCount)
         {
-            if (!MonsterBatchCount.HasValue) return null;
-            byte newBatchCount = MonsterBatchCount.Value;
-            if (newBatchCount > defaultBatchCount) return $"Количество монстров в группе увеличивается с {defaultBatchCount} до {newBatchCount}";
-            if (newBatchCount < defaultBatchCount) return $"Количество монстров в группе уменьшается с {defaultBatchCount} до {newBatchCount}";
-            return $"Количество монстров в группе остаётся прежним: {newBatchCount}";
+            if (!RandomEncounterMonsterBatchCountCap.HasValue) return null;
+            byte newBatchCount = RandomEncounterMonsterBatchCountCap.Value;
+            if (newBatchCount > defaultBatchCount) return $"Максимальное количество случайных монстров в группе увеличивается с {defaultBatchCount} до {newBatchCount}";
+            if (newBatchCount < defaultBatchCount) return $"Максимальное количество случайных монстров в группе уменьшается с {defaultBatchCount} до {newBatchCount}";
+            return $"Максимальное количество случайных монстров в группе остаётся прежним: {newBatchCount}";
         }
 
         public string GetDarkeningLevelDescription(byte defaultDarkeningLevel)
@@ -780,20 +780,20 @@ namespace MMMapEditor
                 $"OvrObject [X={X}, Y={Y}, Dir=0x{DirectionByte:X2}, Paths={NonEmptyPathsCount}"
             };
 
-            if (MonsterPower.HasValue)
-                parts.Add($"Power={MonsterPower.Value}");
+            if (RandomEncounterMonsterPowerCap.HasValue)
+                parts.Add($"REPowerCap={RandomEncounterMonsterPowerCap.Value}");
             else
-                parts.Add("Power=none");
+                parts.Add("REPowerCap=none");
 
-            if (MonsterLevel.HasValue)
-                parts.Add($"Level={MonsterLevel.Value}");
+            if (RandomEncounterMonsterLevelCap.HasValue)
+                parts.Add($"RELevelCap={RandomEncounterMonsterLevelCap.Value}");
             else
-                parts.Add("Level=none");
+                parts.Add("RELevelCap=none");
 
-            if (MonsterBatchCount.HasValue)
-                parts.Add($"BatchCount={MonsterBatchCount.Value}");
+            if (RandomEncounterMonsterBatchCountCap.HasValue)
+                parts.Add($"REBatchCountCap={RandomEncounterMonsterBatchCountCap.Value}");
             else
-                parts.Add("BatchCount=none");
+                parts.Add("REBatchCountCap=none");
 
             if (RandomEncounterChance.HasValue)
                 parts.Add($"EncounterChance={RandomEncounterChance.Value}");
@@ -830,9 +830,9 @@ namespace MMMapEditor
         public List<string> Texts { get; set; } = new List<string>();
         public List<BranchChoice> BranchChoices { get; set; } = new List<BranchChoice>();
 
-        public byte? MonsterPower { get; set; }
-        public byte? MonsterLevel { get; set; }
-        public byte? MonsterBatchCount { get; set; }
+        public byte? RandomEncounterMonsterPowerCap { get; set; }
+        public byte? RandomEncounterMonsterLevelCap { get; set; }
+        public byte? RandomEncounterMonsterBatchCountCap { get; set; }
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? RandomEncounterRubicon { get; set; }
@@ -876,9 +876,9 @@ namespace MMMapEditor
         public bool IsNoOpSpecVariant =>
             IsOnlyRandomEncounterJump &&
             (Texts == null || Texts.Count == 0) &&
-            !MonsterPower.HasValue &&
-            !MonsterLevel.HasValue &&
-            !MonsterBatchCount.HasValue &&
+            !RandomEncounterMonsterPowerCap.HasValue &&
+            !RandomEncounterMonsterLevelCap.HasValue &&
+            !RandomEncounterMonsterBatchCountCap.HasValue &&
             !DarkeningLevel.HasValue &&
             !RandomEncounterChance.HasValue &&
             !RandomEncounterRubicon.HasValue &&
@@ -905,9 +905,9 @@ namespace MMMapEditor
                 PathTexts = new Dictionary<int, HashSet<string>>(),
                 PathTextsOrdered = new Dictionary<int, List<string>>(),
                 PathVariants = new Dictionary<int, PathVariantInfo>(),
-                MonsterPower = MonsterPower,
-                MonsterLevel = MonsterLevel,
-                MonsterBatchCount = MonsterBatchCount,
+                RandomEncounterMonsterPowerCap = RandomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = RandomEncounterMonsterLevelCap,
+                RandomEncounterMonsterBatchCountCap = RandomEncounterMonsterBatchCountCap,
                 DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
                 RandomEncounterRubicon = RandomEncounterRubicon,
@@ -988,9 +988,9 @@ namespace MMMapEditor
         }
 
         public bool HasMonsterStatChanges =>
-            MonsterPower.HasValue ||
-            MonsterLevel.HasValue ||
-            MonsterBatchCount.HasValue ||
+            RandomEncounterMonsterPowerCap.HasValue ||
+            RandomEncounterMonsterLevelCap.HasValue ||
+            RandomEncounterMonsterBatchCountCap.HasValue ||
             DarkeningLevel.HasValue ||
             RandomEncounterChance.HasValue ||
             RandomEncounterRubicon.HasValue ||

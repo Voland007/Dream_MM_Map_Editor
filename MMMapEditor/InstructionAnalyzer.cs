@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -825,23 +825,23 @@ namespace MMMapEditor
         {
             byte[] instructionBytes = insn.Bytes;
 
-            // MOV byte ptr [C961], imm8 - сила монстров
+            // MOV byte ptr [C961], imm8 - максимальная сила случайных монстров
             if (instructionBytes.Length >= 5 &&
                 instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                 instructionBytes[2] == 0x61 && instructionBytes[3] == 0xC9)
             {
-                byte monsterPower = instructionBytes[4];
-                result.MonsterPower = monsterPower;
-                AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ: {monsterPower}");
+                byte randomEncounterMonsterPowerCap = instructionBytes[4];
+                result.RandomEncounterMonsterPowerCap = randomEncounterMonsterPowerCap;
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА МАКСИМАЛЬНАЯ СИЛА СЛУЧАЙНЫХ МОНСТРОВ: {randomEncounterMonsterPowerCap}");
             }
-            // MOV byte ptr [C96F], imm8 - уровень монстров
+            // MOV byte ptr [C96F], imm8 - максимальный уровень случайных монстров
             else if (instructionBytes.Length >= 5 &&
                      instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                      instructionBytes[2] == 0x6F && instructionBytes[3] == 0xC9)
             {
-                byte monsterLevel = instructionBytes[4];
-                result.MonsterLevel = monsterLevel;
-                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ: {monsterLevel}");
+                byte randomEncounterMonsterLevelCap = instructionBytes[4];
+                result.RandomEncounterMonsterLevelCap = randomEncounterMonsterLevelCap;
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН МАКСИМАЛЬНЫЙ УРОВЕНЬ СЛУЧАЙНЫХ МОНСТРОВ: {randomEncounterMonsterLevelCap}");
             }
             // MOV byte ptr [C96E], imm8 - уровень затемнённости
             else if (instructionBytes.Length >= 5 &&
@@ -852,14 +852,14 @@ namespace MMMapEditor
                 result.DarkeningLevel = darkeningLevel;
                 AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ: {darkeningLevel}");
             }
-            // MOV byte ptr [C962], imm8 - количество монстров в группе
+            // MOV byte ptr [C962], imm8 - максимальное количество случайных монстров в группе
             else if (instructionBytes.Length >= 5 &&
                      instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                      instructionBytes[2] == 0x62 && instructionBytes[3] == 0xC9)
             {
-                byte monsterBatchCount = instructionBytes[4];
-                result.MonsterBatchCount = monsterBatchCount;
-                AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ: {monsterBatchCount}");
+                byte randomEncounterMonsterBatchCountCap = instructionBytes[4];
+                result.RandomEncounterMonsterBatchCountCap = randomEncounterMonsterBatchCountCap;
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО МАКСИМАЛЬНОЕ КОЛИЧЕСТВО СЛУЧАЙНЫХ МОНСТРОВ В ГРУППЕ: {randomEncounterMonsterBatchCountCap}");
             }
             // MOV [C961], CH
             else if (instructionBytes.Length >= 4 &&
@@ -868,8 +868,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
-                    result.MonsterPower = chValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ CH: {chValue}");
+                    result.RandomEncounterMonsterPowerCap = chValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА МАКСИМАЛЬНАЯ СИЛА СЛУЧАЙНЫХ МОНСТРОВ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C96F], CH
@@ -879,8 +879,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
-                    result.MonsterLevel = chValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ CH: {chValue}");
+                    result.RandomEncounterMonsterLevelCap = chValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН МАКСИМАЛЬНЫЙ УРОВЕНЬ СЛУЧАЙНЫХ МОНСТРОВ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C96E], CH
@@ -901,8 +901,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
-                    result.MonsterBatchCount = chValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ ИЗ CH: {chValue}");
+                    result.RandomEncounterMonsterBatchCountCap = chValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО МАКСИМАЛЬНОЕ КОЛИЧЕСТВО СЛУЧАЙНЫХ МОНСТРОВ В ГРУППЕ ИЗ CH: {chValue}");
                 }
             }
             // MOV [C961], AL
@@ -912,8 +912,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    result.MonsterPower = alValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА СИЛА МОНСТРОВ ИЗ AL: {alValue}");
+                    result.RandomEncounterMonsterPowerCap = alValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНА МАКСИМАЛЬНАЯ СИЛА СЛУЧАЙНЫХ МОНСТРОВ ИЗ AL: {alValue}");
                 }
             }
             // MOV [C96F], AL
@@ -923,8 +923,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    result.MonsterLevel = alValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ МОНСТРОВ ИЗ AL: {alValue}");
+                    result.RandomEncounterMonsterLevelCap = alValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН МАКСИМАЛЬНЫЙ УРОВЕНЬ СЛУЧАЙНЫХ МОНСТРОВ ИЗ AL: {alValue}");
                 }
             }
             // MOV [C96E], AL
@@ -945,8 +945,8 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    result.MonsterBatchCount = alValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО КОЛИЧЕСТВО МОНСТРОВ В ГРУППЕ ИЗ AL: {alValue}");
+                    result.RandomEncounterMonsterBatchCountCap = alValue;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕНО МАКСИМАЛЬНОЕ КОЛИЧЕСТВО СЛУЧАЙНЫХ МОНСТРОВ В ГРУППЕ ИЗ AL: {alValue}");
                 }
             }
             // MOV byte ptr [C95D], imm8 - шанс случайной встречи

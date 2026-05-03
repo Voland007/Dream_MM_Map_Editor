@@ -1,4 +1,4 @@
-﻿// Copyright (c) Voland007 2026. All rights reserved.
+﻿﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -348,9 +348,9 @@ namespace MMMapEditor
 
                                     AnalysisDebug.WriteLine(
                                         $"        Significant flags: " +
-                                        $"MP={variant?.MonsterPower?.ToString() ?? "-"}, " +
-                                        $"ML={variant?.MonsterLevel?.ToString() ?? "-"}, " +
-                                        $"MBC={variant?.MonsterBatchCount?.ToString() ?? "-"}, " +
+                                        $"REPowerCap={variant?.RandomEncounterMonsterPowerCap?.ToString() ?? "-"}, " +
+                                        $"RELevelCap={variant?.RandomEncounterMonsterLevelCap?.ToString() ?? "-"}, " +
+                                        $"REBatchCountCap={variant?.RandomEncounterMonsterBatchCountCap?.ToString() ?? "-"}, " +
                                         $"Dark={variant?.DarkeningLevel?.ToString() ?? "-"}, " +
                                         $"RE={variant?.RandomEncounterChance?.ToString() ?? "-"}, " +
                                         $"CallRE={variant?.CallsRandomEncounter ?? false}, " +
@@ -2169,9 +2169,9 @@ namespace MMMapEditor
             if (variant.PartyEffects != null && variant.PartyEffects.Count > 0)
                 return false;
 
-            return !variant.MonsterPower.HasValue &&
-                   !variant.MonsterLevel.HasValue &&
-                   !variant.MonsterBatchCount.HasValue &&
+            return !variant.RandomEncounterMonsterPowerCap.HasValue &&
+                   !variant.RandomEncounterMonsterLevelCap.HasValue &&
+                   !variant.RandomEncounterMonsterBatchCountCap.HasValue &&
                    !variant.DarkeningLevel.HasValue &&
                    !variant.RandomEncounterChance.HasValue &&
                    !variant.RandomEncounterRubicon.HasValue &&
@@ -2210,7 +2210,7 @@ namespace MMMapEditor
             if (variant == null)
                 return "<NULL_VARIANT>";
 
-            string statKey = $"{variant.MonsterPower}|{variant.MonsterLevel}|{variant.MonsterBatchCount}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -2807,9 +2807,9 @@ namespace MMMapEditor
                         IsLinear = choice.IsLinear
                     })
                     .ToList() ?? new List<BranchChoice>(),
-                MonsterPower = source.MonsterPower,
-                MonsterLevel = source.MonsterLevel,
-                MonsterBatchCount = source.MonsterBatchCount,
+                RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,
+                RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap,
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
@@ -2987,9 +2987,9 @@ namespace MMMapEditor
 
             return variants.Values.Any(variant =>
                 (variant.Texts?.Count ?? 0) > 0 ||
-                variant.MonsterPower.HasValue ||
-                variant.MonsterLevel.HasValue ||
-                variant.MonsterBatchCount.HasValue ||
+                variant.RandomEncounterMonsterPowerCap.HasValue ||
+                variant.RandomEncounterMonsterLevelCap.HasValue ||
+                variant.RandomEncounterMonsterBatchCountCap.HasValue ||
                 variant.DarkeningLevel.HasValue ||
                 variant.RandomEncounterChance.HasValue ||
                 variant.RandomEncounterRubicon.HasValue ||
@@ -3292,9 +3292,9 @@ namespace MMMapEditor
                 PathId = pathId,
                 Texts = combinedTexts.Where(t => !string.IsNullOrEmpty(t)).ToList(),
                 IsLeaf = isLeaf,
-                MonsterPower = source.MonsterPower,
-                MonsterLevel = source.MonsterLevel,
-                MonsterBatchCount = source.MonsterBatchCount,
+                RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,
+                RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap,
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
@@ -3450,9 +3450,9 @@ namespace MMMapEditor
 
         private void ApplyResolvedVariantInfoToObject(OvrObject target)
         {
-            target.MonsterPower = null;
-            target.MonsterLevel = null;
-            target.MonsterBatchCount = null;
+            target.RandomEncounterMonsterPowerCap = null;
+            target.RandomEncounterMonsterLevelCap = null;
+            target.RandomEncounterMonsterBatchCountCap = null;
             target.DarkeningLevel = null;
             target.RandomEncounterChance = null;
             target.RandomEncounterRubicon = null;
@@ -3471,9 +3471,9 @@ namespace MMMapEditor
                 return;
 
             var variant = target.PathVariants.Values.First();
-            target.MonsterPower = variant.MonsterPower;
-            target.MonsterLevel = variant.MonsterLevel;
-            target.MonsterBatchCount = variant.MonsterBatchCount;
+            target.RandomEncounterMonsterPowerCap = variant.RandomEncounterMonsterPowerCap;
+            target.RandomEncounterMonsterLevelCap = variant.RandomEncounterMonsterLevelCap;
+            target.RandomEncounterMonsterBatchCountCap = variant.RandomEncounterMonsterBatchCountCap;
             target.DarkeningLevel = variant.DarkeningLevel;
             target.RandomEncounterChance = variant.RandomEncounterChance;
             target.RandomEncounterRubicon = variant.RandomEncounterRubicon;
@@ -3717,7 +3717,7 @@ namespace MMMapEditor
         }
 
         private OvrObject CreateMacroObject(Point cellPos, HashSet<string> texts,
-            byte? monsterPower, byte? monsterLevel, byte? darkeningLevel, byte? randomEncounterChance, bool callsRandomEncounter, byte? battleMonsterCount, ValueRange8 battleMonsterCountRange, bool isBattleMonsterCountIndeterminate,
+            byte? randomEncounterMonsterPowerCap, byte? randomEncounterMonsterLevelCap, byte? darkeningLevel, byte? randomEncounterChance, bool callsRandomEncounter, byte? battleMonsterCount, ValueRange8 battleMonsterCountRange, bool isBattleMonsterCountIndeterminate,
             Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> battleMonsters,
             List<PartiallyDefinedBattle> partialBattles, bool hasPartialBattlePattern)
         {
@@ -3726,8 +3726,8 @@ namespace MMMapEditor
                 X = (byte)cellPos.X,
                 Y = (byte)cellPos.Y,
                 DirectionByte = 0,
-                MonsterPower = monsterPower,
-                MonsterLevel = monsterLevel,
+                RandomEncounterMonsterPowerCap = randomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = randomEncounterMonsterLevelCap,
                 DarkeningLevel = darkeningLevel,
                 RandomEncounterChance = randomEncounterChance,
                 CallsRandomEncounter = callsRandomEncounter,
@@ -3765,8 +3765,8 @@ namespace MMMapEditor
                 X = (byte)cellPos.X,
                 Y = (byte)cellPos.Y,
                 DirectionByte = 0,
-                MonsterPower = result.MonsterPower,
-                MonsterLevel = result.MonsterLevel,
+                RandomEncounterMonsterPowerCap = result.RandomEncounterMonsterPowerCap,
+                RandomEncounterMonsterLevelCap = result.RandomEncounterMonsterLevelCap,
                 DarkeningLevel = result.DarkeningLevel,
                 RandomEncounterChance = result.RandomEncounterChance,
                 RandomEncounterRubicon = result.RandomEncounterRubicon,
