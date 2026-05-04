@@ -442,6 +442,10 @@ namespace MMMapEditor
         private const int MaxRepeatedEventRepresentativeOccurrences = 16;
         private const int MaxRepeatedEventStatesPerOccurrence = 32;
         private const int MaxRepeatedEventCanonicalOutcomes = 5;
+        private const int RawLeafDebugSampleLimit = 12;
+        private const int RawLeafDebugGroupLimit = 12;
+        private const int RawLeafDebugTextSampleLimit = 3;
+        private const int RawLeafDebugPartyEffectSampleLimit = 3;
 
         private sealed class SingleOccurrenceAnalysisResult
         {
@@ -619,7 +623,8 @@ namespace MMMapEditor
                         reachableAddresses,
                         initializeRegisters,
                         currentState,
-                        new HashSet<ushort>(currentState.Keys));
+                        new HashSet<ushort>(currentState.Keys),
+                        occurrence);
 
                     foreach (var variant in passResult.CanonicalVariants.Values)
                     {
@@ -866,8 +871,12 @@ namespace MMMapEditor
             HashSet<uint> reachableAddresses,
             Action<RegisterTracker> initializeRegisters,
             Dictionary<ushort, byte> initialEmulatedMemory8,
-            HashSet<ushort> persistentStateAddresses)
+            HashSet<ushort> persistentStateAddresses,
+            int repeatedEventOccurrence)
         {
+            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
+            bool summarizeRepeatedEventPass = debugMode && repeatedEventOccurrence > 1;
+
             if (TryGetCachedSingleOccurrenceAnalysis(
                     analysisCacheScopeKey,
                     startAddress,
@@ -878,6 +887,9 @@ namespace MMMapEditor
             {
                 if (reachableAddresses != null)
                     reachableAddresses.UnionWith(cachedResult.VisitedAddresses ?? Enumerable.Empty<uint>());
+
+                if (summarizeRepeatedEventPass)
+                    WriteSingleOccurrenceBriefDebug(repeatedEventOccurrence, cachedResult, cacheHit: true);
 
                 return cachedResult;
             }
@@ -890,22 +902,26 @@ namespace MMMapEditor
             var localVisitedAddresses = new HashSet<uint>();
 
             var processedBackEdges = new HashSet<(uint From, uint To)>();
-            var mainPathResult = _codeExecutor.ExecuteCodeAtAddress(
-                br,
-                startAddress,
-                registerTracker,
-                new HashSet<uint>(),
-                0,
-                0,
-                0,
-                targetX,
-                targetY,
-                processedBackEdges,
-                invalidateReturnRegistersAfterExternalCall: true,
-                initialEmulatedMemory8: initialEmulatedMemory8 == null
-                    ? null
-                    : new Dictionary<ushort, byte>(initialEmulatedMemory8),
-                persistentStateAddresses: effectivePersistentStateAddresses);
+            PathAnalysisResult mainPathResult;
+            using (summarizeRepeatedEventPass ? AnalysisDebug.Suppress() : null)
+            {
+                mainPathResult = _codeExecutor.ExecuteCodeAtAddress(
+                    br,
+                    startAddress,
+                    registerTracker,
+                    new HashSet<uint>(),
+                    0,
+                    0,
+                    0,
+                    targetX,
+                    targetY,
+                    processedBackEdges,
+                    invalidateReturnRegistersAfterExternalCall: true,
+                    initialEmulatedMemory8: initialEmulatedMemory8 == null
+                        ? null
+                        : new Dictionary<ushort, byte>(initialEmulatedMemory8),
+                    persistentStateAddresses: effectivePersistentStateAddresses);
+            }
             localVisitedAddresses.UnionWith(mainPathResult.VisitedAddresses ?? Enumerable.Empty<uint>());
 
             if (reachableAddresses != null)
@@ -924,7 +940,6 @@ namespace MMMapEditor
 
             var effectiveAlternativePaths = (predefinedAlternativePaths ?? mainPathResult.AlternativePaths)
                 .ToList();
-            bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
 
             bool suppressLoopBackAlternatives =
                 mainPathResult.IsInLoop &&
@@ -941,7 +956,7 @@ namespace MMMapEditor
 
             if (effectiveAlternativePaths.Count > 0)
             {
-                if (debugMode)
+                if (debugMode && !summarizeRepeatedEventPass)
                 {
                     AnalysisDebug.WriteLine($"\nСобрано путей из основного анализа: {effectiveAlternativePaths.Count}");
                     foreach (var path in effectiveAlternativePaths)
@@ -950,14 +965,17 @@ namespace MMMapEditor
                     }
                 }
 
-                _pathAnalyzer.ProcessPaths(effectiveAlternativePaths, 1, 0,
-                    mainDisplayTexts,
-                    br,
-                    targetX, targetY, allResults, null, processedBackEdges,
-                    invalidateReturnRegistersAfterExternalCall: true,
-                    reachableAddresses: localVisitedAddresses,
-                    inheritedState: mainPathResult,
-                    persistentStateAddresses: effectivePersistentStateAddresses);
+                using (summarizeRepeatedEventPass ? AnalysisDebug.Suppress() : null)
+                {
+                    _pathAnalyzer.ProcessPaths(effectiveAlternativePaths, 1, 0,
+                        mainDisplayTexts,
+                        br,
+                        targetX, targetY, allResults, null, processedBackEdges,
+                        invalidateReturnRegistersAfterExternalCall: true,
+                        reachableAddresses: localVisitedAddresses,
+                        inheritedState: mainPathResult,
+                        persistentStateAddresses: effectivePersistentStateAddresses);
+                }
             }
 
             if (reachableAddresses != null)
@@ -968,23 +986,9 @@ namespace MMMapEditor
                 .OrderBy(variant => variant.PathId)
                 .ToList();
 
-            if (debugMode)
+            if (debugMode && !summarizeRepeatedEventPass)
             {
-                AnalysisDebug.WriteLine($"\nСырые leaf-paths до канонизации: {rawLeafVariants.Count}");
-                foreach (var rawVariant in rawLeafVariants)
-                {
-                    var texts = rawVariant.Texts ?? new List<string>();
-                    AnalysisDebug.WriteLine($"  RawPath {rawVariant.PathId}: {texts.Count} текстов");
-                    foreach (var text in texts)
-                        AnalysisDebug.WriteLine($"    {text}");
-
-                    if (rawVariant.PartyEffects != null && rawVariant.PartyEffects.Count > 0)
-                    {
-                        AnalysisDebug.WriteLine($"    PartyEffects={rawVariant.PartyEffects.Count}");
-                        foreach (var effect in rawVariant.PartyEffects)
-                            AnalysisDebug.WriteLine($"      - {PartyEffectSemantics.BuildDebugLine(effect)}");
-                    }
-                }
+                WriteRawLeafVariantDebugSummary(rawLeafVariants);
             }
 
             var result = new SingleOccurrenceAnalysisResult
@@ -1005,7 +1009,253 @@ namespace MMMapEditor
                 initialEmulatedMemory8,
                 result);
 
+            if (summarizeRepeatedEventPass)
+                WriteSingleOccurrenceBriefDebug(repeatedEventOccurrence, result, cacheHit: false);
+
             return result;
+        }
+
+        private void WriteSingleOccurrenceBriefDebug(
+            int occurrence,
+            SingleOccurrenceAnalysisResult result,
+            bool cacheHit)
+        {
+            if (result == null)
+                return;
+
+            var rawLeafVariants = (result.RawLeafVariants ?? new List<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .ToList();
+            int rawWithTexts = rawLeafVariants.Count(variant => (variant.Texts?.Count ?? 0) > 0);
+            int rawOutcomeGroups = rawLeafVariants
+                .Select(BuildRawLeafDebugGroupKey)
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+
+            AnalysisDebug.WriteLine(
+                $"  Повторное наступление #{occurrence}: " +
+                $"детальная трасса {(cacheHit ? "взята из кэша" : "свернута")}; " +
+                $"rawLeafs={rawLeafVariants.Count}, rawWithTexts={rawWithTexts}, " +
+                $"rawOutcomeGroups={rawOutcomeGroups}, canonical={result.CanonicalVariants?.Count ?? 0}, " +
+                $"visited={result.VisitedAddresses?.Count ?? 0}");
+        }
+
+        private void WriteRawLeafVariantDebugSummary(List<PathVariantInfo> rawLeafVariants)
+        {
+            var variants = (rawLeafVariants ?? new List<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .OrderBy(variant => variant.PathId)
+                .ToList();
+
+            AnalysisDebug.WriteLine($"\nСырые leaf-paths до канонизации: {variants.Count}");
+            if (variants.Count == 0)
+                return;
+
+            int withTexts = variants.Count(variant => (variant.Texts?.Count ?? 0) > 0);
+            int withPartyEffects = variants.Count(variant => (variant.PartyEffects?.Count ?? 0) > 0);
+            int withBattles = variants.Count(variant =>
+                variant.BattleMonsterCount.HasValue ||
+                variant.BattleMonsterCountRange != null ||
+                variant.IsBattleMonsterCountIndeterminate ||
+                (variant.BattleMonsters?.Count ?? 0) > 0 ||
+                (variant.PartiallyDefinedBattles?.Count ?? 0) > 0);
+            int withTeleport = variants.Count(variant => variant.HasTeleportTarget);
+            int uniqueTextSets = variants
+                .Select(BuildRawLeafTextKey)
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+            var outcomeGroups = variants
+                .GroupBy(BuildRawLeafDebugGroupKey, StringComparer.Ordinal)
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Min(variant => variant.PathId))
+                .ToList();
+
+            AnalysisDebug.WriteLine(
+                $"  Summary: withTexts={withTexts}, uniqueTextSets={uniqueTextSets}, " +
+                $"withPartyEffects={withPartyEffects}, withBattles={withBattles}, " +
+                $"withTeleport={withTeleport}, outcomeGroups={outcomeGroups.Count}");
+
+            int sampleCount = Math.Min(RawLeafDebugSampleLimit, variants.Count);
+            AnalysisDebug.WriteLine($"  Примеры RawPath: первые {sampleCount} из {variants.Count}");
+            foreach (var rawVariant in variants.Take(sampleCount))
+                WriteRawLeafVariantDebugSample(rawVariant, "    ");
+
+            if (variants.Count > sampleCount)
+            {
+                AnalysisDebug.WriteLine(
+                    $"  ... не показано {variants.Count - sampleCount} RawPath; " +
+                    "ниже сгруппированный summary по видимому исходу.");
+            }
+
+            AnalysisDebug.WriteLine($"  Группы raw leaf-paths по видимому исходу: {outcomeGroups.Count}");
+            int groupIndex = 1;
+            foreach (var group in outcomeGroups.Take(RawLeafDebugGroupLimit))
+            {
+                var sample = group.OrderBy(variant => variant.PathId).First();
+                AnalysisDebug.WriteLine(
+                    $"    Group {groupIndex}: count={group.Count()}, pathIds={BuildPathIdSample(group)}");
+                WriteRawLeafVariantDebugSample(sample, "      sample ");
+                groupIndex++;
+            }
+
+            if (outcomeGroups.Count > RawLeafDebugGroupLimit)
+            {
+                int hiddenVariants = outcomeGroups
+                    .Skip(RawLeafDebugGroupLimit)
+                    .Sum(group => group.Count());
+                AnalysisDebug.WriteLine(
+                    $"    ... не показано групп: {outcomeGroups.Count - RawLeafDebugGroupLimit}, " +
+                    $"RawPath в них: {hiddenVariants}");
+            }
+        }
+
+        private void WriteRawLeafVariantDebugSample(PathVariantInfo rawVariant, string indent)
+        {
+            if (rawVariant == null)
+                return;
+
+            var texts = rawVariant.Texts ?? new List<string>();
+            var partyEffects = rawVariant.PartyEffects ?? new List<PartyEffect>();
+            AnalysisDebug.WriteLine(
+                $"{indent}RawPath {rawVariant.PathId}: texts={texts.Count}, " +
+                $"partyEffects={partyEffects.Count}, " +
+                $"battleMonsters={rawVariant.BattleMonsters?.Count ?? 0}, " +
+                $"partialBattles={rawVariant.PartiallyDefinedBattles?.Count ?? 0}, " +
+                $"battleCount={BuildRawLeafBattleCountText(rawVariant)}, " +
+                $"teleport={BuildRawLeafTeleportText(rawVariant)}, " +
+                $"callsRandomEncounter={rawVariant.CallsRandomEncounter}");
+
+            foreach (var text in texts.Take(RawLeafDebugTextSampleLimit))
+                AnalysisDebug.WriteLine($"{indent}  Text: {text}");
+            if (texts.Count > RawLeafDebugTextSampleLimit)
+                AnalysisDebug.WriteLine($"{indent}  ... ещё текстов: {texts.Count - RawLeafDebugTextSampleLimit}");
+
+            foreach (var effect in partyEffects
+                .Where(effect => effect != null)
+                .Take(RawLeafDebugPartyEffectSampleLimit))
+            {
+                AnalysisDebug.WriteLine($"{indent}  PartyEffect: {PartyEffectSemantics.BuildDebugLine(effect)}");
+            }
+            if (partyEffects.Count > RawLeafDebugPartyEffectSampleLimit)
+            {
+                AnalysisDebug.WriteLine(
+                    $"{indent}  ... ещё party effects: {partyEffects.Count - RawLeafDebugPartyEffectSampleLimit}");
+            }
+        }
+
+        private string BuildRawLeafDebugGroupKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            return string.Join("||", new[]
+            {
+                BuildRawLeafTextKey(variant),
+                BuildRawLeafPartyEffectKey(variant),
+                BuildRawLeafBattleKey(variant),
+                BuildRawLeafTeleportKey(variant),
+                $"random:{variant.RandomEncounterMonsterPowerCap}-{variant.RandomEncounterMonsterLevelCap}-{variant.RandomEncounterMonsterBatchCountCap}-{variant.DarkeningLevel}-{variant.RandomEncounterChance}-{variant.RandomEncounterRubicon}",
+                $"calls:{variant.CallsRandomEncounter}/{variant.IsOnlyRandomEncounterJump}",
+                $"table:{variant.HasAnyTableLoad}",
+                $"loaded:{variant.LoadedValues?.Count ?? 0}",
+                $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
+                $"branchContribution:{variant.HasBranchSpecificContribution}"
+            });
+        }
+
+        private string BuildRawLeafTextKey(PathVariantInfo variant)
+        {
+            return variant?.Texts != null && variant.Texts.Count > 0
+                ? string.Join("|", variant.Texts)
+                : "<NO_TEXT>";
+        }
+
+        private string BuildRawLeafPartyEffectKey(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects != null && variant.PartyEffects.Count > 0
+                ? string.Join(";", variant.PartyEffects
+                    .Where(effect => effect != null)
+                    .Select(PartyEffectSemantics.BuildSemanticKey)
+                    .OrderBy(key => key))
+                : "<NO_PARTY>";
+        }
+
+        private string BuildRawLeafBattleKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NO_BATTLE>";
+
+            string battleMonsters = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(monster => monster.Index)
+                    .Select(monster =>
+                        $"{monster.Index}:{monster.MonsterIndex1:X2}:{monster.MonsterIndex2:X2}:{monster.IsIndeterminate}"))
+                : "<NO_MONSTERS>";
+
+            return string.Join("|", new[]
+            {
+                BuildRawLeafBattleCountText(variant),
+                $"indeterminate:{variant.IsBattleMonsterCountIndeterminate}",
+                $"monsters:{battleMonsters}",
+                $"partial:{variant.PartiallyDefinedBattles?.Count ?? 0}"
+            });
+        }
+
+        private string BuildRawLeafBattleCountText(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL>";
+
+            if (variant.BattleMonsterCountRange != null)
+                return $"{variant.BattleMonsterCountRange.Min}-{variant.BattleMonsterCountRange.Max}";
+
+            return variant.BattleMonsterCount.HasValue
+                ? variant.BattleMonsterCount.Value.ToString()
+                : "<none>";
+        }
+
+        private string BuildRawLeafTeleportKey(PathVariantInfo variant)
+        {
+            if (variant == null || !variant.HasTeleportTarget)
+                return "<NO_TELEPORT>";
+
+            return $"x:{BuildRawLeafValueOrRangeKey(variant.TeleportTargetX, variant.TeleportTargetXRange)};" +
+                   $"y:{BuildRawLeafValueOrRangeKey(variant.TeleportTargetY, variant.TeleportTargetYRange)}";
+        }
+
+        private string BuildRawLeafTeleportText(PathVariantInfo variant)
+        {
+            if (variant == null || !variant.HasTeleportTarget)
+                return "<none>";
+
+            return $"X={BuildRawLeafValueOrRangeKey(variant.TeleportTargetX, variant.TeleportTargetXRange)}, " +
+                   $"Y={BuildRawLeafValueOrRangeKey(variant.TeleportTargetY, variant.TeleportTargetYRange)}";
+        }
+
+        private string BuildRawLeafValueOrRangeKey(byte? value, ValueRange8 range)
+        {
+            if (range != null)
+                return $"{range.Min}-{range.Max}";
+
+            return value.HasValue
+                ? value.Value.ToString()
+                : "?";
+        }
+
+        private string BuildPathIdSample(IEnumerable<PathVariantInfo> variants)
+        {
+            var ids = (variants ?? Enumerable.Empty<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .Select(variant => variant.PathId)
+                .OrderBy(id => id)
+                .ToList();
+
+            const int sampleLimit = 8;
+            string sample = string.Join(", ", ids.Take(sampleLimit));
+            if (ids.Count > sampleLimit)
+                sample += $", ... (+{ids.Count - sampleLimit})";
+
+            return sample;
         }
 
         private void ScheduleRepeatedEventState(
