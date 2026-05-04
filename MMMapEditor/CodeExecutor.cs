@@ -42,6 +42,9 @@ namespace MMMapEditor
         private const ushort PARTY_COUNT_ADDRESS = 0x3BC0;
         private const ushort BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS = 0x3C1C;
         private const ushort BATTLE_MONSTER_COUNT_ADDRESS = 0x3C1D;
+        private const ushort BATTLE_MONSTER_FIRST_TABLE_ADDRESS = 0x3C58;
+        private const ushort BATTLE_MONSTER_SECOND_TABLE_ADDRESS = 0x3C29;
+        private const int BATTLE_MONSTER_TABLE_SLOT_COUNT = 0x0F;
         private const int PARTY_MEMBER_COUNT = 6;
         private const int PARTY_sex_OFFSET = 0x10;
         private const byte PARTY_sex_MALE_VALUE = 0x01;
@@ -3594,6 +3597,15 @@ namespace MMMapEditor
             if (result == null)
                 return;
 
+            bool hasFixedBattleSetup =
+                result.BattleMonsterCount.HasValue ||
+                result.BattleMonsterCountRange != null ||
+                result.IsBattleMonsterCountIndeterminate ||
+                (result.BattleMonsterEntries != null && result.BattleMonsterEntries.Values.Any(entry => (entry.val1 != 0 && entry.val2 != 0) || entry.isIndeterminate)) ||
+                (result.PartialBattles != null && result.PartialBattles.Count > 0) ||
+                result.HasPartialBattlePattern ||
+                (result.PartialBattleInfo != null && result.PartialBattleInfo.Count > 0);
+
             bool hasOtherEffects =
                 (result.OrderedTexts != null && result.OrderedTexts.Count > 0) ||
                 result.RandomEncounterMonsterPowerCap.HasValue ||
@@ -3603,13 +3615,7 @@ namespace MMMapEditor
                 result.RandomEncounterChance.HasValue ||
                 result.RandomEncounterRubicon.HasValue ||
                 result.HasTeleportTarget ||
-                result.BattleMonsterCount.HasValue ||
-                result.BattleMonsterCountRange != null ||
-                result.IsBattleMonsterCountIndeterminate ||
-                (result.BattleMonsterEntries != null && result.BattleMonsterEntries.Values.Any(entry => (entry.val1 != 0 && entry.val2 != 0) || entry.isIndeterminate)) ||
-                (result.PartialBattles != null && result.PartialBattles.Count > 0) ||
-                result.HasPartialBattlePattern ||
-                (result.PartialBattleInfo != null && result.PartialBattleInfo.Count > 0) ||
+                hasFixedBattleSetup ||
                 (result.PartyEffects != null && result.PartyEffects.Count > 0);
 
             result.CallsRandomEncounter = true;
@@ -3625,7 +3631,10 @@ namespace MMMapEditor
                 string suffix = result.IsOnlyRandomEncounterJump
                     ? " без иных эффектов"
                     : " с дополнительными эффектами";
-                AnalysisDebug.WriteLine($"      Обнаружен вызов random encounter через {jumpKind} к 0x517C{suffix}");
+                string routineDescription = hasFixedBattleSetup
+                    ? "общей процедуры боя/encounter"
+                    : "random encounter";
+                AnalysisDebug.WriteLine($"      Обнаружен вызов {routineDescription} через {jumpKind} к 0x517C{suffix}");
             }
         }
 
@@ -5936,7 +5945,16 @@ namespace MMMapEditor
                         }
                         else if (hasExactMemAddr)
                         {
-                            ApplyTrackedByteWrite(memAddr, immValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, 0x{immValue:X2}");
+                            ApplyTrackedByteWrite(
+                                memAddr,
+                                immValue,
+                                result,
+                                targetX,
+                                targetY,
+                                insn,
+                                debugMode,
+                                $"MOV byte ptr {eaText}, 0x{immValue:X2}",
+                                trackBattleMonsterTableWrite: true);
                         }
                     }
                 }
@@ -8525,8 +8543,55 @@ namespace MMMapEditor
             return OvrOverlayAddressReader.TryReadByte(br, _config, memAddr, out value);
         }
 
+        private static bool TryGetBattleMonsterSlot(ushort memAddr, ushort tableBaseAddress, out int slotIndex)
+        {
+            slotIndex = memAddr - tableBaseAddress;
+            return slotIndex >= 0 && slotIndex < BATTLE_MONSTER_TABLE_SLOT_COUNT;
+        }
+
+        private static void UpsertTrackedBattleMonsterComponent(
+            PathAnalysisResult result,
+            int slotIndex,
+            byte value,
+            bool isFirstComponent)
+        {
+            if (result == null)
+                return;
+
+            result.BattleMonsterEntries.TryGetValue(slotIndex, out var existing);
+            result.BattleMonsterEntries[slotIndex] = isFirstComponent
+                ? (value, existing.val2, false)
+                : (existing.val1, value, false);
+            if (value != 0)
+                result.HasSignificantCode = true;
+        }
+
+        private static void ApplyTrackedBattleMonsterTableWrite(
+            ushort memAddr,
+            byte value,
+            PathAnalysisResult result,
+            bool debugMode)
+        {
+            if (result == null)
+                return;
+
+            if (TryGetBattleMonsterSlot(memAddr, BATTLE_MONSTER_FIRST_TABLE_ADDRESS, out int firstSlot))
+            {
+                UpsertTrackedBattleMonsterComponent(result, firstSlot, value, true);
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Семантика [0x{BATTLE_MONSTER_FIRST_TABLE_ADDRESS:X4}+{firstSlot}]: первый индекс монстра = 0x{value:X2}");
+            }
+            else if (TryGetBattleMonsterSlot(memAddr, BATTLE_MONSTER_SECOND_TABLE_ADDRESS, out int secondSlot))
+            {
+                UpsertTrackedBattleMonsterComponent(result, secondSlot, value, false);
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Семантика [0x{BATTLE_MONSTER_SECOND_TABLE_ADDRESS:X4}+{secondSlot}]: второй индекс монстра = 0x{value:X2}");
+            }
+        }
+
         private void ApplyTrackedByteWrite(ushort memAddr, byte value, PathAnalysisResult result,
-            byte targetX, byte targetY, X86Instruction insn, bool debugMode, string sourceDescription)
+            byte targetX, byte targetY, X86Instruction insn, bool debugMode, string sourceDescription,
+            bool trackBattleMonsterTableWrite = false)
         {
             _emulatedMemory8[memAddr] = value;
             _emulatedPartyPointerBytes.Remove(memAddr);
@@ -8539,6 +8604,9 @@ namespace MMMapEditor
 
             if (result == null)
                 return;
+
+            if (trackBattleMonsterTableWrite)
+                ApplyTrackedBattleMonsterTableWrite(memAddr, value, result, debugMode);
 
             if (memAddr == BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS)
             {
