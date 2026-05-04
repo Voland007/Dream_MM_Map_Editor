@@ -724,6 +724,12 @@ namespace MMMapEditor
             public VariantRenderItem DirectVariant { get; set; }
         }
 
+        private sealed class BranchChoiceDisplayCandidate
+        {
+            public BranchChoice Raw { get; set; }
+            public BranchChoice Normalized { get; set; }
+        }
+
         private sealed class SharedPartyHoistBranch
         {
             public VariantTreeNode ChildNode { get; set; }
@@ -1046,12 +1052,104 @@ private static string BuildHierarchicalVariantNotes(
             if (variant?.BranchChoices == null)
                 yield break;
 
+            var candidates = new List<BranchChoiceDisplayCandidate>();
             foreach (var choice in variant.BranchChoices)
             {
                 var normalized = NormalizeBranchChoiceForDisplay(choice);
                 if (normalized != null)
-                    yield return normalized;
+                {
+                    candidates.Add(new BranchChoiceDisplayCandidate
+                    {
+                        Raw = choice,
+                        Normalized = normalized
+                    });
+                }
             }
+
+            foreach (var candidate in CollapseFlagPropagatedInputChoiceDuplicates(candidates))
+            {
+                if (candidate?.Normalized != null)
+                    yield return candidate.Normalized;
+            }
+        }
+
+        private static List<BranchChoiceDisplayCandidate> CollapseFlagPropagatedInputChoiceDuplicates(
+            List<BranchChoiceDisplayCandidate> choices)
+        {
+            var result = new List<BranchChoiceDisplayCandidate>();
+
+            foreach (var choice in choices ?? new List<BranchChoiceDisplayCandidate>())
+            {
+                if (choice?.Normalized == null)
+                    continue;
+
+                if (result.Count > 0 &&
+                    ShouldReplacePreviousInputChoiceWithFlagChoice(result[result.Count - 1], choice))
+                {
+                    result[result.Count - 1] = choice;
+                    continue;
+                }
+
+                result.Add(choice);
+            }
+
+            return result;
+        }
+
+        private static bool ShouldReplacePreviousInputChoiceWithFlagChoice(
+            BranchChoiceDisplayCandidate previous,
+            BranchChoiceDisplayCandidate current)
+        {
+            if (previous?.Raw == null || previous.Normalized == null ||
+                current?.Raw == null || current.Normalized == null)
+            {
+                return false;
+            }
+
+            if (!HasExplicitInputChoiceHint(previous.Raw.Label))
+                return false;
+
+            if (HasExplicitInputChoiceHint(current.Raw.Label) ||
+                !IsGenericTechnicalChoiceLabel(current.Raw.Label))
+            {
+                return false;
+            }
+
+            if (!IsBinaryChoiceDisplayLabel(previous.Normalized.Label) ||
+                !IsBinaryChoiceDisplayLabel(current.Normalized.Label))
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(previous.Normalized.CompareRegister) ||
+                string.IsNullOrWhiteSpace(current.Normalized.CompareRegister) ||
+                !string.Equals(previous.Normalized.CompareRegister, current.Normalized.CompareRegister, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!previous.Normalized.CompareValue.HasValue ||
+                !current.Normalized.CompareValue.HasValue ||
+                previous.Normalized.CompareValue.Value != current.Normalized.CompareValue.Value)
+            {
+                return false;
+            }
+
+            string previousMnemonic = ExtractChoiceMnemonic(previous.Normalized.Condition);
+            string currentMnemonic = ExtractChoiceMnemonic(current.Normalized.Condition);
+            return !string.IsNullOrWhiteSpace(previousMnemonic) &&
+                   string.Equals(previousMnemonic, currentMnemonic, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsBinaryChoiceDisplayLabel(string label)
+        {
+            string normalized = NormalizeChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(normalized) || !normalized.EndsWith(")", StringComparison.Ordinal))
+                return false;
+
+            string token = normalized.Substring(0, normalized.Length - 1).Trim();
+            return string.Equals(token, "Y", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(token, "N", StringComparison.OrdinalIgnoreCase);
         }
 
         private static BranchChoice NormalizeBranchChoiceForDisplay(BranchChoice choice)
