@@ -50,6 +50,7 @@ namespace MMMapEditor
             ProcessGemsTexts(address, instructionBytes, registerTracker, output);
             ProcessGoldTexts(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessLootDestructionPatterns(address, instructionBytes, registerTracker, output);
+            ProcessSecretPassageToDoomCastleNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
 
             // MOV word ptr [0x3BD4], imm16
             if (instructionBytes.Length >= 6 &&
@@ -151,6 +152,133 @@ namespace MMMapEditor
                 SemanticKind = semanticKind,
                 IsInferred = isInferred
             });
+        }
+
+        private void ProcessSecretPassageToDoomCastleNote(uint instructionAddress, byte[] instructionBytes,
+            RegisterTracker registerTracker, List<TextEntry> output, Func<ushort, byte?> tryReadMemory8)
+        {
+            if (!TryGetByteWrittenToAddress(
+                    instructionBytes,
+                    registerTracker,
+                    SpecialNoteTexts.SecretPassageToDoomCastleAddress,
+                    tryReadMemory8,
+                    out byte writtenValue) ||
+                writtenValue == 0)
+            {
+                return;
+            }
+
+            AnalysisDebug.WriteLine(
+                $"    SECRET PASSAGE: [0x{SpecialNoteTexts.SecretPassageToDoomCastleAddress:X4}] = 0x{writtenValue:X2} по адресу 0x{instructionAddress:X4}");
+            AddOutputText(output, instructionAddress, SpecialNoteTexts.SecretPassageToDoomCastle);
+        }
+
+        private bool TryGetByteWrittenToAddress(byte[] instructionBytes, RegisterTracker registerTracker,
+            ushort targetAddress, Func<ushort, byte?> tryReadMemory8, out byte value)
+        {
+            value = 0;
+
+            if (TryGetDirectByteWriteToAddress(instructionBytes, registerTracker, targetAddress, out value))
+                return true;
+
+            if (TryGetDirectWordMemoryWrite(instructionBytes, registerTracker, out ushort wordAddress, out ushort wordValue))
+            {
+                if (wordAddress == targetAddress)
+                {
+                    value = (byte)(wordValue & 0x00FF);
+                    return true;
+                }
+
+                if (unchecked((ushort)(wordAddress + 1)) == targetAddress)
+                {
+                    value = (byte)((wordValue >> 8) & 0x00FF);
+                    return true;
+                }
+            }
+
+            if (TryGetIncDecByteWriteToAddress(instructionBytes, registerTracker, targetAddress, tryReadMemory8, out value))
+                return true;
+
+            return false;
+        }
+
+        private bool TryGetDirectByteWriteToAddress(byte[] instructionBytes, RegisterTracker registerTracker,
+            ushort targetAddress, out byte value)
+        {
+            value = 0;
+
+            if (instructionBytes == null || instructionBytes.Length < 2)
+                return false;
+
+            // MOV [moffs8], AL
+            if (instructionBytes.Length >= 3 && instructionBytes[0] == 0xA2)
+            {
+                ushort memAddr = BitConverter.ToUInt16(instructionBytes, 1);
+                return memAddr == targetAddress &&
+                       registerTracker.TryGetByteRegisterValue("AL", out value);
+            }
+
+            byte modRm = instructionBytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte regField = (byte)((modRm >> 3) & 0x07);
+
+            // MOV byte ptr r/m8, imm8
+            if (instructionBytes[0] == 0xC6 &&
+                mod != 0x03 &&
+                regField == 0 &&
+                TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort immTarget, out int decodedLength) &&
+                immTarget == targetAddress &&
+                instructionBytes.Length > decodedLength)
+            {
+                value = instructionBytes[decodedLength];
+                return true;
+            }
+
+            // MOV byte ptr r/m8, reg8
+            if (instructionBytes[0] == 0x88 &&
+                mod != 0x03 &&
+                TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort regTarget, out _) &&
+                regTarget == targetAddress &&
+                TryGetWrittenByteValue(instructionBytes, registerTracker, out value))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryGetIncDecByteWriteToAddress(byte[] instructionBytes, RegisterTracker registerTracker,
+            ushort targetAddress, Func<ushort, byte?> tryReadMemory8, out byte value)
+        {
+            value = 0;
+
+            if (tryReadMemory8 == null ||
+                instructionBytes == null ||
+                instructionBytes.Length < 2 ||
+                instructionBytes[0] != 0xFE)
+            {
+                return false;
+            }
+
+            byte modRm = instructionBytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte regField = (byte)((modRm >> 3) & 0x07);
+            if (mod == 0x03 || (regField != 0 && regField != 1))
+                return false;
+
+            if (!TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _) ||
+                memAddr != targetAddress)
+            {
+                return false;
+            }
+
+            byte? currentValue = tryReadMemory8(targetAddress);
+            if (!currentValue.HasValue)
+                return false;
+
+            int delta = regField == 0 ? 1 : -1;
+            value = unchecked((byte)(currentValue.Value + delta));
+            return true;
         }
 
         private void ProcessContainerTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,

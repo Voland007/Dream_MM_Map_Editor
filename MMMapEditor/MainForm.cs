@@ -1608,6 +1608,36 @@ namespace MMMapEditor
             }
         }
 
+        private void FormatSecretPassageToDoomCastleNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            string targetText = SpecialNoteTexts.SecretPassageToDoomCastle;
+            int searchStart = 0;
+
+            while (searchStart < noteText.Length)
+            {
+                int matchIndex = noteText.IndexOf(targetText, searchStart, StringComparison.Ordinal);
+                if (matchIndex < 0)
+                    break;
+
+                ApplySecretPassageToDoomCastleStyle(rt, noteText, matchIndex, targetText.Length);
+                searchStart = matchIndex + targetText.Length;
+            }
+        }
+
+        private void ApplySecretPassageToDoomCastleStyle(RichTextBox rt, string noteText, int startIndex, int length)
+        {
+            Color passageTextColor = Color.FromArgb(180, 255, 220);
+            Color passageBackColor = Color.FromArgb(22, 65, 48);
+
+            rt.Select(startIndex, length);
+            rt.SelectionColor = passageTextColor;
+            rt.SelectionBackColor = passageBackColor;
+            rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Bold);
+        }
+
         private void ApplyRainbowBackgroundStyle(RichTextBox rt, int startIndex, string text)
         {
             Color[] rainbowStops = new Color[]
@@ -2368,6 +2398,9 @@ namespace MMMapEditor
 
                 // Радужный фон для заметок о смене пола в партии
                 FormatRainbowPartysexNotes(notesTextBox, noteText);
+
+                // Отдельная подсветка открытия секретного прохода в Doom Castle
+                FormatSecretPassageToDoomCastleNotes(notesTextBox, noteText);
 
                 if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
                     ApplyInlineNoteStyles(notesTextBox, noteText, inlineSpans);

@@ -238,7 +238,8 @@ namespace MMMapEditor
 
                         // Поиск прямых текстов
                         var newTexts = new List<TextEntry>();
-                        _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts, TryGetEmulatedMemory8Value);
+                        _instructionAnalyzer.FindTextsInInstruction(insn, br, registerTracker, depth, newTexts,
+                            address => TryGetCurrentMemory8Value(br, address));
                         ProcessFoundTexts(newTexts, foundTextsInThisPath, result, currentCallDepth, insn, debugMode, ref textOrderCounter);
 
                         // Поиск изменений статистики монстров и информации о битвах
@@ -333,6 +334,16 @@ namespace MMMapEditor
         private byte? TryGetEmulatedMemory8Value(ushort address)
         {
             return _emulatedMemory8.TryGetValue(address, out byte value)
+                ? value
+                : (byte?)null;
+        }
+
+        private byte? TryGetCurrentMemory8Value(BinaryReader br, ushort address)
+        {
+            if (_emulatedMemory8.TryGetValue(address, out byte value))
+                return value;
+
+            return TryReadOverlayByte(br, address, out value)
                 ? value
                 : (byte?)null;
         }
