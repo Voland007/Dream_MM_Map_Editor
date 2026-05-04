@@ -2493,6 +2493,67 @@ namespace MMMapEditor
             }
         }
 
+        private void TrackAccumulatorImmediateLogicalOperation(RegisterTracker registerTracker,
+            PartyEffectOperation operation, byte immediateValue, uint instructionAddress,
+            bool updateAccumulatorValue)
+        {
+            if (registerTracker == null || operation == PartyEffectOperation.Unknown)
+                return;
+
+            string mnemonic = operation switch
+            {
+                PartyEffectOperation.BitSet => "OR",
+                PartyEffectOperation.BitClear => "AND",
+                PartyEffectOperation.BitToggle => "XOR",
+                _ => "LOGIC"
+            };
+
+            if (updateAccumulatorValue &&
+                TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte oldValue) &&
+                TryApplyImmediateByteTransform(oldValue, immediateValue, operation, out byte newValue))
+            {
+                registerTracker.TrackPartialRegisterOperation(
+                    "AX",
+                    "AL",
+                    newValue,
+                    instructionAddress,
+                    $"{mnemonic} AL, 0x{immediateValue:X2}");
+                SetLogicalFlagsForByteResult(registerTracker, "AL", newValue, instructionAddress, immediateValue);
+                return;
+            }
+
+            if (!updateAccumulatorValue &&
+                TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte currentValue))
+            {
+                SetLogicalFlagsForByteResult(registerTracker, "AL", currentValue, instructionAddress, immediateValue);
+                return;
+            }
+
+            if (registerTracker.TryGetRegisterRange("AL", out var _) ||
+                (registerTracker.TryGetPartyFieldValue("AL", out var partyField) && partyField != null) ||
+                (registerTracker.TryGetPartyPointerByteValue("AL", out var pointerByte) && pointerByte != null))
+            {
+                registerTracker.FlagsKnown = false;
+                registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, instructionAddress);
+                registerTracker.LastTestMask = immediateValue;
+            }
+        }
+
+        private static void SetLogicalFlagsForByteResult(RegisterTracker registerTracker, string flagsRegister,
+            byte resultValue, uint instructionAddress, byte? testMask = null)
+        {
+            if (registerTracker == null)
+                return;
+
+            registerTracker.ZeroFlag = resultValue == 0;
+            registerTracker.SignFlag = (resultValue & 0x80) != 0;
+            registerTracker.CarryFlag = false;
+            registerTracker.OverflowFlag = false;
+            registerTracker.FlagsKnown = true;
+            registerTracker.SetFlagsMetadata(flagsRegister, RegisterTracker.FlagsOriginKind.Test, instructionAddress);
+            registerTracker.LastTestMask = testMask;
+        }
+
         private static bool IsTrackedPartyField(PartyFieldKind field)
         {
             return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
@@ -3990,6 +4051,7 @@ namespace MMMapEditor
                 target.RandomEncounterRubicon = source.RandomEncounterRubicon;
 
             target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
+            MultiplyInlineProbability(target, source.InlineProbabilityNumerator, source.InlineProbabilityDenominator);
 
             if (source.RandomEncounterInstructionAddress != 0 &&
                 (target.RandomEncounterInstructionAddress == 0 ||
@@ -4361,6 +4423,7 @@ namespace MMMapEditor
 
                         if (!processedBackEdges.Add(backEdge))
                         {
+                            ApplyInlineBranchProbability(result, insn.Mnemonic, registerTracker, branchTaken: false, debugMode);
                             ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
                                 (uint)insn.Address, debugMode);
 
@@ -4406,6 +4469,7 @@ namespace MMMapEditor
 
                     if (!processedBackEdges.Add(backEdge))
                     {
+                        ApplyInlineBranchProbability(result, insn.Mnemonic, registerTracker, branchTaken: false, debugMode);
                         ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
                             (uint)insn.Address, debugMode);
 
@@ -4517,6 +4581,70 @@ namespace MMMapEditor
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+        }
+
+        private void ApplyInlineBranchProbability(PathAnalysisResult result, string mnemonic,
+            RegisterTracker registerTracker, bool branchTaken, bool debugMode)
+        {
+            if (result == null)
+                return;
+
+            var probability = EstimateBranchProbability(mnemonic, registerTracker, branchTaken);
+            if (probability.denominator <= 1 ||
+                probability.numerator <= 0 ||
+                probability.numerator >= probability.denominator)
+            {
+                return;
+            }
+
+            MultiplyInlineProbability(result, probability.numerator, probability.denominator);
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Учтена вероятность вынужденной ветки после повторного back-edge: {probability.numerator}/{probability.denominator}");
+            }
+        }
+
+        private void MultiplyInlineProbability(PathAnalysisResult result, int numeratorFactor, int denominatorFactor)
+        {
+            if (result == null ||
+                denominatorFactor <= 1 ||
+                numeratorFactor <= 0 ||
+                numeratorFactor >= denominatorFactor)
+            {
+                return;
+            }
+
+            long numerator = Math.Max(1, result.InlineProbabilityNumerator);
+            long denominator = Math.Max(1, result.InlineProbabilityDenominator);
+
+            numerator *= numeratorFactor;
+            denominator *= denominatorFactor;
+
+            long gcd = GreatestCommonDivisor(numerator, denominator);
+            if (gcd > 1)
+            {
+                numerator /= gcd;
+                denominator /= gcd;
+            }
+
+            result.InlineProbabilityNumerator = numerator > int.MaxValue ? int.MaxValue : (int)numerator;
+            result.InlineProbabilityDenominator = denominator > int.MaxValue ? int.MaxValue : (int)denominator;
+        }
+
+        private static long GreatestCommonDivisor(long a, long b)
+        {
+            a = Math.Abs(a);
+            b = Math.Abs(b);
+            while (b != 0)
+            {
+                long remainder = a % b;
+                a = b;
+                b = remainder;
+            }
+
+            return a == 0 ? 1 : a;
         }
 
         private void TrackStateValueConstraintForCurrentFlags(
@@ -4748,18 +4876,20 @@ namespace MMMapEditor
         private void ApplyBranchConstraintInPlace(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
             uint instructionAddress, bool debugMode)
         {
-            if (!TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out string reg, out int min, out int max))
-                return;
-
-            var distribution = GetExistingRegisterDistributionOrUnknown(registerTracker, reg);
-            registerTracker.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
-
-            if (debugMode)
+            if (TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out string reg, out int min, out int max))
             {
-                string branchText = branchTaken ? "taken" : "linear";
-                AnalysisDebug.WriteLine(
-                    $"      Уточнили диапазон {reg} для ветки {branchText} после {mnemonic}: {min:X2}..{max:X2} (инстр. 0x{instructionAddress:X4})");
+                var distribution = GetExistingRegisterDistributionOrUnknown(registerTracker, reg);
+                registerTracker.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
+
+                if (debugMode)
+                {
+                    string branchText = branchTaken ? "taken" : "linear";
+                    AnalysisDebug.WriteLine(
+                        $"      Уточнили диапазон {reg} для ветки {branchText} после {mnemonic}: {min:X2}..{max:X2} (инстр. 0x{instructionAddress:X4})");
+                }
             }
+
+            ApplyKnownFlagsForResolvedBranch(registerTracker, mnemonic, branchTaken);
         }
 
         private RegisterTracker CloneRegisterStateForBranch(BinaryReader br, RegisterTracker registerTracker, string mnemonic,
@@ -4772,6 +4902,8 @@ namespace MMMapEditor
                 var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
                 clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
             }
+
+            ApplyKnownFlagsForResolvedBranch(clone, mnemonic, branchTaken);
 
             var conditionWindow = TryBuildBranchConditionWindow(br, registerTracker, mnemonic, branchTaken,
                 instructionAddress, nextAddress, branchTarget);
@@ -4792,6 +4924,110 @@ namespace MMMapEditor
             return clone;
         }
 
+        private void ApplyKnownFlagsForResolvedBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
+        {
+            if (registerTracker == null)
+                return;
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            bool zeroKnown = false;
+            bool zeroValue = registerTracker.ZeroFlag;
+            bool carryKnown = false;
+            bool carryValue = registerTracker.CarryFlag;
+            bool existingZeroKnown = registerTracker.FlagsKnown &&
+                (!registerTracker.LastFlagsFromBranchConstraint || registerTracker.BranchConstraintZeroFlagKnown);
+            bool existingCarryKnown = registerTracker.FlagsKnown &&
+                (!registerTracker.LastFlagsFromBranchConstraint || registerTracker.BranchConstraintCarryFlagKnown);
+            bool existingZeroValue = registerTracker.ZeroFlag;
+            bool existingCarryValue = registerTracker.CarryFlag;
+
+            switch (jump)
+            {
+                case "JE":
+                case "JZ":
+                    zeroKnown = true;
+                    zeroValue = branchTaken;
+                    break;
+
+                case "JNE":
+                case "JNZ":
+                    zeroKnown = true;
+                    zeroValue = !branchTaken;
+                    break;
+
+                case "JB":
+                case "JC":
+                case "JNAE":
+                    carryKnown = true;
+                    carryValue = branchTaken;
+                    if (branchTaken)
+                    {
+                        zeroKnown = true;
+                        zeroValue = false;
+                    }
+                    break;
+
+                case "JAE":
+                case "JNB":
+                case "JNC":
+                    carryKnown = true;
+                    carryValue = !branchTaken;
+                    if (!branchTaken)
+                    {
+                        zeroKnown = true;
+                        zeroValue = false;
+                    }
+                    break;
+
+                case "JBE":
+                case "JNA":
+                    if (!branchTaken)
+                    {
+                        carryKnown = true;
+                        carryValue = false;
+                        zeroKnown = true;
+                        zeroValue = false;
+                    }
+                    break;
+
+                case "JA":
+                case "JNBE":
+                    if (branchTaken)
+                    {
+                        carryKnown = true;
+                        carryValue = false;
+                        zeroKnown = true;
+                        zeroValue = false;
+                    }
+                    break;
+            }
+
+            if (!zeroKnown && existingZeroKnown)
+            {
+                zeroKnown = true;
+                zeroValue = existingZeroValue;
+            }
+
+            if (!carryKnown && existingCarryKnown)
+            {
+                carryKnown = true;
+                carryValue = existingCarryValue;
+            }
+
+            if (!zeroKnown && !carryKnown)
+                return;
+
+            if (zeroKnown)
+                registerTracker.ZeroFlag = zeroValue;
+            if (carryKnown)
+                registerTracker.CarryFlag = carryValue;
+
+            registerTracker.FlagsKnown = true;
+            registerTracker.LastFlagsFromBranchConstraint = true;
+            registerTracker.BranchConstraintZeroFlagKnown = zeroKnown;
+            registerTracker.BranchConstraintCarryFlagKnown = carryKnown;
+        }
+
         private RegisterValueDistribution GetExistingRegisterDistributionOrUnknown(RegisterTracker registerTracker, string reg)
         {
             if (registerTracker != null &&
@@ -4802,6 +5038,24 @@ namespace MMMapEditor
             }
 
             return RegisterValueDistribution.Unknown;
+        }
+
+        private bool TryGetExactByteRegisterOrRange(RegisterTracker registerTracker, string reg, out byte value)
+        {
+            value = 0;
+            if (registerTracker == null || string.IsNullOrWhiteSpace(reg))
+                return false;
+
+            if (registerTracker.TryGetByteRegisterValue(reg, out value))
+                return true;
+
+            if (registerTracker.TryGetRegisterRange(reg, out var range) && range?.IsExact == true)
+            {
+                value = range.Min;
+                return true;
+            }
+
+            return false;
         }
 
         private RegisterValueDistribution GetShiftedRangeDistribution(RegisterValueDistribution distribution, byte operation)
@@ -4887,6 +5141,14 @@ namespace MMMapEditor
             if (registerTracker == null || !registerTracker.FlagsKnown)
                 return null;
 
+            if (registerTracker.LastFlagsFromBranchConstraint)
+            {
+                if (TryEvaluateConditionalJumpFromKnownBranchFlags(mnemonic, registerTracker, out bool branchResult))
+                    return branchResult;
+
+                return null;
+            }
+
             // Схлопываем только координатные проверки.
             // Внешние guard-условия вроде MOV AL,[0xCAFE] / OR AL,AL / JNE должны
             // оставаться развилкой, даже если текущее значение известно.
@@ -4896,23 +5158,28 @@ namespace MMMapEditor
                 return null;
 
             string flagsReg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
-            if (string.IsNullOrWhiteSpace(flagsReg))
-                return null;
+            bool hasFlagsRegister = !string.IsNullOrWhiteSpace(flagsReg);
+            bool isDeterministicMemoryCompare = IsDeterministicMemoryCompareSource(registerTracker);
 
             bool allowDeterministicResolution =
                 registerTracker.LastFlagsFromCoordinate ||
-                IsDeterministicFlagsSource(registerTracker, flagsReg) ||
-                IsDeterministicMemoryCompareSource(registerTracker);
+                (hasFlagsRegister && IsDeterministicFlagsSource(registerTracker, flagsReg)) ||
+                isDeterministicMemoryCompare;
 
             if (!allowDeterministicResolution)
                 return null;
 
-            bool hasExactValue = registerTracker.TryGetRegisterValue(flagsReg, out _)
-                || (flagsReg.Length == 2 && flagsReg[1] == 'L' && registerTracker.TryGetByteRegisterValue(flagsReg, out _))
-                || (flagsReg.Length == 2 && flagsReg[1] == 'H' && registerTracker.TryGetByteRegisterValue(flagsReg, out _));
-
-            if (!hasExactValue)
+            if (!hasFlagsRegister && !isDeterministicMemoryCompare)
                 return null;
+
+            if (hasFlagsRegister)
+            {
+                bool hasExactValue = registerTracker.TryGetRegisterValue(flagsReg, out _)
+                    || TryGetExactByteRegisterOrRange(registerTracker, flagsReg, out _);
+
+                if (!hasExactValue)
+                    return null;
+            }
 
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
             return jump switch
@@ -4927,6 +5194,83 @@ namespace MMMapEditor
             };
         }
 
+        private bool TryEvaluateConditionalJumpFromKnownBranchFlags(string mnemonic, RegisterTracker registerTracker, out bool branchTaken)
+        {
+            branchTaken = false;
+            if (registerTracker == null || !registerTracker.LastFlagsFromBranchConstraint)
+                return false;
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            bool zeroKnown = registerTracker.BranchConstraintZeroFlagKnown;
+            bool carryKnown = registerTracker.BranchConstraintCarryFlagKnown;
+            bool zero = registerTracker.ZeroFlag;
+            bool carry = registerTracker.CarryFlag;
+
+            switch (jump)
+            {
+                case "JE":
+                case "JZ":
+                    if (!zeroKnown)
+                        return false;
+                    branchTaken = zero;
+                    return true;
+
+                case "JNE":
+                case "JNZ":
+                    if (!zeroKnown)
+                        return false;
+                    branchTaken = !zero;
+                    return true;
+
+                case "JB":
+                case "JC":
+                case "JNAE":
+                    if (!carryKnown)
+                        return false;
+                    branchTaken = carry;
+                    return true;
+
+                case "JAE":
+                case "JNB":
+                case "JNC":
+                    if (!carryKnown)
+                        return false;
+                    branchTaken = !carry;
+                    return true;
+
+                case "JBE":
+                case "JNA":
+                    if ((carryKnown && carry) || (zeroKnown && zero))
+                    {
+                        branchTaken = true;
+                        return true;
+                    }
+                    if (carryKnown && zeroKnown)
+                    {
+                        branchTaken = carry || zero;
+                        return true;
+                    }
+                    return false;
+
+                case "JA":
+                case "JNBE":
+                    if ((carryKnown && carry) || (zeroKnown && zero))
+                    {
+                        branchTaken = false;
+                        return true;
+                    }
+                    if (carryKnown && zeroKnown)
+                    {
+                        branchTaken = !carry && !zero;
+                        return true;
+                    }
+                    return false;
+
+                default:
+                    return false;
+            }
+        }
+
         private bool IsDeterministicFlagsSource(RegisterTracker registerTracker, string flagsReg)
         {
             if (registerTracker == null || string.IsNullOrWhiteSpace(flagsReg))
@@ -4939,7 +5283,8 @@ namespace MMMapEditor
         private bool IsDeterministicMemoryCompareSource(RegisterTracker registerTracker)
         {
             if (registerTracker == null ||
-                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory ||
+                (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory &&
+                 registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate) ||
                 !registerTracker.LastComparedMemoryAddress.HasValue)
             {
                 return false;
@@ -5395,6 +5740,8 @@ namespace MMMapEditor
                     invalidateFlags = true;
                 else if ((opcode >= 0x30 && opcode <= 0x35)) // XOR
                     invalidateFlags = true;
+                else if (opcode >= 0x38 && opcode <= 0x3D) // CMP
+                    invalidateFlags = true;
                 else if (opcode == 0x84 || opcode == 0x85 || opcode == 0xA8 || opcode == 0xA9) // TEST
                     invalidateFlags = true;
                 else if ((opcode >= 0x40 && opcode <= 0x4F)) // INC/DEC reg16
@@ -5409,12 +5756,10 @@ namespace MMMapEditor
                     {
                         byte modRm = instructionBytes[1];
                         byte operation = (byte)((modRm >> 3) & 0x07);
-                        // Невалидируем только для точно поддержанных нами ADD/CMP
-                        if (!(opcode == 0x80 && operation == 0x07 && ((modRm >> 6) & 0x03) == 0x03) &&
-                            !(opcode == 0x04))
-                        {
+                        // Точные обработчики ниже заново выставят флаги; если обработчик не смог
+                        // смоделировать источник, старые флаги не должны протекать в следующий Jcc.
+                        if (!(opcode == 0x04))
                             invalidateFlags = true;
-                        }
                     }
                 }
 
@@ -6326,14 +6671,28 @@ namespace MMMapEditor
                     _ => PartyEffectOperation.Unknown
                 };
 
-                TrackPartyFieldRegisterImmediateTransform(
-                    result,
+                bool hasAccumulatorPartyField =
+                    registerTracker.TryGetPartyFieldValue("AL", out var accumulatorPartyField) &&
+                    accumulatorPartyField != null;
+
+                if (hasAccumulatorPartyField)
+                {
+                    TrackPartyFieldRegisterImmediateTransform(
+                        result,
+                        registerTracker,
+                        "AL",
+                        accumulatorOperation,
+                        instructionBytes[1],
+                        address,
+                        debugMode);
+                }
+
+                TrackAccumulatorImmediateLogicalOperation(
                     registerTracker,
-                    "AL",
                     accumulatorOperation,
                     instructionBytes[1],
                     address,
-                    debugMode);
+                    updateAccumulatorValue: !hasAccumulatorPartyField);
             }
 
             if (instructionBytes.Length >= 2 &&
@@ -6630,7 +6989,7 @@ namespace MMMapEditor
                 {
                     string regName = compareRegName;
 
-                    if (registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
+                    if (TryGetExactByteRegisterOrRange(registerTracker, regName, out byte regValue))
                     {
                         if (instructionBytes[0] == 0x3A)
                         {
@@ -6690,7 +7049,7 @@ namespace MMMapEditor
             {
                 byte immediateValue = instructionBytes[1];
 
-                bool hasKnownAlForCompare = registerTracker.TryGetByteRegisterValue("AL", out byte alValue);
+                bool hasKnownAlForCompare = TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte alValue);
                 bool hasComparedPartyField = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
                     comparedPartyField != null;
                 bool hasComparablePartyField = hasComparedPartyField &&
@@ -6731,15 +7090,9 @@ namespace MMMapEditor
             // OR AL, AL / TEST AL, AL (точное выставление флагов для проверок на ноль)
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x0A && instructionBytes[1] == 0xC0)
             {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                if (TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte alValue))
                 {
-                    registerTracker.ZeroFlag = alValue == 0;
-                    registerTracker.SignFlag = (alValue & 0x80) != 0;
-                    registerTracker.CarryFlag = false;
-                    registerTracker.OverflowFlag = false;
-                    registerTracker.FlagsKnown = true;
-                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
-                    registerTracker.LastTestMask = 0xFF;
+                    SetLogicalFlagsForByteResult(registerTracker, "AL", alValue, address, 0xFF);
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _) ||
                          (registerTracker.TryGetPartyFieldValue("AL", out var alFieldForOr) && alFieldForOr != null) ||
@@ -6758,16 +7111,10 @@ namespace MMMapEditor
                     testedPartyField != null &&
                     IsTrackedPartyField(testedPartyField.Field);
 
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                if (TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte alValue))
                 {
                     byte testResult = (byte)(alValue & immediateValue);
-                    registerTracker.ZeroFlag = testResult == 0;
-                    registerTracker.SignFlag = (testResult & 0x80) != 0;
-                    registerTracker.CarryFlag = false;
-                    registerTracker.OverflowFlag = false;
-                    registerTracker.FlagsKnown = true;
-                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
-                    registerTracker.LastTestMask = immediateValue;
+                    SetLogicalFlagsForByteResult(registerTracker, "AL", testResult, address, immediateValue);
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _))
                 {
@@ -6797,15 +7144,9 @@ namespace MMMapEditor
 
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x84 && instructionBytes[1] == 0xC0)
             {
-                if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
+                if (TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte alValue))
                 {
-                    registerTracker.ZeroFlag = alValue == 0;
-                    registerTracker.SignFlag = (alValue & 0x80) != 0;
-                    registerTracker.CarryFlag = false;
-                    registerTracker.OverflowFlag = false;
-                    registerTracker.FlagsKnown = true;
-                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Test, address);
-                    registerTracker.LastTestMask = 0xFF;
+                    SetLogicalFlagsForByteResult(registerTracker, "AL", alValue, address, 0xFF);
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var _) ||
                          (registerTracker.TryGetPartyFieldValue("AL", out var alFieldForTest) && alFieldForTest != null) ||
@@ -6835,7 +7176,8 @@ namespace MMMapEditor
                         comparedPartyField != null &&
                         IsComparablePartyField(comparedPartyField.Field);
 
-                    if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
+                    if (!string.IsNullOrWhiteSpace(regName) &&
+                        TryGetExactByteRegisterOrRange(registerTracker, regName, out byte regValue))
                     {
                         byte cmpResult = (byte)(regValue - immediateValue);
                         SetArithmeticFlagsForSub8(registerTracker, regValue, immediateValue, cmpResult, regName, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
@@ -6900,6 +7242,11 @@ namespace MMMapEditor
                         {
                             byte cmpResult = (byte)(memValue - immediateValue);
                             SetArithmeticFlagsForSub8(registerTracker, memValue, immediateValue, cmpResult, null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
+                        }
+                        else if (hasExactMemAddr)
+                        {
+                            registerTracker.FlagsKnown = false;
+                            registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         }
                         else if (hasPartyFieldRef && comparedFieldRef != null && IsComparablePartyField(comparedFieldRef.Field))
                         {

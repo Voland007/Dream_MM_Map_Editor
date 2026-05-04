@@ -127,6 +127,9 @@ namespace MMMapEditor
                     combinedProbabilityDenominator = 1;
                 }
 
+                ApplyInlinePathProbability(pathResult, ref combinedProbabilityApplicable,
+                    ref combinedProbabilityNumerator, ref combinedProbabilityDenominator);
+
                 var currentBranchChoices = CloneBranchChoices(inheritedBranchChoices);
                 var currentChoice = CreateBranchChoice(path);
                 if (currentChoice != null)
@@ -167,6 +170,67 @@ namespace MMMapEditor
                         persistentStateAddresses);
                 }
             }
+        }
+
+        private void ApplyInlinePathProbability(PathAnalysisResult pathResult,
+            ref bool probabilityApplicable,
+            ref int probabilityNumerator,
+            ref int probabilityDenominator)
+        {
+            if (pathResult == null ||
+                pathResult.InlineProbabilityDenominator <= 1 ||
+                pathResult.InlineProbabilityNumerator <= 0 ||
+                pathResult.InlineProbabilityNumerator >= pathResult.InlineProbabilityDenominator)
+            {
+                return;
+            }
+
+            if (probabilityApplicable)
+            {
+                long numerator = (long)probabilityNumerator * pathResult.InlineProbabilityNumerator;
+                long denominator = (long)probabilityDenominator * Math.Max(1, pathResult.InlineProbabilityDenominator);
+                NormalizeProbability(ref numerator, ref denominator);
+                probabilityNumerator = numerator > int.MaxValue ? int.MaxValue : (int)numerator;
+                probabilityDenominator = denominator > int.MaxValue ? int.MaxValue : (int)denominator;
+            }
+            else
+            {
+                probabilityApplicable = true;
+                probabilityNumerator = pathResult.InlineProbabilityNumerator;
+                probabilityDenominator = Math.Max(1, pathResult.InlineProbabilityDenominator);
+                long numerator = probabilityNumerator;
+                long denominator = probabilityDenominator;
+                NormalizeProbability(ref numerator, ref denominator);
+                probabilityNumerator = (int)numerator;
+                probabilityDenominator = (int)denominator;
+            }
+        }
+
+        private void NormalizeProbability(ref long numerator, ref long denominator)
+        {
+            if (denominator <= 0)
+                denominator = 1;
+
+            long gcd = GreatestCommonDivisor(numerator, denominator);
+            if (gcd > 1)
+            {
+                numerator /= gcd;
+                denominator /= gcd;
+            }
+        }
+
+        private long GreatestCommonDivisor(long a, long b)
+        {
+            a = Math.Abs(a);
+            b = Math.Abs(b);
+            while (b != 0)
+            {
+                long remainder = a % b;
+                a = b;
+                b = remainder;
+            }
+
+            return a == 0 ? 1 : a;
         }
 
         private List<BranchChoice> CloneBranchChoices(List<BranchChoice> source)
@@ -840,6 +904,8 @@ namespace MMMapEditor
             clone.IsTerminated = source.IsTerminated;
             clone.HasSignificantCode = source.HasSignificantCode;
             clone.UsesInitialCoordinates = source.UsesInitialCoordinates;
+            clone.InlineProbabilityNumerator = source.InlineProbabilityNumerator;
+            clone.InlineProbabilityDenominator = source.InlineProbabilityDenominator;
 
             foreach (var entry in source.BattleMonsterEntries)
                 clone.BattleMonsterEntries[entry.Key] = entry.Value;
@@ -1590,8 +1656,9 @@ namespace MMMapEditor
                 : "<NO_PARTIAL>";
 
             string partyKey = BuildPartyEffectsKey(variant);
+            string probabilityKey = $"{variant.ProbabilityNumerator}/{Math.Max(1, variant.ProbabilityDenominator)}";
 
-            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}";
+            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}||{probabilityKey}";
         }
 
         private int GreatestCommonDivisor(int a, int b)

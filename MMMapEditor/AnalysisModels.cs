@@ -397,6 +397,8 @@ namespace MMMapEditor
         public List<uint> ExitPendingReturnAddresses { get; set; } = new List<uint>();
         public int ExitCallDepth { get; set; } = 0;
         public bool UsesInitialCoordinates { get; set; } = false;
+        public int InlineProbabilityNumerator { get; set; } = 1;
+        public int InlineProbabilityDenominator { get; set; } = 1;
 
         // Адрес первой инструкции, которая загрузила локальный текст
         public uint FirstLocalTextAddress { get; set; } = uint.MaxValue;
