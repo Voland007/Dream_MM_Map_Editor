@@ -1846,6 +1846,13 @@ namespace MMMapEditor
                 ProcessDirectSaveTo3C29FromAL(bytes, tracker, result, address);
                 return;
             }
+
+            // Прямое сохранение в [3C29] из CL (без BX)
+            else if (bytes.Length >= 4 && bytes[0] == 0x88 && bytes[1] == 0x0E && bytes[2] == 0x29 && bytes[3] == 0x3C)
+            {
+                ProcessDirectSaveTo3C29FromCL(bytes, tracker, result, address);
+                return;
+            }
         }
 
         private static ushort? ComputeSourceTableBaseAddress(ushort? sourceAddr, ushort? originalBx)
@@ -2508,6 +2515,61 @@ namespace MMMapEditor
             else
             {
                 TryRecordRangedBattleSave(tracker, result, saveIndex, 0x3C29, "AL", "AX", "[3C29]", sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, sourceIndexProviderAddr);
+            }
+        }
+
+        /// <summary>
+        /// Прямое сохранение в [3C29] из CL (без BX)
+        /// </summary>
+        private void ProcessDirectSaveTo3C29FromCL(byte[] bytes, RegisterTracker tracker,
+    PathAnalysisResult result, uint address)
+        {
+            int saveIndex = 0; // BX = 0 для прямых сохранений
+            bool isFromTable = tracker.IsFromTable("CL") || tracker.IsFromTable("CX");
+            ushort? sourceAddr = tracker.GetSourceAddress("CL") ?? tracker.GetSourceAddress("CX");
+            ushort? originalBx = tracker.GetOriginalBx("CL") ?? tracker.GetOriginalBx("CX");
+            string sourceTable = tracker.GetSourceTable("CL") ?? tracker.GetSourceTable("CX");
+            bool sourceIndexExternallyDerived = tracker.GetSourceIndexExternallyDerived("CL") || tracker.GetSourceIndexExternallyDerived("CX");
+            ushort? sourceIndexProviderAddr = tracker.GetSourceIndexProviderAddress("CL") ?? tracker.GetSourceIndexProviderAddress("CX");
+
+            if (tracker.TryGetByteRegisterValue("CL", out byte clValue))
+            {
+                if (isFromTable)
+                {
+                    switch (sourceTable)
+                    {
+                        case "CDB5":
+                            // Из таблицы CDB5+ - ВТОРОЙ ИНДЕКС монстра
+                            UpsertSecondBattleMonsterComponent(result, saveIndex, clValue, "CL", sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, sourceIndexProviderAddr, true);
+                            AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая, из CDB5): [3C29] = CL (val2={clValue:X2})");
+                            break;
+
+                        case "CDBD":
+                            // Из таблицы CDBD+ - ПЕРВЫЙ ИНДЕКС в CL? Нестандартно
+                            AnalysisDebug.WriteLine($"    [!] ПОЛНАЯ БИТВА (прямая, из CDBD в 3C29? Нестандартно): [3C29] = CL (val2={clValue:X2})");
+                            UpsertSecondBattleMonsterComponent(result, saveIndex, clValue, "CL", sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, sourceIndexProviderAddr, true);
+                            break;
+
+                        case "CDB1":
+                        case "CDA9":
+                        case "CA7F":
+                        case "CA84":
+                        default:
+                            RecordPartialBattleSave(result, saveIndex, 0x3C29, "CL", clValue, sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, sourceIndexProviderAddr);
+                            AnalysisDebug.WriteLine($"    ПРЯМОЕ СОХРАНЕНИЕ ИЗ ТАБЛИЦЫ {sourceTable ?? "UNKNOWN"}+: [3C29] = CL (originalBX={originalBx}, val={clValue:X2})");
+                            break;
+                    }
+                }
+                else
+                {
+                    // Значение не из таблиц - полностью определённая битва
+                    UpsertSecondBattleMonsterComponent(result, saveIndex, clValue, "CL", sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, sourceIndexProviderAddr, false);
+                    AnalysisDebug.WriteLine($"    ПОЛНАЯ БИТВА (прямая): [3C29] = CL (val2={clValue:X2})");
+                }
+            }
+            else
+            {
+                TryRecordRangedBattleSave(tracker, result, saveIndex, 0x3C29, "CL", "CX", "[3C29]", sourceAddr, originalBx, sourceTable, sourceIndexExternallyDerived, sourceIndexProviderAddr);
             }
         }
 
