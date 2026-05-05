@@ -1608,26 +1608,34 @@ namespace MMMapEditor
             }
         }
 
-        private void FormatSecretPassageToDoomCastleNotes(RichTextBox rt, string noteText)
+        private void FormatSpecialHighlightedNotes(RichTextBox rt, string noteText)
         {
             if (rt == null || string.IsNullOrEmpty(noteText))
                 return;
 
-            string targetText = SpecialNoteTexts.SecretPassageToDoomCastle;
-            int searchStart = 0;
-
-            while (searchStart < noteText.Length)
+            string[] targetTexts =
             {
-                int matchIndex = noteText.IndexOf(targetText, searchStart, StringComparison.Ordinal);
-                if (matchIndex < 0)
-                    break;
+                SpecialNoteTexts.SecretPassageToDoomCastle,
+                SpecialNoteTexts.RedDragonResurrection
+            };
 
-                ApplySecretPassageToDoomCastleStyle(rt, noteText, matchIndex, targetText.Length);
-                searchStart = matchIndex + targetText.Length;
+            foreach (string targetText in targetTexts)
+            {
+                int searchStart = 0;
+
+                while (searchStart < noteText.Length)
+                {
+                    int matchIndex = noteText.IndexOf(targetText, searchStart, StringComparison.Ordinal);
+                    if (matchIndex < 0)
+                        break;
+
+                    ApplySpecialHighlightedNoteStyle(rt, matchIndex, targetText.Length);
+                    searchStart = matchIndex + targetText.Length;
+                }
             }
         }
 
-        private void ApplySecretPassageToDoomCastleStyle(RichTextBox rt, string noteText, int startIndex, int length)
+        private void ApplySpecialHighlightedNoteStyle(RichTextBox rt, int startIndex, int length)
         {
             Color passageTextColor = Color.FromArgb(180, 255, 220);
             Color passageBackColor = Color.FromArgb(22, 65, 48);
@@ -2399,8 +2407,8 @@ namespace MMMapEditor
                 // Радужный фон для заметок о смене пола в партии
                 FormatRainbowPartysexNotes(notesTextBox, noteText);
 
-                // Отдельная подсветка открытия секретного прохода в Doom Castle
-                FormatSecretPassageToDoomCastleNotes(notesTextBox, noteText);
+                // Отдельная подсветка специальных заметок
+                FormatSpecialHighlightedNotes(notesTextBox, noteText);
 
                 if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
                     ApplyInlineNoteStyles(notesTextBox, noteText, inlineSpans);

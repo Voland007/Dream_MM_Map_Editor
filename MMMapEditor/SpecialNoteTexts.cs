@@ -34,5 +34,9 @@ namespace MMMapEditor
         public const ushort SecretPassageToDoomCastleAddress = 0xC9D4;
         public const string SecretPassageToDoomCastle =
             "***Открывается SECRET PASSAGE TO DOOM CASTLE (7,14)***";
+
+        public const ushort RedDragonResurrectionAddress = 0xC9B6;
+        public const string RedDragonResurrection =
+            "***Воскрешение RED DRAGON на клетке (11,3)***";
     }
 }

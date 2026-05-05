@@ -51,6 +51,7 @@ namespace MMMapEditor
             ProcessGoldTexts(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessLootDestructionPatterns(address, instructionBytes, registerTracker, output);
             ProcessSecretPassageToDoomCastleNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
+            ProcessRedDragonResurrectionNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
 
             // MOV word ptr [0x3BD4], imm16
             if (instructionBytes.Length >= 6 &&
@@ -171,6 +172,25 @@ namespace MMMapEditor
             AnalysisDebug.WriteLine(
                 $"    SECRET PASSAGE: [0x{SpecialNoteTexts.SecretPassageToDoomCastleAddress:X4}] = 0x{writtenValue:X2} по адресу 0x{instructionAddress:X4}");
             AddOutputText(output, instructionAddress, SpecialNoteTexts.SecretPassageToDoomCastle);
+        }
+
+        private void ProcessRedDragonResurrectionNote(uint instructionAddress, byte[] instructionBytes,
+            RegisterTracker registerTracker, List<TextEntry> output, Func<ushort, byte?> tryReadMemory8)
+        {
+            if (!TryGetByteWrittenToAddress(
+                    instructionBytes,
+                    registerTracker,
+                    SpecialNoteTexts.RedDragonResurrectionAddress,
+                    tryReadMemory8,
+                    out byte writtenValue) ||
+                writtenValue != 0)
+            {
+                return;
+            }
+
+            AnalysisDebug.WriteLine(
+                $"    RED DRAGON RESURRECTION: [0x{SpecialNoteTexts.RedDragonResurrectionAddress:X4}] = 0x{writtenValue:X2} по адресу 0x{instructionAddress:X4}");
+            AddOutputText(output, instructionAddress, SpecialNoteTexts.RedDragonResurrection);
         }
 
         private bool TryGetByteWrittenToAddress(byte[] instructionBytes, RegisterTracker registerTracker,
