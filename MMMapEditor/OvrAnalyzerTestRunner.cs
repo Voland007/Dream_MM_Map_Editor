@@ -78,6 +78,8 @@ namespace MMMapEditor.Tests
     /// </summary>
     public class OvrAnalyzerTestRunner
     {
+        private const int DefaultMaxParallelTests = 4;
+
         private readonly Dictionary<string, OvrFileConfig> _configs;
         private static readonly Lazy<bool> VerboseTestLoggingEnabled = new Lazy<bool>(DetermineVerboseTestLoggingEnabled, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -506,7 +508,10 @@ namespace MMMapEditor.Tests
             if (int.TryParse(configuredValue, out int configuredParallelism) && configuredParallelism > 0)
                 return Math.Min(testCount, configuredParallelism);
 
-            return Math.Min(testCount, Math.Min(Environment.ProcessorCount, 4));
+            if (IsAnalysisDebugEnabledForTests())
+                return 1;
+
+            return Math.Min(testCount, DefaultMaxParallelTests);
         }
 
         private static void WarmUpSharedReferenceData()

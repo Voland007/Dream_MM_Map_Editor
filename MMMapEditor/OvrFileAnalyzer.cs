@@ -18,7 +18,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using Gee.External.Capstone;
 using Gee.External.Capstone.X86;
 
 namespace MMMapEditor
@@ -983,7 +982,7 @@ namespace MMMapEditor
 
             var rawLeafVariants = allResults
                 .Where(variant => variant != null && variant.IsLeaf)
-                .OrderBy(variant => variant.PathId)
+                .OrderBy(GetPathOrderKey)
                 .ToList();
 
             if (debugMode && !summarizeRepeatedEventPass)
@@ -1040,11 +1039,21 @@ namespace MMMapEditor
                 $"visited={result.VisitedAddresses?.Count ?? 0}");
         }
 
+        private static decimal GetPathOrderKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return decimal.MaxValue;
+
+            return variant.PathOrderKey > 0
+                ? variant.PathOrderKey
+                : variant.PathId;
+        }
+
         private void WriteRawLeafVariantDebugSummary(List<PathVariantInfo> rawLeafVariants)
         {
             var variants = (rawLeafVariants ?? new List<PathVariantInfo>())
                 .Where(variant => variant != null)
-                .OrderBy(variant => variant.PathId)
+                .OrderBy(GetPathOrderKey)
                 .ToList();
 
             AnalysisDebug.WriteLine($"\nСырые leaf-paths до канонизации: {variants.Count}");
@@ -1067,7 +1076,7 @@ namespace MMMapEditor
             var outcomeGroups = variants
                 .GroupBy(BuildRawLeafDebugGroupKey, StringComparer.Ordinal)
                 .OrderByDescending(group => group.Count())
-                .ThenBy(group => group.Min(variant => variant.PathId))
+                .ThenBy(group => group.Min(GetPathOrderKey))
                 .ToList();
 
             AnalysisDebug.WriteLine(
@@ -1091,7 +1100,7 @@ namespace MMMapEditor
             int groupIndex = 1;
             foreach (var group in outcomeGroups.Take(RawLeafDebugGroupLimit))
             {
-                var sample = group.OrderBy(variant => variant.PathId).First();
+                var sample = group.OrderBy(GetPathOrderKey).First();
                 AnalysisDebug.WriteLine(
                     $"    Group {groupIndex}: count={group.Count()}, pathIds={BuildPathIdSample(group)}");
                 WriteRawLeafVariantDebugSample(sample, "      sample ");
@@ -3044,6 +3053,7 @@ namespace MMMapEditor
             return new PathVariantInfo
             {
                 PathId = source.PathId,
+                PathOrderKey = source.PathOrderKey,
                 IsLeaf = source.IsLeaf,
                 Texts = source.Texts?.ToList() ?? new List<string>(),
                 BranchChoices = source.BranchChoices?
@@ -3127,6 +3137,7 @@ namespace MMMapEditor
                 ProbabilityNumerator = source.ProbabilityNumerator,
                 ProbabilityDenominator = source.ProbabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
+                TerminatedByPromptLoopBackEdge = source.TerminatedByPromptLoopBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 HasBranchSpecificContribution = source.HasBranchSpecificContribution
             };
@@ -3417,25 +3428,20 @@ namespace MMMapEditor
         {
             var instructions = new List<X86Instruction>();
 
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            long fileLength = br.BaseStream.Length;
+            uint currentAddress = 0;
+
+            while (currentAddress < fileLength)
             {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                long fileLength = br.BaseStream.Length;
-                uint currentAddress = 0;
-
-                while (currentAddress < fileLength)
+                var chunk = ReadCodeBlock(br, currentAddress, out var disassembled);
+                if (disassembled == null || disassembled.Length == 0)
                 {
-                    var chunk = ReadCodeBlock(br, currentAddress, out var disassembled);
-                    if (disassembled == null || disassembled.Length == 0)
-                    {
-                        currentAddress++;
-                        continue;
-                    }
-
-                    instructions.AddRange(disassembled);
-                    currentAddress = (uint)(disassembled.Last().Address + disassembled.Last().Bytes.Length);
+                    currentAddress++;
+                    continue;
                 }
+
+                instructions.AddRange(disassembled);
+                currentAddress = (uint)(disassembled.Last().Address + disassembled.Last().Bytes.Length);
             }
 
             AnalysisDebug.WriteLine($"Дизассемблировано инструкций: {instructions.Count}");
@@ -3454,11 +3460,7 @@ namespace MMMapEditor
             int bytesToRead = (int)Math.Min(32, fileLength - address);
             byte[] chunk = ReadBytesAt(br, address, bytesToRead);
 
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-                instructions = capstone.Disassemble(chunk, address);
-            }
+            instructions = CapstoneX86Disassembly.Disassemble(chunk, address);
 
             return chunk;
         }
@@ -3540,6 +3542,7 @@ namespace MMMapEditor
             return new PathVariantInfo
             {
                 PathId = pathId,
+                PathOrderKey = pathId,
                 Texts = combinedTexts.Where(t => !string.IsNullOrEmpty(t)).ToList(),
                 IsLeaf = isLeaf,
                 RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
@@ -3559,7 +3562,7 @@ namespace MMMapEditor
                 BattleMonsterCount = source.BattleMonsterCount,
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
                 BattleMonsters = source.BattleMonsterEntries
-                    .Where(entry => entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                    .Where(entry => entry.Value.val1 != 0 && entry.Value.val2 != 0)
                     .OrderBy(entry => entry.Key)
                     .Select(entry => new BattleMonster
                     {

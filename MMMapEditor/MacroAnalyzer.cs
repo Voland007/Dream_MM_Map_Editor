@@ -49,7 +49,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using Gee.External.Capstone;
 using Gee.External.Capstone.X86;
 
 namespace MMMapEditor
@@ -714,80 +713,73 @@ namespace MMMapEditor
         public void CollectAlternativePaths(BinaryReader br, uint startAddress,
             List<AlternativePath> alternativePaths, int objIndex)
         {
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
+            long fileLength = br.BaseStream.Length;
+            uint currentAddress = startAddress;
+            int instructionsShown = 0;
+            const int MAX_INSTRUCTIONS = 100;
+
+            var processedAddresses = new Dictionary<uint, int>();
+
+            while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
             {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-
-                long fileLength = br.BaseStream.Length;
-                uint currentAddress = startAddress;
-                int instructionsShown = 0;
-                const int MAX_INSTRUCTIONS = 100;
-
-                var processedAddresses = new Dictionary<uint, int>();
-
-                while (currentAddress < fileLength && instructionsShown < MAX_INSTRUCTIONS)
+                if (processedAddresses.ContainsKey(currentAddress))
                 {
-                    if (processedAddresses.ContainsKey(currentAddress))
+                    processedAddresses[currentAddress]++;
+                    if (processedAddresses[currentAddress] > 2) break;
+                }
+                else
+                {
+                    processedAddresses[currentAddress] = 1;
+                }
+
+                var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
+                if (instructions == null || instructions.Length == 0) break;
+
+                foreach (var insn in instructions)
+                {
+                    if (instructionsShown >= MAX_INSTRUCTIONS) break;
+                    instructionsShown++;
+
+                    string mnemonicUpper = insn.Mnemonic.ToUpper();
+                    uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
+
+                    if (IsConditionalJump(insn, out uint jumpTarget))
                     {
-                        processedAddresses[currentAddress]++;
-                        if (processedAddresses[currentAddress] > 2) break;
+                        if (jumpTarget != 0 && jumpTarget < fileLength)
+                        {
+                            var altPath = new AlternativePath
+                            {
+                                ObjectIndex = objIndex,
+                                Address = (uint)insn.Address,
+                                Condition = $"{insn.Mnemonic} {insn.Operand}",
+                                TargetAddress = jumpTarget,
+                                Analyzed = false
+                            };
+
+                            bool alreadyExists = alternativePaths.Any(p =>
+                                p.Address == altPath.Address && p.TargetAddress == altPath.TargetAddress);
+
+                            if (!alreadyExists)
+                                alternativePaths.Add(altPath);
+                        }
+                    }
+
+                    if (IsReturnInstruction(mnemonicUpper)) return;
+
+                    if (mnemonicUpper == "JMP")
+                    {
+                        uint jumpTarget2 = GetJumpTarget(insn);
+                        if (jumpTarget2 >= fileLength) return;
+
+                        if (jumpTarget2 < fileLength && jumpTarget2 != 0)
+                        {
+                            currentAddress = jumpTarget2;
+                            break;
+                        }
                     }
                     else
                     {
-                        processedAddresses[currentAddress] = 1;
-                    }
-
-                    var chunk = ReadCodeBlock(br, currentAddress, out var instructions);
-                    if (instructions == null || instructions.Length == 0) break;
-
-                    foreach (var insn in instructions)
-                    {
-                        if (instructionsShown >= MAX_INSTRUCTIONS) break;
-                        instructionsShown++;
-
-                        string mnemonicUpper = insn.Mnemonic.ToUpper();
-                        uint nextAddress = (uint)(insn.Address + insn.Bytes.Length);
-
-                        if (IsConditionalJump(insn, out uint jumpTarget))
-                        {
-                            if (jumpTarget != 0 && jumpTarget < fileLength)
-                            {
-                                var altPath = new AlternativePath
-                                {
-                                    ObjectIndex = objIndex,
-                                    Address = (uint)insn.Address,
-                                    Condition = $"{insn.Mnemonic} {insn.Operand}",
-                                    TargetAddress = jumpTarget,
-                                    Analyzed = false
-                                };
-
-                                bool alreadyExists = alternativePaths.Any(p =>
-                                    p.Address == altPath.Address && p.TargetAddress == altPath.TargetAddress);
-
-                                if (!alreadyExists)
-                                {
-                                    alternativePaths.Add(altPath);
-                                }
-                            }
-                        }
-
-                        if (IsReturnInstruction(mnemonicUpper)) return;
-
-                        if (mnemonicUpper == "JMP")
-                        {
-                            uint jumpTarget2 = GetJumpTarget(insn);
-                            if (jumpTarget2 >= fileLength) return;
-
-                            if (jumpTarget2 < fileLength && jumpTarget2 != 0)
-                            {
-                                currentAddress = jumpTarget2;
-                                break;
-                            }
-                        }
-                        else
-                        {
-                            currentAddress = nextAddress;
-                        }
+                        currentAddress = nextAddress;
                     }
                 }
             }
@@ -813,11 +805,7 @@ namespace MMMapEditor
             int bytesToRead = (int)Math.Min(32, fileLength - address);
             byte[] chunk = ReadBytesAt(br, address, bytesToRead);
 
-            using (var capstone = CapstoneDisassembler.CreateX86Disassembler(X86DisassembleMode.Bit16))
-            {
-                capstone.DisassembleSyntax = DisassembleSyntax.Intel;
-                instructions = capstone.Disassemble(chunk, address);
-            }
+            instructions = CapstoneX86Disassembly.Disassemble(chunk, address);
 
             return chunk;
         }

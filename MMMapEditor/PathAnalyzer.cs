@@ -28,6 +28,8 @@ namespace MMMapEditor
     /// </summary>
     public class PathAnalyzer
     {
+        private const int MaxPathProcessingDepth = 24;
+
         private readonly OvrFileConfig _config;
         private readonly CodeExecutor _codeExecutor;
 
@@ -37,7 +39,7 @@ namespace MMMapEditor
             _codeExecutor = codeExecutor;
         }
 
-        public void ProcessPaths(List<AlternativePath> paths, int basePathId, int depth,
+        public void ProcessPaths(List<AlternativePath> paths, decimal basePathOrderKey, int depth,
             List<TextEntry> inheritedDisplayTexts,
             BinaryReader br,
             byte targetX, byte targetY, List<PathVariantInfo> allResults, OvrObject ovrObject,
@@ -52,20 +54,21 @@ namespace MMMapEditor
             HashSet<ushort> persistentStateAddresses = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
-            if (depth > 8) return;
+            if (depth > MaxPathProcessingDepth) return;
 
             var sortedPaths = paths.OrderBy(p => p.Address).ToList();
             int localCounter = 1;
             foreach (var path in sortedPaths)
             {
-                int currentPathId = basePathId * 10 + localCounter;
+                decimal currentPathOrderKey = basePathOrderKey * 10 + localCounter;
+                int currentPathId = ToDebugPathId(currentPathOrderKey);
                 localCounter++;
 
                 bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
 
                 if (debugMode)
                 {
-                    AnalysisDebug.WriteLine($"\n  Анализ пути {currentPathId} (глубина {depth}) -> 0x{path.TargetAddress:X4} ({path.Condition})");
+                    AnalysisDebug.WriteLine($"\n  Анализ пути {FormatPathOrderKey(currentPathOrderKey)} (глубина {depth}) -> 0x{path.TargetAddress:X4} ({path.Condition})");
                 }
 
                 // Продолжаем путь с тем состоянием регистров, которое было в точке ветвления
@@ -77,7 +80,11 @@ namespace MMMapEditor
                     path.EmulatedMemory8 == null ? null : new Dictionary<ushort, byte>(path.EmulatedMemory8),
                     path.EmulatedPartyPointers == null ? null : path.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     path.EmulatedPartyPointerBytes == null ? null : path.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    persistentStateAddresses == null ? null : new HashSet<ushort>(persistentStateAddresses));
+                    persistentStateAddresses == null ? null : new HashSet<ushort>(persistentStateAddresses),
+                    path.EmulatedMemory8Ranges == null ? null : CloneRangeDictionary(path.EmulatedMemory8Ranges),
+                    path.EmulatedMemory8RangeDistributions == null
+                        ? null
+                        : new Dictionary<ushort, RegisterValueDistribution>(path.EmulatedMemory8RangeDistributions));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
                 MergeStateValueConstraints(effectivePathResult.StateValueConstraints, path.BranchStateValueConstraints);
 
@@ -134,13 +141,14 @@ namespace MMMapEditor
                 var currentChoice = CreateBranchChoice(path);
                 if (currentChoice != null)
                     currentBranchChoices.Add(currentChoice);
+                AppendBranchChoices(currentBranchChoices, pathResult.InlineBranchChoices);
 
                 // Добавляем путь в результаты
-                allResults.Add(CreatePathVariant(currentPathId, pathTexts, isLeaf, effectivePathResult, combinedProbabilityNumerator, combinedProbabilityDenominator, currentBranchChoices));
+                allResults.Add(CreatePathVariant(currentPathId, currentPathOrderKey, pathTexts, isLeaf, effectivePathResult, combinedProbabilityNumerator, combinedProbabilityDenominator, currentBranchChoices));
 
                 if (debugMode && pathTexts.Count > 0)
                 {
-                    AnalysisDebug.WriteLine($"      Найдено текстов в пути {currentPathId}: {pathTexts.Count} (листовой: {isLeaf})");
+                    AnalysisDebug.WriteLine($"      Найдено текстов в пути {FormatPathOrderKey(currentPathOrderKey)}: {pathTexts.Count} (листовой: {isLeaf})");
                     foreach (var text in pathTexts.OrderBy(t => t.Order))
                     {
                         AnalysisDebug.WriteLine($"        [{text.Order}] {(text.IsContextual ? "C" : "L")}: {text.Text}");
@@ -157,7 +165,7 @@ namespace MMMapEditor
                     {
                         AnalysisDebug.WriteLine($"      Найдено {pathResult.AlternativePaths.Count} вложенных путей");
                     }
-                    ProcessPaths(pathResult.AlternativePaths, currentPathId, depth + 1,
+                    ProcessPaths(pathResult.AlternativePaths, currentPathOrderKey, depth + 1,
                         newInheritedDisplayTexts,
                         br, targetX, targetY,
                         allResults, ovrObject, processedBackEdges,
@@ -206,6 +214,41 @@ namespace MMMapEditor
             }
         }
 
+        private static int ToDebugPathId(decimal pathOrderKey)
+        {
+            if (pathOrderKey <= 0)
+                return 0;
+
+            return pathOrderKey > int.MaxValue
+                ? int.MaxValue
+                : (int)pathOrderKey;
+        }
+
+        private static string FormatPathOrderKey(decimal pathOrderKey)
+        {
+            return pathOrderKey.ToString("0");
+        }
+
+        private static decimal GetPathOrderKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return decimal.MaxValue;
+
+            return variant.PathOrderKey > 0
+                ? variant.PathOrderKey
+                : variant.PathId;
+        }
+
+        private static Dictionary<ushort, ValueRange8> CloneRangeDictionary(Dictionary<ushort, ValueRange8> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, ValueRange8>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value == null ? null : new ValueRange8(kvp.Value.Min, kvp.Value.Max));
+        }
+
         private void NormalizeProbability(ref long numerator, ref long denominator)
         {
             if (denominator <= 0)
@@ -249,6 +292,35 @@ namespace MMMapEditor
                     IsLinear = choice.IsLinear
                 })
                 .ToList();
+        }
+
+        private void AppendBranchChoices(List<BranchChoice> target, IEnumerable<BranchChoice> source)
+        {
+            if (target == null || source == null)
+                return;
+
+            foreach (var choice in source.Where(choice => choice != null))
+            {
+                bool exists = target.Any(existing =>
+                    existing != null &&
+                    string.Equals(existing.Label, choice.Label, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(existing.Condition, choice.Condition, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(existing.CompareRegister, choice.CompareRegister, StringComparison.OrdinalIgnoreCase) &&
+                    existing.CompareValue == choice.CompareValue &&
+                    existing.IsLinear == choice.IsLinear);
+
+                if (exists)
+                    continue;
+
+                target.Add(new BranchChoice
+                {
+                    Label = choice.Label,
+                    Condition = choice.Condition,
+                    CompareValue = choice.CompareValue,
+                    CompareRegister = choice.CompareRegister,
+                    IsLinear = choice.IsLinear
+                });
+            }
         }
 
         private BranchChoice CreateBranchChoice(AlternativePath path)
@@ -536,6 +608,8 @@ namespace MMMapEditor
                         DestAddr = info.DestAddr,
                         SrcReg = info.SrcReg,
                         SrcRegValue = info.SrcRegValue,
+                        ValueMin = info.ValueMin,
+                        ValueMax = info.ValueMax,
                         IsFromTable = info.IsFromTable,
                         SourceTableAddr = info.SourceTableAddr,
                         SourceTableBaseAddr = info.SourceTableBaseAddr,
@@ -626,8 +700,10 @@ namespace MMMapEditor
 
             merged.IsIndeterminateLoop = merged.IsIndeterminateLoop || currentState.IsIndeterminateLoop;
             merged.TerminatedByRepeatedBackEdge = merged.TerminatedByRepeatedBackEdge || currentState.TerminatedByRepeatedBackEdge;
+            merged.TerminatedByPromptLoopBackEdge = merged.TerminatedByPromptLoopBackEdge || currentState.TerminatedByPromptLoopBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             merged.UsesInitialCoordinates = merged.UsesInitialCoordinates || inheritedState.UsesInitialCoordinates || currentState.UsesInitialCoordinates;
+            AppendBranchChoices(merged.InlineBranchChoices, currentState.InlineBranchChoices);
             merged.MemoryReadAddresses.UnionWith(currentState.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             merged.MemoryWrittenAddresses.UnionWith(currentState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             merged.AdjustedMemoryAddresses.UnionWith(currentState.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
@@ -646,6 +722,10 @@ namespace MMMapEditor
 
             if (currentState.ExitEmulatedMemory8 != null && currentState.ExitEmulatedMemory8.Count > 0)
                 merged.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(currentState.ExitEmulatedMemory8);
+            if (currentState.ExitEmulatedMemory8Ranges != null && currentState.ExitEmulatedMemory8Ranges.Count > 0)
+                merged.ExitEmulatedMemory8Ranges = CloneRangeDictionary(currentState.ExitEmulatedMemory8Ranges);
+            if (currentState.ExitEmulatedMemory8RangeDistributions != null && currentState.ExitEmulatedMemory8RangeDistributions.Count > 0)
+                merged.ExitEmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(currentState.ExitEmulatedMemory8RangeDistributions);
 
             return merged;
         }
@@ -906,6 +986,7 @@ namespace MMMapEditor
             clone.UsesInitialCoordinates = source.UsesInitialCoordinates;
             clone.InlineProbabilityNumerator = source.InlineProbabilityNumerator;
             clone.InlineProbabilityDenominator = source.InlineProbabilityDenominator;
+            clone.InlineBranchChoices = CloneBranchChoices(source.InlineBranchChoices);
 
             foreach (var entry in source.BattleMonsterEntries)
                 clone.BattleMonsterEntries[entry.Key] = entry.Value;
@@ -923,6 +1004,8 @@ namespace MMMapEditor
                     DestAddr = info.DestAddr,
                     SrcReg = info.SrcReg,
                     SrcRegValue = info.SrcRegValue,
+                    ValueMin = info.ValueMin,
+                    ValueMax = info.ValueMax,
                     IsFromTable = info.IsFromTable,
                     SourceTableAddr = info.SourceTableAddr,
                     SourceTableBaseAddr = info.SourceTableBaseAddr,
@@ -948,6 +1031,10 @@ namespace MMMapEditor
             clone.ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                 ? new Dictionary<ushort, byte>()
                 : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8);
+            clone.ExitEmulatedMemory8Ranges = CloneRangeDictionary(source.ExitEmulatedMemory8Ranges);
+            clone.ExitEmulatedMemory8RangeDistributions = source.ExitEmulatedMemory8RangeDistributions == null
+                ? new Dictionary<ushort, RegisterValueDistribution>()
+                : new Dictionary<ushort, RegisterValueDistribution>(source.ExitEmulatedMemory8RangeDistributions);
             clone.VisitedAddresses = new HashSet<uint>(source.VisitedAddresses);
             clone.FirstLocalTextAddress = source.FirstLocalTextAddress;
             clone.NextSpecialEventOrder = source.NextSpecialEventOrder;
@@ -956,6 +1043,7 @@ namespace MMMapEditor
                 : new List<uint>(source.ExitPendingReturnAddresses);
             clone.ExitCallDepth = source.ExitCallDepth;
             clone.TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge;
+            clone.TerminatedByPromptLoopBackEdge = source.TerminatedByPromptLoopBackEdge;
             clone.TerminatedByTerminalRet = source.TerminatedByTerminalRet;
             clone.PartyFieldAccesses = source.PartyFieldAccesses?.Select(a => a?.Clone()).Where(a => a != null).ToList() ?? new List<PartyFieldReference>();
             clone.PendingPartyHpOperation = source.PendingPartyHpOperation?.Clone();
@@ -987,6 +1075,10 @@ namespace MMMapEditor
                     EmulatedMemory8 = alt.EmulatedMemory8 == null
                         ? new Dictionary<ushort, byte>()
                         : new Dictionary<ushort, byte>(alt.EmulatedMemory8),
+                    EmulatedMemory8Ranges = CloneRangeDictionary(alt.EmulatedMemory8Ranges),
+                    EmulatedMemory8RangeDistributions = alt.EmulatedMemory8RangeDistributions == null
+                        ? new Dictionary<ushort, RegisterValueDistribution>()
+                        : new Dictionary<ushort, RegisterValueDistribution>(alt.EmulatedMemory8RangeDistributions),
                     EmulatedPartyPointers = alt.EmulatedPartyPointers == null
                         ? new Dictionary<ushort, PartyMemberReference>()
                         : alt.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
@@ -1002,7 +1094,7 @@ namespace MMMapEditor
             return clone;
         }
 
-        private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
+        private PathVariantInfo CreatePathVariant(int pathId, decimal pathOrderKey, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
         {
             var normalizedPartyEffects = PartyEffectNormalizer.Normalize(source) ?? new List<PartyEffect>();
             var semanticPartyEffects = normalizedPartyEffects
@@ -1013,6 +1105,7 @@ namespace MMMapEditor
             return new PathVariantInfo
             {
                 PathId = pathId,
+                PathOrderKey = pathOrderKey,
                 IsLeaf = isLeaf,
                 Texts = pathTexts
                     .OrderBy(t => t.Order)
@@ -1055,6 +1148,7 @@ namespace MMMapEditor
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
+                TerminatedByPromptLoopBackEdge = source.TerminatedByPromptLoopBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 BranchChoices = CloneBranchChoices(branchChoices)
             };
@@ -1063,7 +1157,7 @@ namespace MMMapEditor
         private List<BattleMonster> CloneBattleMonsters(PathAnalysisResult source)
         {
             return source.BattleMonsterEntries
-                .Where(entry => entry.Value.val1 != 0 || entry.Value.val2 != 0)
+                .Where(entry => entry.Value.val1 != 0 && entry.Value.val2 != 0)
                 .OrderBy(entry => entry.Key)
                 .Select(entry => new BattleMonster
                 {
@@ -1160,7 +1254,15 @@ namespace MMMapEditor
                 return false;
 
             if (variant.TerminatedByRepeatedBackEdge)
-                return false;
+            {
+                if (variant.TerminatedByPromptLoopBackEdge)
+                    return HasAnyOutcome(variant);
+
+                if (HasAnyOutcome(variant))
+                    return true;
+
+                return variant.Texts != null && variant.Texts.Count > 0;
+            }
 
             if (variant.TerminatedByTerminalRet)
                 return true;
@@ -1178,6 +1280,55 @@ namespace MMMapEditor
                 return true;
 
             return false;
+        }
+
+        private int GetVariantOutcomeDisplayPriority(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return int.MaxValue;
+
+            if (variant.HasTeleportTarget && (variant.Texts == null || variant.Texts.Count == 0))
+                return 0;
+
+            if (IsPureEmptyLeafVariant(variant))
+                return 1;
+
+            if (VariantTextsContain(variant, "PULL IT (Y/N)?") ||
+                VariantTextsContain(variant, "INCORRECT SETTINGS") ||
+                VariantTextsContain(variant, "YOU HAVE MASTERED THE MAGIC SQUARE"))
+            {
+                if (VariantTextsContain(variant, "INCORRECT SETTINGS"))
+                    return 2;
+
+                if (VariantTextsContain(variant, "YOU HAVE MASTERED THE MAGIC SQUARE"))
+                    return 4;
+
+                return 3;
+            }
+
+            if (VariantTextsContain(variant, "THANK YOU") ||
+                VariantTextsContain(variant, "FIELDS DEACTIVATED"))
+            {
+                return 1;
+            }
+
+            if (VariantTextsContain(variant, "IMPROPER") ||
+                VariantTextsContain(variant, "INCORRECT") ||
+                VariantTextsContain(variant, "WRONG"))
+            {
+                return 2;
+            }
+
+            return 1;
+        }
+
+        private bool VariantTextsContain(PathVariantInfo variant, string text)
+        {
+            if (variant?.Texts == null || string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return variant.Texts.Any(line =>
+                line?.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
 
@@ -1218,7 +1369,7 @@ namespace MMMapEditor
             var leafResults = allResults
                 .Where(r => r.IsLeaf)
                 .Where(IsMeaningfulLeaf)
-                .OrderBy(r => r.PathId)
+                .OrderBy(GetPathOrderKey)
                 .ToList();
 
             var uniqueVariants = new Dictionary<string, PathVariantInfo>();
@@ -1245,7 +1396,7 @@ namespace MMMapEditor
             // несколько листовых путей с разной глубиной разворота цикла.
             // Для таких случаев оставляем наиболее информативный вариант.
             var semanticallyUnique = new Dictionary<string, PathVariantInfo>();
-            foreach (var variant in uniqueVariants.Values.OrderBy(v => v.PathId))
+            foreach (var variant in uniqueVariants.Values.OrderBy(GetPathOrderKey))
             {
                 string semanticKey = BuildSemanticVariantKey(variant);
                 if (!semanticallyUnique.TryGetValue(semanticKey, out var existing))
@@ -1266,7 +1417,7 @@ namespace MMMapEditor
             // одинаковые тексты и одинаковые party-effects, различающиеся только историей
             // прохода по итерациям цикла, считаем одним вариантом.
             var branchInsensitiveUnique = new Dictionary<string, PathVariantInfo>();
-            foreach (var variant in semanticallyUnique.Values.OrderBy(v => v.PathId))
+            foreach (var variant in semanticallyUnique.Values.OrderBy(GetPathOrderKey))
             {
                 string key = BuildVariantIdentityKey(variant);
                 if (!branchInsensitiveUnique.TryGetValue(key, out var existing))
@@ -1288,7 +1439,8 @@ namespace MMMapEditor
                     CollapsePromptOnlyVariantsShadowedByLoopEffects(
                         CollapseGuardOnlyPartyLoopVariants(
                             CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))))
-                .OrderBy(v => v.PathId)
+                .OrderBy(GetVariantOutcomeDisplayPriority)
+                .ThenBy(GetPathOrderKey)
                 .ToList();
 
             for (int i = 0; i < orderedUniqueVariants.Count; i++)
@@ -1330,7 +1482,7 @@ namespace MMMapEditor
             var result = new List<PathVariantInfo>();
 
             foreach (var group in variants
-                .OrderBy(v => v.PathId)
+                .OrderBy(GetPathOrderKey)
                 .GroupBy(BuildPartyLoopTextCollapseKey))
             {
                 var groupItems = group.ToList();
@@ -1354,7 +1506,7 @@ namespace MMMapEditor
             var result = new List<PathVariantInfo>();
 
             foreach (var group in variants
-                .OrderBy(v => v.PathId)
+                .OrderBy(GetPathOrderKey)
                 .GroupBy(BuildConditionalLoopSubsetCollapseKey))
             {
                 var groupItems = group.ToList();
@@ -1378,7 +1530,7 @@ namespace MMMapEditor
             var result = new List<PathVariantInfo>();
 
             foreach (var group in variants
-                .OrderBy(v => v.PathId)
+                .OrderBy(GetPathOrderKey)
                 .GroupBy(BuildConditionalLoopSubsetCoverageShadowKey))
             {
                 var groupItems = group.ToList();
@@ -1419,7 +1571,7 @@ namespace MMMapEditor
             var result = new List<PathVariantInfo>();
 
             foreach (var group in variants
-                .OrderBy(v => v.PathId)
+                .OrderBy(GetPathOrderKey)
                 .GroupBy(BuildPartyLoopGuardCollapseKey))
             {
                 var groupItems = group.ToList();
@@ -1446,7 +1598,7 @@ namespace MMMapEditor
             var result = new List<PathVariantInfo>();
 
             foreach (var group in variants
-                .OrderBy(v => v.PathId)
+                .OrderBy(GetPathOrderKey)
                 .GroupBy(BuildPartyLoopGuardCollapseKey))
             {
                 var groupItems = group.ToList();
@@ -1515,7 +1667,7 @@ namespace MMMapEditor
 
             var selected = preferred
                 .OrderByDescending(GetVariantPrecisionScore)
-                .ThenBy(v => v.PathId)
+                .ThenBy(GetPathOrderKey)
                 .First();
 
             foreach (var variant in variants)
@@ -2008,11 +2160,12 @@ namespace MMMapEditor
             var preferred = variants
                 .OrderByDescending(v => v.PartyEffects?.Count ?? 0)
                 .ThenByDescending(GetVariantPrecisionScore)
-                .ThenBy(v => v.PathId)
+                .ThenBy(GetPathOrderKey)
                 .First();
 
             var merged = CloneVariantInfo(preferred);
             merged.PathId = variants.Min(v => v.PathId);
+            merged.PathOrderKey = variants.Min(GetPathOrderKey);
             merged.PartyEffects = variants
                 .SelectMany(v => v.PartyEffects ?? Enumerable.Empty<PartyEffect>())
                 .Where(e => e != null)
@@ -2046,6 +2199,7 @@ namespace MMMapEditor
             return new PathVariantInfo
             {
                 PathId = source.PathId,
+                PathOrderKey = source.PathOrderKey,
                 IsLeaf = source.IsLeaf,
                 Texts = source.Texts?.ToList() ?? new List<string>(),
                 BranchChoices = source.BranchChoices?
@@ -2129,6 +2283,7 @@ namespace MMMapEditor
                 ProbabilityNumerator = source.ProbabilityNumerator,
                 ProbabilityDenominator = source.ProbabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
+                TerminatedByPromptLoopBackEdge = source.TerminatedByPromptLoopBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 HasBranchSpecificContribution = source.HasBranchSpecificContribution
             };

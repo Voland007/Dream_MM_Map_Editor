@@ -429,6 +429,37 @@ namespace MMMapEditor
         {
             string regUpper = reg.ToUpperInvariant();
             ClearCoordinateSeed(regUpper);
+            ClearExternalDerivation(regUpper);
+            ClearPendingExternalCallResult(regUpper);
+            ClearPartyFieldValue(regUpper);
+            ClearPartyPointerByteValue(regUpper);
+            ClearPartyMemberBase(regUpper);
+            registerSources.Remove(regUpper);
+            registerSources2.Remove(regUpper);
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                registerSources.Remove(fullReg);
+                registerSources2.Remove(fullReg);
+                ClearPartyFieldValue(fullReg);
+                ClearPartyMemberBase(fullReg);
+
+                if (regUpper == fullReg)
+                {
+                    registerSources.Remove(lowReg);
+                    registerSources.Remove(highReg);
+                    registerSources2.Remove(lowReg);
+                    registerSources2.Remove(highReg);
+                    ClearFullRegisterByteSemantics(fullReg);
+                }
+                else
+                {
+                    registerSources.Remove(regUpper);
+                    registerSources2.Remove(regUpper);
+                    ClearFullRegisterByteSemantics(fullReg);
+                }
+            }
+
             registerRanges[regUpper] = new ValueRange8(min, max);
             registerRangeDistributions[regUpper] = distribution;
 
@@ -488,6 +519,41 @@ namespace MMMapEditor
 
             range = null;
             return false;
+        }
+
+        public void SetRegisterRangeWithSource(
+            string reg,
+            byte min,
+            byte max,
+            RegisterValueDistribution distribution,
+            ushort sourceAddr,
+            uint address,
+            string instruction,
+            bool fromTable = false,
+            ushort originalBx = 0,
+            string sourceTable = null,
+            bool sourceIndexExternallyDerived = false,
+            ushort? sourceIndexProviderAddr = null)
+        {
+            SetRegisterRange(reg, min, max, distribution);
+
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            string tableType = sourceTable;
+            if (tableType == null && fromTable)
+                tableType = ResolveKnownTableType(sourceAddr);
+
+            var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
+            registerSources2[regUpper] = srcInfo;
+            registerSources[regUpper] = $"0x{min:X2}..0x{max:X2} loaded at 0x{address:X4} via {instruction}";
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
+            {
+                registerSources2[fullReg] = srcInfo;
+                registerSources[fullReg] = registerSources[regUpper];
+            }
         }
 
         public void ClearRegisterRange(string reg)

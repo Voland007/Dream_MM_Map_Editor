@@ -25,6 +25,7 @@ namespace MMMapEditor
             new Lazy<HashSet<string>>(BuildKnownLootItemNames);
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
+        private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
 
         public static OvrNotesBuildResult BuildNotes(
             string filename,
@@ -719,7 +720,9 @@ namespace MMMapEditor
         {
             public int OccurrenceOrderKey { get; set; }
             public int DisplayPriority { get; set; }
-            public int PathOrderKey { get; set; }
+            public decimal PathOrderKey { get; set; }
+            public int ChoiceOrderKey { get; set; } = int.MaxValue;
+            public bool HasChoiceOrderKey { get; set; }
             public VariantTreeNode ChildNode { get; set; }
             public VariantRenderItem DirectVariant { get; set; }
         }
@@ -753,7 +756,7 @@ private static string BuildHierarchicalVariantNotes(
             var items = new List<VariantRenderItem>();
             foreach (var variant in obj.PathVariants.Values
                 .Where(v => v != null)
-                .OrderBy(v => v.PathId))
+                .OrderBy(GetPathOrderKey))
             {
                 var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
                 var narrativeLines = DecodeNoteTexts(variant.Texts);
@@ -835,7 +838,7 @@ private static string BuildHierarchicalVariantNotes(
                 .GroupBy(item => BuildTopLevelGroupKey(item))
                 .Select(g =>
                 {
-                    var ordered = g.OrderBy(v => v.Variant?.PathId ?? int.MaxValue).ToList();
+                    var ordered = g.OrderBy(GetVariantRenderOrderKey).ToList();
                     var first = ordered.FirstOrDefault();
                     var firstChoice = GetRelevantBranchChoices(first?.Variant).FirstOrDefault();
                     string firstNarrativeLine = GetNarrativeRootLine(first);
@@ -867,7 +870,7 @@ private static string BuildHierarchicalVariantNotes(
             groups = groups
                 .Where(HasRenderableTopLevelContent)
                 .OrderByDescending(g => g.GroupedByChoice)
-                .ThenBy(g => g.Items.Min(v => v.Variant?.PathId ?? int.MaxValue))
+                .ThenBy(g => g.Items.Min(GetVariantRenderOrderKey))
                 .ToList();
 
             return groups;
@@ -1580,7 +1583,7 @@ private static string BuildHierarchicalVariantNotes(
 
             var ordered = directVariants
                 .Where(v => v != null)
-                .OrderBy(v => v.Variant?.PathId ?? int.MaxValue)
+                .OrderBy(GetVariantRenderOrderKey)
                 .ToList();
 
             if (ordered.Count <= 1)
@@ -1683,6 +1686,17 @@ private static string BuildHierarchicalVariantNotes(
                     result.AddRange(slashParts);
                     continue;
                 }
+            }
+
+            var inlineChoiceMatches = Regex.Matches(
+                normalized,
+                @"(?<![A-Za-z0-9])([A-Za-z0-9]|ESC)\)\s*(?=\S)",
+                RegexOptions.IgnoreCase);
+            foreach (Match match in inlineChoiceMatches)
+            {
+                string token = match.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(token))
+                    result.Add(token);
             }
 
             return result
@@ -2621,9 +2635,119 @@ private static string BuildHierarchicalVariantNotes(
             return node;
         }
 
-        private static int GetVariantRenderOrderKey(VariantRenderItem variant)
+        private static decimal GetVariantRenderOrderKey(VariantRenderItem variant)
         {
-            return variant?.Variant?.PathId ?? int.MaxValue;
+            return GetPathOrderKey(variant?.Variant);
+        }
+
+        private static decimal GetPathOrderKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return decimal.MaxValue;
+
+            decimal baseOrderKey = variant.PathOrderKey > 0
+                ? variant.PathOrderKey
+                : variant.PathId;
+            int outcomePriority = GetVariantOutcomeDisplayPriority(variant);
+
+            if (outcomePriority >= int.MaxValue / 2)
+                return decimal.MaxValue;
+
+            return outcomePriority * VariantOutcomeOrderStride + baseOrderKey;
+        }
+
+        private static int GetVariantOutcomeDisplayPriority(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return int.MaxValue;
+
+            if (variant.HasTeleportTarget && (variant.Texts == null || variant.Texts.Count == 0))
+                return 0;
+
+            if (IsPureEmptyVariant(variant))
+                return 1;
+
+            if (VariantTextsContain(variant, "PULL IT (Y/N)?") ||
+                VariantTextsContain(variant, "INCORRECT SETTINGS") ||
+                VariantTextsContain(variant, "YOU HAVE MASTERED THE MAGIC SQUARE"))
+            {
+                if (VariantTextsContain(variant, "INCORRECT SETTINGS"))
+                    return 2;
+
+                if (VariantTextsContain(variant, "YOU HAVE MASTERED THE MAGIC SQUARE"))
+                    return 4;
+
+                return 3;
+            }
+
+            if (VariantTextsContain(variant, "THANK YOU") ||
+                VariantTextsContain(variant, "FIELDS DEACTIVATED"))
+            {
+                return 1;
+            }
+
+            if (VariantTextsContain(variant, "IMPROPER") ||
+                VariantTextsContain(variant, "INCORRECT") ||
+                VariantTextsContain(variant, "WRONG"))
+            {
+                return 2;
+            }
+
+            return 1;
+        }
+
+        private static bool IsPureEmptyVariant(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.Texts != null && variant.Texts.Count > 0)
+                return false;
+
+            return !HasAnyVariantOutcome(variant);
+        }
+
+        private static bool HasAnyVariantOutcome(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (variant.CallsRandomEncounter ||
+                variant.RandomEncounterMonsterPowerCap.HasValue ||
+                variant.RandomEncounterMonsterLevelCap.HasValue ||
+                variant.RandomEncounterMonsterBatchCountCap.HasValue ||
+                variant.DarkeningLevel.HasValue ||
+                variant.RandomEncounterChance.HasValue ||
+                variant.RandomEncounterRubicon.HasValue ||
+                variant.HasTeleportTarget ||
+                variant.BattleMonsterCount.HasValue ||
+                variant.BattleMonsterCountRange != null ||
+                variant.IsBattleMonsterCountIndeterminate ||
+                variant.HasAnyTableLoad)
+            {
+                return true;
+            }
+
+            if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
+                return true;
+
+            if (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0)
+                return true;
+
+            if (variant.LoadedValues != null && variant.LoadedValues.Count > 0)
+                return true;
+
+            return variant.PartyEffects != null &&
+                   variant.PartyEffects.Any(PartyEffectSemantics.IsSemanticOutcomeEffect);
+        }
+
+        private static bool VariantTextsContain(PathVariantInfo variant, string text)
+        {
+            if (variant?.Texts == null || string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return variant.Texts.Any(line =>
+                line?.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static int GetVariantOccurrenceOrderKey(PathVariantInfo variant)
@@ -2652,12 +2776,12 @@ private static string BuildHierarchicalVariantNotes(
             return GetVariantOccurrenceOrderKey(variant?.Variant);
         }
 
-        private static int GetNodeRenderOrderKey(VariantTreeNode node)
+        private static decimal GetNodeRenderOrderKey(VariantTreeNode node)
         {
             return GetAllVariants(node)
                 .Where(variant => variant != null)
                 .Select(GetVariantRenderOrderKey)
-                .DefaultIfEmpty(int.MaxValue)
+                .DefaultIfEmpty(decimal.MaxValue)
                 .Min();
         }
 
@@ -2671,21 +2795,27 @@ private static string BuildHierarchicalVariantNotes(
         }
 
         private static List<OrderedRenderEntry> BuildOrderedRenderEntries(
+            VariantTreeNode parentNode,
             IEnumerable<VariantTreeNode> children,
-            IEnumerable<VariantRenderItem> directVariants)
+            IEnumerable<VariantRenderItem> directVariants,
+            IReadOnlyDictionary<VariantRenderItem, string> syntheticDirectLabels = null)
         {
             var result = new List<OrderedRenderEntry>();
+            var promptChoiceOrder = BuildPromptChoiceOrder(parentNode?.CommonLines);
 
             foreach (var child in children ?? Enumerable.Empty<VariantTreeNode>())
             {
                 if (child == null)
                     continue;
 
+                bool hasChoiceOrder = TryGetChoiceOrderKey(child.Label, promptChoiceOrder, out int choiceOrderKey);
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
                     DisplayPriority = 0,
                     PathOrderKey = GetNodeRenderOrderKey(child),
+                    ChoiceOrderKey = choiceOrderKey,
+                    HasChoiceOrderKey = hasChoiceOrder,
                     ChildNode = child
                 });
             }
@@ -2695,13 +2825,30 @@ private static string BuildHierarchicalVariantNotes(
                 if (variant == null)
                     continue;
 
+                string syntheticLabel = null;
+                syntheticDirectLabels?.TryGetValue(variant, out syntheticLabel);
+                bool hasChoiceOrder = TryGetChoiceOrderKey(syntheticLabel, promptChoiceOrder, out int choiceOrderKey);
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetVariantOccurrenceOrderKey(variant),
                     DisplayPriority = IsEmptyOrNoOpVariant(variant) ? 1 : 0,
                     PathOrderKey = GetVariantRenderOrderKey(variant),
+                    ChoiceOrderKey = choiceOrderKey,
+                    HasChoiceOrderKey = hasChoiceOrder,
                     DirectVariant = variant
                 });
+            }
+
+            bool useChoiceOrdering = ShouldOrderEntriesByChoiceLabel(result);
+            if (useChoiceOrdering)
+            {
+                return result
+                    .OrderBy(entry => entry.ChoiceOrderKey)
+                    .ThenBy(entry => entry.OccurrenceOrderKey)
+                    .ThenBy(entry => entry.DisplayPriority)
+                    .ThenBy(entry => entry.PathOrderKey)
+                    .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
+                    .ToList();
             }
 
             return result
@@ -2710,6 +2857,82 @@ private static string BuildHierarchicalVariantNotes(
                 .ThenBy(entry => entry.PathOrderKey)
                 .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
                 .ToList();
+        }
+
+        private static Dictionary<string, int> BuildPromptChoiceOrder(IEnumerable<string> commonLines)
+        {
+            string promptText = string.Join("\n", commonLines ?? Enumerable.Empty<string>());
+            var labels = ExtractPromptOptionLabels(promptText)
+                .Select(NormalizeChoiceLabel)
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .ToList();
+
+            var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < labels.Count; i++)
+            {
+                if (!result.ContainsKey(labels[i]))
+                    result[labels[i]] = i;
+            }
+
+            return result;
+        }
+
+        private static bool ShouldOrderEntriesByChoiceLabel(List<OrderedRenderEntry> entries)
+        {
+            if (entries == null || entries.Count < 4)
+                return false;
+
+            if (entries.Any(entry => entry == null || !entry.HasChoiceOrderKey))
+                return false;
+
+            return entries
+                .Select(entry => entry.ChoiceOrderKey)
+                .Distinct()
+                .Count() > 1;
+        }
+
+        private static bool TryGetChoiceOrderKey(
+            string label,
+            IReadOnlyDictionary<string, int> promptChoiceOrder,
+            out int key)
+        {
+            key = int.MaxValue;
+            string normalized = NormalizeChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            if (promptChoiceOrder != null && promptChoiceOrder.TryGetValue(normalized, out int promptOrder))
+            {
+                key = promptOrder;
+                return true;
+            }
+
+            string token = normalized.Trim();
+            if (token.EndsWith(")", StringComparison.Ordinal))
+                token = token.Substring(0, token.Length - 1).Trim();
+
+            if (string.Equals(token, "ESC", StringComparison.OrdinalIgnoreCase))
+            {
+                key = 0;
+                return true;
+            }
+
+            if (int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out int numericValue))
+            {
+                key = 100 + numericValue;
+                return true;
+            }
+
+            if (token.Length == 1 && char.IsLetterOrDigit(token[0]))
+            {
+                char upper = char.ToUpperInvariant(token[0]);
+                key = char.IsDigit(upper)
+                    ? 100 + (upper - '0')
+                    : 1000 + (upper - 'A');
+                return true;
+            }
+
+            return false;
         }
 
         private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
@@ -2768,7 +2991,7 @@ private static string BuildHierarchicalVariantNotes(
             int childIndex = 1;
             bool wroteAnyChild = false;
 
-            foreach (var entry in BuildOrderedRenderEntries(renderableChildren, directVariants))
+            foreach (var entry in BuildOrderedRenderEntries(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels))
             {
                 if (wroteAnyChild)
                     sb.AppendLine();
@@ -2916,7 +3139,7 @@ private static string BuildHierarchicalVariantNotes(
             bool wroteAny = false;
             string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
 
-            foreach (var entry in BuildOrderedRenderEntries(renderableChildren, renderableDirectVariants))
+            foreach (var entry in BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels))
             {
                 if (wroteAny)
                     sb.AppendLine();
@@ -2990,7 +3213,7 @@ private static string BuildHierarchicalVariantNotes(
                 .OrderBy(v => v?.Lines?.Count ?? 0)
                 .ThenByDescending(v => v?.Variant?.ProbabilityDenominator ?? 1)
                 .ThenByDescending(v => v?.Variant?.ProbabilityNumerator ?? 1)
-                .ThenBy(v => v?.Variant?.PathId ?? int.MaxValue);
+                .ThenBy(v => GetPathOrderKey(v?.Variant));
         }
 
         private static void RenderLooseVariant(

@@ -163,6 +163,8 @@ namespace MMMapEditor
         public int CallDepth { get; set; } = 0;
         public List<uint> PendingReturnAddresses { get; set; } = new List<uint>();
         public Dictionary<ushort, byte> EmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
+        public Dictionary<ushort, ValueRange8> EmulatedMemory8Ranges { get; set; } = new Dictionary<ushort, ValueRange8>();
+        public Dictionary<ushort, RegisterValueDistribution> EmulatedMemory8RangeDistributions { get; set; } = new Dictionary<ushort, RegisterValueDistribution>();
         public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
         public Dictionary<ushort, PartyPointerByteReference> EmulatedPartyPointerBytes { get; set; } = new Dictionary<ushort, PartyPointerByteReference>();
         public Dictionary<ushort, StateValueConstraintInfo> BranchStateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
@@ -350,6 +352,8 @@ namespace MMMapEditor
             = new Dictionary<ushort, PersistentMemoryFirstAccessKind>();
         public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
+        public Dictionary<ushort, ValueRange8> ExitEmulatedMemory8Ranges { get; set; } = new Dictionary<ushort, ValueRange8>();
+        public Dictionary<ushort, RegisterValueDistribution> ExitEmulatedMemory8RangeDistributions { get; set; } = new Dictionary<ushort, RegisterValueDistribution>();
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         public byte? RandomEncounterMonsterPowerCap { get; set; }
         public byte? RandomEncounterMonsterLevelCap { get; set; }
@@ -382,6 +386,7 @@ namespace MMMapEditor
         public bool IsTerminated { get; set; } = false;
         public bool HasSignificantCode { get; set; } = false;
         public bool TerminatedByRepeatedBackEdge { get; set; } = false;
+        public bool TerminatedByPromptLoopBackEdge { get; set; } = false;
         public bool TerminatedByTerminalRet { get; set; } = false;
         public bool CallsRandomEncounter { get; set; } = false;
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
@@ -399,6 +404,7 @@ namespace MMMapEditor
         public bool UsesInitialCoordinates { get; set; } = false;
         public int InlineProbabilityNumerator { get; set; } = 1;
         public int InlineProbabilityDenominator { get; set; } = 1;
+        public List<BranchChoice> InlineBranchChoices { get; set; } = new List<BranchChoice>();
 
         // Адрес первой инструкции, которая загрузила локальный текст
         public uint FirstLocalTextAddress { get; set; } = uint.MaxValue;

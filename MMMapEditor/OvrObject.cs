@@ -825,6 +825,7 @@ namespace MMMapEditor
     public class PathVariantInfo
     {
         public int PathId { get; set; }
+        public decimal PathOrderKey { get; set; }
         public bool IsLeaf { get; set; }
 
         public List<string> Texts { get; set; } = new List<string>();
@@ -870,6 +871,7 @@ namespace MMMapEditor
         public int ProbabilityNumerator { get; set; } = 1;
         public int ProbabilityDenominator { get; set; } = 1;
         public bool TerminatedByRepeatedBackEdge { get; set; } = false;
+        public bool TerminatedByPromptLoopBackEdge { get; set; } = false;
         public bool TerminatedByTerminalRet { get; set; } = false;
         public bool HasBranchSpecificContribution { get; set; } = false;
 
