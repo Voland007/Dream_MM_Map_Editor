@@ -29,6 +29,7 @@ namespace MMMapEditor
     public class PathAnalyzer
     {
         private const int MaxPathProcessingDepth = 24;
+        private const int MaxPathVariantsPerSingleOccurrence = 3072;
 
         private readonly OvrFileConfig _config;
         private readonly CodeExecutor _codeExecutor;
@@ -55,11 +56,14 @@ namespace MMMapEditor
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             if (depth > MaxPathProcessingDepth) return;
+            if (HasReachedPathVariantBudget(allResults, targetX, targetY)) return;
 
             var sortedPaths = paths.OrderBy(p => p.Address).ToList();
             int localCounter = 1;
             foreach (var path in sortedPaths)
             {
+                if (HasReachedPathVariantBudget(allResults, targetX, targetY)) return;
+
                 decimal currentPathOrderKey = basePathOrderKey * 10 + localCounter;
                 int currentPathId = ToDebugPathId(currentPathOrderKey);
                 localCounter++;
@@ -99,7 +103,11 @@ namespace MMMapEditor
                 var pathTexts = BuildPathTexts(pathResult, inheritedDisplayTexts);
 
                 // Путь считается листовым, только если у него нет вложенных путей
-                bool isLeaf = pathResult.AlternativePaths.Count == 0;
+                bool reachedPathBudget = WillReachPathVariantBudget(allResults);
+                bool reachedDepthBudget = depth + 1 >= MaxPathProcessingDepth;
+                bool isLeaf = pathResult.AlternativePaths.Count == 0 ||
+                              reachedPathBudget ||
+                              reachedDepthBudget;
 
                 var effectiveProbability = GetEffectivePathProbability(path);
                 bool currentBranchProbabilityApplicable = effectiveProbability.denominator > 1 &&
@@ -160,7 +168,7 @@ namespace MMMapEditor
                 var newInheritedDisplayTexts = BuildInheritedTexts(inheritedDisplayTexts, pathResult);
 
                 // Рекурсивно обрабатываем вложенные пути
-                if (pathResult.AlternativePaths.Count > 0)
+                if (!reachedPathBudget && !reachedDepthBudget && pathResult.AlternativePaths.Count > 0)
                 {
                     if (debugMode)
                     {
@@ -179,6 +187,30 @@ namespace MMMapEditor
                         persistentStateAddresses);
                 }
             }
+        }
+
+        private static bool HasReachedPathVariantBudget(List<PathVariantInfo> allResults, byte targetX, byte targetY)
+        {
+            if (!IsAtPathVariantBudget(allResults))
+                return false;
+
+            if (AnalysisDebug.IsEnabledFor(targetX, targetY))
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Достигнут лимит вариантов пути ({MaxPathVariantsPerSingleOccurrence}), дальнейшие ветки свернуты");
+            }
+
+            return true;
+        }
+
+        private static bool IsAtPathVariantBudget(List<PathVariantInfo> allResults)
+        {
+            return allResults != null && allResults.Count >= MaxPathVariantsPerSingleOccurrence;
+        }
+
+        private static bool WillReachPathVariantBudget(List<PathVariantInfo> allResults)
+        {
+            return allResults != null && allResults.Count + 1 >= MaxPathVariantsPerSingleOccurrence;
         }
 
         private void ApplyInlinePathProbability(PathAnalysisResult pathResult,
