@@ -486,7 +486,7 @@ namespace MMMapEditor
                 .Select(info =>
                 {
                     string incrementText = info.Delta == 1 ? "1" : info.Delta.ToString();
-                    string description = $"Количество увеличивается на {incrementText} при каждом следующем выпадении этой битвы, максимум x{info.CapValue.Value}";
+                    string description = $"Количество увеличивается на {incrementText} при каждом следующем наступлении этой битвы, максимум x{info.CapValue.Value}";
                     return InlineNoteStyleCodec.EncodePersistentCounterProgressionText(description);
                 })
                 .Distinct()

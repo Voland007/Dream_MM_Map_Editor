@@ -34,6 +34,7 @@ namespace MMMapEditor
         private const string RandomEncounterRubiconWarningTokenPrefix = "[[RERUBICON:";
         private const string PersistentCounterProgressionTokenPrefix = "[[PCOUNTER:";
         private const string DynamicRandomBoundDependencyTokenPrefix = "[[DYNBOUND:";
+        private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
         private const string RandomEncounterRubiconWarningPrefix =
             "Внимание: Если сумма уровней активной партии ";
         private const string RandomEncounterRubiconWarningSuffix =
@@ -74,6 +75,11 @@ namespace MMMapEditor
         public static string EncodeDynamicRandomBoundDependencyText(string visibleText)
         {
             return EncodeTextStyleToken(DynamicRandomBoundDependencyTokenPrefix, visibleText);
+        }
+
+        public static string EncodeMutedParentheticalNoteText(string visibleText)
+        {
+            return EncodeTextStyleToken(MutedParentheticalNoteTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -163,6 +169,25 @@ namespace MMMapEditor
                     });
                     AppendAggregateTemporaryStatDetailStyles(rendered.Styles, start, aggregateText);
                     i += aggregateConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    MutedParentheticalNoteTokenPrefix,
+                    out string mutedText,
+                    out int mutedConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(mutedText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = mutedText.Length,
+                        Kind = NoteInlineStyleKind.MutedParentheticalNote
+                    });
+                    i += mutedConsumedLength;
                     continue;
                 }
 

@@ -191,6 +191,10 @@ namespace MMMapEditor
                     {
                         AppendExistingRenderedText(newNotes, inlineStyles, existingCellNotes, existingInlineStyles);
                     }
+                    else if (TryBuildCollapsedCappedRandomPartialBattleNote(obj, variantContents, out string collapsedVariantNotes))
+                    {
+                        AppendRenderedText(newNotes, inlineStyles, collapsedVariantNotes);
+                    }
                     else if (variantContents.Count == 1)
                     {
                         var singleVariant = variantContents.First().Value;
@@ -536,6 +540,328 @@ namespace MMMapEditor
                 return "Ничего не происходит (не выполнены условия для наступления ни одного варианта)";
 
             return line;
+        }
+
+        private static bool TryBuildCollapsedCappedRandomPartialBattleNote(
+            OvrObject obj,
+            Dictionary<int, List<string>> variantContents,
+            out string notes)
+        {
+            notes = null;
+
+            if (obj?.PathVariants == null ||
+                obj.PathVariants.Count < 3 ||
+                variantContents == null ||
+                variantContents.Count < 3)
+            {
+                return false;
+            }
+
+            var variants = obj.PathVariants
+                .Where(kvp => kvp.Value != null)
+                .OrderBy(kvp => kvp.Key)
+                .ToList();
+
+            var noOpCandidates = variants
+                .Where(kvp => IsDisplayedNoOpVariant(kvp.Value, variantContents.TryGetValue(kvp.Key, out var lines) ? lines : null))
+                .ToList();
+
+            if (noOpCandidates.Count != 1)
+                return false;
+
+            var noOpEntry = noOpCandidates[0];
+            var noOpVariant = noOpEntry.Value;
+            if (!noOpVariant.HasProbabilityInfo ||
+                noOpVariant.ProbabilityNumerator <= 0 ||
+                noOpVariant.ProbabilityNumerator >= noOpVariant.ProbabilityDenominator)
+            {
+                return false;
+            }
+
+            var battleVariants = variants
+                .Where(kvp => kvp.Key != noOpEntry.Key)
+                .Select(kvp => kvp.Value)
+                .ToList();
+
+            if (battleVariants.Count < 2 ||
+                battleVariants.Any(variant => !IsPlainPartialBattleVariant(variant)))
+            {
+                return false;
+            }
+
+            var dynamicDependencies = battleVariants
+                .SelectMany(variant => variant.DynamicRandomBoundDependencies ?? new List<DynamicRandomBoundDependencyInfo>())
+                .Where(dependency => dependency?.UpperBoundFormula != null)
+                .ToList();
+
+            if (dynamicDependencies.Count == 0)
+                return false;
+
+            var dynamicDependency = dynamicDependencies[0];
+            string dynamicDependencyKey = dynamicDependency.GetIdentityKey();
+            if (dynamicDependencies.Any(dependency =>
+                !string.Equals(dependency.GetIdentityKey(), dynamicDependencyKey, StringComparison.Ordinal)))
+            {
+                return false;
+            }
+
+            if (!IsLevelPlusOffsetFormula(dynamicDependency?.UpperBoundFormula))
+                return false;
+
+            var battleOptions = BuildCollapsedPartialBattleOptions(battleVariants);
+            if (battleOptions.Count < 2)
+                return false;
+
+            int encounterNumerator = noOpVariant.ProbabilityDenominator - noOpVariant.ProbabilityNumerator;
+            int encounterDenominator = noOpVariant.ProbabilityDenominator;
+            ReduceFraction(ref encounterNumerator, ref encounterDenominator);
+
+            string encounterProbability = BuildProbabilityHeaderAnnotation(
+                BuildStandaloneProbabilityLine(encounterNumerator, encounterDenominator));
+            if (string.IsNullOrWhiteSpace(encounterProbability))
+                return false;
+
+            string formulaText = BuildDiceFormulaExpression(dynamicDependency.UpperBoundFormula);
+            string dynamicVariantCountText =
+                $"Количество доступных вариантов рассчитывается по формуле: {formulaText}, но не более {battleOptions.Count}";
+            string dynamicVariantCountLine = InlineNoteStyleCodec.EncodeMutedParentheticalNoteText(
+                $"({dynamicVariantCountText})");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine($"{BuildVariantHeader(obj, noOpEntry.Key, 1)}:");
+            AppendLines(sb, variantContents.TryGetValue(noOpEntry.Key, out var noOpLines)
+                ? noOpLines
+                : new List<string> { "Ничего не происходит" });
+            sb.AppendLine();
+            sb.AppendLine($"Вариант 2 ({encounterProbability}):");
+            sb.AppendLine($"Частично определённая битва. {battleOptions.Count} вариант(ов):");
+            sb.AppendLine(dynamicVariantCountLine);
+
+            for (int i = 0; i < battleOptions.Count; i++)
+            {
+                var option = battleOptions[i];
+                string optionText = string.IsNullOrWhiteSpace(option.CountDisplay)
+                    ? option.MonsterName
+                    : $"{option.MonsterName} x{option.CountDisplay}";
+                sb.AppendLine($"  • Вариант {i + 1}: {optionText}");
+            }
+
+            string rubiconWarning = BuildSharedRandomEncounterRubiconWarning(battleVariants);
+            if (!string.IsNullOrWhiteSpace(rubiconWarning))
+                sb.AppendLine(rubiconWarning);
+
+            notes = sb.ToString().TrimEnd('\r', '\n');
+            return true;
+        }
+
+        private static bool IsDisplayedNoOpVariant(PathVariantInfo variant, List<string> lines)
+        {
+            if (variant == null)
+                return false;
+
+            bool hasNoBattlePayload =
+                (variant.Texts == null || variant.Texts.Count == 0) &&
+                (variant.BattleMonsters == null || variant.BattleMonsters.Count == 0) &&
+                (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
+                (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
+                (variant.PartyEffects == null || variant.PartyEffects.Count == 0) &&
+                !variant.HasTeleportTarget &&
+                !variant.HasAnyTableLoad &&
+                !variant.CallsRandomEncounter;
+
+            if (!hasNoBattlePayload)
+                return false;
+
+            var meaningfulLines = (lines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+
+            return meaningfulLines.Count == 0 ||
+                   meaningfulLines.All(line => line.StartsWith("Ничего не происходит", StringComparison.Ordinal));
+        }
+
+        private static bool IsPlainPartialBattleVariant(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            return (variant.Texts == null || variant.Texts.Count == 0) &&
+                   (variant.BattleMonsters == null || variant.BattleMonsters.Count == 0) &&
+                   variant.PartiallyDefinedBattles != null &&
+                   variant.PartiallyDefinedBattles.Count > 0 &&
+                   !variant.RandomEncounterMonsterPowerCap.HasValue &&
+                   !variant.RandomEncounterMonsterLevelCap.HasValue &&
+                   !variant.RandomEncounterMonsterBatchCountCap.HasValue &&
+                   !variant.DarkeningLevel.HasValue &&
+                   !variant.RandomEncounterChance.HasValue &&
+                   (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
+                   (variant.PartyEffects == null || variant.PartyEffects.Count == 0) &&
+                   !variant.HasTeleportTarget &&
+                   !variant.HasAnyTableLoad;
+        }
+
+        private static bool IsLevelPlusOffsetFormula(DynamicValueFormulaInfo formula)
+        {
+            if (formula?.SourceField == null)
+                return false;
+
+            return formula.SourceField.Field == PartyFieldKind.TempLevel &&
+                   formula.Multiplier == 1 &&
+                   formula.AdditiveOffset > 0;
+        }
+
+        private static List<(string OptionKey, string MonsterName, string CountDisplay)> BuildCollapsedPartialBattleOptions(
+            List<PathVariantInfo> battleVariants)
+        {
+            var result = new List<(string OptionKey, string MonsterName, string CountDisplay)>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var variant in battleVariants ?? new List<PathVariantInfo>())
+            {
+                foreach (var partial in (variant.PartiallyDefinedBattles ?? new List<PartiallyDefinedBattle>())
+                    .OrderBy(battle => battle.BxIndex))
+                {
+                    string countDisplay = partial.GetRepeatCountDisplay();
+                    foreach (var monster in partial.GetPossibleMonsters())
+                    {
+                        string optionKey = $"{monster.Val1:X2}:{monster.Val2:X2}";
+                        if (!seen.Add(optionKey))
+                            continue;
+
+                        string monsterName = CleanMonsterNameForCollapsedDisplay(monster.MonsterName);
+                        if (string.IsNullOrWhiteSpace(monsterName))
+                            continue;
+
+                        result.Add((optionKey, monsterName, countDisplay));
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static string CleanMonsterNameForCollapsedDisplay(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return name;
+
+            var clean = new StringBuilder();
+            foreach (char c in name)
+            {
+                if ((c >= 'A' && c <= 'Z') ||
+                    (c >= 'a' && c <= 'z') ||
+                    c == ' ' || c == '-' || c == '\'' || c == '.')
+                {
+                    clean.Append(c);
+                }
+            }
+
+            return Regex.Replace(clean.ToString().Trim(), @"\s+", " ");
+        }
+
+        private static string BuildSharedRandomEncounterRubiconWarning(List<PathVariantInfo> battleVariants)
+        {
+            var thresholds = (battleVariants ?? new List<PathVariantInfo>())
+                .Where(variant => variant != null && variant.CallsRandomEncounter && variant.RandomEncounterRubicon.HasValue)
+                .Select(variant => 2 * (variant.RandomEncounterRubicon.Value + 1))
+                .Distinct()
+                .ToList();
+
+            return thresholds.Count == 1
+                ? InlineNoteStyleCodec.EncodeRandomEncounterRubiconWarning(thresholds[0])
+                : null;
+        }
+
+        private static string BuildDiceFormulaExpression(DynamicValueFormulaInfo formula)
+        {
+            if (formula == null)
+                return "значение";
+
+            if (formula.SourceField?.Field == PartyFieldKind.TempLevel)
+            {
+                string expression = "временный LEVEL";
+                string memberText = BuildDiceFormulaMemberText(formula.SourceField.Member);
+                if (!string.IsNullOrWhiteSpace(memberText))
+                    expression += " " + memberText;
+
+                if (formula.Multiplier != 1)
+                    expression = $"{formula.Multiplier}*{expression}";
+
+                if (formula.AdditiveOffset > 0)
+                    expression += $" + {formula.AdditiveOffset}";
+                else if (formula.AdditiveOffset < 0)
+                    expression += $" - {Math.Abs(formula.AdditiveOffset)}";
+
+                return expression;
+            }
+
+            return formula.GetFormulaExpression();
+        }
+
+        private static string BuildDiceFormulaMemberText(PartyMemberReference member)
+        {
+            if (member == null)
+                return null;
+
+            if (member.MemberIndex == 0)
+                return "первого героя";
+
+            if (member.MemberIndex.HasValue)
+                return $"персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)}";
+
+            if (member.IsPartyLoopMember)
+                return "текущего персонажа";
+
+            return null;
+        }
+
+        private static string BuildStandaloneProbabilityLine(int numerator, int denominator)
+        {
+            if (denominator <= 1)
+                return null;
+
+            double percent = 100.0 * numerator / denominator;
+            string percentText = percent % 1.0 == 0.0
+                ? percent.ToString("0")
+                : percent.ToString("0.##");
+
+            return $"Вероятность: {percentText}% ({numerator}/{denominator})";
+        }
+
+        private static void ReduceFraction(ref int numerator, ref int denominator)
+        {
+            if (denominator <= 0)
+            {
+                denominator = 1;
+                return;
+            }
+
+            int divisor = GreatestCommonDivisor(Math.Abs(numerator), Math.Abs(denominator));
+            if (divisor <= 1)
+                return;
+
+            numerator /= divisor;
+            denominator /= divisor;
+        }
+
+        private static int GreatestCommonDivisor(int a, int b)
+        {
+            while (b != 0)
+            {
+                int temp = a % b;
+                a = b;
+                b = temp;
+            }
+
+            return Math.Max(1, a);
+        }
+
+        private static void AppendLines(StringBuilder sb, IEnumerable<string> lines)
+        {
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+                sb.AppendLine(line);
         }
 
         private static IEnumerable<string> SplitDisplayLines(string text)

@@ -2414,6 +2414,9 @@ namespace MMMapEditor
                     ApplyInlineNoteStyles(notesTextBox, noteText, inlineSpans);
 
                 FormatRandomEncounterRubiconWarnings(notesTextBox, noteText);
+
+                // Семантические пользовательские заметки могут прийти из старых/ручных карт без inline-spans.
+                FormatGeneratedSemanticNotes(notesTextBox, noteText);
             }
         }
 
@@ -2491,6 +2494,10 @@ namespace MMMapEditor
                     case NoteInlineStyleKind.DynamicRandomBoundDependencyFormula:
                         ApplyDynamicRandomBoundDependencyFormulaStyle(rt);
                         break;
+
+                    case NoteInlineStyleKind.MutedParentheticalNote:
+                        ApplyMutedParentheticalNoteStyle(rt);
+                        break;
                 }
             }
 
@@ -2553,16 +2560,108 @@ namespace MMMapEditor
 
         private void ApplyDynamicRandomBoundDependencyNoteStyle(RichTextBox rt)
         {
-            rt.SelectionColor = Color.FromArgb(210, 222, 235);
-            rt.SelectionBackColor = Color.FromArgb(34, 44, 59);
-            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Regular);
+            rt.SelectionColor = Color.FromArgb(234, 222, 228);
+            rt.SelectionBackColor = Color.FromArgb(58, 45, 53);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Italic);
         }
 
         private void ApplyDynamicRandomBoundDependencyFormulaStyle(RichTextBox rt)
         {
-            rt.SelectionColor = Color.FromArgb(219, 202, 238);
-            rt.SelectionBackColor = Color.FromArgb(34, 44, 59);
+            rt.SelectionColor = Color.FromArgb(212, 232, 196);
+            rt.SelectionBackColor = Color.FromArgb(58, 45, 53);
             rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyMutedParentheticalNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(145, 145, 145);
+            rt.SelectionBackColor = rt.BackColor;
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void FormatGeneratedSemanticNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            FormatPersistentCounterProgressionNotes(rt, noteText);
+            FormatDynamicRandomBoundDependencyNotes(rt, noteText);
+            FormatMutedParentheticalNotes(rt, noteText);
+            rt.Select(0, 0);
+        }
+
+        private void FormatMutedParentheticalNotes(RichTextBox rt, string noteText)
+        {
+            var noteMatches = Regex.Matches(
+                noteText,
+                @"^\([^\r\n]*Количество доступных вариантов рассчитывается по формуле:[^\r\n]+\)$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+            foreach (Match match in noteMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyMutedParentheticalNoteStyle(rt);
+            }
+        }
+
+        private void FormatPersistentCounterProgressionNotes(RichTextBox rt, string noteText)
+        {
+            var noteMatches = Regex.Matches(
+                noteText,
+                @"^[^\r\n]*Количество увеличивается на\s+\d+\s+при каждом следующем наступлении этой битвы,\s+максимум\s+x\d+[^\r\n]*$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+            foreach (Match match in noteMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyPersistentCounterProgressionNoteStyle(rt);
+
+                foreach (Match numericValue in Regex.Matches(
+                    match.Value,
+                    @"(?<![\p{L}\p{N}_])x?\d+\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                {
+                    if (!numericValue.Success || numericValue.Length <= 0)
+                        continue;
+
+                    rt.Select(match.Index + numericValue.Index, numericValue.Length);
+                    ApplyPersistentCounterProgressionValueStyle(rt);
+                }
+            }
+        }
+
+        private void FormatDynamicRandomBoundDependencyNotes(RichTextBox rt, string noteText)
+        {
+            var noteMatches = Regex.Matches(
+                noteText,
+                @"^[^\r\n]*Количество вариантов зависит от[^\r\n]*рассчитывается по формуле:\s*[^\r\n]+$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+            foreach (Match match in noteMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyDynamicRandomBoundDependencyNoteStyle(rt);
+
+                int formulaSeparator = match.Value.LastIndexOf(": ", StringComparison.Ordinal);
+                int formulaStart = formulaSeparator >= 0
+                    ? formulaSeparator + 2
+                    : -1;
+
+                if (formulaStart < 0 || formulaStart >= match.Value.Length)
+                    continue;
+
+                rt.Select(match.Index + formulaStart, match.Value.Length - formulaStart);
+                ApplyDynamicRandomBoundDependencyFormulaStyle(rt);
+            }
         }
 
         private void FormatAggregateTemporaryStatNotes(RichTextBox rt, string noteText)
