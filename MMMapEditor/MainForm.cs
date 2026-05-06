@@ -38,6 +38,8 @@ namespace MMMapEditor
     {
         private const int GridSize = 16;
         private const int CellSize = 40;
+        private const int PassageTypeSecret = 3;
+        private const int PassageTypeRough = 8;
         private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
             new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
@@ -4397,7 +4399,7 @@ namespace MMMapEditor
                 FlatStyle = FlatStyle.Flat
             };
 
-            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход" });
+            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход", "Девятый вал" });
 
             if (comboBox.Items.Count > 0)
             {
@@ -4948,6 +4950,59 @@ namespace MMMapEditor
             g.DrawImage(exitWordBitmap, targetRect);
         }
 
+        private void DrawRoughWord(Graphics g, Rectangle bounds, Direction direction, Color roughWordColor)
+        {
+            int[,] roughWordPatternToUse = Passage_Pixels_Patterns.rough_word;
+
+            Bitmap roughWordBitmap = new Bitmap(roughWordPatternToUse.GetLength(1), roughWordPatternToUse.GetLength(0));
+            using (Graphics roughGraphics = Graphics.FromImage(roughWordBitmap))
+            using (SolidBrush roughBrush = new SolidBrush(roughWordColor))
+            {
+                roughGraphics.Clear(Color.Transparent);
+
+                for (int y = 0; y < roughWordPatternToUse.GetLength(0); y++)
+                {
+                    for (int x = 0; x < roughWordPatternToUse.GetLength(1); x++)
+                    {
+                        if (roughWordPatternToUse[y, x] == 1)
+                        {
+                            roughGraphics.FillRectangle(roughBrush, x, y, 1, 1);
+                        }
+                    }
+                }
+            }
+
+            if (direction == Direction.Left)
+            {
+                roughWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY);
+            }
+            if (direction == Direction.Right)
+            {
+                roughWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone);
+            }
+
+            Rectangle targetRect;
+            switch (direction)
+            {
+                case Direction.Top:
+                    targetRect = new Rectangle(bounds.X, bounds.Y, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                case Direction.Bottom:
+                    targetRect = new Rectangle(bounds.X, bounds.Bottom - roughWordBitmap.Height, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                case Direction.Left:
+                    targetRect = new Rectangle(bounds.X, bounds.Y + 1, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                case Direction.Right:
+                    targetRect = new Rectangle(bounds.Right - roughWordBitmap.Width, bounds.Y, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                default:
+                    return;
+            }
+
+            g.DrawImage(roughWordBitmap, targetRect);
+        }
+
         //Метод для отрисовки портала
         private void DrawPortal(Graphics graphics, Rectangle bounds, Direction direction)
         {
@@ -5281,8 +5336,19 @@ namespace MMMapEditor
         // Метод для отрисовки надписи SECRET
         private void DrawSecretWord(Graphics g, Rectangle bounds, Direction direction)
         {
+            DrawPassageWord(g, bounds, direction, "SECRET");
+        }
+
+        // Метод для отрисовки надписи ROUGH
+        private void DrawRoughWord(Graphics g, Rectangle bounds, Direction direction)
+        {
+            DrawPassageWord(g, bounds, direction, "ROUGH");
+        }
+
+        private void DrawPassageWord(Graphics g, Rectangle bounds, Direction direction, string word)
+        {
             // Вычисляем максимальный допустимый размер шрифта
-            float maxFontSize = CalculateOptimalFontSize(g, "SECRET", bounds.Width, bounds.Height);
+            float maxFontSize = CalculateOptimalFontSize(g, word, bounds.Width, bounds.Height);
 
             // Создаем оптимальный шрифт
             Font font = new Font(FontFamily.GenericSansSerif, maxFontSize, FontStyle.Bold);
@@ -5307,12 +5373,19 @@ namespace MMMapEditor
                 bufferG.Clear(Color.Transparent);
 
                 // Предварительно выводим текст
-                bufferG.DrawString("SECRE", font, Brushes.HotPink, bounds, format);
-                SizeF textSize = bufferG.MeasureString("SECRE", font);
-                float extraSpace = 3f; // Интервал между "E" и "T"
-                float nextX = bounds.X + textSize.Width + extraSpace;
-                float nextY = bounds.Y + (bounds.Height - textSize.Height) / 2;
-                bufferG.DrawString("T", font, Brushes.HotPink, nextX, nextY);
+                if (word == "SECRET")
+                {
+                    bufferG.DrawString("SECRE", font, Brushes.HotPink, bounds, format);
+                    SizeF textSize = bufferG.MeasureString("SECRE", font);
+                    float extraSpace = 3f; // Интервал между "E" и "T"
+                    float nextX = bounds.X + textSize.Width + extraSpace;
+                    float nextY = bounds.Y + (bounds.Height - textSize.Height) / 2;
+                    bufferG.DrawString("T", font, Brushes.HotPink, nextX, nextY);
+                }
+                else
+                {
+                    bufferG.DrawString(word, font, Brushes.HotPink, bounds, format);
+                }
             }
 
             // Основа: наносим подготовленный буфер на изображение с учётом направления
@@ -5456,16 +5529,34 @@ namespace MMMapEditor
 
         void DrawFilteredHotPinkSecret(Graphics g, Rectangle bounds, Direction direction)
         {
+            DrawFilteredHotPinkPassageWord(g, bounds, direction, "SECRET", true);
+        }
+
+        void DrawFilteredHotPinkRough(Graphics g, Rectangle bounds, Direction direction)
+        {
+            DrawFilteredHotPinkPassageWord(g, bounds, direction, "ROUGH", false, GetRoughPassageOffset(direction));
+        }
+
+        void DrawFilteredHotPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC)
+        {
+            DrawFilteredHotPinkPassageWord(g, bounds, direction, word, correctLetterC, Point.Empty);
+        }
+
+        void DrawFilteredHotPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC, Point offset)
+        {
             // Предполагаем, что DrawSecret создает изображение с размерами bounds
             Bitmap originaSecretTextImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originaSecretTextImage))
             {
-                DrawSecretWord(imgG, bounds, direction); // РИСУЕМ оригинальное изображение
+                DrawPassageWord(imgG, bounds, direction, word); // РИСУЕМ оригинальное изображение
             }
 
             // Применяем фильтр, оставляем только горячий розовый цвет
             FilterColors(originaSecretTextImage, colorsMap);
-            CorrectLetterC(originaSecretTextImage, direction);
+            if (correctLetterC)
+            {
+                CorrectLetterC(originaSecretTextImage, direction);
+            }
 
             Rectangle targetRect;
             int secretTextWidth = originaSecretTextImage.Width;
@@ -5489,6 +5580,8 @@ namespace MMMapEditor
                     return; // Недопустимое направление
             }
 
+            targetRect.Offset(offset);
+
             // Выводим итоговое изображение двери на холст
             g.DrawImage(originaSecretTextImage, targetRect);
         }
@@ -5496,11 +5589,26 @@ namespace MMMapEditor
         //Отображение надписи SECRET для белых поверхностией
         private void DrawFilteredDarkPinkSecret(Graphics g, Rectangle bounds, Direction direction)
         {
+            DrawFilteredDarkPinkPassageWord(g, bounds, direction, "SECRET", true);
+        }
+
+        private void DrawFilteredDarkPinkRough(Graphics g, Rectangle bounds, Direction direction)
+        {
+            DrawFilteredDarkPinkPassageWord(g, bounds, direction, "ROUGH", false, GetRoughPassageOffset(direction));
+        }
+
+        private void DrawFilteredDarkPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC)
+        {
+            DrawFilteredDarkPinkPassageWord(g, bounds, direction, word, correctLetterC, Point.Empty);
+        }
+
+        private void DrawFilteredDarkPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC, Point offset)
+        {
             // Исходное изображение SECRET
             Bitmap originalSecretTextImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originalSecretTextImage))
             {
-                DrawFilteredHotPinkSecret(imgG, bounds, direction); // Нарисовать оригинальный текст SECRET
+                DrawFilteredHotPinkPassageWord(imgG, bounds, direction, word, correctLetterC); // Нарисовать оригинальный текст
             }
 
             // Замена цвета розовых пикселей на тёмно-зелёный
@@ -5528,6 +5636,8 @@ namespace MMMapEditor
                 default:
                     return; // Некорректное направление
             }
+
+            targetRect.Offset(offset);
 
             g.DrawImage(originalSecretTextImage, targetRect);
         }
@@ -5671,6 +5781,36 @@ namespace MMMapEditor
             else
             {
                 DrawFilteredHotPinkSecret(g, bounds, direction); // Осталось как было раньше
+            }
+        }
+
+        // Вспомогательная функция для правильного выбора метода рисования ROUGH
+        private void DrawCorrectRough(Graphics g, Rectangle bounds, string wallType, Direction direction)
+        {
+            if (!showSecretPassages)
+                return;
+
+            Color roughWordColor = wallType == "Кирпичная стена"
+                ? Color.FromArgb(0, 0, 255)
+                : Color.FromArgb(255, 105, 180);
+
+            DrawRoughWord(g, bounds, direction, roughWordColor);
+        }
+
+        private static Point GetRoughPassageOffset(Direction direction)
+        {
+            switch (direction)
+            {
+                case Direction.Top:
+                    return new Point(2, -2);
+                case Direction.Bottom:
+                    return new Point(2, 0);
+                case Direction.Left:
+                    return new Point(-2, 2);
+                case Direction.Right:
+                    return new Point(2, 2);
+                default:
+                    return Point.Empty;
             }
         }
 
@@ -6082,21 +6222,38 @@ namespace MMMapEditor
                 if (passageDict.TryGetValue(pos, out var passageData))
                 {
                     // Проверяем каждое направление и рисуем тайник, если он найден
-                    if (passageData.Top == 3) // секретный проход сверху
+                    if (passageData.Top == PassageTypeSecret) // секретный проход сверху
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Top, Direction.Top);
                     }
-                    if (passageData.Bottom == 3) //  секретный проход снизу
+                    if (passageData.Bottom == PassageTypeSecret) //  секретный проход снизу
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Bottom, Direction.Bottom);
                     }
-                    if (passageData.Left == 3) //  секретный проход слева
+                    if (passageData.Left == PassageTypeSecret) //  секретный проход слева
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Left, Direction.Left);
                     }
-                    if (passageData.Right == 3) //  секретный проход справа
+                    if (passageData.Right == PassageTypeSecret) //  секретный проход справа
                     {
                         DrawCorrectSecret(g, bounds, edgeTypes.Right, Direction.Right);
+                    }
+
+                    if (passageData.Top == PassageTypeRough) // ROUGH проход сверху
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Top, Direction.Top);
+                    }
+                    if (passageData.Bottom == PassageTypeRough) // ROUGH проход снизу
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Bottom, Direction.Bottom);
+                    }
+                    if (passageData.Left == PassageTypeRough) // ROUGH проход слева
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Left, Direction.Left);
+                    }
+                    if (passageData.Right == PassageTypeRough) // ROUGH проход справа
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Right, Direction.Right);
                     }
 
                     // Остальные элементы (двери и решётки) остались прежними
