@@ -135,6 +135,7 @@ namespace MMMapEditor
         private Point? mostDangerousCell; //флаг для поментки опасной клетки
         private Point? mostPeacefulCell; // флаг для пометки безопасной клетки
         private bool showSecretPassages = true;
+        private bool showDangerousWaterCells = true;
 
 
         public MainForm()
@@ -152,6 +153,7 @@ namespace MMMapEditor
             InitializeAllCells(); // Начальное задание свойств каждой клетки
             CreateContxtMenu();
             showSecretPassages = GetBooleanSetting("DisplaySettings", "ShowSecretPassages", true);
+            showDangerousWaterCells = GetBooleanSetting("DisplaySettings", "ShowDangerousWaterCells", true);
 
             // Читаем файл по умолчанию из INI
             string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
@@ -3767,7 +3769,9 @@ namespace MMMapEditor
                 if (form.ShowDialog() == DialogResult.OK)
                 {
                     showSecretPassages = form.ShowSecretPassages;
+                    showDangerousWaterCells = form.ShowDangerousWaterCells;
                     InvalidateGridButtons();
+                    UpdatePreview();
                 }
             }
         }
@@ -6135,7 +6139,7 @@ namespace MMMapEditor
         private void PrepareCellImage(Point pos, Graphics g, Rectangle bounds)
         {
             // Применяем специальные эффекты согласно состоянию клетки
-            if (isDangerStates.TryGetValue(pos, out var isDangerous) && isDangerous)
+            if (ShouldPaintDangerArea(pos))
             {
                 PaintDangerArea(g, bounds);
             }
@@ -6485,6 +6489,23 @@ namespace MMMapEditor
                 }
             }
 
+        }
+
+        private bool ShouldPaintDangerArea(Point pos)
+        {
+            if (!isDangerStates.TryGetValue(pos, out var isDangerous) || !isDangerous)
+                return false;
+
+            return showDangerousWaterCells || !AreAllBordersWater(pos);
+        }
+
+        private bool AreAllBordersWater(Point pos)
+        {
+            return borders.TryGetValue(pos, out var edgeTypes)
+                && string.Equals(edgeTypes.Top, BorderTypeWater, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Bottom, BorderTypeWater, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Left, BorderTypeWater, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Right, BorderTypeWater, StringComparison.Ordinal);
         }
 
         // Вспомогательный метод для преобразования изображения в массив пикселей
