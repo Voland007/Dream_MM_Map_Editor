@@ -94,6 +94,7 @@ namespace MMMapEditor.Tests
         private Button _exportHtmlButton;
         private Button _exportTextButton;
         private Button _acceptActualButton;
+        private Button _acceptAllActualButton;
         private Button _undoExpectationButton;
         private Label _acceptRecommendationLabel = null!;
         private TextBox _filterBox;
@@ -310,10 +311,23 @@ namespace MMMapEditor.Tests
                 Enabled = false
             };
 
+            _acceptAllActualButton = new Button
+            {
+                Text = "✓ Принять все",
+                Location = new Point(585, 45),
+                Width = 130,
+                Height = 30,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(106, 153, 85),
+                ForeColor = Color.White,
+                FlatAppearance = { BorderSize = 0 },
+                Enabled = false
+            };
+
             _undoExpectationButton = new Button
             {
                 Text = "↶ Откатить",
-                Location = new Point(585, 45),
+                Location = new Point(720, 45),
                 Width = 170,
                 Height = 30,
                 FlatStyle = FlatStyle.Flat,
@@ -328,11 +342,12 @@ namespace MMMapEditor.Tests
             _exportHtmlButton.Click += ExportHtml;
             _exportTextButton.Click += ExportText;
             _acceptActualButton.Click += AcceptActualAsExpected;
+            _acceptAllActualButton.Click += AcceptAllMatchingActualsAsExpected;
             _undoExpectationButton.Click += UndoLastExpectationChange;
 
             buttonPanel.Controls.AddRange(new Control[] {
                 _runSelectedButton, _runAllButton, _exportHtmlButton, _exportTextButton,
-                _ovrFileCombo, _acceptRecommendationLabel, _acceptActualButton, _undoExpectationButton
+                _ovrFileCombo, _acceptRecommendationLabel, _acceptActualButton, _acceptAllActualButton, _undoExpectationButton
             });
 
             // Вкладки
@@ -940,6 +955,9 @@ namespace MMMapEditor.Tests
         {
             if (_acceptActualButton != null)
                 _acceptActualButton.Enabled = _selectedCellResult != null;
+
+            if (_acceptAllActualButton != null)
+                _acceptAllActualButton.Enabled = _selectedCellResult != null && _selectedTestResult != null;
 
             if (_undoExpectationButton != null)
             {
@@ -1907,6 +1925,140 @@ namespace MMMapEditor.Tests
             {
                 Cursor = Cursors.Default;
             }
+        }
+
+        private void AcceptAllMatchingActualsAsExpected(object sender, EventArgs e)
+        {
+            if (_selectedCellResult == null || _selectedTestResult == null)
+                return;
+
+            List<CellCheckResult> matchingResults = GetMatchingExpectedResults(
+                _selectedTestResult,
+                _selectedCellResult);
+
+            if (matchingResults.Count == 0)
+                return;
+
+            var emptyActualResults = matchingResults
+                .Where(result => string.IsNullOrWhiteSpace(result.Actual))
+                .ToList();
+
+            if (emptyActualResults.Count > 0)
+            {
+                string emptyCells = string.Join(", ", emptyActualResults
+                    .Take(8)
+                    .Select(result => $"({result.Cell.X},{result.Cell.Y})"));
+
+                if (emptyActualResults.Count > 8)
+                    emptyCells += $", ... и ещё {emptyActualResults.Count - 8}";
+
+                DialogResult emptyResultConfirmation = MessageBox.Show(
+                    $"У {emptyActualResults.Count} совпадающих клеток фактический результат пустой: {emptyCells}.\n\n" +
+                    "Для этих клеток будет установлен флаг пустого ожидания, а сохранённые тексты для обоих режимов очистятся.\n\n" +
+                    "Продолжить?",
+                    "Подтверждение изменения",
+                    MessageBoxButtons.OKCancel,
+                    MessageBoxIcon.Warning);
+
+                if (emptyResultConfirmation != DialogResult.OK)
+                    return;
+            }
+
+            Cursor = Cursors.WaitCursor;
+
+            try
+            {
+                int changedCount = 0;
+                int unchangedCount = 0;
+                TestExpectationUpdateResult? lastUpdateResult = null;
+
+                foreach (CellCheckResult matchingResult in matchingResults)
+                {
+                    TestExpectationUpdateResult updateResult = _expectationStore.AcceptActualAsExpected(
+                        _selectedTestResult.TestCase.Id,
+                        matchingResult.Cell,
+                        matchingResult.ViewMode,
+                        matchingResult.Actual);
+
+                    if (!updateResult.Success)
+                    {
+                        MessageBox.Show(updateResult.Message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+
+                    lastUpdateResult = updateResult;
+
+                    if (updateResult.Changed)
+                        changedCount++;
+                    else
+                        unchangedCount++;
+                }
+
+                _historyCount = _expectationStore.GetHistoryCount();
+                UpdateActionButtons();
+
+                if (changedCount == 0)
+                {
+                    MessageBox.Show(
+                        "Фактические результаты уже сохранены как ожидаемые для всех совпадающих клеток.",
+                        "Информация",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                    return;
+                }
+
+                TestResult? refreshedResult = lastUpdateResult?.TestCase == null
+                    ? null
+                    : RunTestAndUpdate(
+                        lastUpdateResult.TestCase,
+                        showCompletionMessage: false,
+                        cellToSelect: _selectedCellResult.Cell,
+                        viewModeToSelect: _selectedCellResult.ViewMode);
+
+                if (refreshedResult != null)
+                {
+                    string modeLabel = string.IsNullOrWhiteSpace(_selectedCellResult.ViewMode)
+                        ? "без режима"
+                        : _selectedCellResult.ViewMode;
+
+                    MessageBox.Show(
+                        $"Принято фактических результатов: {changedCount}.\n" +
+                        $"Без изменений: {unchangedCount}.\n" +
+                        $"Режим: {modeLabel}.",
+                        "Ожидания обновлены",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Не удалось обновить ожидаемые результаты: {ex.Message}",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+            finally
+            {
+                Cursor = Cursors.Default;
+            }
+        }
+
+        private static List<CellCheckResult> GetMatchingExpectedResults(
+            TestResult testResult,
+            CellCheckResult selectedResult)
+        {
+            string selectedExpected = NormalizeTextForDiff(selectedResult.Expected);
+
+            return (testResult.CellResults ?? new List<CellCheckResult>())
+                .Where(result => result != null)
+                .Where(result => string.Equals(result.ViewMode, selectedResult.ViewMode, StringComparison.Ordinal))
+                .Where(result => string.Equals(
+                    NormalizeTextForDiff(result.Expected),
+                    selectedExpected,
+                    StringComparison.Ordinal))
+                .OrderBy(result => result.Cell.Y)
+                .ThenBy(result => result.Cell.X)
+                .ToList();
         }
 
         private void UndoLastExpectationChange(object sender, EventArgs e)
