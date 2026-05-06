@@ -891,6 +891,7 @@ namespace MMMapEditor
         public string Condition { get; set; }
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
+        public ushort? CompareMemoryAddress { get; set; }
         public bool IsLinear { get; set; }
         public PartyPredicate GuardPredicate { get; set; }
 
@@ -904,6 +905,7 @@ namespace MMMapEditor
                 Condition = Condition,
                 CompareValue = CompareValue,
                 CompareRegister = CompareRegister,
+                CompareMemoryAddress = CompareMemoryAddress,
                 IsLinear = IsLinear,
                 GuardPredicate = GuardPredicate?.Clone()
             };
@@ -1132,7 +1134,21 @@ namespace MMMapEditor
             if (!HasProbabilityInfo || ProbabilityDenominator <= 0)
                 return null;
 
-            double percent = 100.0 * ProbabilityNumerator / ProbabilityDenominator;
+            int numerator = Math.Max(0, ProbabilityNumerator);
+            int denominator = Math.Max(1, ProbabilityDenominator);
+            if (numerator >= denominator && numerator > 0)
+            {
+                numerator = 1;
+                denominator = 1;
+            }
+            else
+            {
+                int gcd = GreatestCommonDivisor(numerator, denominator);
+                numerator /= gcd;
+                denominator /= gcd;
+            }
+
+            double percent = 100.0 * numerator / denominator;
             string percentText = percent % 1.0 == 0.0
                 ? percent.ToString("0")
                 : percent.ToString("0.##");
@@ -1141,7 +1157,22 @@ namespace MMMapEditor
                 ? "Вероятность при выполнении условий"
                 : "Вероятность";
 
-            return $"{label}: {percentText}% ({ProbabilityNumerator}/{ProbabilityDenominator})";
+            return $"{label}: {percentText}% ({numerator}/{denominator})";
+        }
+
+        private static int GreatestCommonDivisor(int a, int b)
+        {
+            a = Math.Abs(a);
+            b = Math.Abs(b);
+
+            while (b != 0)
+            {
+                int t = a % b;
+                a = b;
+                b = t;
+            }
+
+            return a == 0 ? 1 : a;
         }
 
         public string GetOccurrenceDescription()

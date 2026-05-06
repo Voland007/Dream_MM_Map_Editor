@@ -2545,7 +2545,37 @@ namespace MMMapEditor
                     .Select(value => $"{value.BxIndex}:{value.RegName}:{value.Value:X2}:{value.SourceAddr:X4}:{value.IsFirstTable}:{value.IsSaved}"))
                 : "<NO_LOADS>";
 
-            return $"{statKey}||{battleKey}||{partialKey}||{loadKey}||{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
+            return $"{statKey}||{battleKey}||{partialKey}||{loadKey}||{BuildNormalizedProbabilityKey(variant)}";
+        }
+
+        private static string BuildNormalizedProbabilityKey(PathVariantInfo variant)
+        {
+            int numerator = Math.Max(0, variant?.ProbabilityNumerator ?? 1);
+            int denominator = Math.Max(1, variant?.ProbabilityDenominator ?? 1);
+
+            if (numerator == 0)
+                return "0/1";
+
+            if (numerator >= denominator)
+                return "1/1";
+
+            int gcd = GreatestCommonDivisor(numerator, denominator);
+            return $"{numerator / gcd}/{denominator / gcd}";
+        }
+
+        private static int GreatestCommonDivisor(int a, int b)
+        {
+            a = Math.Abs(a);
+            b = Math.Abs(b);
+
+            while (b != 0)
+            {
+                int t = a % b;
+                a = b;
+                b = t;
+            }
+
+            return a == 0 ? 1 : a;
         }
 
         private string BuildRepeatedEventVariantTargetKey(PathVariantInfo variant)

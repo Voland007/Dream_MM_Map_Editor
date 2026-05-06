@@ -38,7 +38,52 @@ namespace MMMapEditor
         private readonly Dictionary<ushort, PartyPointerByteReference> _emulatedPartyPointerBytes = new Dictionary<ushort, PartyPointerByteReference>();
         private readonly HashSet<ushort> _persistentEventStateAddresses = new HashSet<ushort>();
 
+        private enum ShiftLoopTargetKind
+        {
+            Register,
+            Memory
+        }
+
+        private enum ShiftLoopOperationKind
+        {
+            SetCarry,
+            Shl,
+            Shr,
+            Rcl,
+            Rcr
+        }
+
+        private sealed class ShiftLoopOperation
+        {
+            public ShiftLoopOperationKind Kind { get; set; }
+            public ShiftLoopTargetKind TargetKind { get; set; }
+            public string RegisterName { get; set; }
+            public ushort MemoryAddress { get; set; }
+            public bool CarryValue { get; set; }
+        }
+
+        private sealed class ShiftLoopSimulationState
+        {
+            public Dictionary<string, byte> Registers { get; set; } = new Dictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<ushort, byte> Memory { get; set; } = new Dictionary<ushort, byte>();
+            public bool CarryKnown { get; set; }
+            public bool Carry { get; set; }
+
+            public ShiftLoopSimulationState Clone()
+            {
+                return new ShiftLoopSimulationState
+                {
+                    Registers = new Dictionary<string, byte>(Registers, StringComparer.OrdinalIgnoreCase),
+                    Memory = new Dictionary<ushort, byte>(Memory),
+                    CarryKnown = CarryKnown,
+                    Carry = Carry
+                };
+            }
+        }
+
         private const int MAX_DEPTH = 24;
+        private const byte KEYBOARD_INPUT_MIN = 0x00;
+        private const byte KEYBOARD_INPUT_MAX = 0x7F;
         private const ushort PARTY_POINTER_TABLE = 0x3CA8;
         private const ushort PARTY_COUNT_ADDRESS = 0x3BC0;
         private const ushort BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS = 0x3C1C;
@@ -390,6 +435,9 @@ namespace MMMapEditor
         {
             if (_emulatedMemory8.TryGetValue(address, out byte value))
                 return value;
+
+            if (_emulatedMemory8Ranges.TryGetValue(address, out var range) && range != null)
+                return range.IsExact ? range.Min : (byte?)null;
 
             return TryReadOverlayByte(br, address, out value)
                 ? value
@@ -1629,11 +1677,24 @@ namespace MMMapEditor
 
         private static bool IsPendingPartyMemberScanBackEdge(RegisterTracker registerTracker)
         {
+            return TryGetPartyMemberScanCounterRegister(registerTracker, out _);
+        }
+
+        private static bool TryGetPartyMemberScanCounterRegister(RegisterTracker registerTracker, out string counterRegister)
+        {
+            counterRegister = registerTracker?.LastFlagsRegister?.ToUpperInvariant();
             return registerTracker != null &&
                    registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareMemory &&
-                   string.Equals(registerTracker.LastFlagsRegister, "BL", StringComparison.OrdinalIgnoreCase) &&
+                   TryGetHighByteRegisterForLowByteRegister(counterRegister, out _) &&
                    registerTracker.LastComparedMemoryAddress == PARTY_COUNT_ADDRESS &&
                    registerTracker.LastFlagsInstructionAddress.HasValue;
+        }
+
+        private static bool IsByteRegisterName(string registerName)
+        {
+            string reg = registerName?.ToUpperInvariant();
+            return reg == "AL" || reg == "CL" || reg == "DL" || reg == "BL" ||
+                   reg == "AH" || reg == "CH" || reg == "DH" || reg == "BH";
         }
 
         private PartyEffectScope ResolveDirectPartyEffectScope(
@@ -4101,11 +4162,11 @@ namespace MMMapEditor
             if (callTarget == 0x5101)
             {
                 registerTracker.InvalidateRegister("AX");
-                registerTracker.SetRegisterRange("AL", 0x1B, 0x35, RegisterValueDistribution.Unknown);
-                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.Random);
+                registerTracker.SetRegisterRange("AL", KEYBOARD_INPUT_MIN, KEYBOARD_INPUT_MAX, RegisterValueDistribution.Unknown);
+                registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.UserInput);
 
                 if (debugMode)
-                    AnalysisDebug.WriteLine("        Распознана SUB_5101: AL получает код клавиши в диапазоне ESC..'5'");
+                    AnalysisDebug.WriteLine("        Распознана SUB_5101: AL получает пользовательский код клавиши");
 
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
             }
@@ -4232,6 +4293,7 @@ namespace MMMapEditor
                             PathNumber = result.AlternativePaths.Count + 1,
                             CompareValue = altPath.CompareValue,
                             CompareRegister = altPath.CompareRegister,
+                            CompareMemoryAddress = altPath.CompareMemoryAddress,
                             IsInputChoiceBranch = altPath.IsInputChoiceBranch,
                             RegisterState = altPath.RegisterState?.Clone(),
                             ProbabilityNumerator = altPath.ProbabilityNumerator,
@@ -4746,7 +4808,8 @@ namespace MMMapEditor
                     TrackStateValueConstraintForCurrentFlags(registerTracker, insn.Mnemonic, branchTaken.Value, result);
                     uint resolvedTarget = branchTaken.Value ? condJumpTarget : nextAddress;
 
-                    if (condJumpTarget < currentAddress && branchTaken.Value)
+                    bool isResolvedLoopBackEdge = IsStructuralLoopBackEdge(br, condJumpTarget, currentAddress);
+                    if (isResolvedLoopBackEdge && branchTaken.Value)
                     {
                         if (TryAdvanceFiniteBattleCounterLoop(registerTracker, result, currentAddress, condJumpTarget,
                             visitedInThisPath, finiteLoopProgressByJumpAddress, debugMode))
@@ -4832,7 +4895,23 @@ namespace MMMapEditor
                     return collapsedPartyScanResult;
                 }
 
-                if (condJumpTarget < currentAddress)
+                if (TryCollapseCountedShiftLoopBranch(
+                    insn, br, condJumpTarget, nextAddress, fileLength, debugMode, result,
+                    currentAddress, registerTracker, targetX, targetY, pendingReturnAddresses, callDepth,
+                    visitedInThisPath, out var collapsedShiftLoopResult))
+                {
+                    return collapsedShiftLoopResult;
+                }
+
+                if (TryHandlePartyMemberScanBackEdge(
+                    insn, condJumpTarget, nextAddress, debugMode, processedBackEdges, result,
+                    currentAddress, registerTracker, pendingReturnAddresses, callDepth,
+                    out var partyScanBackEdgeResult))
+                {
+                    return partyScanBackEdgeResult;
+                }
+
+                if (IsStructuralLoopBackEdge(br, condJumpTarget, currentAddress))
                 {
                     if (IsInputRetryBackEdge(registerTracker, condJumpTarget, currentAddress, visitedInThisPath, result))
                     {
@@ -4981,6 +5060,7 @@ namespace MMMapEditor
                             (uint)insn.Address, nextAddress, condJumpTarget),
                         CompareRegister = registerTracker.LastFlagsRegister,
                         CompareValue = registerTracker.LastCompareImmediate,
+                        CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
                         IsInputChoiceBranch = isInputChoiceBranch,
                         ProbabilityNumerator = takenProbability.numerator,
                         ProbabilityDenominator = takenProbability.denominator,
@@ -5020,6 +5100,7 @@ namespace MMMapEditor
                             (uint)insn.Address, nextAddress, condJumpTarget),
                         CompareRegister = registerTracker.LastFlagsRegister,
                         CompareValue = registerTracker.LastCompareImmediate,
+                        CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
                         IsInputChoiceBranch = isInputChoiceBranch,
                         ProbabilityNumerator = notTakenProbability.numerator,
                         ProbabilityDenominator = notTakenProbability.denominator,
@@ -5063,6 +5144,66 @@ namespace MMMapEditor
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+        }
+
+        private bool TryHandlePartyMemberScanBackEdge(
+            X86Instruction insn,
+            uint condJumpTarget,
+            uint nextAddress,
+            bool debugMode,
+            HashSet<(uint From, uint To)> processedBackEdges,
+            PathAnalysisResult result,
+            uint currentAddress,
+            RegisterTracker registerTracker,
+            List<uint> pendingReturnAddresses,
+            int callDepth,
+            out ControlFlowResult controlFlowResult)
+        {
+            controlFlowResult = null;
+
+            if (insn == null ||
+                condJumpTarget >= currentAddress ||
+                processedBackEdges == null ||
+                !IsCarrySetJump(insn.Mnemonic) ||
+                !TryGetPartyMemberScanCounterRegister(registerTracker, out string counterRegister))
+            {
+                return false;
+            }
+
+            MarkPartyMemberScanLoop(result, condJumpTarget, debugMode, currentAddress);
+
+            var backEdge = (From: currentAddress, To: condJumpTarget);
+            if (processedBackEdges.Add(backEdge))
+            {
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine(
+                        $"      Первый party-scan back-edge по {counterRegister}: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, разрешаем одну развилку");
+                }
+
+                return false;
+            }
+
+            ApplyInlineBranchProbability(result, insn.Mnemonic, registerTracker, branchTaken: false, debugMode);
+            ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
+                (uint)insn.Address, debugMode);
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Повторный party-scan back-edge по {counterRegister}: 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}, продолжаем после обхода партии");
+            }
+
+            controlFlowResult = new ControlFlowResult
+            {
+                ShouldReturn = false,
+                NextAddress = nextAddress,
+                UpdatedPendingReturnAddresses = pendingReturnAddresses == null
+                    ? new List<uint>()
+                    : new List<uint>(pendingReturnAddresses),
+                UpdatedCallDepth = callDepth
+            };
+            return true;
         }
 
         private bool IsRepeatedInputValidationFailureBranch(X86Instruction insn, BinaryReader br, long fileLength,
@@ -5393,7 +5534,110 @@ namespace MMMapEditor
                 return false;
             }
 
-            return alInputRange.Min == 0x1B && alInputRange.Max == 0x35;
+            bool isUserInput =
+                registerTracker.TryGetPendingExternalCallResultKind("AL", out var externalKind) &&
+                externalKind == RegisterTracker.ExternalCallResultKind.UserInput;
+
+            return isUserInput || IsKeyboardInputPlaceholderRange(alInputRange);
+        }
+
+        private bool IsStructuralLoopBackEdge(BinaryReader br, uint targetAddress, uint currentAddress)
+        {
+            if (targetAddress >= currentAddress ||
+                br?.BaseStream == null ||
+                !br.BaseStream.CanSeek)
+            {
+                return false;
+            }
+
+            return CanFlowLinearlyToAddress(br, targetAddress, currentAddress);
+        }
+
+        private bool CanFlowLinearlyToAddress(BinaryReader br, uint startAddress, uint targetAddress)
+        {
+            const int maxInstructions = 256;
+
+            if (startAddress > targetAddress)
+                return false;
+
+            uint cursor = startAddress;
+            var seen = new HashSet<uint>();
+
+            for (int i = 0; i < maxInstructions; i++)
+            {
+                if (cursor == targetAddress)
+                    return true;
+
+                if (cursor > targetAddress || !seen.Add(cursor))
+                    return false;
+
+                if (!TryDisassembleNext(br, cursor, out X86Instruction instruction) ||
+                    instruction?.Bytes == null ||
+                    instruction.Bytes.Length == 0 ||
+                    (uint)instruction.Address != cursor)
+                {
+                    return false;
+                }
+
+                uint nextAddress = (uint)(instruction.Address + instruction.Bytes.Length);
+                if (nextAddress <= cursor)
+                    return false;
+
+                if (IsStructuralFlowTerminator(instruction))
+                    return false;
+
+                if (IsUnconditionalJump(instruction))
+                {
+                    if (!HasDirectImmediateJumpEncoding(instruction) ||
+                        !TryGetDirectUnconditionalJumpTarget(instruction, out uint jumpTarget))
+                    {
+                        return false;
+                    }
+
+                    if (jumpTarget == targetAddress)
+                        return true;
+
+                    if (jumpTarget <= cursor || jumpTarget > targetAddress)
+                        return false;
+
+                    cursor = jumpTarget;
+                    continue;
+                }
+
+                cursor = nextAddress;
+            }
+
+            return false;
+        }
+
+        private static bool IsUnconditionalJump(X86Instruction instruction)
+        {
+            string mnemonic = instruction?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            return mnemonic == "JMP" ||
+                   mnemonic == "JMPF" ||
+                   mnemonic == "JMPL" ||
+                   mnemonic == "JMPE" ||
+                   mnemonic == "JMPI";
+        }
+
+        private static bool HasDirectImmediateJumpEncoding(X86Instruction instruction)
+        {
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length == 0)
+                return false;
+
+            return bytes[0] == 0xE9 ||
+                   bytes[0] == 0xEA ||
+                   bytes[0] == 0xEB;
+        }
+
+        private static bool IsStructuralFlowTerminator(X86Instruction instruction)
+        {
+            string mnemonic = instruction?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            return mnemonic == "RET" ||
+                   mnemonic == "RETF" ||
+                   mnemonic == "IRET" ||
+                   mnemonic == "HLT";
         }
 
         private bool IsInputRetryBackEdge(
@@ -5454,6 +5698,7 @@ namespace MMMapEditor
                 Condition = branchTaken ? mnemonic : $"LINEAR after {mnemonic}",
                 CompareRegister = registerTracker.LastFlagsRegister,
                 CompareValue = registerTracker.LastCompareImmediate,
+                CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
                 IsLinear = !branchTaken
             };
 
@@ -5687,11 +5932,8 @@ namespace MMMapEditor
             if (registerTracker == null)
                 return false;
 
-            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
-                return false;
-
             reg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
-            if (string.IsNullOrWhiteSpace(reg) || !registerTracker.LastCompareImmediate.HasValue)
+            if (string.IsNullOrWhiteSpace(reg))
                 return false;
 
             if (registerTracker.TryGetRegisterRange(reg, out var range) && range != null)
@@ -5710,8 +5952,51 @@ namespace MMMapEditor
                 return false;
             }
 
-            int imm = registerTracker.LastCompareImmediate.Value;
+            int originalMin = min;
+            int originalMax = max;
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+
+            if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.Test &&
+                registerTracker.LastTestMask == 0xFF)
+            {
+                bool isZeroBranch = jump switch
+                {
+                    "JE" or "JZ" => branchTaken,
+                    "JNE" or "JNZ" => !branchTaken,
+                    _ => false
+                };
+
+                bool isNonZeroBranch = jump switch
+                {
+                    "JE" or "JZ" => !branchTaken,
+                    "JNE" or "JNZ" => branchTaken,
+                    _ => false
+                };
+
+                if (!isZeroBranch && !isNonZeroBranch)
+                    return false;
+
+                if (isZeroBranch)
+                {
+                    min = max = 0;
+                }
+                else
+                {
+                    min = Math.Max(min, 1);
+                }
+
+                min = Math.Max(min, originalMin);
+                max = Math.Min(max, originalMax);
+                return min <= max;
+            }
+
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
+                !registerTracker.LastCompareImmediate.HasValue)
+            {
+                return false;
+            }
+
+            int imm = registerTracker.LastCompareImmediate.Value;
 
             if (branchTaken)
             {
@@ -5800,6 +6085,8 @@ namespace MMMapEditor
 
             if (min < 0) min = 0;
             if (max > 0xFF) max = 0xFF;
+            min = Math.Max(min, originalMin);
+            max = Math.Min(max, originalMax);
             return min <= max;
         }
 
@@ -6057,6 +6344,142 @@ namespace MMMapEditor
             return false;
         }
 
+        private void ApplyShiftRotateMemory8Operation(
+            ushort memAddr,
+            string eaText,
+            byte operation,
+            X86Instruction insn,
+            BinaryReader br,
+            RegisterTracker registerTracker,
+            PathAnalysisResult result,
+            byte targetX,
+            byte targetY,
+            bool debugMode)
+        {
+            if (!IsSupportedShiftRotateByteOperation(operation))
+                return;
+
+            var inputValues = new List<byte>();
+            if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte exactValue))
+            {
+                inputValues.Add(exactValue);
+            }
+            else if (TryGetEmulatedMemory8Range(memAddr, out var range, out _))
+            {
+                if (range == null || range.Max < range.Min)
+                    return;
+
+                for (int value = range.Min; value <= range.Max; value++)
+                    inputValues.Add((byte)value);
+            }
+            else
+            {
+                return;
+            }
+
+            bool needsCarryIn = operation == 0x02 || operation == 0x03;
+            var carryInputs = needsCarryIn && !registerTracker.FlagsKnown
+                ? new[] { false, true }
+                : new[] { registerTracker.FlagsKnown && registerTracker.CarryFlag };
+
+            var outputValues = new HashSet<byte>();
+            bool carryOutputKnown = true;
+            bool? carryOutput = null;
+
+            foreach (byte inputValue in inputValues)
+            {
+                foreach (bool carryInput in carryInputs)
+                {
+                    byte outputValue = TransformShiftRotateByte(inputValue, operation, carryInput, out bool nextCarry);
+                    outputValues.Add(outputValue);
+                    if (!carryOutput.HasValue)
+                        carryOutput = nextCarry;
+                    else if (carryOutput.Value != nextCarry)
+                        carryOutputKnown = false;
+                }
+            }
+
+            if (outputValues.Count == 0)
+                return;
+
+            byte minValue = outputValues.Min();
+            byte maxValue = outputValues.Max();
+            string sourceDescription = $"{GetShiftRotateOperationName(operation)} byte ptr {eaText}, 1";
+
+            if (minValue == maxValue)
+            {
+                ApplyTrackedByteWrite(memAddr, minValue, result, targetX, targetY, insn, debugMode, sourceDescription);
+            }
+            else
+            {
+                ApplyTrackedByteRangeWrite(memAddr, new ValueRange8(minValue, maxValue), RegisterValueDistribution.Unknown,
+                    result, targetX, targetY, insn, debugMode, sourceDescription);
+            }
+
+            if (carryOutputKnown && carryOutput.HasValue)
+            {
+                registerTracker.CarryFlag = carryOutput.Value;
+                registerTracker.FlagsKnown = true;
+                registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Arithmetic, (uint)insn.Address);
+            }
+            else
+            {
+                registerTracker.FlagsKnown = false;
+                registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Arithmetic, (uint)insn.Address);
+            }
+        }
+
+        private static bool IsSupportedShiftRotateByteOperation(byte operation)
+        {
+            return operation == 0x02 || operation == 0x03 || operation == 0x04 || operation == 0x05;
+        }
+
+        private static string GetShiftRotateOperationName(byte operation)
+        {
+            return operation switch
+            {
+                0x02 => "RCL",
+                0x03 => "RCR",
+                0x04 => "SHL",
+                0x05 => "SHR",
+                _ => "SHIFT"
+            };
+        }
+
+        private static ShiftLoopOperationKind MapShiftRotateOperationKind(byte operation)
+        {
+            return operation switch
+            {
+                0x02 => ShiftLoopOperationKind.Rcl,
+                0x03 => ShiftLoopOperationKind.Rcr,
+                0x04 => ShiftLoopOperationKind.Shl,
+                0x05 => ShiftLoopOperationKind.Shr,
+                _ => ShiftLoopOperationKind.Shl
+            };
+        }
+
+        private static byte TransformShiftRotateByte(byte value, byte operation, bool carryIn, out bool carryOut)
+        {
+            switch (operation)
+            {
+                case 0x02: // RCL r/m8,1
+                    carryOut = (value & 0x80) != 0;
+                    return (byte)((value << 1) | (carryIn ? 1 : 0));
+                case 0x03: // RCR r/m8,1
+                    carryOut = (value & 0x01) != 0;
+                    return (byte)((value >> 1) | (carryIn ? 0x80 : 0x00));
+                case 0x04: // SHL/SAL r/m8,1
+                    carryOut = (value & 0x80) != 0;
+                    return (byte)(value << 1);
+                case 0x05: // SHR r/m8,1
+                    carryOut = (value & 0x01) != 0;
+                    return (byte)(value >> 1);
+                default:
+                    carryOut = false;
+                    return value;
+            }
+        }
+
         private RegisterValueDistribution GetShiftedRangeDistribution(RegisterValueDistribution distribution, byte operation)
         {
             return operation switch
@@ -6083,7 +6506,8 @@ namespace MMMapEditor
             if (registerTracker == null)
                 return (1, 1);
 
-            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate)
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.Test)
                 return (1, 1);
 
             string compareRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
@@ -6093,23 +6517,63 @@ namespace MMMapEditor
             if (!registerTracker.TryGetRegisterRange(compareRegister, out var range) || range == null)
                 return (1, 1);
 
-            if (!registerTracker.TryGetRegisterDistribution(compareRegister, out var distribution) ||
-                distribution != RegisterValueDistribution.UniformDiscreteRange)
-                return (1, 1);
-
-            if (!registerTracker.LastCompareImmediate.HasValue)
-                return (1, 1);
-
-            byte imm = registerTracker.LastCompareImmediate.Value;
             int total = range.Max - range.Min + 1;
             if (total <= 0)
                 return (1, 1);
 
-            int favorable = CountFavorableValues((mnemonic ?? string.Empty).ToUpperInvariant(), range, imm, branchTaken);
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            int favorable;
+            if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate)
+            {
+                if (!registerTracker.LastCompareImmediate.HasValue)
+                    return (1, 1);
+
+                favorable = CountFavorableValues(jump, range, registerTracker.LastCompareImmediate.Value, branchTaken);
+            }
+            else if (registerTracker.LastTestMask == 0xFF)
+            {
+                favorable = CountFavorableTestZeroValues(jump, range, branchTaken);
+            }
+            else
+            {
+                return (1, 1);
+            }
+
             if (favorable < 0 || favorable > total)
                 return (1, 1);
 
+            if (favorable == 0)
+                return (0, 1);
+
+            if (favorable == total)
+                return (1, 1);
+
+            if (!registerTracker.TryGetRegisterDistribution(compareRegister, out var distribution) ||
+                distribution != RegisterValueDistribution.UniformDiscreteRange)
+            {
+                return (1, 1);
+            }
+
             return (favorable, total);
+        }
+
+        private int CountFavorableTestZeroValues(string mnemonic, ValueRange8 range, bool branchTaken)
+        {
+            int count = 0;
+            for (int value = range.Min; value <= range.Max; value++)
+            {
+                bool taken = mnemonic switch
+                {
+                    "JE" or "JZ" => value == 0,
+                    "JNE" or "JNZ" => value != 0,
+                    _ => false
+                };
+
+                if (taken == branchTaken)
+                    count++;
+            }
+
+            return count;
         }
 
         private int CountFavorableValues(string mnemonic, ValueRange8 range, byte imm, bool branchTaken)
@@ -6250,7 +6714,7 @@ namespace MMMapEditor
 
         private static bool IsKeyboardInputPlaceholderRange(ValueRange8 range)
         {
-            return range != null && range.Min == 0x1B && range.Max == 0x35;
+            return range != null && range.Min == KEYBOARD_INPUT_MIN && range.Max == KEYBOARD_INPUT_MAX;
         }
 
         private static bool TryEvaluateUnsignedCompareImmediateJump(string jump, byte value, byte imm, out bool branchTaken)
@@ -6675,6 +7139,557 @@ namespace MMMapEditor
             }
         }
 
+        private bool TryCollapseCountedShiftLoopBranch(
+            X86Instruction branchInsn,
+            BinaryReader br,
+            uint condJumpTarget,
+            uint nextAddress,
+            long fileLength,
+            bool debugMode,
+            PathAnalysisResult result,
+            uint currentAddress,
+            RegisterTracker registerTracker,
+            byte targetX,
+            byte targetY,
+            List<uint> pendingReturnAddresses,
+            int callDepth,
+            HashSet<uint> visitedInThisPath,
+            out ControlFlowResult controlFlowResult)
+        {
+            controlFlowResult = null;
+
+            string jump = branchInsn?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            if (br?.BaseStream == null ||
+                registerTracker == null ||
+                result == null ||
+                (jump != "JNE" && jump != "JNZ") ||
+                !IsStructuralLoopBackEdge(br, condJumpTarget, currentAddress) ||
+                condJumpTarget >= fileLength)
+            {
+                return false;
+            }
+
+            if (!TryCollectCountedShiftLoopBody(br, condJumpTarget, currentAddress, registerTracker,
+                    out var operations, out string counterRegister, out uint decAddress) ||
+                operations.Count == 0)
+            {
+                return false;
+            }
+
+            if (!TryGetByteRegisterValueRange(registerTracker, counterRegister, out int remainingMin, out int remainingMax) ||
+                remainingMin < 0 ||
+                remainingMax < remainingMin ||
+                remainingMax > 32)
+            {
+                return false;
+            }
+
+            if (!TrySimulateShiftLoopRemainder(operations, registerTracker, remainingMin, remainingMax,
+                    out var registerOutputs, out var memoryOutputs))
+            {
+                return false;
+            }
+
+            foreach (var kvp in registerOutputs)
+            {
+                string regName = kvp.Key;
+                byte minValue = kvp.Value.Min;
+                byte maxValue = kvp.Value.Max;
+                string fullReg = GetFullRegisterNameForByteRegister(regName);
+                if (string.IsNullOrWhiteSpace(fullReg))
+                    continue;
+
+                if (minValue == maxValue)
+                {
+                    registerTracker.TrackPartialRegisterOperation(
+                        fullReg,
+                        regName,
+                        minValue,
+                        currentAddress,
+                        $"collapsed counted shift loop {regName}");
+                }
+                else
+                {
+                    registerTracker.SetRegisterRange(regName, minValue, maxValue, RegisterValueDistribution.Unknown);
+                }
+            }
+
+            foreach (var kvp in memoryOutputs)
+            {
+                ushort memAddr = kvp.Key;
+                byte minValue = kvp.Value.Min;
+                byte maxValue = kvp.Value.Max;
+                if (minValue == maxValue)
+                {
+                    ApplyTrackedByteWrite(memAddr, minValue, result, targetX, targetY, branchInsn, debugMode,
+                        "схлопнутый counted shift loop");
+                }
+                else
+                {
+                    ApplyTrackedByteRangeWrite(memAddr, new ValueRange8(minValue, maxValue), RegisterValueDistribution.Unknown,
+                        result, targetX, targetY, branchInsn, debugMode, "схлопнутый counted shift loop");
+                }
+            }
+
+            string counterFullReg = GetFullRegisterNameForByteRegister(counterRegister);
+            if (!string.IsNullOrWhiteSpace(counterFullReg))
+            {
+                registerTracker.TrackPartialRegisterOperation(
+                    counterFullReg,
+                    counterRegister,
+                    0,
+                    currentAddress,
+                    $"collapsed counted shift loop {counterRegister}=0");
+            }
+
+            registerTracker.ZeroFlag = true;
+            registerTracker.CarryFlag = false;
+            registerTracker.FlagsKnown = true;
+            registerTracker.SetFlagsMetadata(counterRegister, RegisterTracker.FlagsOriginKind.Arithmetic, currentAddress);
+
+            foreach (var visitedAddress in visitedInThisPath
+                .Where(address => address >= condJumpTarget && address <= currentAddress)
+                .ToList())
+            {
+                visitedInThisPath.Remove(visitedAddress);
+            }
+
+            result.IsInLoop = true;
+            if (result.LoopStartAddress == 0 || condJumpTarget < result.LoopStartAddress)
+                result.LoopStartAddress = condJumpTarget;
+            if (currentAddress > result.LoopEndAddress)
+                result.LoopEndAddress = currentAddress;
+            result.LoopIterationCount = Math.Max(result.LoopIterationCount, remainingMax + 1);
+            result.LoopIteration = Math.Max(result.LoopIteration, remainingMax + 1);
+            result.IsIndeterminateLoop = false;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Схлопнут counted shift loop 0x{condJumpTarget:X4}..0x{currentAddress:X4}: " +
+                    $"{counterRegister}=0x{remainingMin:X2}..0x{remainingMax:X2} после DEC, выход 0x{nextAddress:X4}");
+            }
+
+            controlFlowResult = new ControlFlowResult
+            {
+                ShouldReturn = false,
+                NextAddress = nextAddress,
+                UpdatedPendingReturnAddresses = pendingReturnAddresses == null
+                    ? new List<uint>()
+                    : new List<uint>(pendingReturnAddresses),
+                UpdatedCallDepth = callDepth
+            };
+            return true;
+        }
+
+        private bool TryCollectCountedShiftLoopBody(
+            BinaryReader br,
+            uint loopStartAddress,
+            uint branchAddress,
+            RegisterTracker registerTracker,
+            out List<ShiftLoopOperation> operations,
+            out string counterRegister,
+            out uint decAddress)
+        {
+            operations = new List<ShiftLoopOperation>();
+            counterRegister = null;
+            decAddress = 0;
+
+            uint address = loopStartAddress;
+            while (address < branchAddress)
+            {
+                if (!TryDisassembleNext(br, address, out X86Instruction instruction) ||
+                    instruction?.Bytes == null ||
+                    instruction.Bytes.Length == 0)
+                {
+                    return false;
+                }
+
+                uint next = (uint)(instruction.Address + instruction.Bytes.Length);
+                if (next <= address || next > branchAddress)
+                    return false;
+
+                if (next == branchAddress)
+                {
+                    if (!TryDecodeDecReg8(instruction, out counterRegister))
+                        return false;
+
+                    decAddress = (uint)instruction.Address;
+                    return operations.Any(op => op.Kind != ShiftLoopOperationKind.SetCarry);
+                }
+
+                if (TryDecodeCarrySeedOperation(instruction, out bool carryValue))
+                {
+                    operations.Add(new ShiftLoopOperation
+                    {
+                        Kind = ShiftLoopOperationKind.SetCarry,
+                        CarryValue = carryValue
+                    });
+                }
+                else if (TryDecodeShiftRotateByteByOne(instruction, registerTracker, out var operation))
+                {
+                    operations.Add(operation);
+                }
+                else
+                {
+                    return false;
+                }
+
+                address = next;
+            }
+
+            return false;
+        }
+
+        private static bool TryDecodeCarrySeedOperation(X86Instruction instruction, out bool carryValue)
+        {
+            carryValue = false;
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length != 1)
+                return false;
+
+            if (bytes[0] == 0xF8)
+            {
+                carryValue = false;
+                return true;
+            }
+
+            if (bytes[0] == 0xF9)
+            {
+                carryValue = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryDecodeShiftRotateByteByOne(
+            X86Instruction instruction,
+            RegisterTracker registerTracker,
+            out ShiftLoopOperation operation)
+        {
+            operation = null;
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 2 || bytes[0] != 0xD0)
+                return false;
+
+            byte modRm = bytes[1];
+            byte mode = (byte)((modRm >> 6) & 0x03);
+            byte groupOperation = (byte)((modRm >> 3) & 0x07);
+            byte rm = (byte)(modRm & 0x07);
+            if (!IsSupportedShiftRotateByteOperation(groupOperation))
+                return false;
+
+            operation = new ShiftLoopOperation
+            {
+                Kind = MapShiftRotateOperationKind(groupOperation)
+            };
+
+            if (mode == 0x03)
+            {
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+                if (rm >= regNames8.Length)
+                    return false;
+
+                operation.TargetKind = ShiftLoopTargetKind.Register;
+                operation.RegisterName = regNames8[rm];
+                return true;
+            }
+
+            if (!TryDecode16BitEffectiveAddress(bytes, registerTracker, out ushort memAddr, out _, out _))
+                return false;
+
+            operation.TargetKind = ShiftLoopTargetKind.Memory;
+            operation.MemoryAddress = memAddr;
+            return true;
+        }
+
+        private static bool TryDecodeDecReg8(X86Instruction instruction, out string registerName)
+        {
+            registerName = null;
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 2 || bytes[0] != 0xFE)
+                return false;
+
+            byte modRm = bytes[1];
+            byte mode = (byte)((modRm >> 6) & 0x03);
+            byte operation = (byte)((modRm >> 3) & 0x07);
+            byte rm = (byte)(modRm & 0x07);
+            string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+            if (mode != 0x03 || operation != 0x01 || rm >= regNames8.Length)
+                return false;
+
+            registerName = regNames8[rm];
+            return true;
+        }
+
+        private static bool TryGetByteRegisterValueRange(RegisterTracker registerTracker, string registerName,
+            out int min, out int max)
+        {
+            min = 0;
+            max = 0;
+            if (registerTracker == null || string.IsNullOrWhiteSpace(registerName))
+                return false;
+
+            if (registerTracker.TryGetByteRegisterValue(registerName, out byte exactValue))
+            {
+                min = max = exactValue;
+                return true;
+            }
+
+            if (registerTracker.TryGetRegisterRange(registerName, out var range) && range != null)
+            {
+                min = range.Min;
+                max = range.Max;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TrySimulateShiftLoopRemainder(
+            List<ShiftLoopOperation> operations,
+            RegisterTracker registerTracker,
+            int remainingMin,
+            int remainingMax,
+            out Dictionary<string, ValueRange8> registerOutputs,
+            out Dictionary<ushort, ValueRange8> memoryOutputs)
+        {
+            registerOutputs = new Dictionary<string, ValueRange8>(StringComparer.OrdinalIgnoreCase);
+            memoryOutputs = new Dictionary<ushort, ValueRange8>();
+
+            if (!TryCreateInitialShiftLoopStates(operations, registerTracker, out var initialStates))
+                return false;
+
+            var registerValues = new Dictionary<string, List<byte>>(StringComparer.OrdinalIgnoreCase);
+            var memoryValues = new Dictionary<ushort, List<byte>>();
+
+            for (int remaining = remainingMin; remaining <= remainingMax; remaining++)
+            {
+                foreach (var initialState in initialStates)
+                {
+                    var states = new List<ShiftLoopSimulationState> { initialState.Clone() };
+                    for (int iteration = 0; iteration < remaining; iteration++)
+                    {
+                        foreach (var operation in operations)
+                        {
+                            states = ApplyShiftLoopOperation(states, operation);
+                            if (states.Count == 0 || states.Count > 4096)
+                                return false;
+                        }
+                    }
+
+                    foreach (var state in states)
+                    {
+                        foreach (var key in state.Registers.Keys.ToList())
+                        {
+                            if (!registerValues.TryGetValue(key, out var values))
+                            {
+                                values = new List<byte>();
+                                registerValues[key] = values;
+                            }
+                            values.Add(state.Registers[key]);
+                        }
+
+                        foreach (var key in state.Memory.Keys.ToList())
+                        {
+                            if (!memoryValues.TryGetValue(key, out var values))
+                            {
+                                values = new List<byte>();
+                                memoryValues[key] = values;
+                            }
+                            values.Add(state.Memory[key]);
+                        }
+                    }
+                }
+            }
+
+            foreach (var kvp in registerValues)
+                registerOutputs[kvp.Key] = new ValueRange8(kvp.Value.Min(), kvp.Value.Max());
+
+            foreach (var kvp in memoryValues)
+                memoryOutputs[kvp.Key] = new ValueRange8(kvp.Value.Min(), kvp.Value.Max());
+
+            return registerOutputs.Count > 0 || memoryOutputs.Count > 0;
+        }
+
+        private bool TryCreateInitialShiftLoopStates(
+            List<ShiftLoopOperation> operations,
+            RegisterTracker registerTracker,
+            out List<ShiftLoopSimulationState> states)
+        {
+            states = new List<ShiftLoopSimulationState>
+            {
+                new ShiftLoopSimulationState
+                {
+                    CarryKnown = registerTracker.FlagsKnown,
+                    Carry = registerTracker.FlagsKnown && registerTracker.CarryFlag
+                }
+            };
+
+            foreach (var operation in operations)
+            {
+                if (operation.Kind == ShiftLoopOperationKind.SetCarry)
+                    continue;
+
+                if (operation.TargetKind == ShiftLoopTargetKind.Register)
+                {
+                    if (states.All(state => state.Registers.ContainsKey(operation.RegisterName)))
+                        continue;
+
+                    if (!TryGetShiftLoopRegisterValues(registerTracker, operation.RegisterName, out var values))
+                        return false;
+
+                    states = ExpandShiftLoopStates(states, operation.RegisterName, values);
+                }
+                else
+                {
+                    if (states.All(state => state.Memory.ContainsKey(operation.MemoryAddress)))
+                        continue;
+
+                    if (!TryGetShiftLoopMemoryValues(operation.MemoryAddress, out var values))
+                        return false;
+
+                    states = ExpandShiftLoopStates(states, operation.MemoryAddress, values);
+                }
+
+                if (states.Count == 0 || states.Count > 4096)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private bool TryGetShiftLoopRegisterValues(RegisterTracker registerTracker, string registerName, out List<byte> values)
+        {
+            values = new List<byte>();
+            if (registerTracker.TryGetByteRegisterValue(registerName, out byte exactValue))
+            {
+                values.Add(exactValue);
+                return true;
+            }
+
+            if (registerTracker.TryGetRegisterRange(registerName, out var range) && range != null)
+            {
+                for (int value = range.Min; value <= range.Max; value++)
+                    values.Add((byte)value);
+                return values.Count > 0;
+            }
+
+            return false;
+        }
+
+        private bool TryGetShiftLoopMemoryValues(ushort memoryAddress, out List<byte> values)
+        {
+            values = new List<byte>();
+            if (_emulatedMemory8.TryGetValue(memoryAddress, out byte exactValue))
+            {
+                values.Add(exactValue);
+                return true;
+            }
+
+            if (TryGetEmulatedMemory8Range(memoryAddress, out var range, out _) && range != null)
+            {
+                for (int value = range.Min; value <= range.Max; value++)
+                    values.Add((byte)value);
+                return values.Count > 0;
+            }
+
+            return false;
+        }
+
+        private static List<ShiftLoopSimulationState> ExpandShiftLoopStates(
+            List<ShiftLoopSimulationState> states,
+            string registerName,
+            List<byte> values)
+        {
+            var expanded = new List<ShiftLoopSimulationState>();
+            foreach (var state in states)
+            {
+                foreach (byte value in values)
+                {
+                    var clone = state.Clone();
+                    clone.Registers[registerName] = value;
+                    expanded.Add(clone);
+                }
+            }
+
+            return expanded;
+        }
+
+        private static List<ShiftLoopSimulationState> ExpandShiftLoopStates(
+            List<ShiftLoopSimulationState> states,
+            ushort memoryAddress,
+            List<byte> values)
+        {
+            var expanded = new List<ShiftLoopSimulationState>();
+            foreach (var state in states)
+            {
+                foreach (byte value in values)
+                {
+                    var clone = state.Clone();
+                    clone.Memory[memoryAddress] = value;
+                    expanded.Add(clone);
+                }
+            }
+
+            return expanded;
+        }
+
+        private static List<ShiftLoopSimulationState> ApplyShiftLoopOperation(
+            List<ShiftLoopSimulationState> states,
+            ShiftLoopOperation operation)
+        {
+            var result = new List<ShiftLoopSimulationState>();
+            foreach (var state in states)
+            {
+                if (operation.Kind == ShiftLoopOperationKind.SetCarry)
+                {
+                    var clone = state.Clone();
+                    clone.CarryKnown = true;
+                    clone.Carry = operation.CarryValue;
+                    result.Add(clone);
+                    continue;
+                }
+
+                byte currentValue = operation.TargetKind == ShiftLoopTargetKind.Register
+                    ? state.Registers[operation.RegisterName]
+                    : state.Memory[operation.MemoryAddress];
+
+                var carryInputs = (operation.Kind == ShiftLoopOperationKind.Rcl ||
+                                   operation.Kind == ShiftLoopOperationKind.Rcr) &&
+                                  !state.CarryKnown
+                    ? new[] { false, true }
+                    : new[] { state.CarryKnown && state.Carry };
+
+                foreach (bool carryInput in carryInputs)
+                {
+                    var clone = state.Clone();
+                    byte operationCode = operation.Kind switch
+                    {
+                        ShiftLoopOperationKind.Rcl => (byte)0x02,
+                        ShiftLoopOperationKind.Rcr => (byte)0x03,
+                        ShiftLoopOperationKind.Shl => (byte)0x04,
+                        ShiftLoopOperationKind.Shr => (byte)0x05,
+                        _ => (byte)0x04
+                    };
+
+                    byte nextValue = TransformShiftRotateByte(currentValue, operationCode, carryInput, out bool carryOut);
+                    if (operation.TargetKind == ShiftLoopTargetKind.Register)
+                        clone.Registers[operation.RegisterName] = nextValue;
+                    else
+                        clone.Memory[operation.MemoryAddress] = nextValue;
+
+                    clone.CarryKnown = true;
+                    clone.Carry = carryOut;
+                    result.Add(clone);
+                }
+            }
+
+            return result;
+        }
+
         private bool TryCollapseFiniteBitCountLoopBranch(
             X86Instruction branchInsn,
             BinaryReader br,
@@ -7070,15 +8085,17 @@ namespace MMMapEditor
             }
 
             uint compareAddress = registerTracker.LastFlagsInstructionAddress.Value;
+            string counterRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
             if (!TryDisassembleNext(br, compareAddress, out X86Instruction compareInsn) ||
                 compareInsn == null ||
                 (uint)(compareInsn.Address + compareInsn.Bytes.Length) != currentAddress ||
-                !TryFindPartyScanCounterMemoryBeforeCompare(br, compareAddress, out ushort counterMemoryAddress))
+                string.IsNullOrWhiteSpace(counterRegister) ||
+                !TryFindPartyScanCounterMemoryBeforeCompare(br, compareAddress, counterRegister, out ushort counterMemoryAddress))
             {
                 return false;
             }
 
-            if (!registerTracker.TryGetByteRegisterValue("BL", out byte currentCounterValue) ||
+            if (!registerTracker.TryGetByteRegisterValue(counterRegister, out byte currentCounterValue) ||
                 currentCounterValue == 0 ||
                 currentCounterValue > PARTY_MEMBER_COUNT)
             {
@@ -7098,8 +8115,8 @@ namespace MMMapEditor
 
             byte finalCounterMin = currentCounterValue;
             byte finalCounterMax = PARTY_MEMBER_COUNT;
-            registerTracker.ClearConcreteByteRegisterValueKeepSemantic("BL");
-            registerTracker.SetRegisterRange("BL", finalCounterMin, finalCounterMax, RegisterValueDistribution.Unknown);
+            registerTracker.ClearConcreteByteRegisterValueKeepSemantic(counterRegister);
+            registerTracker.SetRegisterRange(counterRegister, finalCounterMin, finalCounterMax, RegisterValueDistribution.Unknown);
 
             byte finalStoredMin = (byte)Math.Max(0, currentCounterValue - 1);
             byte finalStoredMax = PARTY_MEMBER_COUNT - 1;
@@ -7119,7 +8136,7 @@ namespace MMMapEditor
             registerTracker.SignFlag = false;
             registerTracker.OverflowFlag = false;
             registerTracker.FlagsKnown = true;
-            registerTracker.SetFlagsMetadata("BL", RegisterTracker.FlagsOriginKind.CompareMemory, compareAddress);
+            registerTracker.SetFlagsMetadata(counterRegister, RegisterTracker.FlagsOriginKind.CompareMemory, compareAddress);
             registerTracker.LastCompareImmediate = null;
             registerTracker.LastComparedMemoryAddress = PARTY_COUNT_ADDRESS;
 
@@ -7143,7 +8160,7 @@ namespace MMMapEditor
             {
                 AnalysisDebug.WriteLine(
                     $"      Схлопнут party member scan loop 0x{loopBodyStartAddress:X4}..0x{currentAddress:X4}: " +
-                    $"BL=0x{currentCounterValue:X2}->0x{finalCounterMin:X2}..0x{finalCounterMax:X2}, " +
+                    $"{counterRegister}=0x{currentCounterValue:X2}->0x{finalCounterMin:X2}..0x{finalCounterMax:X2}, " +
                     $"[0x{counterMemoryAddress:X4}]=0x{finalStoredMin:X2}..0x{finalStoredMax:X2}, выход 0x{condJumpTarget:X4}");
             }
 
@@ -7159,16 +8176,19 @@ namespace MMMapEditor
             return true;
         }
 
-        private bool TryFindPartyScanCounterMemoryBeforeCompare(BinaryReader br, uint compareAddress, out ushort counterMemoryAddress)
+        private bool TryFindPartyScanCounterMemoryBeforeCompare(BinaryReader br, uint compareAddress,
+            string counterRegister, out ushort counterMemoryAddress)
         {
             counterMemoryAddress = 0;
-            if (compareAddress < 8)
+            if (compareAddress < 8 ||
+                string.IsNullOrWhiteSpace(counterRegister) ||
+                !TryGetHighByteRegisterForLowByteRegister(counterRegister, out string highRegister))
                 return false;
 
             uint loadAddress = compareAddress - 8;
             if (!TryDisassembleNext(br, loadAddress, out X86Instruction loadCounterInsn) ||
                 loadCounterInsn == null ||
-                !TryDecodeMovReg8FromMemoryDirect(loadCounterInsn, "BL", out counterMemoryAddress))
+                !TryDecodeMovReg8FromMemoryDirect(loadCounterInsn, counterRegister, out counterMemoryAddress))
             {
                 return false;
             }
@@ -7176,7 +8196,7 @@ namespace MMMapEditor
             uint zeroHighAddress = (uint)(loadCounterInsn.Address + loadCounterInsn.Bytes.Length);
             if (!TryDisassembleNext(br, zeroHighAddress, out X86Instruction zeroHighInsn) ||
                 zeroHighInsn == null ||
-                !TryDecodeMovReg8Immediate(zeroHighInsn, "BH", 0))
+                !TryDecodeMovReg8Immediate(zeroHighInsn, highRegister, 0))
             {
                 return false;
             }
@@ -7185,12 +8205,26 @@ namespace MMMapEditor
             if (!TryDisassembleNext(br, incrementAddress, out X86Instruction incrementInsn) ||
                 incrementInsn == null ||
                 !TryDecodeIncReg8(incrementInsn, out string incrementRegister) ||
-                !string.Equals(incrementRegister, "BL", StringComparison.OrdinalIgnoreCase))
+                !string.Equals(incrementRegister, counterRegister, StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
             return (uint)(incrementInsn.Address + incrementInsn.Bytes.Length) == compareAddress;
+        }
+
+        private static bool TryGetHighByteRegisterForLowByteRegister(string lowRegister, out string highRegister)
+        {
+            highRegister = lowRegister?.ToUpperInvariant() switch
+            {
+                "AL" => "AH",
+                "CL" => "CH",
+                "DL" => "DH",
+                "BL" => "BH",
+                _ => null
+            };
+
+            return highRegister != null;
         }
 
         private bool TryGetDirectUnconditionalJumpTarget(X86Instruction instruction, out uint target)
@@ -7844,6 +8878,7 @@ namespace MMMapEditor
                             RegisterState = splitTracker,
                             CompareRegister = registerTracker.LastFlagsRegister,
                             CompareValue = registerTracker.LastCompareImmediate,
+                            CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
                             IsInputChoiceBranch = false,
                             ProbabilityNumerator = 1,
                             ProbabilityDenominator = 1,
@@ -8979,6 +10014,21 @@ namespace MMMapEditor
                             AnalysisDebug.WriteLine($"        {mnemonicUpper} {regName}, 1: диапазон {oldRange.Min}-{oldRange.Max} -> {newMin}-{newMax}");
                     }
                 }
+                else if (mode != 0x03 &&
+                         TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    ApplyShiftRotateMemory8Operation(
+                        memAddr,
+                        string.IsNullOrWhiteSpace(eaText) ? $"[0x{memAddr:X4}]" : eaText,
+                        operation,
+                        insn,
+                        br,
+                        registerTracker,
+                        result,
+                        targetX,
+                        targetY,
+                        debugMode);
+                }
             }
 
             // Арифметические операции
@@ -9160,16 +10210,24 @@ namespace MMMapEditor
                         out memoryComparedField) &&
                     memoryComparedField != null;
 
+                bool comparesByteRegisterWithMemory =
+                    mod != 0x03 &&
+                    !string.IsNullOrWhiteSpace(compareRegName) &&
+                    IsByteRegisterName(compareRegName);
                 bool comparesBl =
-                    (instructionBytes[0] == 0x3A && reg == 0x03 && mod != 0x03) ||
-                    (instructionBytes[0] == 0x38 && rm == 0x03 && mod != 0x03);
+                    comparesByteRegisterWithMemory &&
+                    string.Equals(compareRegName, "BL", StringComparison.OrdinalIgnoreCase);
 
-                if (comparesBl &&
+                bool comparesLowByteRegisterWithMemory =
+                    comparesByteRegisterWithMemory &&
+                    TryGetHighByteRegisterForLowByteRegister(compareRegName, out _);
+
+                if (comparesLowByteRegisterWithMemory &&
                     hasExactMemAddress &&
                     memAddr == PARTY_COUNT_ADDRESS)
                 {
                     registerTracker.FlagsKnown = false;
-                    registerTracker.SetFlagsMetadata("BL", RegisterTracker.FlagsOriginKind.CompareMemory, address);
+                    registerTracker.SetFlagsMetadata(compareRegName, RegisterTracker.FlagsOriginKind.CompareMemory, address);
                     registerTracker.LastCompareImmediate = null;
                     registerTracker.LastComparedMemoryAddress = PARTY_COUNT_ADDRESS;
                     MarkPartyMemberScanLoop(result, address, debugMode);
@@ -10713,6 +11771,19 @@ namespace MMMapEditor
             {
                 RegisterMemoryRead(result, memAddr, _persistentEventStateAddresses.Contains(memAddr));
                 return true;
+            }
+
+            if (TryGetEmulatedMemory8Range(memAddr, out var range, out _))
+            {
+                RegisterMemoryRead(result, memAddr, _persistentEventStateAddresses.Contains(memAddr));
+                if (range.IsExact)
+                {
+                    value = range.Min;
+                    return true;
+                }
+
+                value = 0;
+                return false;
             }
 
             if (memAddr == 0x3C38)

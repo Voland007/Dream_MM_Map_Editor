@@ -156,6 +156,7 @@ namespace MMMapEditor
         public int PathNumber { get; set; }
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
+        public ushort? CompareMemoryAddress { get; set; }
         public bool IsInputChoiceBranch { get; set; }
         public RegisterTracker RegisterState { get; set; }
         public int ProbabilityNumerator { get; set; } = 1;

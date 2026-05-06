@@ -28,6 +28,7 @@ namespace MMMapEditor
     /// </summary>
     public class PathAnalyzer
     {
+        private const ushort PartyCountAddress = 0x3BC0;
         private const int MaxPathProcessingDepth = 24;
         private const int MaxPathVariantsPerSingleOccurrence = 3072;
 
@@ -145,6 +146,7 @@ namespace MMMapEditor
 
                 ApplyInlinePathProbability(pathResult, ref combinedProbabilityApplicable,
                     ref combinedProbabilityNumerator, ref combinedProbabilityDenominator);
+                NormalizeProbabilityForStorage(ref combinedProbabilityNumerator, ref combinedProbabilityDenominator);
 
                 var currentBranchChoices = CloneBranchChoices(inheritedBranchChoices);
                 var currentChoice = CreateBranchChoice(path);
@@ -245,6 +247,32 @@ namespace MMMapEditor
                 probabilityNumerator = (int)numerator;
                 probabilityDenominator = (int)denominator;
             }
+        }
+
+        private void NormalizeProbabilityForStorage(ref int numerator, ref int denominator)
+        {
+            numerator = Math.Max(0, numerator);
+            denominator = Math.Max(1, denominator);
+
+            if (numerator == 0)
+            {
+                denominator = 1;
+                return;
+            }
+
+            if (numerator >= denominator)
+            {
+                numerator = 1;
+                denominator = 1;
+                return;
+            }
+
+            long normalizedNumerator = numerator;
+            long normalizedDenominator = denominator;
+            NormalizeProbability(ref normalizedNumerator, ref normalizedDenominator);
+
+            numerator = normalizedNumerator > int.MaxValue ? int.MaxValue : (int)normalizedNumerator;
+            denominator = normalizedDenominator > int.MaxValue ? int.MaxValue : (int)normalizedDenominator;
         }
 
         private static int ToDebugPathId(decimal pathOrderKey)
@@ -355,6 +383,7 @@ namespace MMMapEditor
                 Condition = path.Condition,
                 CompareValue = path.CompareValue,
                 CompareRegister = path.CompareRegister,
+                CompareMemoryAddress = path.CompareMemoryAddress,
                 IsLinear = isLinear,
                 GuardPredicate = path.BranchPartyPredicate?.Clone()
             };
@@ -1112,6 +1141,7 @@ namespace MMMapEditor
                     PathNumber = alt.PathNumber,
                     CompareValue = alt.CompareValue,
                     CompareRegister = alt.CompareRegister,
+                    CompareMemoryAddress = alt.CompareMemoryAddress,
                     IsInputChoiceBranch = alt.IsInputChoiceBranch,
                     RegisterState = alt.RegisterState?.Clone(),
                     ProbabilityNumerator = alt.ProbabilityNumerator,
@@ -1155,6 +1185,8 @@ namespace MMMapEditor
 
         private PathVariantInfo CreatePathVariant(int pathId, decimal pathOrderKey, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
         {
+            NormalizeProbabilityForStorage(ref probabilityNumerator, ref probabilityDenominator);
+
             var normalizedPartyEffects = PartyEffectNormalizer.Normalize(source) ?? new List<PartyEffect>();
             var semanticPartyEffects = normalizedPartyEffects
                 .Where(PartyEffectSemantics.IsSemanticOutcomeEffect)
@@ -1825,7 +1857,7 @@ namespace MMMapEditor
                 return $"<NO_PARTY_LOOP_COLLAPSE>|{BuildVariantIdentityKey(variant)}";
             }
 
-            return $"{BuildPartyEffectsKey(variant)}|{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
+            return $"{BuildPartyEffectsKey(variant)}|{BuildNormalizedProbabilityKey(variant)}";
         }
 
         private bool HasOnlyTextsAndPartyEffects(PathVariantInfo variant)
@@ -1947,9 +1979,17 @@ namespace MMMapEditor
                 : "<NO_PARTIAL>";
 
             string partyKey = BuildPartyEffectsKey(variant);
-            string probabilityKey = $"{variant.ProbabilityNumerator}/{Math.Max(1, variant.ProbabilityDenominator)}";
+            string probabilityKey = BuildNormalizedProbabilityKey(variant);
 
             return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}||{probabilityKey}";
+        }
+
+        private string BuildNormalizedProbabilityKey(PathVariantInfo variant)
+        {
+            int numerator = Math.Max(0, variant?.ProbabilityNumerator ?? 1);
+            int denominator = Math.Max(1, variant?.ProbabilityDenominator ?? 1);
+            int gcd = GreatestCommonDivisor(numerator, denominator);
+            return $"{numerator / gcd}/{denominator / gcd}";
         }
 
         private int GreatestCommonDivisor(int a, int b)
@@ -2027,7 +2067,7 @@ namespace MMMapEditor
                     .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
                 : "<NO_LOADS>";
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{variant.ProbabilityNumerator}/{variant.ProbabilityDenominator}";
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{BuildNormalizedProbabilityKey(variant)}";
         }
 
         private string BuildPartyEffectsKey(PathVariantInfo variant)
@@ -2278,7 +2318,8 @@ namespace MMMapEditor
         private bool IsPartyLoopTraversalBranchChoice(BranchChoice choice)
         {
             string mnemonic = ExtractBranchMnemonic(choice);
-            if (!string.Equals(choice?.CompareRegister, "BL", StringComparison.OrdinalIgnoreCase))
+            if (!IsLowByteRegisterName(choice?.CompareRegister) ||
+                choice?.CompareMemoryAddress != PartyCountAddress)
                 return false;
 
             return string.Equals(mnemonic, "JB", StringComparison.OrdinalIgnoreCase) ||
@@ -2287,6 +2328,12 @@ namespace MMMapEditor
                    string.Equals(mnemonic, "JAE", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mnemonic, "JNB", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(mnemonic, "JNC", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLowByteRegisterName(string registerName)
+        {
+            string reg = registerName?.ToUpperInvariant();
+            return reg == "AL" || reg == "CL" || reg == "DL" || reg == "BL";
         }
 
         private string ExtractBranchMnemonic(BranchChoice choice)
@@ -2356,6 +2403,10 @@ namespace MMMapEditor
         {
             if (source == null)
                 return null;
+
+            int probabilityNumerator = source.ProbabilityNumerator;
+            int probabilityDenominator = source.ProbabilityDenominator;
+            NormalizeProbabilityForStorage(ref probabilityNumerator, ref probabilityDenominator);
 
             return new PathVariantInfo
             {
@@ -2442,8 +2493,8 @@ namespace MMMapEditor
                     .Select(range => range.Clone())
                     .ToList() ?? new List<OccurrenceRangeInfo>(),
                 OccurrenceDescription = source.OccurrenceDescription,
-                ProbabilityNumerator = source.ProbabilityNumerator,
-                ProbabilityDenominator = source.ProbabilityDenominator,
+                ProbabilityNumerator = probabilityNumerator,
+                ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
                 TerminatedByPromptLoopBackEdge = source.TerminatedByPromptLoopBackEdge,
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
