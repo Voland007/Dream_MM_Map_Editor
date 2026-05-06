@@ -19,6 +19,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace MMMapEditor.Tests
@@ -53,6 +54,37 @@ namespace MMMapEditor.Tests
             public bool HasDifferences => Differences.Count > 0;
         }
 
+        private sealed class DisplayedVariant
+        {
+            public string HeaderKey { get; set; } = string.Empty;
+            public string BodyKey { get; set; } = string.Empty;
+
+            public string HeaderBodyKey => HeaderKey + "\n" + BodyKey;
+        }
+
+        private sealed class DisplayedVariantGroup
+        {
+            public string ScaffoldKey { get; set; } = string.Empty;
+            public List<DisplayedVariant> Variants { get; } = new List<DisplayedVariant>();
+        }
+
+        private sealed class DisplayedVariantHeader
+        {
+            public int LineIndex { get; set; }
+            public int Depth { get; set; }
+            public string ParentNumber { get; set; } = string.Empty;
+            public string HeaderKey { get; set; } = string.Empty;
+        }
+
+        private sealed class VariantOrderRecommendation
+        {
+            public int VariantCount { get; set; }
+        }
+
+        private static readonly Regex DisplayVariantHeaderRegex = new Regex(
+            @"^(?<indent>\s*)Вариант\s+(?<number>\d+(?:\.\d+)*)(?<tail>.*)$",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
         private readonly List<TestResult> _results;
         private readonly TestExpectationStore _expectationStore;
         private TreeView _treeView;
@@ -63,6 +95,7 @@ namespace MMMapEditor.Tests
         private Button _exportTextButton;
         private Button _acceptActualButton;
         private Button _undoExpectationButton;
+        private Label _acceptRecommendationLabel = null!;
         private TextBox _filterBox;
         private ComboBox _ovrFileCombo;
         private DataGridView _summaryGrid;
@@ -189,7 +222,7 @@ namespace MMMapEditor.Tests
             var rightPanel = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(45, 45, 45) };
 
             // Панель кнопок
-            var buttonPanel = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(5), BackColor = Color.FromArgb(60, 60, 60) };
+            var buttonPanel = new Panel { Dock = DockStyle.Top, Height = 85, Padding = new Padding(5), BackColor = Color.FromArgb(60, 60, 60) };
 
             _runSelectedButton = new Button
             {
@@ -250,10 +283,24 @@ namespace MMMapEditor.Tests
                 ForeColor = Color.White
             };
 
+            _acceptRecommendationLabel = new Label
+            {
+                Text = "",
+                Location = new Point(5, 45),
+                Width = 385,
+                Height = 30,
+                AutoEllipsis = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(6, 0, 6, 0),
+                BackColor = Color.FromArgb(45, 95, 55),
+                ForeColor = Color.White,
+                Visible = false
+            };
+
             _acceptActualButton = new Button
             {
                 Text = "✓ Принять фактический",
-                Location = new Point(765, 5),
+                Location = new Point(400, 45),
                 Width = 180,
                 Height = 30,
                 FlatStyle = FlatStyle.Flat,
@@ -266,7 +313,7 @@ namespace MMMapEditor.Tests
             _undoExpectationButton = new Button
             {
                 Text = "↶ Откатить",
-                Location = new Point(950, 5),
+                Location = new Point(585, 45),
                 Width = 170,
                 Height = 30,
                 FlatStyle = FlatStyle.Flat,
@@ -285,7 +332,7 @@ namespace MMMapEditor.Tests
 
             buttonPanel.Controls.AddRange(new Control[] {
                 _runSelectedButton, _runAllButton, _exportHtmlButton, _exportTextButton,
-                _ovrFileCombo, _acceptActualButton, _undoExpectationButton
+                _ovrFileCombo, _acceptRecommendationLabel, _acceptActualButton, _undoExpectationButton
             });
 
             // Вкладки
@@ -900,6 +947,378 @@ namespace MMMapEditor.Tests
                 _undoExpectationButton.Text = _historyCount > 0
                     ? $"↶ Откатить ({_historyCount})"
                     : "↶ Откатить";
+            }
+
+            UpdateVariantOrderRecommendation();
+        }
+
+        private void UpdateVariantOrderRecommendation()
+        {
+            if (_acceptRecommendationLabel == null)
+                return;
+
+            VariantOrderRecommendation? recommendation = BuildVariantOrderRecommendation(_selectedCellResult);
+            if (recommendation == null)
+            {
+                _acceptRecommendationLabel.Visible = false;
+                _acceptRecommendationLabel.Text = "";
+                return;
+            }
+
+            _acceptRecommendationLabel.Text =
+                $"Рекомендация: принять - только порядок вариантов ({recommendation.VariantCount})";
+            _acceptRecommendationLabel.Visible = true;
+        }
+
+        private static VariantOrderRecommendation? BuildVariantOrderRecommendation(CellCheckResult? cellResult)
+        {
+            if (cellResult == null || cellResult.Passed)
+                return null;
+
+            foreach (string expectedCandidate in SplitExpectedTextAlternatives(cellResult.Expected))
+            {
+                if (TryBuildVariantOrderRecommendation(expectedCandidate, cellResult.Actual, out var recommendation))
+                    return recommendation;
+            }
+
+            return null;
+        }
+
+        private static bool TryBuildVariantOrderRecommendation(
+            string expectedText,
+            string actualText,
+            out VariantOrderRecommendation? recommendation)
+        {
+            recommendation = null;
+
+            List<DisplayedVariantGroup> expectedGroups = BuildDisplayedVariantGroups(expectedText);
+            List<DisplayedVariantGroup> actualGroups = BuildDisplayedVariantGroups(actualText);
+
+            foreach (DisplayedVariantGroup expectedGroup in expectedGroups)
+            {
+                foreach (DisplayedVariantGroup actualGroup in actualGroups)
+                {
+                    if (!string.Equals(expectedGroup.ScaffoldKey, actualGroup.ScaffoldKey, StringComparison.Ordinal))
+                        continue;
+
+                    if (!TryBuildVariantOrderRecommendation(expectedGroup, actualGroup, out recommendation))
+                        continue;
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryBuildVariantOrderRecommendation(
+            DisplayedVariantGroup expectedGroup,
+            DisplayedVariantGroup actualGroup,
+            out VariantOrderRecommendation? recommendation)
+        {
+            recommendation = null;
+
+            var expectedVariants = expectedGroup?.Variants ?? new List<DisplayedVariant>();
+            var actualVariants = actualGroup?.Variants ?? new List<DisplayedVariant>();
+
+            if (expectedVariants.Count != actualVariants.Count || expectedVariants.Count < 2)
+                return false;
+
+            if (!HaveSameMultiset(
+                    expectedVariants.Select(v => v.BodyKey),
+                    actualVariants.Select(v => v.BodyKey)))
+            {
+                return false;
+            }
+
+            if (!HaveSameMultiset(
+                    expectedVariants.Select(v => v.HeaderBodyKey),
+                    actualVariants.Select(v => v.HeaderBodyKey)))
+            {
+                return false;
+            }
+
+            if (SequencesEqual(
+                    expectedVariants.Select(v => v.HeaderBodyKey),
+                    actualVariants.Select(v => v.HeaderBodyKey)))
+            {
+                return false;
+            }
+
+            recommendation = new VariantOrderRecommendation
+            {
+                VariantCount = expectedVariants.Count
+            };
+            return true;
+        }
+
+        private static IEnumerable<string> SplitExpectedTextAlternatives(string expectedText)
+        {
+            if (string.IsNullOrWhiteSpace(expectedText))
+                yield break;
+
+            string[] lines = NormalizeTextForDiff(expectedText).Split('\n');
+            var current = new List<string>();
+
+            foreach (string line in lines)
+            {
+                string trimmedLine = line.Trim();
+                bool isAlternativeSeparator =
+                    string.Equals(trimmedLine, "ИЛИ", StringComparison.Ordinal) ||
+                    string.Equals(trimmedLine, "РР›Р", StringComparison.Ordinal);
+
+                if (isAlternativeSeparator)
+                {
+                    string alternative = string.Join("\n", current).Trim();
+                    if (!string.IsNullOrWhiteSpace(alternative))
+                        yield return alternative;
+
+                    current.Clear();
+                    continue;
+                }
+
+                current.Add(line);
+            }
+
+            string lastAlternative = string.Join("\n", current).Trim();
+            if (!string.IsNullOrWhiteSpace(lastAlternative))
+                yield return lastAlternative;
+        }
+
+        private static List<DisplayedVariantGroup> BuildDisplayedVariantGroups(string text)
+        {
+            var groups = new List<DisplayedVariantGroup>();
+            if (string.IsNullOrWhiteSpace(text))
+                return groups;
+
+            string[] lines = NormalizeTextForDiff(text).Split('\n');
+            var headers = new List<DisplayedVariantHeader>();
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                Match match = DisplayVariantHeaderRegex.Match(lines[i]);
+                if (!match.Success)
+                    continue;
+
+                string number = match.Groups["number"].Value;
+                headers.Add(new DisplayedVariantHeader
+                {
+                    LineIndex = i,
+                    Depth = GetVariantNumberDepth(number),
+                    ParentNumber = GetVariantParentNumber(number),
+                    HeaderKey = NormalizeVariantHeaderForComparison(lines[i])
+                });
+            }
+
+            if (headers.Count < 2)
+                return groups;
+
+            foreach (var siblingHeaders in headers
+                .GroupBy(h => new { h.Depth, h.ParentNumber })
+                .Select(group => group.OrderBy(h => h.LineIndex).ToList())
+                .Where(group => group.Count >= 2)
+                .OrderBy(group => group[0].LineIndex))
+            {
+                var group = new DisplayedVariantGroup
+                {
+                    ScaffoldKey = BuildVariantScaffoldKey(lines, headers, siblingHeaders)
+                };
+
+                foreach (DisplayedVariantHeader header in siblingHeaders)
+                {
+                    int bodyStartLine = header.LineIndex + 1;
+                    int bodyEndLine = FindVariantBlockEndLine(headers, header, lines.Length);
+
+                    group.Variants.Add(new DisplayedVariant
+                    {
+                        HeaderKey = header.HeaderKey,
+                        BodyKey = BuildVariantBodyKey(lines, bodyStartLine, bodyEndLine)
+                    });
+                }
+
+                groups.Add(group);
+            }
+
+            return groups;
+        }
+
+        private static int GetVariantNumberDepth(string number)
+        {
+            if (string.IsNullOrWhiteSpace(number))
+                return 0;
+
+            return number.Split('.').Length;
+        }
+
+        private static string GetVariantParentNumber(string number)
+        {
+            if (string.IsNullOrWhiteSpace(number))
+                return string.Empty;
+
+            int lastDot = number.LastIndexOf('.');
+            return lastDot < 0
+                ? string.Empty
+                : number.Substring(0, lastDot);
+        }
+
+        private static int FindVariantBlockEndLine(
+            List<DisplayedVariantHeader> headers,
+            DisplayedVariantHeader currentHeader,
+            int lineCount)
+        {
+            foreach (DisplayedVariantHeader header in headers
+                .Where(h => h.LineIndex > currentHeader.LineIndex)
+                .OrderBy(h => h.LineIndex))
+            {
+                if (header.Depth <= currentHeader.Depth)
+                    return header.LineIndex;
+            }
+
+            return lineCount;
+        }
+
+        private static string BuildVariantScaffoldKey(
+            string[] lines,
+            List<DisplayedVariantHeader> allHeaders,
+            List<DisplayedVariantHeader> removedHeaders)
+        {
+            var removedLineIndexes = new HashSet<int>();
+            foreach (DisplayedVariantHeader header in removedHeaders)
+            {
+                int blockEnd = FindVariantBlockEndLine(allHeaders, header, lines.Length);
+                for (int lineIndex = header.LineIndex; lineIndex < blockEnd; lineIndex++)
+                    removedLineIndexes.Add(lineIndex);
+            }
+
+            var scaffoldLines = new List<string>();
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (removedLineIndexes.Contains(i))
+                    continue;
+
+                scaffoldLines.Add(NormalizeVariantBodyLine(lines[i]));
+            }
+
+            return NormalizeScaffoldLines(scaffoldLines);
+        }
+
+        private static string NormalizeScaffoldLines(IEnumerable<string> lines)
+        {
+            var normalized = new List<string>();
+            foreach (string line in lines ?? Enumerable.Empty<string>())
+            {
+                string normalizedLine = (line ?? string.Empty).TrimEnd();
+                if (string.IsNullOrWhiteSpace(normalizedLine))
+                {
+                    if (normalized.Count > 0 && normalized[normalized.Count - 1].Length != 0)
+                        normalized.Add(string.Empty);
+
+                    continue;
+                }
+
+                normalized.Add(normalizedLine);
+            }
+
+            while (normalized.Count > 0 && normalized[0].Length == 0)
+                normalized.RemoveAt(0);
+
+            while (normalized.Count > 0 && normalized[normalized.Count - 1].Length == 0)
+                normalized.RemoveAt(normalized.Count - 1);
+
+            return string.Join("\n", normalized);
+        }
+
+        private static string BuildVariantBodyKey(string[] lines, int startLine, int endLine)
+        {
+            int start = Math.Max(0, startLine);
+            int end = Math.Min(lines?.Length ?? 0, Math.Max(start, endLine));
+
+            while (start < end && string.IsNullOrWhiteSpace(lines[start]))
+                start++;
+
+            while (end > start && string.IsNullOrWhiteSpace(lines[end - 1]))
+                end--;
+
+            var normalizedLines = new List<string>();
+            for (int i = start; i < end; i++)
+                normalizedLines.Add(NormalizeVariantBodyLine(lines[i]));
+
+            return string.Join("\n", normalizedLines);
+        }
+
+        private static string NormalizeVariantBodyLine(string line)
+        {
+            string normalizedLine = (line ?? string.Empty).TrimEnd();
+            Match match = DisplayVariantHeaderRegex.Match(normalizedLine);
+            if (!match.Success)
+                return normalizedLine;
+
+            string indent = match.Groups["indent"].Value;
+            string headerTail = NormalizeVariantHeaderForComparison(normalizedLine);
+            return string.IsNullOrEmpty(headerTail)
+                ? indent + "Вариант"
+                : indent + "Вариант " + headerTail;
+        }
+
+        private static string NormalizeVariantHeaderForComparison(string headerLine)
+        {
+            Match match = DisplayVariantHeaderRegex.Match((headerLine ?? string.Empty).TrimEnd());
+            if (!match.Success)
+                return string.Empty;
+
+            string tail = match.Groups["tail"].Value.Trim();
+            if (tail.StartsWith(":", StringComparison.Ordinal))
+                tail = tail.Substring(1).Trim();
+
+            if (tail.EndsWith(":", StringComparison.Ordinal))
+                tail = tail.Substring(0, tail.Length - 1).Trim();
+
+            return Regex.Replace(tail, @"\s+", " ").Trim();
+        }
+
+        private static bool HaveSameMultiset(IEnumerable<string> expected, IEnumerable<string> actual)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (string value in expected ?? Enumerable.Empty<string>())
+            {
+                string key = value ?? string.Empty;
+                counts.TryGetValue(key, out int count);
+                counts[key] = count + 1;
+            }
+
+            foreach (string value in actual ?? Enumerable.Empty<string>())
+            {
+                string key = value ?? string.Empty;
+                if (!counts.TryGetValue(key, out int count) || count == 0)
+                    return false;
+
+                if (count == 1)
+                    counts.Remove(key);
+                else
+                    counts[key] = count - 1;
+            }
+
+            return counts.Count == 0;
+        }
+
+        private static bool SequencesEqual(IEnumerable<string> expected, IEnumerable<string> actual)
+        {
+            using var expectedEnumerator = (expected ?? Enumerable.Empty<string>()).GetEnumerator();
+            using var actualEnumerator = (actual ?? Enumerable.Empty<string>()).GetEnumerator();
+
+            while (true)
+            {
+                bool hasExpected = expectedEnumerator.MoveNext();
+                bool hasActual = actualEnumerator.MoveNext();
+
+                if (hasExpected != hasActual)
+                    return false;
+
+                if (!hasExpected)
+                    return true;
+
+                if (!string.Equals(expectedEnumerator.Current, actualEnumerator.Current, StringComparison.Ordinal))
+                    return false;
             }
         }
 
