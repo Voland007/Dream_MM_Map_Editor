@@ -40,6 +40,7 @@ namespace MMMapEditor
         private const int CellSize = 40;
         private const int PassageTypeSecret = 3;
         private const int PassageTypeRough = 8;
+        private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
         private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
             new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
@@ -3594,10 +3595,12 @@ namespace MMMapEditor
 
             int passageType = definition.PassageType;
             if (passageType == 0 && IsImplicitSecretPassage(bits, definition))
-                passageType = 3;
+                passageType = PassageTypeSecret;
 
             if (definition.SuppressPassageWhenSecondLowBitSet && bits.SecondLowBit)
                 passageType = 0;
+
+            passageType = ApplyWaterPassageRules(definition, passageType);
 
             return new DirectionState
             {
@@ -3605,6 +3608,17 @@ namespace MMMapEditor
                 PassageType = passageType,
                 IsClosed = definition.MarkClosedWhenSecondLowBitSet && bits.SecondLowBit
             };
+        }
+
+        private static int ApplyWaterPassageRules(OvrSideElementDefinition definition, int passageType)
+        {
+            if (!string.Equals(definition.BorderType, BorderTypeWater, StringComparison.Ordinal))
+                return passageType;
+
+            if (passageType == PassageTypeSecret)
+                return 0;
+
+            return passageType == 0 ? PassageTypeRough : passageType;
         }
 
         private static bool IsImplicitSecretPassage(DirectionBits bits, OvrSideElementDefinition definition)
