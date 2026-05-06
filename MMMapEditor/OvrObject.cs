@@ -70,6 +70,10 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
+        public List<PersistentCounterProgressionInfo> PersistentCounterProgressions { get; set; }
+            = new List<PersistentCounterProgressionInfo>();
+        public List<DynamicRandomBoundDependencyInfo> DynamicRandomBoundDependencies { get; set; }
+            = new List<DynamicRandomBoundDependencyInfo>();
         public bool HasBattleInfo => BattleMonsters.Count > 0;
         public bool HasMonsterStatChanges => RandomEncounterMonsterPowerCap.HasValue || RandomEncounterMonsterLevelCap.HasValue || RandomEncounterMonsterBatchCountCap.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || RandomEncounterRubicon.HasValue || CallsRandomEncounter;
 
@@ -451,18 +455,19 @@ namespace MMMapEditor
             return null;
         }
 
-        private static int? GetSharedPartialBattleRepeatCount(IEnumerable<PartiallyDefinedBattle> battles)
+        private static string GetSharedPartialBattleRepeatCountDisplay(IEnumerable<PartiallyDefinedBattle> battles)
         {
             if (battles == null)
                 return null;
 
-            var repeatCounts = battles
-                .Where(battle => battle != null && battle.RepeatCount > 1)
-                .Select(battle => battle.RepeatCount)
+            var repeatDisplays = battles
+                .Where(battle => battle != null)
+                .Select(battle => battle.GetRepeatCountDisplay())
+                .Where(display => !string.IsNullOrWhiteSpace(display))
                 .Distinct()
                 .ToList();
 
-            return repeatCounts.Count == 1 ? repeatCounts[0] : (int?)null;
+            return repeatDisplays.Count == 1 ? repeatDisplays[0] : null;
         }
 
         private string GetRandomEncounterRubiconWarningDescription()
@@ -472,6 +477,32 @@ namespace MMMapEditor
 
             int partyLevelSumThreshold = 2 * (RandomEncounterRubicon.Value + 1);
             return InlineNoteStyleCodec.EncodeRandomEncounterRubiconWarning(partyLevelSumThreshold);
+        }
+
+        private List<string> GetPersistentBattleCounterProgressionDescriptions()
+        {
+            return (PersistentCounterProgressions ?? new List<PersistentCounterProgressionInfo>())
+                .Where(info => info != null && info.HasFutureProgression)
+                .Select(info =>
+                {
+                    string incrementText = info.Delta == 1 ? "1" : info.Delta.ToString();
+                    string description = $"Количество увеличивается на {incrementText} при каждом следующем выпадении этой битвы, максимум x{info.CapValue.Value}";
+                    return InlineNoteStyleCodec.EncodePersistentCounterProgressionText(description);
+                })
+                .Distinct()
+                .ToList();
+        }
+
+        private List<string> GetDynamicRandomBoundDependencyDescriptions()
+        {
+            bool battleContext = HasBattleLikeInfo || HasPartiallyDefinedBattles || HasBattleInfo;
+            return (DynamicRandomBoundDependencies ?? new List<DynamicRandomBoundDependencyInfo>())
+                .Where(info => info != null)
+                .Select(info => info.BuildDescription(battleContext))
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Select(InlineNoteStyleCodec.EncodeDynamicRandomBoundDependencyText)
+                .Distinct()
+                .ToList();
         }
 
         /// <summary>
@@ -574,6 +605,24 @@ namespace MMMapEditor
                     descriptions.Add(result);
                     addedDescriptions.Add(result);
                 }
+
+                foreach (var progressionDescription in GetPersistentBattleCounterProgressionDescriptions())
+                {
+                    if (!addedDescriptions.Contains(progressionDescription))
+                    {
+                        descriptions.Add(progressionDescription);
+                        addedDescriptions.Add(progressionDescription);
+                    }
+                }
+
+                foreach (var dynamicBoundDescription in GetDynamicRandomBoundDependencyDescriptions())
+                {
+                    if (!addedDescriptions.Contains(dynamicBoundDescription))
+                    {
+                        descriptions.Add(dynamicBoundDescription);
+                        addedDescriptions.Add(dynamicBoundDescription);
+                    }
+                }
             }
 
             // ===== ЧАСТИЧНО ОПРЕДЕЛЁННЫЕ БИТВЫ =====
@@ -609,9 +658,9 @@ namespace MMMapEditor
 
                     if (monsters.Count > 0)
                     {
-                        int? sharedRepeatCount = GetSharedPartialBattleRepeatCount(PartiallyDefinedBattles);
-                        string countDisplay = sharedRepeatCount.HasValue
-                            ? sharedRepeatCount.Value.ToString()
+                        string sharedRepeatCount = GetSharedPartialBattleRepeatCountDisplay(PartiallyDefinedBattles);
+                        string countDisplay = !string.IsNullOrWhiteSpace(sharedRepeatCount)
+                            ? sharedRepeatCount
                             : GetPartialBattleCountDisplay(PartiallyDefinedBattles.Count);
                         string result;
 
@@ -658,8 +707,9 @@ namespace MMMapEditor
                         addedDescriptions.Add(battleKey);
 
                         var monsters = battle.GetPossibleMonsters();
-                        string countDisplay = battle.RepeatCount > 1
-                            ? battle.RepeatCount.ToString()
+                        string battleRepeatDisplay = battle.GetRepeatCountDisplay();
+                        string countDisplay = !string.IsNullOrWhiteSpace(battleRepeatDisplay)
+                            ? battleRepeatDisplay
                             : (PartiallyDefinedBattles.Count == 1 ? GetPartialBattleCountDisplay() : null);
 
                         if (monsters.Count == 1)
@@ -717,6 +767,27 @@ namespace MMMapEditor
                 }
             }
 
+            if (descriptions.Count > 0)
+            {
+                foreach (var progressionDescription in GetPersistentBattleCounterProgressionDescriptions())
+                {
+                    if (!addedDescriptions.Contains(progressionDescription))
+                    {
+                        descriptions.Add(progressionDescription);
+                        addedDescriptions.Add(progressionDescription);
+                    }
+                }
+
+                foreach (var dynamicBoundDescription in GetDynamicRandomBoundDependencyDescriptions())
+                {
+                    if (!addedDescriptions.Contains(dynamicBoundDescription))
+                    {
+                        descriptions.Add(dynamicBoundDescription);
+                        addedDescriptions.Add(dynamicBoundDescription);
+                    }
+                }
+            }
+
             string rubiconWarning = GetRandomEncounterRubiconWarningDescription();
             if (descriptions.Count > 0 &&
                 !string.IsNullOrEmpty(rubiconWarning) &&
@@ -757,6 +828,7 @@ namespace MMMapEditor
             (PathTexts != null && PathTexts.Any(kvp => kvp.Value != null && kvp.Value.Count > 0)) ||
             HasMonsterStatChanges ||
             HasBattleLikeInfo ||
+            (DynamicRandomBoundDependencies != null && DynamicRandomBoundDependencies.Count > 0) ||
             HasAnyTableLoad ||
             CallsRandomEncounter;
 
@@ -820,6 +892,37 @@ namespace MMMapEditor
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
         public bool IsLinear { get; set; }
+        public PartyPredicate GuardPredicate { get; set; }
+
+        public bool HasGuardPredicate => GuardPredicate != null;
+
+        public BranchChoice Clone()
+        {
+            return new BranchChoice
+            {
+                Label = Label,
+                Condition = Condition,
+                CompareValue = CompareValue,
+                CompareRegister = CompareRegister,
+                IsLinear = IsLinear,
+                GuardPredicate = GuardPredicate?.Clone()
+            };
+        }
+
+        public string GetIdentityKey()
+        {
+            string guardKey = HasGuardPredicate
+                ? PartyEffectSemantics.BuildPredicateKey(GuardPredicate)
+                : "<NO_GUARD>";
+
+            return string.Join("|",
+                Label ?? string.Empty,
+                Condition ?? string.Empty,
+                CompareRegister ?? string.Empty,
+                CompareValue?.ToString() ?? string.Empty,
+                IsLinear.ToString(),
+                guardKey);
+        }
     }
 
     public class PathVariantInfo
@@ -850,6 +953,10 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; }
+        public List<PersistentCounterProgressionInfo> PersistentCounterProgressions { get; set; }
+            = new List<PersistentCounterProgressionInfo>();
+        public List<DynamicRandomBoundDependencyInfo> DynamicRandomBoundDependencies { get; set; }
+            = new List<DynamicRandomBoundDependencyInfo>();
 
         public List<BattleMonster> BattleMonsters { get; set; } = new List<BattleMonster>();
         public List<PartiallyDefinedBattle> PartiallyDefinedBattles { get; set; } = new List<PartiallyDefinedBattle>();
@@ -888,14 +995,18 @@ namespace MMMapEditor
             !BattleMonsterCount.HasValue &&
             BattleMonsterCountRange == null &&
             !IsBattleMonsterCountIndeterminate &&
+            (PersistentCounterProgressions == null || PersistentCounterProgressions.Count == 0) &&
+            (DynamicRandomBoundDependencies == null || DynamicRandomBoundDependencies.Count == 0) &&
             (BattleMonsters == null || BattleMonsters.Count == 0) &&
             (PartiallyDefinedBattles == null || PartiallyDefinedBattles.Count == 0) &&
             !HasAnyTableLoad &&
             (LoadedValues == null || LoadedValues.Count == 0) &&
+            !HasStateGuardInfo &&
             (PartyEffects == null || PartyEffects.Count == 0);
 
         public bool HasProbabilityInfo => ProbabilityDenominator > 1;
         public bool HasOccurrenceInfo => !string.IsNullOrWhiteSpace(OccurrenceDescription);
+        public bool HasStateGuardInfo => GetGuardPredicates().Count > 0;
 
         public OvrObject ToOvrObject(byte x, byte y, byte directionByte)
         {
@@ -923,6 +1034,14 @@ namespace MMMapEditor
                 BattleMonsterCount = BattleMonsterCount,
                 BattleMonsterCountRange = BattleMonsterCountRange == null ? null : new ValueRange8(BattleMonsterCountRange.Min, BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = IsBattleMonsterCountIndeterminate,
+                PersistentCounterProgressions = PersistentCounterProgressions?
+                    .Where(info => info != null)
+                    .Select(info => info.Clone())
+                    .ToList() ?? new List<PersistentCounterProgressionInfo>(),
+                DynamicRandomBoundDependencies = DynamicRandomBoundDependencies?
+                    .Where(info => info != null)
+                    .Select(info => info.Clone())
+                    .ToList() ?? new List<DynamicRandomBoundDependencyInfo>(),
                 IsFromTable = true,
                 HasAnyTableLoad = HasAnyTableLoad,
                 PartyEffects = PartyEffects?.Select(e => e?.Clone()).Where(e => e != null).ToList() ?? new List<PartyEffect>()
@@ -938,14 +1057,7 @@ namespace MMMapEditor
 
             obj.PathVariants[0] = this;
             obj.PathVariants[0].BranchChoices = BranchChoices?
-                .Select(choice => choice == null ? null : new BranchChoice
-                {
-                    Label = choice.Label,
-                    Condition = choice.Condition,
-                    CompareValue = choice.CompareValue,
-                    CompareRegister = choice.CompareRegister,
-                    IsLinear = choice.IsLinear
-                })
+                .Select(choice => choice?.Clone())
                 .Where(choice => choice != null)
                 .ToList() ?? new List<BranchChoice>();
 
@@ -1012,6 +1124,7 @@ namespace MMMapEditor
             CallsRandomEncounter ||
             HasProbabilityInfo ||
             HasOccurrenceInfo ||
+            HasStateGuardInfo ||
             (PartyEffects != null && PartyEffects.Count > 0);
 
         public string GetProbabilityDescription()
@@ -1024,7 +1137,11 @@ namespace MMMapEditor
                 ? percent.ToString("0")
                 : percent.ToString("0.##");
 
-            return $"Вероятность: {percentText}% ({ProbabilityNumerator}/{ProbabilityDenominator})";
+            string label = HasStateGuardInfo
+                ? "Вероятность при выполнении условий"
+                : "Вероятность";
+
+            return $"{label}: {percentText}% ({ProbabilityNumerator}/{ProbabilityDenominator})";
         }
 
         public string GetOccurrenceDescription()
@@ -1032,6 +1149,20 @@ namespace MMMapEditor
             return string.IsNullOrWhiteSpace(OccurrenceDescription)
                 ? null
                 : OccurrenceDescription;
+        }
+
+        public IReadOnlyList<PartyPredicate> GetGuardPredicates()
+        {
+            if (BranchChoices == null || BranchChoices.Count == 0)
+                return Array.Empty<PartyPredicate>();
+
+            return BranchChoices
+                .Where(choice => choice?.GuardPredicate != null)
+                .Select(choice => choice.GuardPredicate)
+                .GroupBy(PartyEffectSemantics.BuildPredicateKey)
+                .Select(group => group.First().Clone())
+                .OrderBy(PartyEffectSemantics.BuildPredicateKey)
+                .ToList();
         }
     }
 
@@ -1142,6 +1273,12 @@ namespace MMMapEditor
         /// для диапазонных шаблонов используется как отображаемый размер группы.
         /// </summary>
         public int RepeatCount { get; set; } = 1;
+
+        /// <summary>
+        /// Диапазон количества повторений шаблона, если цикл ограничен случайным
+        /// или символическим счётчиком.
+        /// </summary>
+        public ValueRange8 RepeatCountRange { get; set; }
 
         /// <summary>
         /// Дискретный набор точных пар val1/val2, если варианты задаются таблицей,
@@ -1282,6 +1419,18 @@ namespace MMMapEditor
                 .Count()
             : (RangeEnd1 - RangeStart1 + 1) * (RangeEnd2 - RangeStart2 + 1);
 
+        public string GetRepeatCountDisplay()
+        {
+            if (RepeatCountRange != null)
+            {
+                return RepeatCountRange.IsExact
+                    ? RepeatCountRange.Min.ToString()
+                    : $"{RepeatCountRange.Min}-{RepeatCountRange.Max}";
+            }
+
+            return RepeatCount > 1 ? RepeatCount.ToString() : null;
+        }
+
         public string GetIdentityKey()
         {
             string exactOptionsKey = HasExactOptions
@@ -1293,7 +1442,11 @@ namespace MMMapEditor
                         .Select(option => $"{option.Val1:X2}:{option.Val2:X2}"))
                 : "<NO_EXACT_OPTIONS>";
 
-            return $"{BxIndex}:{RangeStart1:X2}-{RangeEnd1:X2}:{RangeStart2:X2}-{RangeEnd2:X2}:R{Math.Max(1, RepeatCount)}:{exactOptionsKey}";
+            string repeatKey = RepeatCountRange != null
+                ? $"{RepeatCountRange.Min}-{RepeatCountRange.Max}"
+                : Math.Max(1, RepeatCount).ToString();
+
+            return $"{BxIndex}:{RangeStart1:X2}-{RangeEnd1:X2}:{RangeStart2:X2}-{RangeEnd2:X2}:R{repeatKey}:{exactOptionsKey}";
         }
 
         public PartiallyDefinedBattle Clone()
@@ -1306,6 +1459,7 @@ namespace MMMapEditor
                 RangeStart2 = RangeStart2,
                 RangeEnd2 = RangeEnd2,
                 RepeatCount = RepeatCount,
+                RepeatCountRange = RepeatCountRange == null ? null : new ValueRange8(RepeatCountRange.Min, RepeatCountRange.Max),
                 ExactOptions = ExactOptions?
                     .Where(option => option != null)
                     .Select(option => option.Clone())
@@ -1316,14 +1470,15 @@ namespace MMMapEditor
         public override string ToString()
         {
             var monsters = GetPossibleMonsters();
+            string repeatDisplay = GetRepeatCountDisplay();
             if (monsters.Count == 1)
-                return RepeatCount > 1
-                    ? $"Частично определён: {monsters[0].MonsterName} x{RepeatCount}"
+                return !string.IsNullOrEmpty(repeatDisplay)
+                    ? $"Частично определён: {monsters[0].MonsterName} x{repeatDisplay}"
                     : $"Частично определён: {monsters[0].MonsterName}";
             else if (monsters.Count > 0)
                 return HasExactOptions
-                    ? $"Частично определён: {monsters.Count} точных вариант(ов){(RepeatCount > 1 ? $" группы x{RepeatCount}" : string.Empty)}"
-                    : $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]){(RepeatCount > 1 ? $" группы x{RepeatCount}" : string.Empty)}";
+                    ? $"Частично определён: {monsters.Count} точных вариант(ов){(!string.IsNullOrEmpty(repeatDisplay) ? $" группы x{repeatDisplay}" : string.Empty)}"
+                    : $"Частично определён: {monsters.Count} возможных монстров (диапазоны: [{RangeStart1:X2}-{RangeEnd1:X2}] + [{RangeStart2:X2}-{RangeEnd2:X2}]){(!string.IsNullOrEmpty(repeatDisplay) ? $" группы x{repeatDisplay}" : string.Empty)}";
             else
                 return $"Частично определён: пустой диапазон";
         }

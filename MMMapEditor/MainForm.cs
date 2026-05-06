@@ -2475,6 +2475,22 @@ namespace MMMapEditor
                     case NoteInlineStyleKind.RandomEncounterRubiconThreshold:
                         ApplyRandomEncounterRubiconThresholdStyle(rt);
                         break;
+
+                    case NoteInlineStyleKind.PersistentCounterProgressionNote:
+                        ApplyPersistentCounterProgressionNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.PersistentCounterProgressionValue:
+                        ApplyPersistentCounterProgressionValueStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.DynamicRandomBoundDependencyNote:
+                        ApplyDynamicRandomBoundDependencyNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.DynamicRandomBoundDependencyFormula:
+                        ApplyDynamicRandomBoundDependencyFormulaStyle(rt);
+                        break;
                 }
             }
 
@@ -2518,6 +2534,34 @@ namespace MMMapEditor
         {
             rt.SelectionColor = Color.FromArgb(255, 245, 150);
             rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyPersistentCounterProgressionNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(218, 232, 221);
+            rt.SelectionBackColor = Color.FromArgb(35, 51, 42);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Regular);
+        }
+
+        private void ApplyPersistentCounterProgressionValueStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(238, 218, 167);
+            rt.SelectionBackColor = Color.FromArgb(35, 51, 42);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyDynamicRandomBoundDependencyNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(210, 222, 235);
+            rt.SelectionBackColor = Color.FromArgb(34, 44, 59);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Regular);
+        }
+
+        private void ApplyDynamicRandomBoundDependencyFormulaStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(219, 202, 238);
+            rt.SelectionBackColor = Color.FromArgb(34, 44, 59);
             rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
         }
 

@@ -89,7 +89,8 @@ namespace MMMapEditor
             Dictionary<ushort, PartyPointerByteReference> initialEmulatedPartyPointerBytes = null,
             HashSet<ushort> persistentStateAddresses = null,
             Dictionary<ushort, ValueRange8> initialEmulatedMemory8Ranges = null,
-            Dictionary<ushort, RegisterValueDistribution> initialEmulatedMemory8RangeDistributions = null)
+            Dictionary<ushort, RegisterValueDistribution> initialEmulatedMemory8RangeDistributions = null,
+            Dictionary<ushort, PersistentCounterProgressionInfo> initialPendingPersistentCounterProgressions = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
@@ -147,6 +148,7 @@ namespace MMMapEditor
             try
             {
                 var result = new PathAnalysisResult();
+                result.PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(initialPendingPersistentCounterProgressions);
                 long fileLength = br.BaseStream.Length;
                 uint currentAddress = startAddress;
                 var currentPendingReturnAddresses = pendingReturnAddresses != null ? new List<uint>(pendingReturnAddresses) : new List<uint>();
@@ -1630,6 +1632,7 @@ namespace MMMapEditor
             return registerTracker != null &&
                    registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareMemory &&
                    string.Equals(registerTracker.LastFlagsRegister, "BL", StringComparison.OrdinalIgnoreCase) &&
+                   registerTracker.LastComparedMemoryAddress == PARTY_COUNT_ADDRESS &&
                    registerTracker.LastFlagsInstructionAddress.HasValue;
         }
 
@@ -2539,6 +2542,30 @@ namespace MMMapEditor
                 default:
                     return false;
             }
+        }
+
+        private static DynamicValueFormulaInfo CreateDynamicFormulaFromPartyField(
+            PartyFieldReference fieldRef,
+            uint instructionAddress,
+            byte? exactValue = null)
+        {
+            if (fieldRef == null ||
+                fieldRef.Field == PartyFieldKind.Unknown ||
+                fieldRef.HasBitTransform)
+            {
+                return null;
+            }
+
+            return new DynamicValueFormulaInfo
+            {
+                SourceField = fieldRef.Clone(),
+                Multiplier = 1,
+                AdditiveOffset = 0,
+                MinValue = exactValue,
+                MaxValue = exactValue,
+                SourceInstructionAddress = instructionAddress,
+                LastTransformInstructionAddress = instructionAddress
+            };
         }
 
         private void TrackAccumulatorImmediateLogicalOperation(RegisterTracker registerTracker,
@@ -4023,10 +4050,30 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte n) && n > 0)
                 {
                     registerTracker.SetRegisterRange("AL", 1, n, RegisterValueDistribution.UniformDiscreteRange);
-                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.Random);
 
                     if (debugMode)
                         AnalysisDebug.WriteLine($"        Распознана SUB_509A: AL получает псевдослучайное значение в диапазоне 1..{n}");
+                }
+                else if (registerTracker.TryGetDynamicValueFormula("AL", out var upperBoundFormula) &&
+                         upperBoundFormula?.MaxValue > 0)
+                {
+                    byte maxN = upperBoundFormula.MaxValue.Value;
+                    registerTracker.SetRegisterRange("AL", 1, maxN, RegisterValueDistribution.Unknown);
+                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.Random);
+                    TrackDynamicRandomBoundDependency(
+                        result,
+                        upperBoundFormula,
+                        "AL",
+                        (uint)insn.Address,
+                        maxN,
+                        debugMode);
+
+                    if (debugMode)
+                    {
+                        AnalysisDebug.WriteLine(
+                            $"        Распознана SUB_509A: AL получает псевдослучайное значение в диапазоне 1..{upperBoundFormula.GetFormulaExpression()} (верхняя граница зависит от поля партии)");
+                    }
                 }
                 else if (registerTracker.TryGetRegisterRange("AL", out var nRange) &&
                          nRange != null &&
@@ -4041,7 +4088,7 @@ namespace MMMapEditor
                 else
                 {
                     registerTracker.InvalidateRegister("AX");
-                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.Random);
 
                     if (debugMode)
                         AnalysisDebug.WriteLine("        SUB_509A вызвана, но верхняя граница N в AL неизвестна");
@@ -4054,7 +4101,7 @@ namespace MMMapEditor
             {
                 registerTracker.InvalidateRegister("AX");
                 registerTracker.SetRegisterRange("AL", 0x1B, 0x35, RegisterValueDistribution.Unknown);
-                registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+                    registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.Random);
 
                 if (debugMode)
                     AnalysisDebug.WriteLine("        Распознана SUB_5101: AL получает код клавиши в диапазоне ESC..'5'");
@@ -4083,7 +4130,8 @@ namespace MMMapEditor
                     _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     initialEmulatedMemory8Ranges: CloneRangeDictionary(_emulatedMemory8Ranges),
-                    initialEmulatedMemory8RangeDistributions: new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions));
+                    initialEmulatedMemory8RangeDistributions: new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                    initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions));
 
                 // Добавляем результаты из подпрограммы
                 foreach (var visitedAddress in subroutineResult.VisitedAddresses)
@@ -4204,6 +4252,7 @@ namespace MMMapEditor
                             EmulatedPartyPointerBytes = altPath.EmulatedPartyPointerBytes == null
                                 ? new Dictionary<ushort, PartyPointerByteReference>()
                                 : altPath.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                            PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(altPath.PendingPersistentCounterProgressions),
                             BranchStateValueConstraints = CloneStateValueConstraints(altPath.BranchStateValueConstraints),
                             BranchPartyCondition = altPath.BranchPartyCondition,
                             BranchPartyPredicate = altPath.BranchPartyPredicate?.Clone()
@@ -4233,7 +4282,7 @@ namespace MMMapEditor
                 // Не инвалидируем AX/AL глобально. Только помечаем, что значение AX/AL
                 // потенциально зависит от результата внешней функции. Эта пометка будет
                 // учтена позже только при вычислении количества монстров в полной битве.
-                registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
+                registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.UserInput);
 
                 if (debugMode)
                     AnalysisDebug.WriteLine("        Помечаем AX/AL как кандидата на зависимость от внешнего CALL для табличного объекта");
@@ -4452,6 +4501,12 @@ namespace MMMapEditor
             target.MemoryWrittenAddresses.UnionWith(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             target.AdjustedMemoryAddresses.UnionWith(source.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
             target.MemoryReadBeforeWriteAddresses.UnionWith(source.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+            foreach (var kvp in source.PendingPersistentCounterProgressions ?? Enumerable.Empty<KeyValuePair<ushort, PersistentCounterProgressionInfo>>())
+                target.PendingPersistentCounterProgressions[kvp.Key] = kvp.Value?.Clone();
+            foreach (var progression in source.PersistentCounterProgressions ?? Enumerable.Empty<PersistentCounterProgressionInfo>())
+                AddOrReplacePersistentCounterProgression(target.PersistentCounterProgressions, progression);
+            foreach (var dependency in source.DynamicRandomBoundDependencies ?? Enumerable.Empty<DynamicRandomBoundDependencyInfo>())
+                AddOrReplaceDynamicRandomBoundDependency(target.DynamicRandomBoundDependencies, dependency);
 
             foreach (var kvp in source.PersistentMemoryFirstAccessKinds ?? Enumerable.Empty<KeyValuePair<ushort, PersistentMemoryFirstAccessKind>>())
             {
@@ -4785,6 +4840,22 @@ namespace MMMapEditor
                     if (IsPendingPartyMemberScanBackEdge(registerTracker))
                         MarkPartyMemberScanLoop(result, condJumpTarget, debugMode, currentAddress);
 
+                    if (TrySkipRangedBattleCounterLoopBackEdge(
+                        registerTracker,
+                        result,
+                        currentAddress,
+                        condJumpTarget,
+                        debugMode))
+                    {
+                        return new ControlFlowResult
+                        {
+                            ShouldReturn = false,
+                            NextAddress = nextAddress,
+                            UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                            UpdatedCallDepth = callDepth
+                        };
+                    }
+
                     var backEdge = (From: currentAddress, To: condJumpTarget);
 
                     if (!processedBackEdges.Add(backEdge))
@@ -4878,74 +4949,82 @@ namespace MMMapEditor
                 var takenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: true);
                 var notTakenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: false);
 
-                // Добавляем целевой адрес перехода как альтернативный путь
-                var altPath = new AlternativePath
+                if (takenProbability.numerator > 0)
                 {
-                    Address = (uint)insn.Address,
-                    TargetAddress = condJumpTarget,
-                    Condition = $"{insn.Mnemonic} {insn.Operand}",
-                    Analyzed = false,
-                    PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: true,
-                        (uint)insn.Address, nextAddress, condJumpTarget),
-                    CompareRegister = registerTracker.LastFlagsRegister,
-                    CompareValue = registerTracker.LastCompareImmediate,
-                    IsInputChoiceBranch = isInputChoiceBranch,
-                    ProbabilityNumerator = takenProbability.numerator,
-                    ProbabilityDenominator = takenProbability.denominator,
-                    CallDepth = callDepth,
-                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
-                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
-                    EmulatedMemory8Ranges = CloneEmulatedMemoryRangesForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
-                    EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
-                    EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
-                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
-                    BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, (uint)insn.Address)
-                };
+                    // Добавляем целевой адрес перехода как альтернативный путь
+                    var altPath = new AlternativePath
+                    {
+                        Address = (uint)insn.Address,
+                        TargetAddress = condJumpTarget,
+                        Condition = $"{insn.Mnemonic} {insn.Operand}",
+                        Analyzed = false,
+                        PathNumber = result.AlternativePaths.Count + 1,
+                        RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: true,
+                            (uint)insn.Address, nextAddress, condJumpTarget),
+                        CompareRegister = registerTracker.LastFlagsRegister,
+                        CompareValue = registerTracker.LastCompareImmediate,
+                        IsInputChoiceBranch = isInputChoiceBranch,
+                        ProbabilityNumerator = takenProbability.numerator,
+                        ProbabilityDenominator = takenProbability.denominator,
+                        CallDepth = callDepth,
+                        PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                        EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
+                        EmulatedMemory8Ranges = CloneEmulatedMemoryRangesForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                        EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                        EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                        EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                        PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
+                        BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                        BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                        BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, (uint)insn.Address)
+                    };
 
-                if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
-                                                       p.TargetAddress == altPath.TargetAddress))
-                {
-                    result.AlternativePaths.Add(altPath);
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"      Найден альтернативный путь: 0x{insn.Address:X4} -> 0x{condJumpTarget:X4}");
+                    if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
+                                                           p.TargetAddress == altPath.TargetAddress))
+                    {
+                        result.AlternativePaths.Add(altPath);
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"      Найден альтернативный путь: 0x{insn.Address:X4} -> 0x{condJumpTarget:X4}");
+                    }
                 }
 
-                // Добавляем линейное продолжение как отдельный путь
-                var linearPath = new AlternativePath
+                if (notTakenProbability.numerator > 0)
                 {
-                    Address = (uint)insn.Address,
-                    TargetAddress = nextAddress,
-                    Condition = $"LINEAR after {insn.Mnemonic}",
-                    Analyzed = false,
-                    PathNumber = result.AlternativePaths.Count + 1,
-                    RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: false,
-                        (uint)insn.Address, nextAddress, condJumpTarget),
-                    CompareRegister = registerTracker.LastFlagsRegister,
-                    CompareValue = registerTracker.LastCompareImmediate,
-                    IsInputChoiceBranch = isInputChoiceBranch,
-                    ProbabilityNumerator = notTakenProbability.numerator,
-                    ProbabilityDenominator = notTakenProbability.denominator,
-                    CallDepth = callDepth,
-                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
-                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
-                    EmulatedMemory8Ranges = CloneEmulatedMemoryRangesForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
-                    EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
-                    EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                    BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
-                    BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
-                    BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, (uint)insn.Address)
-                };
+                    // Добавляем линейное продолжение как отдельный путь
+                    var linearPath = new AlternativePath
+                    {
+                        Address = (uint)insn.Address,
+                        TargetAddress = nextAddress,
+                        Condition = $"LINEAR after {insn.Mnemonic}",
+                        Analyzed = false,
+                        PathNumber = result.AlternativePaths.Count + 1,
+                        RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: false,
+                            (uint)insn.Address, nextAddress, condJumpTarget),
+                        CompareRegister = registerTracker.LastFlagsRegister,
+                        CompareValue = registerTracker.LastCompareImmediate,
+                        IsInputChoiceBranch = isInputChoiceBranch,
+                        ProbabilityNumerator = notTakenProbability.numerator,
+                        ProbabilityDenominator = notTakenProbability.denominator,
+                        CallDepth = callDepth,
+                        PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                        EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
+                        EmulatedMemory8Ranges = CloneEmulatedMemoryRangesForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                        EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                        EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                        EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                        PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
+                        BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                        BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                        BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, (uint)insn.Address)
+                    };
 
-                if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
-                                                       p.TargetAddress == linearPath.TargetAddress))
-                {
-                    result.AlternativePaths.Add(linearPath);
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
+                    if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
+                                                           p.TargetAddress == linearPath.TargetAddress))
+                    {
+                        result.AlternativePaths.Add(linearPath);
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
+                    }
                 }
 
                 // Завершаем текущий путь – не продолжаем выполнение
@@ -4959,6 +5038,7 @@ namespace MMMapEditor
                                              result.RandomEncounterMonsterLevelCap.HasValue ||
                                              result.BattleMonsterEntries.Count > 0 ||
                                              result.PartialBattles.Count > 0 ||
+                                             (result.DynamicRandomBoundDependencies != null && result.DynamicRandomBoundDependencies.Count > 0) ||
                                              result.HasPartialBattlePattern ||
                                              result.CallsRandomEncounter;
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
@@ -5361,11 +5441,7 @@ namespace MMMapEditor
 
             bool alreadyRecorded = result.InlineBranchChoices.Any(existing =>
                 existing != null &&
-                string.Equals(existing.Label, choice.Label, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(existing.Condition, choice.Condition, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(existing.CompareRegister, choice.CompareRegister, StringComparison.OrdinalIgnoreCase) &&
-                existing.CompareValue == choice.CompareValue &&
-                existing.IsLinear == choice.IsLinear);
+                string.Equals(existing.GetIdentityKey(), choice.GetIdentityKey(), StringComparison.OrdinalIgnoreCase));
 
             if (alreadyRecorded)
                 return;
@@ -5600,11 +5676,22 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(reg) || !registerTracker.LastCompareImmediate.HasValue)
                 return false;
 
-            if (!registerTracker.TryGetRegisterRange(reg, out var range) || range == null)
+            if (registerTracker.TryGetRegisterRange(reg, out var range) && range != null)
+            {
+                min = range.Min;
+                max = range.Max;
+            }
+            else if ((registerTracker.TryGetPartyFieldValue(reg, out var partyField) && partyField != null && IsComparablePartyField(partyField.Field)) ||
+                     (registerTracker.LastComparedPartyField != null && IsComparablePartyField(registerTracker.LastComparedPartyField.Field)))
+            {
+                min = 0;
+                max = 0xFF;
+            }
+            else
+            {
                 return false;
+            }
 
-            min = range.Min;
-            max = range.Max;
             int imm = registerTracker.LastCompareImmediate.Value;
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
 
@@ -5705,6 +5792,7 @@ namespace MMMapEditor
             {
                 var distribution = GetExistingRegisterDistributionOrUnknown(registerTracker, reg);
                 ushort? sourceAddress = registerTracker.GetSourceAddress(reg);
+                registerTracker.TryGetDynamicValueFormula(reg, out var formulaBeforeConstraint);
                 if (sourceAddress.HasValue)
                 {
                     registerTracker.SetRegisterRangeWithSource(reg, (byte)min, (byte)max, distribution,
@@ -5716,6 +5804,9 @@ namespace MMMapEditor
                 {
                     registerTracker.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
                 }
+
+                if (formulaBeforeConstraint != null)
+                    registerTracker.SetDynamicValueFormula(reg, formulaBeforeConstraint.WithValueConstraint((byte)min, (byte)max));
 
                 if (debugMode)
                 {
@@ -5737,6 +5828,7 @@ namespace MMMapEditor
             {
                 var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
                 ushort? sourceAddress = clone.GetSourceAddress(reg);
+                clone.TryGetDynamicValueFormula(reg, out var formulaBeforeConstraint);
                 if (sourceAddress.HasValue)
                 {
                     clone.SetRegisterRangeWithSource(reg, (byte)min, (byte)max, distribution,
@@ -5747,6 +5839,9 @@ namespace MMMapEditor
                 {
                     clone.SetRegisterRange(reg, (byte)min, (byte)max, distribution);
                 }
+
+                if (formulaBeforeConstraint != null)
+                    clone.SetDynamicValueFormula(reg, formulaBeforeConstraint.WithValueConstraint((byte)min, (byte)max));
             }
 
             ApplyKnownFlagsForResolvedBranch(clone, mnemonic, branchTaken);
@@ -6024,7 +6119,13 @@ namespace MMMapEditor
 
         private bool? EvaluateConditionalJump(string mnemonic, RegisterTracker registerTracker)
         {
-            if (registerTracker == null || !registerTracker.FlagsKnown)
+            if (registerTracker == null)
+                return null;
+
+            if (TryEvaluateConditionalJumpFromCompareImmediateRange(mnemonic, registerTracker, out bool rangeBranchResult))
+                return rangeBranchResult;
+
+            if (!registerTracker.FlagsKnown)
                 return null;
 
             if (registerTracker.LastFlagsFromBranchConstraint)
@@ -6078,6 +6179,102 @@ namespace MMMapEditor
                 "JA" or "JNBE" => !registerTracker.CarryFlag && !registerTracker.ZeroFlag,
                 _ => (bool?)null
             };
+        }
+
+        private bool TryEvaluateConditionalJumpFromCompareImmediateRange(string mnemonic, RegisterTracker registerTracker, out bool branchTaken)
+        {
+            branchTaken = false;
+            if (registerTracker == null ||
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
+                !registerTracker.LastCompareImmediate.HasValue)
+            {
+                return false;
+            }
+
+            string compareRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(compareRegister) ||
+                !registerTracker.TryGetRegisterRange(compareRegister, out var range) ||
+                range == null)
+            {
+                return false;
+            }
+
+            if (registerTracker.TryGetPendingExternalCallResultKind(compareRegister, out var externalKind) &&
+                externalKind == RegisterTracker.ExternalCallResultKind.UserInput)
+            {
+                return false;
+            }
+
+            if (IsKeyboardInputPlaceholderRange(range))
+                return false;
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            bool? resolved = null;
+            byte imm = registerTracker.LastCompareImmediate.Value;
+
+            for (int value = range.Min; value <= range.Max; value++)
+            {
+                if (!TryEvaluateUnsignedCompareImmediateJump(jump, (byte)value, imm, out bool current))
+                    return false;
+
+                if (!resolved.HasValue)
+                    resolved = current;
+                else if (resolved.Value != current)
+                    return false;
+            }
+
+            if (!resolved.HasValue)
+                return false;
+
+            branchTaken = resolved.Value;
+            return true;
+        }
+
+        private static bool IsKeyboardInputPlaceholderRange(ValueRange8 range)
+        {
+            return range != null && range.Min == 0x1B && range.Max == 0x35;
+        }
+
+        private static bool TryEvaluateUnsignedCompareImmediateJump(string jump, byte value, byte imm, out bool branchTaken)
+        {
+            switch (jump)
+            {
+                case "JE":
+                case "JZ":
+                    branchTaken = value == imm;
+                    return true;
+
+                case "JNE":
+                case "JNZ":
+                    branchTaken = value != imm;
+                    return true;
+
+                case "JB":
+                case "JC":
+                case "JNAE":
+                    branchTaken = value < imm;
+                    return true;
+
+                case "JBE":
+                case "JNA":
+                    branchTaken = value <= imm;
+                    return true;
+
+                case "JA":
+                case "JNBE":
+                    branchTaken = value > imm;
+                    return true;
+
+                case "JAE":
+                case "JNB":
+                case "JNC":
+                    branchTaken = value >= imm;
+                    return true;
+
+                default:
+                    branchTaken = false;
+                    return false;
+            }
         }
 
         private bool TryEvaluateConditionalJumpFromKnownBranchFlags(string mnemonic, RegisterTracker registerTracker, out bool branchTaken)
@@ -6238,6 +6435,226 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private static Dictionary<ushort, PersistentCounterProgressionInfo> ClonePendingPersistentCounterProgressions(
+            Dictionary<ushort, PersistentCounterProgressionInfo> source)
+        {
+            return source == null
+                ? new Dictionary<ushort, PersistentCounterProgressionInfo>()
+                : source
+                    .Where(kvp => kvp.Value != null)
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Clone());
+        }
+
+        private static List<PersistentCounterProgressionInfo> ClonePersistentCounterProgressions(
+            IEnumerable<PersistentCounterProgressionInfo> source)
+        {
+            return source?
+                .Where(info => info != null)
+                .Select(info => info.Clone())
+                .ToList() ?? new List<PersistentCounterProgressionInfo>();
+        }
+
+        private static List<DynamicRandomBoundDependencyInfo> CloneDynamicRandomBoundDependencies(
+            IEnumerable<DynamicRandomBoundDependencyInfo> source)
+        {
+            return source?
+                .Where(info => info != null)
+                .Select(info => info.Clone())
+                .ToList() ?? new List<DynamicRandomBoundDependencyInfo>();
+        }
+
+        private static void AddOrReplacePersistentCounterProgression(
+            List<PersistentCounterProgressionInfo> target,
+            PersistentCounterProgressionInfo progression)
+        {
+            if (target == null || progression == null)
+                return;
+
+            string key = progression.GetIdentityKey();
+            int existingIndex = target.FindIndex(item => item != null && item.GetIdentityKey() == key);
+            if (existingIndex >= 0)
+                target[existingIndex] = progression.Clone();
+            else
+                target.Add(progression.Clone());
+        }
+
+        private static void AddOrReplaceDynamicRandomBoundDependency(
+            List<DynamicRandomBoundDependencyInfo> target,
+            DynamicRandomBoundDependencyInfo dependency)
+        {
+            if (target == null || dependency == null)
+                return;
+
+            string key = dependency.GetIdentityKey();
+            int existingIndex = target.FindIndex(item => item != null && item.GetIdentityKey() == key);
+            if (existingIndex >= 0)
+                target[existingIndex] = dependency.Clone();
+            else
+                target.Add(dependency.Clone());
+        }
+
+        private static void TrackDynamicRandomBoundDependency(
+            PathAnalysisResult result,
+            DynamicValueFormulaInfo upperBoundFormula,
+            string resultRegisterName,
+            uint callInstructionAddress,
+            byte? maxObservedUpperBound,
+            bool debugMode)
+        {
+            if (result == null || upperBoundFormula == null)
+                return;
+
+            var dependency = new DynamicRandomBoundDependencyInfo
+            {
+                UpperBoundFormula = upperBoundFormula.Clone(),
+                TargetKind = DynamicRandomBoundTargetKind.RandomUpperBound,
+                MaxObservedUpperBound = maxObservedUpperBound,
+                ResultRegisterName = resultRegisterName,
+                RandomCallInstructionAddress = callInstructionAddress
+            };
+
+            result.DynamicRandomBoundDependencies ??= new List<DynamicRandomBoundDependencyInfo>();
+            AddOrReplaceDynamicRandomBoundDependency(result.DynamicRandomBoundDependencies, dependency);
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        Семантика динамической верхней границы random: {dependency.ToDebugString()}");
+        }
+
+        private static void TrackPersistentCounterAdjustment(
+            PathAnalysisResult result,
+            ushort counterAddress,
+            byte oldValue,
+            byte newValue,
+            int delta,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result == null || delta == 0)
+                return;
+
+            result.PendingPersistentCounterProgressions ??= new Dictionary<ushort, PersistentCounterProgressionInfo>();
+            if (!result.PendingPersistentCounterProgressions.TryGetValue(counterAddress, out var progression) ||
+                progression == null)
+            {
+                progression = new PersistentCounterProgressionInfo
+                {
+                    CounterAddress = counterAddress,
+                    InitialValue = oldValue,
+                    CurrentValue = newValue,
+                    Delta = delta,
+                    AdjustmentInstructionAddress = instructionAddress
+                };
+                result.PendingPersistentCounterProgressions[counterAddress] = progression;
+            }
+            else
+            {
+                progression.CurrentValue = newValue;
+                progression.Delta += delta;
+                if (progression.AdjustmentInstructionAddress == 0)
+                    progression.AdjustmentInstructionAddress = instructionAddress;
+            }
+
+            if (debugMode)
+            {
+                string opText = delta > 0 ? $"+{delta}" : delta.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                AnalysisDebug.WriteLine(
+                    $"        Семантика persistent counter: [0x{counterAddress:X4}] {oldValue}->{newValue} ({opText})");
+            }
+        }
+
+        private static void TrackPersistentCounterCapFromCompare(
+            PathAnalysisResult result,
+            RegisterTracker registerTracker,
+            string registerName,
+            byte capValue,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result?.PendingPersistentCounterProgressions == null || registerTracker == null)
+                return;
+
+            ushort? sourceAddress = registerTracker.GetSourceAddress(registerName);
+            if (!sourceAddress.HasValue ||
+                !result.PendingPersistentCounterProgressions.TryGetValue(sourceAddress.Value, out var progression) ||
+                progression == null)
+            {
+                return;
+            }
+
+            if (!progression.CapValue.HasValue || capValue < progression.CapValue.Value)
+            {
+                progression.CapValue = capValue;
+                progression.CapInstructionAddress = instructionAddress;
+
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine(
+                        $"        Семантика persistent counter: [0x{sourceAddress.Value:X4}] ограничен максимумом 0x{capValue:X2}");
+                }
+            }
+        }
+
+        private static void RefreshPendingPersistentCounterStoredValue(
+            PathAnalysisResult result,
+            ushort memAddr,
+            byte value,
+            uint instructionAddress)
+        {
+            if (result?.PendingPersistentCounterProgressions == null ||
+                !result.PendingPersistentCounterProgressions.TryGetValue(memAddr, out var progression) ||
+                progression == null)
+            {
+                return;
+            }
+
+            progression.CurrentValue = value;
+            if (progression.CapValue.HasValue && value == progression.CapValue.Value && progression.CapInstructionAddress == 0)
+                progression.CapInstructionAddress = instructionAddress;
+        }
+
+        private static void TryFinalizePersistentBattleCountProgression(
+            PathAnalysisResult result,
+            RegisterTracker registerTracker,
+            string sourceRegisterName,
+            ushort targetAddress,
+            byte value,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result?.PendingPersistentCounterProgressions == null ||
+                registerTracker == null ||
+                targetAddress != BATTLE_MONSTER_COUNT_ADDRESS)
+            {
+                return;
+            }
+
+            ushort? sourceAddress = registerTracker.GetSourceAddress(sourceRegisterName);
+            if (!sourceAddress.HasValue ||
+                !result.PendingPersistentCounterProgressions.TryGetValue(sourceAddress.Value, out var pending) ||
+                pending == null ||
+                pending.Delta == 0)
+            {
+                return;
+            }
+
+            var finalized = pending.Clone();
+            finalized.CurrentValue = value;
+            finalized.TargetAddress = targetAddress;
+            finalized.TargetKind = PersistentCounterProgressionTargetKind.BattleMonsterCount;
+            finalized.TargetWriteInstructionAddress = instructionAddress;
+
+            result.PersistentCounterProgressions ??= new List<PersistentCounterProgressionInfo>();
+            AddOrReplacePersistentCounterProgression(result.PersistentCounterProgressions, finalized);
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Семантика persistent counter -> BattleMonsterCount: {finalized.ToDebugString()}");
+            }
         }
 
         private bool TryAdvanceFiniteImmediateCounterLoop(
@@ -6419,6 +6836,63 @@ namespace MMMapEditor
             {
                 AnalysisDebug.WriteLine(
                     $"      Конечный цикл по {limitSourceText} продолжается: {counterRegister}=0x{counterValue:X2}, limit=0x{loopLimit:X2}, повторно заходим в тело 0x{loopBodyStartAddress:X4}");
+            }
+
+            return true;
+        }
+
+        private bool TrySkipRangedBattleCounterLoopBackEdge(
+            RegisterTracker registerTracker,
+            PathAnalysisResult result,
+            uint jumpAddress,
+            uint loopBodyStartAddress,
+            bool debugMode)
+        {
+            if (registerTracker == null ||
+                result == null ||
+                result.IsBattleMonsterCountIndeterminate ||
+                result.BattleMonsterCountRange == null ||
+                result.BattleMonsterCountRange.IsExact)
+            {
+                return false;
+            }
+
+            if (registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareMemory ||
+                registerTracker.LastComparedMemoryAddress != BATTLE_MONSTER_COUNT_ADDRESS)
+            {
+                return false;
+            }
+
+            if (!HasObservedSequentialBattleProgress(result, registerTracker))
+                return false;
+
+            string counterRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (!string.Equals(counterRegister, "BL", StringComparison.OrdinalIgnoreCase) ||
+                !registerTracker.TryGetByteRegisterValue(counterRegister, out byte counterValue))
+            {
+                return false;
+            }
+
+            result.IsInLoop = true;
+            result.LoopSemantic = result.LoopSemantic == LoopSemanticKind.None
+                ? LoopSemanticKind.PartialBattle
+                : result.LoopSemantic;
+
+            if (result.LoopStartAddress == 0 || loopBodyStartAddress < result.LoopStartAddress)
+                result.LoopStartAddress = loopBodyStartAddress;
+
+            if (jumpAddress > result.LoopEndAddress)
+                result.LoopEndAddress = jumpAddress;
+
+            if (counterValue > result.LoopIteration)
+                result.LoopIteration = counterValue;
+
+            result.IsIndeterminateLoop = false;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Диапазонный цикл по [0x{BATTLE_MONSTER_COUNT_ADDRESS:X4}] представлен шаблоном повторов {result.BattleMonsterCountRange.Min}-{result.BattleMonsterCountRange.Max}; продолжаем за пределами цикла");
             }
 
             return true;
@@ -6792,7 +7266,8 @@ namespace MMMapEditor
                             EmulatedMemory8Ranges = CloneRangeDictionary(_emulatedMemory8Ranges),
                             EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
                             EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                            EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone())
+                            EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                            PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions)
                         });
                     }
 
@@ -6863,6 +7338,7 @@ namespace MMMapEditor
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
                     ApplyTrackedByteWrite(memAddr, alValue, result, targetX, targetY, insn, debugMode, "MOV [moffs8], AL");
+                    TryFinalizePersistentBattleCountProgression(result, registerTracker, "AL", memAddr, alValue, address, debugMode);
                     if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteExact))
                         ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteExact);
                 }
@@ -6955,7 +7431,11 @@ namespace MMMapEditor
                             );
 
                             if (registerTracker.TryGetPartyFieldValue(regNames8[reg], out var copiedPartyField))
+                            {
                                 registerTracker.SetPartyFieldValue(dstReg, copiedPartyField);
+                                if (registerTracker.TryGetDynamicValueFormula(regNames8[reg], out var copiedFormula))
+                                    registerTracker.SetDynamicValueFormula(dstReg, copiedFormula);
+                            }
 
                             if (registerTracker.TryGetPartyPointerByteValue(regNames8[reg], out var copiedPointerByte))
                                 registerTracker.SetPartyPointerByteValue(dstReg, copiedPointerByte);
@@ -6975,7 +7455,13 @@ namespace MMMapEditor
                             registerTracker.ClearConcreteByteRegisterValueKeepSemantic(dstReg);
 
                             if (semanticField88 != null)
+                            {
                                 registerTracker.SetPartyFieldValue(dstReg, semanticField88);
+                                if (registerTracker.TryGetDynamicValueFormula(regNames8[reg], out var copiedFormula))
+                                    registerTracker.SetDynamicValueFormula(dstReg, copiedFormula);
+                                else
+                                    registerTracker.SetDynamicValueFormula(dstReg, CreateDynamicFormulaFromPartyField(semanticField88, address));
+                            }
 
                             if (semanticPointerByte88 != null)
                                 registerTracker.SetPartyPointerByteValue(dstReg, semanticPointerByte88);
@@ -7030,6 +7516,7 @@ namespace MMMapEditor
                         else if (hasExactMemAddr)
                         {
                             ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, {regName}");
+                            TryFinalizePersistentBattleCountProgression(result, registerTracker, regName, memAddr, regValue, address, debugMode);
 
                             if (registerTracker.TryGetPartyPointerByteValue(regName, out var pointerByte))
                                 ApplyTrackedPartyPointerByteWrite(memAddr, pointerByte);
@@ -7085,6 +7572,7 @@ namespace MMMapEditor
                     byte newValue = unchecked((byte)(currentValue + delta));
                     string operation = delta > 0 ? "INC" : "DEC";
                     ApplyTrackedByteWrite(memAddr, newValue, result, targetX, targetY, insn, debugMode, $"{operation} byte ptr [disp16]");
+                    TrackPersistentCounterAdjustment(result, memAddr, currentValue, newValue, delta, address, debugMode);
                 }
                 else if (TryShiftTrackedSemanticByteRange(memAddr, delta, result, debugMode))
                 {
@@ -7288,7 +7776,13 @@ namespace MMMapEditor
                             registerTracker.ClearConcreteByteRegisterValueKeepSemantic(dstReg);
 
                             if (semanticField8A != null)
+                            {
                                 registerTracker.SetPartyFieldValue(dstReg, semanticField8A);
+                                if (registerTracker.TryGetDynamicValueFormula(srcReg, out var copiedFormula))
+                                    registerTracker.SetDynamicValueFormula(dstReg, copiedFormula);
+                                else
+                                    registerTracker.SetDynamicValueFormula(dstReg, CreateDynamicFormulaFromPartyField(semanticField8A, address));
+                            }
 
                             if (semanticPointerByte8A != null)
                                 registerTracker.SetPartyPointerByteValue(dstReg, semanticPointerByte8A);
@@ -7357,6 +7851,9 @@ namespace MMMapEditor
                                 if (hasPartyFieldRef)
                                 {
                                     registerTracker.SetPartyFieldValue(regName, partyFieldRef);
+                                    registerTracker.SetDynamicValueFormula(
+                                        regName,
+                                        CreateDynamicFormulaFromPartyField(partyFieldRef, address, value));
                                     registerTracker.ClearPartyPointerByteValue(regName);
                                     RegisterPartyFieldRead(
                                         result,
@@ -7401,6 +7898,9 @@ namespace MMMapEditor
                         string regName = regNames8[reg];
                         registerTracker.ClearConcreteByteRegisterValueKeepSemantic(regName);
                         registerTracker.SetPartyFieldValue(regName, partyFieldRef);
+                        registerTracker.SetDynamicValueFormula(
+                            regName,
+                            CreateDynamicFormulaFromPartyField(partyFieldRef, address));
                         registerTracker.ClearPartyPointerByteValue(regName);
                         RegisterPartyFieldRead(
                             result,
@@ -7472,15 +7972,36 @@ namespace MMMapEditor
                         registerTracker.TryGetRegisterValue(regNames16[rm], out ushort srcValue))
                     {
                         string dstReg = regNames16[reg];
-                        registerTracker.SetRegisterValue(dstReg, srcValue, address, $"MOV {dstReg}, {regNames16[rm]}");
-                        PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, regNames16[rm], dstReg, debugMode);
-                        if (registerTracker.TryGetPartyMemberBase(regNames16[rm], out var copiedPartyMember))
+                        string srcReg = regNames16[rm];
+                        bool sourceIsFromTable = registerTracker.IsFromTable(srcReg);
+                        ushort? sourceAddr = registerTracker.GetSourceAddress(srcReg);
+                        if (sourceIsFromTable && sourceAddr.HasValue)
+                        {
+                            registerTracker.SetRegisterValueWithSource(
+                                dstReg,
+                                srcValue,
+                                sourceAddr.Value,
+                                registerTracker.GetOriginalBx(srcReg) ?? 0,
+                                true,
+                                address,
+                                $"MOV {dstReg}, {srcReg}",
+                                registerTracker.GetSourceTable(srcReg),
+                                sourceIndexExternallyDerived: registerTracker.GetSourceIndexExternallyDerived(srcReg),
+                                sourceIndexProviderAddr: registerTracker.GetSourceIndexProviderAddress(srcReg));
+                        }
+                        else
+                        {
+                            registerTracker.SetRegisterValue(dstReg, srcValue, address, $"MOV {dstReg}, {srcReg}");
+                        }
+
+                        PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, srcReg, dstReg, debugMode);
+                        if (registerTracker.TryGetPartyMemberBase(srcReg, out var copiedPartyMember))
                             registerTracker.SetPartyMemberBase(dstReg, copiedPartyMember);
                         else
                             registerTracker.ClearPartyMemberBase(dstReg);
 
                         if (debugMode)
-                            AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames16[rm]} = 0x{srcValue:X4}");
+                            AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {srcReg} = 0x{srcValue:X4}");
                     }
                     else if (reg < regNames16.Length && rm < regNames16.Length &&
                         registerTracker.TryGetRegisterRange(regNames16[rm], out var copiedRange16))
@@ -7910,12 +8431,18 @@ namespace MMMapEditor
                 else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && alRange != null)
                 {
                     registerTracker.TryGetRegisterDistribution("AL", out var alDistribution);
+                    registerTracker.TryGetDynamicValueFormula("AL", out var formulaBeforeArithmetic);
+                    int delta = isAdd
+                        ? immediateValue + carryIn
+                        : -(immediateValue + carryIn);
                     if (isAdd)
                     {
                         int newMin = Math.Min(0xFF, alRange.Min + immediateValue + carryIn);
                         int newMax = Math.Min(0xFF, alRange.Max + immediateValue + carryIn);
                         registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax,
                             GetAdditiveRangeDistribution(alDistribution, immediateValue + carryIn));
+                        if (formulaBeforeArithmetic != null)
+                            registerTracker.SetDynamicValueFormula("AL", formulaBeforeArithmetic.WithAdditiveOffset(delta, address));
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {mnemonic} AL, 0x{immediateValue:X2}: диапазон {alRange.Min}-{alRange.Max} -> {newMin}-{newMax}");
@@ -7926,6 +8453,8 @@ namespace MMMapEditor
                         int newMax = Math.Max(0, alRange.Max - immediateValue - carryIn);
                         registerTracker.SetRegisterRange("AL", (byte)newMin, (byte)newMax,
                             GetAdditiveRangeDistribution(alDistribution, -(immediateValue + carryIn)));
+                        if (formulaBeforeArithmetic != null)
+                            registerTracker.SetDynamicValueFormula("AL", formulaBeforeArithmetic.WithAdditiveOffset(delta, address));
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {mnemonic} AL, 0x{immediateValue:X2}: диапазон {alRange.Min}-{alRange.Max} -> {newMin}-{newMax}");
@@ -7947,11 +8476,56 @@ namespace MMMapEditor
             if (instructionBytes.Length >= 4 && instructionBytes[0] == 0x81 && instructionBytes[1] == 0xE5 && instructionBytes[2] == 0xFF && instructionBytes[3] == 0x00)
             {
                 if (registerTracker.TryGetRegisterValue("BP", out ushort bpValue))
-                    registerTracker.SetRegisterValue("BP", (ushort)(bpValue & 0x00FF), address, "AND BP, 0x00FF");
+                {
+                    ushort maskedValue = (ushort)(bpValue & 0x00FF);
+                    bool sourceIsFromTable = registerTracker.IsFromTable("BP");
+                    ushort? sourceAddr = registerTracker.GetSourceAddress("BP");
+                    if (sourceIsFromTable && sourceAddr.HasValue)
+                    {
+                        registerTracker.SetRegisterValueWithSource(
+                            "BP",
+                            maskedValue,
+                            sourceAddr.Value,
+                            registerTracker.GetOriginalBx("BP") ?? 0,
+                            true,
+                            address,
+                            "AND BP, 0x00FF",
+                            registerTracker.GetSourceTable("BP"),
+                            sourceIndexExternallyDerived: registerTracker.GetSourceIndexExternallyDerived("BP"),
+                            sourceIndexProviderAddr: registerTracker.GetSourceIndexProviderAddress("BP"));
+                    }
+                    else
+                    {
+                        registerTracker.SetRegisterValue("BP", maskedValue, address, "AND BP, 0x00FF");
+                    }
+                }
                 else if (registerTracker.TryGetRegisterRange("BP", out var bpRange) && bpRange != null)
                 {
                     registerTracker.TryGetRegisterDistribution("BP", out var bpDistribution);
-                    registerTracker.SetRegisterRange("BP", (byte)(bpRange.Min & 0xFF), (byte)(bpRange.Max & 0xFF), bpDistribution);
+                    byte maskedMin = (byte)(bpRange.Min & 0xFF);
+                    byte maskedMax = (byte)(bpRange.Max & 0xFF);
+                    bool sourceIsFromTable = registerTracker.IsFromTable("BP");
+                    ushort? sourceAddr = registerTracker.GetSourceAddress("BP");
+                    if (sourceIsFromTable && sourceAddr.HasValue)
+                    {
+                        registerTracker.SetRegisterRangeWithSource(
+                            "BP",
+                            maskedMin,
+                            maskedMax,
+                            bpDistribution,
+                            sourceAddr.Value,
+                            address,
+                            "AND BP, 0x00FF",
+                            fromTable: true,
+                            originalBx: registerTracker.GetOriginalBx("BP") ?? 0,
+                            sourceTable: registerTracker.GetSourceTable("BP"),
+                            sourceIndexExternallyDerived: registerTracker.GetSourceIndexExternallyDerived("BP"),
+                            sourceIndexProviderAddr: registerTracker.GetSourceIndexProviderAddress("BP"));
+                    }
+                    else
+                    {
+                        registerTracker.SetRegisterRange("BP", maskedMin, maskedMax, bpDistribution);
+                    }
                 }
             }
 
@@ -8012,6 +8586,21 @@ namespace MMMapEditor
                     registerTracker.LastCompareImmediate = null;
                     registerTracker.LastComparedMemoryAddress = PARTY_COUNT_ADDRESS;
                     MarkPartyMemberScanLoop(result, address, debugMode);
+                    handledSpecialCompare = true;
+                }
+
+                if (!handledSpecialCompare &&
+                    comparesBl &&
+                    hasExactMemAddress &&
+                    memAddr == BATTLE_MONSTER_COUNT_ADDRESS &&
+                    result?.BattleMonsterCountRange != null &&
+                    !result.BattleMonsterCountRange.IsExact &&
+                    !result.IsBattleMonsterCountIndeterminate)
+                {
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("BL", RegisterTracker.FlagsOriginKind.CompareMemory, address);
+                    registerTracker.LastCompareImmediate = null;
+                    registerTracker.LastComparedMemoryAddress = BATTLE_MONSTER_COUNT_ADDRESS;
                     handledSpecialCompare = true;
                 }
 
@@ -8117,6 +8706,7 @@ namespace MMMapEditor
                     registerTracker.LastComparedPartyField = null;
                 }
 
+                TrackPersistentCounterCapFromCompare(result, registerTracker, "AL", immediateValue, address, debugMode);
                 registerTracker.LastCompareImmediate = immediateValue;
                 registerTracker.LastComparedMemoryAddress = null;
             }
@@ -8609,7 +9199,8 @@ namespace MMMapEditor
                 result.PartialBattles.Add(partialBattle);
                 AnalysisDebug.WriteLine(
                     $"        -> СОЗДАНА НАБЛЮДАЕМАЯ ЧАСТИЧНАЯ БИТВА: BX={saveBxIndex}, " +
-                    $"val1={FormatObservedPartialBattleValue(entry58)}, val2={FormatObservedPartialBattleValue(entry29)}");
+                    $"val1={FormatObservedPartialBattleValue(entry58)}, val2={FormatObservedPartialBattleValue(entry29)}, " +
+                    $"repeatCount={FormatPartialBattleRepeatCount(partialBattle)}");
             }
         }
 
@@ -8632,7 +9223,8 @@ namespace MMMapEditor
             var partialBattle = new PartiallyDefinedBattle
             {
                 BxIndex = saveBxIndex,
-                RepeatCount = GetPartialBattleRepeatCount(result)
+                RepeatCount = GetPartialBattleRepeatCount(result),
+                RepeatCountRange = GetPartialBattleRepeatCountRange(result)
             };
 
             if (entry58.HasExactValue && entry29.HasExactValue)
@@ -9131,6 +9723,7 @@ namespace MMMapEditor
                 {
                     BxIndex = templateObservations.Min(observation => observation.SaveBxIndex),
                     RepeatCount = GetPartialBattleRepeatCount(result),
+                    RepeatCountRange = GetPartialBattleRepeatCountRange(result),
                     ExactOptions = exactOptions
                 };
 
@@ -9142,7 +9735,7 @@ namespace MMMapEditor
                 }
 
                 result.PartialBattles.Add(battle);
-                AnalysisDebug.WriteLine($"        -> СОЗДАН УНИФИЦИРОВАННЫЙ ШАБЛОН ЧАСТИЧНОЙ БИТВЫ [{firstBaseAddr:X4}/{secondBaseAddr:X4}]: BX={battle.BxIndex}, options={exactOptions.Count}, repeatCount={battle.RepeatCount}");
+                AnalysisDebug.WriteLine($"        -> СОЗДАН УНИФИЦИРОВАННЫЙ ШАБЛОН ЧАСТИЧНОЙ БИТВЫ [{firstBaseAddr:X4}/{secondBaseAddr:X4}]: BX={battle.BxIndex}, options={exactOptions.Count}, repeatCount={FormatPartialBattleRepeatCount(battle)}");
             }
 
             return handledAny;
@@ -9156,6 +9749,18 @@ namespace MMMapEditor
             return entry.val1 != 0 && entry.val2 != 0;
         }
 
+        private ValueRange8 GetPartialBattleRepeatCountRange(PathAnalysisResult result)
+        {
+            if (result?.BattleMonsterCountRange != null &&
+                !result.IsBattleMonsterCountIndeterminate &&
+                result.BattleMonsterCountRange.Max > 0)
+            {
+                return new ValueRange8(result.BattleMonsterCountRange.Min, result.BattleMonsterCountRange.Max);
+            }
+
+            return null;
+        }
+
         private int GetPartialBattleRepeatCount(PathAnalysisResult result)
         {
             if (TryGetExactBattleMonsterCount(result, out byte exactBattleMonsterCount) &&
@@ -9166,6 +9771,18 @@ namespace MMMapEditor
             }
 
             return 1;
+        }
+
+        private static string FormatPartialBattleRepeatCount(PartiallyDefinedBattle battle)
+        {
+            if (battle == null)
+                return "?";
+
+            return battle.RepeatCountRange != null
+                ? (battle.RepeatCountRange.IsExact
+                    ? battle.RepeatCountRange.Min.ToString()
+                    : $"{battle.RepeatCountRange.Min}-{battle.RepeatCountRange.Max}")
+                : Math.Max(1, battle.RepeatCount).ToString();
         }
 
         private int DeterminePartialBattleIterationCount(
@@ -9616,6 +10233,7 @@ namespace MMMapEditor
             _emulatedPartyPointers.Remove(memAddr);
             _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
             RegisterMemoryWrite(result, memAddr);
+            RefreshPendingPersistentCounterStoredValue(result, memAddr, value, (uint)insn.Address);
 
             if (debugMode)
                 AnalysisDebug.WriteLine($"        {sourceDescription}: записали 0x{value:X2} в эмулируемую память [0x{memAddr:X4}]");
@@ -9796,6 +10414,7 @@ namespace MMMapEditor
                                          result.RandomEncounterRubicon.HasValue ||
                                          result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 && entry.val2 != 0) ||
                                          result.PartialBattles.Count > 0 ||
+                                         (result.DynamicRandomBoundDependencies != null && result.DynamicRandomBoundDependencies.Count > 0) ||
                                          result.HasPartialBattlePattern ||
                                          result.CallsRandomEncounter ||
                                          result.HasTeleportTarget ||

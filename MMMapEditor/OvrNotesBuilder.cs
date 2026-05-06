@@ -525,7 +525,9 @@ namespace MMMapEditor
         private static bool VariantHeaderContainsProbability(string variantHeader)
         {
             return !string.IsNullOrEmpty(variantHeader)
-                && variantHeader.IndexOf("вероятность наступления", StringComparison.OrdinalIgnoreCase) >= 0;
+                && (variantHeader.IndexOf("вероятность наступления", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    variantHeader.IndexOf("вероятность при выполнении условий", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    variantHeader.IndexOf("при условии:", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static string FormatVariantLine(string line, bool headerContainsProbability)
@@ -603,10 +605,21 @@ namespace MMMapEditor
             return variant.GetOccurrenceDescription();
         }
 
-        private static string BuildProbabilityHeaderAnnotation(string probabilityLine)
+        private static string BuildProbabilityHeaderAnnotation(
+            string probabilityLine,
+            bool conditionAlreadyVisible = false)
         {
             if (string.IsNullOrWhiteSpace(probabilityLine))
                 return null;
+
+            const string conditionalPrefix = "Вероятность при выполнении условий: ";
+            if (probabilityLine.StartsWith(conditionalPrefix, StringComparison.Ordinal))
+            {
+                string probabilityText = probabilityLine.Substring(conditionalPrefix.Length);
+                return conditionAlreadyVisible
+                    ? PrefixProbabilityWordInParentheses(probabilityText)
+                    : "вероятность при выполнении условий " + probabilityText;
+            }
 
             if (probabilityLine.StartsWith("Вероятность: ", StringComparison.Ordinal))
                 probabilityLine = probabilityLine.Substring("Вероятность: ".Length);
@@ -614,15 +627,87 @@ namespace MMMapEditor
             return PrefixProbabilityWordInParentheses(probabilityLine);
         }
 
+        private static List<PartyPredicate> GetDisplayGuardPredicates(PathVariantInfo variant)
+        {
+            if (!ShouldDisplayGuardCondition(variant))
+                return new List<PartyPredicate>();
+
+            return variant?.GetGuardPredicates()?.ToList() ?? new List<PartyPredicate>();
+        }
+
+        private static bool ShouldDisplayGuardCondition(PathVariantInfo variant)
+        {
+            return variant?.HasStateGuardInfo == true && variant.HasProbabilityInfo;
+        }
+
+        private static string BuildGuardConditionKey(PathVariantInfo variant)
+        {
+            return BuildGuardConditionKey(GetDisplayGuardPredicates(variant));
+        }
+
+        private static string BuildGuardConditionKey(IEnumerable<PartyPredicate> predicates)
+        {
+            var keys = (predicates ?? Enumerable.Empty<PartyPredicate>())
+                .Where(predicate => predicate != null)
+                .Select(PartyEffectSemantics.BuildPredicateKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(key => key, StringComparer.Ordinal)
+                .ToList();
+
+            return keys.Count == 0
+                ? null
+                : string.Join("&", keys);
+        }
+
+        private static string BuildGuardHeaderAnnotation(PathVariantInfo variant, string suppressedGuardKey = null)
+        {
+            var predicates = GetDisplayGuardPredicates(variant);
+            string guardKey = BuildGuardConditionKey(predicates);
+            if (string.IsNullOrWhiteSpace(guardKey))
+                return null;
+
+            if (!string.IsNullOrWhiteSpace(suppressedGuardKey) &&
+                string.Equals(guardKey, suppressedGuardKey, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return BuildGuardHeaderAnnotation(predicates);
+        }
+
+        private static string BuildGuardHeaderAnnotation(IEnumerable<PartyPredicate> predicates)
+        {
+            string text = PartyEffectSemantics.BuildPredicateListDisplayText(predicates);
+            return string.IsNullOrWhiteSpace(text)
+                ? null
+                : "при условии: " + text;
+        }
+
+        private static bool IsGuardConditionVisibleInScope(PathVariantInfo variant, string suppressedGuardKey)
+        {
+            if (string.IsNullOrWhiteSpace(suppressedGuardKey))
+                return false;
+
+            string guardKey = BuildGuardConditionKey(variant);
+            return !string.IsNullOrWhiteSpace(guardKey) &&
+                   string.Equals(guardKey, suppressedGuardKey, StringComparison.Ordinal);
+        }
+
         private static List<string> BuildVariantHeaderAnnotations(
             PathVariantInfo variant,
-            string suppressedProbabilityLine = null)
+            string suppressedProbabilityLine = null,
+            string suppressedGuardKey = null)
         {
             var annotations = new List<string>();
 
             string occurrence = BuildOccurrenceLine(variant);
             if (!string.IsNullOrWhiteSpace(occurrence))
                 annotations.Add(occurrence);
+
+            string guard = BuildGuardHeaderAnnotation(variant, suppressedGuardKey);
+            if (!string.IsNullOrWhiteSpace(guard))
+                annotations.Add(guard);
 
             string probability = BuildProbabilityLine(variant);
             if (!string.IsNullOrEmpty(suppressedProbabilityLine) &&
@@ -631,7 +716,9 @@ namespace MMMapEditor
                 probability = null;
             }
 
-            string probabilityAnnotation = BuildProbabilityHeaderAnnotation(probability);
+            bool conditionVisible = !string.IsNullOrWhiteSpace(guard) ||
+                                    IsGuardConditionVisibleInScope(variant, suppressedGuardKey);
+            string probabilityAnnotation = BuildProbabilityHeaderAnnotation(probability, conditionVisible);
             if (!string.IsNullOrWhiteSpace(probabilityAnnotation))
                 annotations.Add(probabilityAnnotation);
 
@@ -910,6 +997,9 @@ private static string BuildHierarchicalVariantNotes(
             if (item.Variant?.HasProbabilityInfo == true)
                 return true;
 
+            if (ShouldDisplayGuardCondition(item.Variant))
+                return true;
+
             return false;
         }
 
@@ -1180,7 +1270,8 @@ private static string BuildHierarchicalVariantNotes(
                 Condition = choice.Condition,
                 CompareValue = choice.CompareValue,
                 CompareRegister = choice.CompareRegister,
-                IsLinear = choice.IsLinear
+                IsLinear = choice.IsLinear,
+                GuardPredicate = choice.GuardPredicate?.Clone()
             };
         }
 
@@ -1781,6 +1872,55 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return firstProbability;
+        }
+
+        private static List<PartyPredicate> GetSharedGuardPredicates(
+            VariantTreeNode node,
+            string inheritedGuardKey = null)
+        {
+            if (node == null)
+                return null;
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant?.Variant != null)
+                .ToList();
+
+            if (variants.Count < 2)
+                return null;
+
+            var firstPredicates = GetDisplayGuardPredicates(variants[0].Variant);
+            string firstGuardKey = BuildGuardConditionKey(firstPredicates);
+            if (string.IsNullOrWhiteSpace(firstGuardKey))
+                return null;
+
+            if (!string.IsNullOrWhiteSpace(inheritedGuardKey) &&
+                string.Equals(firstGuardKey, inheritedGuardKey, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return variants
+                .Select(variant => BuildGuardConditionKey(variant.Variant))
+                .All(key => string.Equals(key, firstGuardKey, StringComparison.Ordinal))
+                ? firstPredicates
+                : null;
+        }
+
+        private static bool HasInheritedGuardForAllVariants(VariantTreeNode node, string inheritedGuardKey)
+        {
+            if (node == null || string.IsNullOrWhiteSpace(inheritedGuardKey))
+                return false;
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant?.Variant != null)
+                .ToList();
+
+            return variants.Count > 0 &&
+                   variants.All(variant =>
+                       string.Equals(
+                           BuildGuardConditionKey(variant.Variant),
+                           inheritedGuardKey,
+                           StringComparison.Ordinal));
         }
 
         private static void ComputeCommonLines(VariantTreeNode node)
@@ -2723,6 +2863,8 @@ private static string BuildHierarchicalVariantNotes(
                 variant.BattleMonsterCount.HasValue ||
                 variant.BattleMonsterCountRange != null ||
                 variant.IsBattleMonsterCountIndeterminate ||
+                (variant.PersistentCounterProgressions?.Count ?? 0) > 0 ||
+                (variant.DynamicRandomBoundDependencies?.Count ?? 0) > 0 ||
                 variant.HasAnyTableLoad)
             {
                 return true;
@@ -2939,9 +3081,20 @@ private static string BuildHierarchicalVariantNotes(
         {
             string header = $"Вариант {groupNumber}";
             string sharedProbabilityLine = GetSharedProbabilityLine(group?.TreeRoot);
-            string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(sharedProbabilityLine);
+            var sharedGuardPredicates = GetSharedGuardPredicates(group?.TreeRoot);
+            string sharedGuardKey = BuildGuardConditionKey(sharedGuardPredicates);
+            string sharedGuardAnnotation = BuildGuardHeaderAnnotation(sharedGuardPredicates);
+            string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(
+                sharedProbabilityLine,
+                !string.IsNullOrWhiteSpace(sharedGuardAnnotation));
+
+            var sharedAnnotations = new List<string>();
+            if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
+                sharedAnnotations.Add(sharedGuardAnnotation);
             if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
-                header += $" ({sharedProbabilityAnnotation})";
+                sharedAnnotations.Add(sharedProbabilityAnnotation);
+            if (sharedAnnotations.Count > 0)
+                header += $" ({string.Join("; ", sharedAnnotations)})";
 
             if (!string.IsNullOrWhiteSpace(group?.Label))
                 header += $": {group.Label}";
@@ -3003,15 +3156,30 @@ private static string BuildHierarchicalVariantNotes(
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
-                        sharedProbabilityLine);
+                        sharedProbabilityLine,
+                        sharedGuardKey);
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
-                    RenderChoiceLeaf(syntheticLabel, entry.DirectVariant, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                    RenderChoiceLeaf(
+                        syntheticLabel,
+                        entry.DirectVariant,
+                        sb,
+                        new List<int> { groupNumber, childIndex++ },
+                        1,
+                        sharedProbabilityLine,
+                        sharedGuardKey);
                 }
                 else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
                 {
-                    RenderChoiceLeaf("N)", entry.DirectVariant, sb, new List<int> { groupNumber, childIndex++ }, 1);
+                    RenderChoiceLeaf(
+                        "N)",
+                        entry.DirectVariant,
+                        sb,
+                        new List<int> { groupNumber, childIndex++ },
+                        1,
+                        sharedProbabilityLine,
+                        sharedGuardKey);
                 }
                 else
                 {
@@ -3020,7 +3188,8 @@ private static string BuildHierarchicalVariantNotes(
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
-                        sharedProbabilityLine);
+                        sharedProbabilityLine,
+                        sharedGuardKey);
                 }
 
                 wroteAnyChild = true;
@@ -3059,7 +3228,8 @@ private static string BuildHierarchicalVariantNotes(
             StringBuilder sb,
             List<int> numbering,
             int depth,
-            string inheritedProbabilityLine = null)
+            string inheritedProbabilityLine = null,
+            string inheritedGuardKey = null)
         {
             if (!IsRenderableStructuralNode(node))
                 return;
@@ -3080,18 +3250,34 @@ private static string BuildHierarchicalVariantNotes(
             string sharedProbabilityLine = singleLeaf == null
                 ? GetSharedProbabilityLine(node, inheritedProbabilityLine)
                 : null;
-            string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(sharedProbabilityLine);
+            var sharedGuardPredicates = singleLeaf == null
+                ? GetSharedGuardPredicates(node, inheritedGuardKey)
+                : null;
+            string sharedGuardKey = BuildGuardConditionKey(sharedGuardPredicates);
+            string sharedGuardAnnotation = BuildGuardHeaderAnnotation(sharedGuardPredicates);
+            bool conditionVisibleForSharedProbability =
+                !string.IsNullOrWhiteSpace(sharedGuardAnnotation) ||
+                HasInheritedGuardForAllVariants(node, inheritedGuardKey);
+            string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(
+                sharedProbabilityLine,
+                conditionVisibleForSharedProbability);
 
             string header = $"{indent}Вариант {variantNumber}";
             if (singleLeaf != null)
             {
-                var annotations = BuildVariantHeaderAnnotations(singleLeaf, inheritedProbabilityLine);
+                var annotations = BuildVariantHeaderAnnotations(singleLeaf, inheritedProbabilityLine, inheritedGuardKey);
                 if (annotations.Count > 0)
                     header += $" ({string.Join("; ", annotations)})";
             }
-            else if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
+            else
             {
-                header += $" ({sharedProbabilityAnnotation})";
+                var sharedAnnotations = new List<string>();
+                if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
+                    sharedAnnotations.Add(sharedGuardAnnotation);
+                if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
+                    sharedAnnotations.Add(sharedProbabilityAnnotation);
+                if (sharedAnnotations.Count > 0)
+                    header += $" ({string.Join("; ", sharedAnnotations)})";
             }
 
             if (!string.IsNullOrWhiteSpace(node.Label))
@@ -3138,6 +3324,7 @@ private static string BuildHierarchicalVariantNotes(
             int nestedIndex = 1;
             bool wroteAny = false;
             string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
+            string descendantSuppressedGuardKey = sharedGuardKey ?? inheritedGuardKey;
 
             foreach (var entry in BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels))
             {
@@ -3151,15 +3338,30 @@ private static string BuildHierarchicalVariantNotes(
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
-                        descendantSuppressedProbabilityLine);
+                        descendantSuppressedProbabilityLine,
+                        descendantSuppressedGuardKey);
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
-                    RenderChoiceLeaf(syntheticLabel, entry.DirectVariant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                    RenderChoiceLeaf(
+                        syntheticLabel,
+                        entry.DirectVariant,
+                        sb,
+                        new List<int>(numbering) { nestedIndex++ },
+                        depth + 1,
+                        descendantSuppressedProbabilityLine,
+                        descendantSuppressedGuardKey);
                 }
                 else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
                 {
-                    RenderChoiceLeaf("N)", entry.DirectVariant, sb, new List<int>(numbering) { nestedIndex++ }, depth + 1);
+                    RenderChoiceLeaf(
+                        "N)",
+                        entry.DirectVariant,
+                        sb,
+                        new List<int>(numbering) { nestedIndex++ },
+                        depth + 1,
+                        descendantSuppressedProbabilityLine,
+                        descendantSuppressedGuardKey);
                 }
                 else
                 {
@@ -3168,7 +3370,8 @@ private static string BuildHierarchicalVariantNotes(
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
-                        descendantSuppressedProbabilityLine);
+                        descendantSuppressedProbabilityLine,
+                        descendantSuppressedGuardKey);
                 }
 
                 wroteAny = true;
@@ -3178,6 +3381,9 @@ private static string BuildHierarchicalVariantNotes(
         private static bool ShouldRenderAsNoChoiceVariant(VariantRenderItem item)
         {
             if (item == null)
+                return false;
+
+            if (ShouldDisplayGuardCondition(item.Variant))
                 return false;
 
             if (GetRelevantBranchChoices(item.Variant).Any())
@@ -3200,10 +3406,21 @@ private static string BuildHierarchicalVariantNotes(
             return false;
         }
 
-        private static void RenderChoiceLeaf(string label, VariantRenderItem item, StringBuilder sb, List<int> numbering, int depth)
+        private static void RenderChoiceLeaf(
+            string label,
+            VariantRenderItem item,
+            StringBuilder sb,
+            List<int> numbering,
+            int depth,
+            string inheritedProbabilityLine = null,
+            string inheritedGuardKey = null)
         {
             string indent = new string(' ', depth * 3);
-            string header = $"{indent}Вариант {string.Join(".", numbering)}: {label}";
+            string header = $"{indent}Вариант {string.Join(".", numbering)}";
+            var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine, inheritedGuardKey);
+            if (annotations.Count > 0)
+                header += $" ({string.Join("; ", annotations)})";
+            header += $": {label}";
             sb.AppendLine(header);
         }
 
@@ -3221,11 +3438,12 @@ private static string BuildHierarchicalVariantNotes(
             StringBuilder sb,
             List<int> numbering,
             int depth,
-            string inheritedProbabilityLine = null)
+            string inheritedProbabilityLine = null,
+            string inheritedGuardKey = null)
         {
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
-            var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine);
+            var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine, inheritedGuardKey);
             if (annotations.Count > 0)
                 header += $" ({string.Join("; ", annotations)})";
             header += ":";
@@ -3631,14 +3849,18 @@ private static string BuildHierarchicalVariantNotes(
                 occurrenceKey = BuildOccurrenceLine(variant) ?? string.Empty;
             }
 
+            string guardKey = obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var guardedVariant)
+                ? BuildGuardConditionKey(guardedVariant) ?? string.Empty
+                : string.Empty;
             string linesKey = string.Join("\n", (lines ?? new List<string>()).Select(line => line ?? string.Empty));
-            return occurrenceKey + "\n---\n" + probabilityKey + "\n---\n" + linesKey;
+            return string.Join("\n---\n", occurrenceKey, probabilityKey, guardKey, linesKey);
         }
 
         private static string BuildDisplayedVariantItemKey(VariantRenderItem item)
         {
             string occurrenceKey = BuildOccurrenceLine(item?.Variant) ?? string.Empty;
             string probabilityKey = BuildProbabilityLine(item?.Variant) ?? string.Empty;
+            string guardConditionKey = BuildGuardConditionKey(item?.Variant) ?? string.Empty;
             string branchKey = string.Join("|",
                 GetRelevantBranchChoices(item?.Variant)
                     .Select(choice => NormalizeChoiceLabel(choice?.Label) ?? string.Empty));
@@ -3646,7 +3868,7 @@ private static string BuildHierarchicalVariantNotes(
                 (item?.Lines ?? new List<string>())
                     .Select(line => line?.TrimEnd() ?? string.Empty));
 
-            return string.Join("\n---\n", occurrenceKey, probabilityKey, branchKey, linesKey);
+            return string.Join("\n---\n", occurrenceKey, probabilityKey, guardConditionKey, branchKey, linesKey);
         }
 
         private static List<string> NumberLootBlockIfNeeded(List<string> lines)

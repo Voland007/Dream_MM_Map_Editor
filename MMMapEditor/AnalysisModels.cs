@@ -167,6 +167,8 @@ namespace MMMapEditor
         public Dictionary<ushort, RegisterValueDistribution> EmulatedMemory8RangeDistributions { get; set; } = new Dictionary<ushort, RegisterValueDistribution>();
         public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
         public Dictionary<ushort, PartyPointerByteReference> EmulatedPartyPointerBytes { get; set; } = new Dictionary<ushort, PartyPointerByteReference>();
+        public Dictionary<ushort, PersistentCounterProgressionInfo> PendingPersistentCounterProgressions { get; set; }
+            = new Dictionary<ushort, PersistentCounterProgressionInfo>();
         public Dictionary<ushort, StateValueConstraintInfo> BranchStateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         public PartyConditionKind BranchPartyCondition { get; set; } = PartyConditionKind.None;
         public PartyPredicate BranchPartyPredicate { get; set; }
@@ -289,7 +291,11 @@ namespace MMMapEditor
         AggregateTemporaryStatTemporaryWord = 3,
         AggregateTemporaryStatValue = 4,
         RandomEncounterRubiconWarning = 5,
-        RandomEncounterRubiconThreshold = 6
+        RandomEncounterRubiconThreshold = 6,
+        PersistentCounterProgressionNote = 7,
+        PersistentCounterProgressionValue = 8,
+        DynamicRandomBoundDependencyNote = 9,
+        DynamicRandomBoundDependencyFormula = 10
     }
 
     public sealed class NoteInlineStyleSpan
@@ -366,6 +372,12 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; } = false;
+        public Dictionary<ushort, PersistentCounterProgressionInfo> PendingPersistentCounterProgressions { get; set; }
+            = new Dictionary<ushort, PersistentCounterProgressionInfo>();
+        public List<PersistentCounterProgressionInfo> PersistentCounterProgressions { get; set; }
+            = new List<PersistentCounterProgressionInfo>();
+        public List<DynamicRandomBoundDependencyInfo> DynamicRandomBoundDependencies { get; set; }
+            = new List<DynamicRandomBoundDependencyInfo>();
         public Dictionary<int, (byte val1, byte val2, bool isIndeterminate)> BattleMonsterEntries { get; set; }
             = new Dictionary<int, (byte, byte, bool)>();
         public bool HasPartialBattlePattern { get; set; } = false;
@@ -415,6 +427,300 @@ namespace MMMapEditor
         public byte? LastCompareImm { get; set; }
         public ushort? LastCompareMem { get; set; }
         public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
+    }
+
+    public enum PersistentCounterProgressionTargetKind
+    {
+        Unknown = 0,
+        BattleMonsterCount = 1
+    }
+
+    public class PersistentCounterProgressionInfo
+    {
+        public ushort CounterAddress { get; set; }
+        public byte InitialValue { get; set; }
+        public byte CurrentValue { get; set; }
+        public int Delta { get; set; }
+        public byte? CapValue { get; set; }
+        public ushort? TargetAddress { get; set; }
+        public PersistentCounterProgressionTargetKind TargetKind { get; set; } = PersistentCounterProgressionTargetKind.Unknown;
+        public uint AdjustmentInstructionAddress { get; set; }
+        public uint CapInstructionAddress { get; set; }
+        public uint TargetWriteInstructionAddress { get; set; }
+
+        public bool IsLinkedToBattleMonsterCount =>
+            TargetKind == PersistentCounterProgressionTargetKind.BattleMonsterCount;
+
+        public bool HasFutureProgression =>
+            IsLinkedToBattleMonsterCount &&
+            Delta > 0 &&
+            CapValue.HasValue &&
+            CurrentValue < CapValue.Value;
+
+        public PersistentCounterProgressionInfo Clone()
+        {
+            return new PersistentCounterProgressionInfo
+            {
+                CounterAddress = CounterAddress,
+                InitialValue = InitialValue,
+                CurrentValue = CurrentValue,
+                Delta = Delta,
+                CapValue = CapValue,
+                TargetAddress = TargetAddress,
+                TargetKind = TargetKind,
+                AdjustmentInstructionAddress = AdjustmentInstructionAddress,
+                CapInstructionAddress = CapInstructionAddress,
+                TargetWriteInstructionAddress = TargetWriteInstructionAddress
+            };
+        }
+
+        public string GetIdentityKey()
+        {
+            return string.Join("|",
+                CounterAddress.ToString("X4"),
+                InitialValue.ToString("X2"),
+                CurrentValue.ToString("X2"),
+                Delta.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                CapValue?.ToString("X2") ?? "-",
+                TargetAddress?.ToString("X4") ?? "-",
+                TargetKind.ToString(),
+                AdjustmentInstructionAddress.ToString("X4"),
+                CapInstructionAddress.ToString("X4"),
+                TargetWriteInstructionAddress.ToString("X4"));
+        }
+
+        public string ToDebugString()
+        {
+            string capText = CapValue.HasValue ? $"cap=0x{CapValue.Value:X2}" : "cap=?";
+            string targetText = TargetAddress.HasValue
+                ? $"{TargetKind}@[0x{TargetAddress.Value:X4}]"
+                : TargetKind.ToString();
+            string opText = Delta >= 0 ? $"+{Delta}" : Delta.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return $"[0x{CounterAddress:X4}] {InitialValue}->{CurrentValue} ({opText}), {capText}, target={targetText}, at=0x{TargetWriteInstructionAddress:X4}";
+        }
+    }
+
+    public enum DynamicRandomBoundTargetKind
+    {
+        Unknown = 0,
+        RandomUpperBound = 1,
+        PartialBattleVariantCount = 2
+    }
+
+    public class DynamicValueFormulaInfo
+    {
+        public PartyFieldReference SourceField { get; set; }
+        public int Multiplier { get; set; } = 1;
+        public int AdditiveOffset { get; set; }
+        public byte? MinValue { get; set; }
+        public byte? MaxValue { get; set; }
+        public uint SourceInstructionAddress { get; set; }
+        public uint LastTransformInstructionAddress { get; set; }
+
+        public DynamicValueFormulaInfo Clone()
+        {
+            return new DynamicValueFormulaInfo
+            {
+                SourceField = SourceField?.Clone(),
+                Multiplier = Multiplier,
+                AdditiveOffset = AdditiveOffset,
+                MinValue = MinValue,
+                MaxValue = MaxValue,
+                SourceInstructionAddress = SourceInstructionAddress,
+                LastTransformInstructionAddress = LastTransformInstructionAddress
+            };
+        }
+
+        public DynamicValueFormulaInfo WithAdditiveOffset(int delta, uint instructionAddress)
+        {
+            var clone = Clone();
+            clone.AdditiveOffset += delta;
+            clone.MinValue = AddClamped(clone.MinValue, delta);
+            clone.MaxValue = AddClamped(clone.MaxValue, delta);
+            clone.LastTransformInstructionAddress = instructionAddress;
+            return clone;
+        }
+
+        public DynamicValueFormulaInfo WithValueConstraint(byte min, byte max)
+        {
+            var clone = Clone();
+            clone.MinValue = clone.MinValue.HasValue ? (byte)System.Math.Max(clone.MinValue.Value, min) : min;
+            clone.MaxValue = clone.MaxValue.HasValue ? (byte)System.Math.Min(clone.MaxValue.Value, max) : max;
+
+            if (clone.MinValue.HasValue &&
+                clone.MaxValue.HasValue &&
+                clone.MinValue.Value > clone.MaxValue.Value)
+            {
+                clone.MinValue = min;
+                clone.MaxValue = max;
+            }
+
+            return clone;
+        }
+
+        public string GetFormulaExpression()
+        {
+            string baseText = GetFormulaBaseText(SourceField?.Field);
+            if (Multiplier != 1)
+                baseText = $"{Multiplier}*{baseText}";
+
+            if (AdditiveOffset > 0)
+                return $"{baseText} + {AdditiveOffset}";
+
+            if (AdditiveOffset < 0)
+                return $"{baseText} - {System.Math.Abs(AdditiveOffset)}";
+
+            return baseText;
+        }
+
+        public string GetSourceDescription()
+        {
+            string fieldText = GetSourceFieldPhrase(SourceField?.Field);
+            string memberText = GetMemberPhrase(SourceField?.Member);
+            return string.IsNullOrWhiteSpace(memberText)
+                ? fieldText
+                : $"{fieldText} {memberText}";
+        }
+
+        public string GetIdentityKey()
+        {
+            var member = SourceField?.Member;
+            return string.Join("|",
+                SourceField?.Field.ToString() ?? "-",
+                SourceField?.Offset.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-",
+                member?.MemberIndex?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-",
+                member?.IsPartyLoopMember == true ? "loop" : "-",
+                Multiplier.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                AdditiveOffset.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                MinValue?.ToString("X2") ?? "-",
+                MaxValue?.ToString("X2") ?? "-",
+                SourceInstructionAddress.ToString("X4"),
+                LastTransformInstructionAddress.ToString("X4"));
+        }
+
+        private static byte? AddClamped(byte? value, int delta)
+        {
+            if (!value.HasValue)
+                return null;
+
+            int adjusted = value.Value + delta;
+            if (adjusted < 0)
+                adjusted = 0;
+            if (adjusted > 0xFF)
+                adjusted = 0xFF;
+
+            return (byte)adjusted;
+        }
+
+        private static string GetFormulaBaseText(PartyFieldKind? field)
+        {
+            return field switch
+            {
+                PartyFieldKind.TempLevel => "временный LEVEL",
+                PartyFieldKind.TempIntellect => "временный INTELLECT",
+                PartyFieldKind.TempMight => "временный MIGHT",
+                PartyFieldKind.TempPersonality => "временный PERSONALITY",
+                PartyFieldKind.TempEndurance => "временный ENDURANCE",
+                PartyFieldKind.TempSpeed => "временный SPEED",
+                PartyFieldKind.TempAccuracy => "временный ACCURANCY",
+                PartyFieldKind.TempLuck => "временный LUCK",
+                _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
+                    PartyTemporaryStatSemantics.GetFieldLabel(field.Value),
+                _ when field.HasValue && PartyTechnicalFieldSemantics.IsTrackedField(field.Value) =>
+                    PartyTechnicalFieldSemantics.GetFieldLabel(field.Value),
+                _ => field?.ToString() ?? "значение"
+            };
+        }
+
+        private static string GetSourceFieldPhrase(PartyFieldKind? field)
+        {
+            return field switch
+            {
+                PartyFieldKind.TempLevel => "временного уровня",
+                _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
+                    PartyTemporaryStatSemantics.GetFieldLabel(field.Value),
+                _ when field.HasValue && PartyTechnicalFieldSemantics.IsTrackedField(field.Value) =>
+                    PartyTechnicalFieldSemantics.GetFieldLabel(field.Value),
+                _ => field?.ToString() ?? "значения"
+            };
+        }
+
+        private static string GetMemberPhrase(PartyMemberReference member)
+        {
+            if (member == null)
+                return null;
+
+            if (member.IsPartyLoopMember)
+                return "каждого персонажа партии";
+
+            if (member.MemberIndex == 0)
+                return "первого героя";
+
+            if (member.MemberIndex.HasValue)
+                return $"персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)}";
+
+            return null;
+        }
+    }
+
+    public class DynamicRandomBoundDependencyInfo
+    {
+        public DynamicValueFormulaInfo UpperBoundFormula { get; set; }
+        public DynamicRandomBoundTargetKind TargetKind { get; set; } = DynamicRandomBoundTargetKind.RandomUpperBound;
+        public byte? MaxObservedUpperBound { get; set; }
+        public string ResultRegisterName { get; set; }
+        public uint RandomCallInstructionAddress { get; set; }
+        public uint TargetInstructionAddress { get; set; }
+        public ushort? TargetAddress { get; set; }
+
+        public DynamicRandomBoundDependencyInfo Clone()
+        {
+            return new DynamicRandomBoundDependencyInfo
+            {
+                UpperBoundFormula = UpperBoundFormula?.Clone(),
+                TargetKind = TargetKind,
+                MaxObservedUpperBound = MaxObservedUpperBound,
+                ResultRegisterName = ResultRegisterName,
+                RandomCallInstructionAddress = RandomCallInstructionAddress,
+                TargetInstructionAddress = TargetInstructionAddress,
+                TargetAddress = TargetAddress
+            };
+        }
+
+        public string GetIdentityKey()
+        {
+            return string.Join("|",
+                UpperBoundFormula?.GetIdentityKey() ?? "-",
+                TargetKind.ToString(),
+                MaxObservedUpperBound?.ToString("X2") ?? "-",
+                ResultRegisterName ?? "-",
+                RandomCallInstructionAddress.ToString("X4"),
+                TargetInstructionAddress.ToString("X4"),
+                TargetAddress?.ToString("X4") ?? "-");
+        }
+
+        public string BuildDescription(bool battleContext)
+        {
+            if (UpperBoundFormula == null)
+                return null;
+
+            string sourceText = UpperBoundFormula.GetSourceDescription();
+            string formulaText = UpperBoundFormula.GetFormulaExpression();
+
+            if (battleContext || TargetKind == DynamicRandomBoundTargetKind.PartialBattleVariantCount)
+                return $"Количество вариантов зависит от {sourceText} и рассчитывается по формуле: {formulaText}";
+
+            return $"Верхняя граница случайного значения зависит от {sourceText} и рассчитывается по формуле: {formulaText}";
+        }
+
+        public string ToDebugString()
+        {
+            string maxText = MaxObservedUpperBound.HasValue ? $"max=0x{MaxObservedUpperBound.Value:X2}" : "max=?";
+            string targetText = TargetAddress.HasValue
+                ? $"{TargetKind}@[0x{TargetAddress.Value:X4}]"
+                : TargetKind.ToString();
+            return $"{targetText}, {maxText}, formula={UpperBoundFormula?.GetFormulaExpression() ?? "?"}, call=0x{RandomCallInstructionAddress:X4}";
+        }
     }
 
     public enum PersistentMemoryFirstAccessKind

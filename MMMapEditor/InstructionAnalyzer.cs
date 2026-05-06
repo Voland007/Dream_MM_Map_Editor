@@ -1783,8 +1783,8 @@ namespace MMMapEditor
                 byte clValue = (byte)(bpValue & 0xFF);
                 byte chValue = (byte)(bpValue >> 8);
 
-                tracker.TrackPartialRegisterOperation("CX", "CL", clValue, address, "MOV CL, low byte of BP");
-                tracker.TrackPartialRegisterOperation("CX", "CH", chValue, address, "MOV CH, high byte of BP");
+                tracker.TrackPartialRegisterOperation("CX", "CL", clValue, address, "MOV CL, low byte of BP", preserveSourceMetadata: true);
+                tracker.TrackPartialRegisterOperation("CX", "CH", chValue, address, "MOV CH, high byte of BP", preserveSourceMetadata: true);
 
                 AnalysisDebug.WriteLine($"    КОПИРОВАНИЕ ИЗ ТАБЛИЦЫ: CX = BP (source={sourceAddr:X4}, table={sourceTable}, originalBX={originalBx}, val={bpValue:X4})");
             }
@@ -1797,8 +1797,8 @@ namespace MMMapEditor
 
                     byte clValue = (byte)(bpValue & 0xFF);
                     byte chValue = (byte)(bpValue >> 8);
-                    tracker.TrackPartialRegisterOperation("CX", "CL", clValue, address, "MOV CL, low byte of BP");
-                    tracker.TrackPartialRegisterOperation("CX", "CH", chValue, address, "MOV CH, high byte of BP");
+                    tracker.TrackPartialRegisterOperation("CX", "CL", clValue, address, "MOV CL, low byte of BP", preserveSourceMetadata: true);
+                    tracker.TrackPartialRegisterOperation("CX", "CH", chValue, address, "MOV CH, high byte of BP", preserveSourceMetadata: true);
 
                     AnalysisDebug.WriteLine($"    КОПИРОВАНИЕ: CX = BP (0x{bpValue:X4})");
                 }

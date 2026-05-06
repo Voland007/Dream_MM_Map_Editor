@@ -557,6 +557,106 @@ namespace MMMapEditor
                 BuildPredicateTargetKey(predicate.TargetMember));
         }
 
+        public static string BuildPredicateDisplayText(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return null;
+
+            string targetText = BuildPredicateTargetDisplayText(predicate.TargetMember);
+            string fieldText = FormatFieldName(predicate.Field);
+            string comparisonText = FormatPredicateComparison(predicate.Comparison);
+            string valueText = FormatPredicateValue(predicate);
+
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(targetText))
+                parts.Add(targetText);
+            if (!string.IsNullOrWhiteSpace(fieldText))
+                parts.Add(fieldText);
+            if (!string.IsNullOrWhiteSpace(comparisonText))
+                parts.Add(comparisonText);
+            if (!string.IsNullOrWhiteSpace(valueText))
+                parts.Add(valueText);
+
+            if (parts.Count > 0)
+                return string.Join(" ", parts);
+
+            return predicate.Description;
+        }
+
+        public static string BuildPredicateListDisplayText(IEnumerable<PartyPredicate> predicates)
+        {
+            var descriptions = predicates?
+                .Where(predicate => predicate != null)
+                .GroupBy(BuildPredicateKey)
+                .Select(group => group.First())
+                .OrderBy(BuildPredicateKey)
+                .Select(BuildPredicateDisplayText)
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .ToList() ?? new List<string>();
+
+            return descriptions.Count == 0
+                ? null
+                : string.Join("; ", descriptions);
+        }
+
+        private static string BuildPredicateTargetDisplayText(PartyMemberReference member)
+        {
+            if (member == null)
+                return null;
+
+            if (member.MemberIndex.HasValue)
+                return $"у персонажа {FormatMemberDisplay(member.MemberIndex.Value)}";
+
+            if (member.IsPartyLoopMember)
+                return "у текущего персонажа";
+
+            return member.SelectionKind switch
+            {
+                PartyMemberSelectionKind.Random => "у случайного персонажа",
+                PartyMemberSelectionKind.Dynamic => "у выбранного персонажа",
+                _ => null
+            };
+        }
+
+        private static string FormatPredicateComparison(PartyPredicateComparison comparison)
+        {
+            return comparison switch
+            {
+                PartyPredicateComparison.Equal => "==",
+                PartyPredicateComparison.NotEqual => "!=",
+                PartyPredicateComparison.LessThan => "<",
+                PartyPredicateComparison.LessOrEqual => "<=",
+                PartyPredicateComparison.GreaterThan => ">",
+                PartyPredicateComparison.GreaterOrEqual => ">=",
+                _ => null
+            };
+        }
+
+        private static string FormatPredicateValue(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return null;
+
+            if (predicate.ImmediateRange != null)
+            {
+                return predicate.ImmediateRange.IsExact
+                    ? FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateRange.Min)
+                    : $"{FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateRange.Min)}-{FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateRange.Max)}";
+            }
+
+            if (predicate.ImmediateValue.HasValue)
+                return FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateValue.Value);
+
+            return null;
+        }
+
+        private static string FormatPredicateImmediateValue(PartyFieldKind field, ushort value)
+        {
+            return PartyAlignmentSemantics.IsAlignmentField(field)
+                ? PartyAlignmentSemantics.FormatAlignmentValue(value)
+                : value.ToString(CultureInfo.InvariantCulture);
+        }
+
         internal static PartyValueKnowledge GetEffectiveValueKnowledgeForDiagnostics(PartyEffect effect)
         {
             if (effect == null)

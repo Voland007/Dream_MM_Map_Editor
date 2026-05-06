@@ -84,7 +84,8 @@ namespace MMMapEditor
                     path.EmulatedMemory8Ranges == null ? null : CloneRangeDictionary(path.EmulatedMemory8Ranges),
                     path.EmulatedMemory8RangeDistributions == null
                         ? null
-                        : new Dictionary<ushort, RegisterValueDistribution>(path.EmulatedMemory8RangeDistributions));
+                        : new Dictionary<ushort, RegisterValueDistribution>(path.EmulatedMemory8RangeDistributions),
+                    initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(path.PendingPersistentCounterProgressions));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
                 MergeStateValueConstraints(effectivePathResult.StateValueConstraints, path.BranchStateValueConstraints);
 
@@ -283,14 +284,7 @@ namespace MMMapEditor
 
             return source
                 .Where(choice => choice != null)
-                .Select(choice => new BranchChoice
-                {
-                    Label = choice.Label,
-                    Condition = choice.Condition,
-                    CompareValue = choice.CompareValue,
-                    CompareRegister = choice.CompareRegister,
-                    IsLinear = choice.IsLinear
-                })
+                .Select(choice => choice.Clone())
                 .ToList();
         }
 
@@ -303,23 +297,12 @@ namespace MMMapEditor
             {
                 bool exists = target.Any(existing =>
                     existing != null &&
-                    string.Equals(existing.Label, choice.Label, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(existing.Condition, choice.Condition, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(existing.CompareRegister, choice.CompareRegister, StringComparison.OrdinalIgnoreCase) &&
-                    existing.CompareValue == choice.CompareValue &&
-                    existing.IsLinear == choice.IsLinear);
+                    string.Equals(existing.GetIdentityKey(), choice.GetIdentityKey(), StringComparison.OrdinalIgnoreCase));
 
                 if (exists)
                     continue;
 
-                target.Add(new BranchChoice
-                {
-                    Label = choice.Label,
-                    Condition = choice.Condition,
-                    CompareValue = choice.CompareValue,
-                    CompareRegister = choice.CompareRegister,
-                    IsLinear = choice.IsLinear
-                });
+                target.Add(choice.Clone());
             }
         }
 
@@ -340,7 +323,8 @@ namespace MMMapEditor
                 Condition = path.Condition,
                 CompareValue = path.CompareValue,
                 CompareRegister = path.CompareRegister,
-                IsLinear = isLinear
+                IsLinear = isLinear,
+                GuardPredicate = path.BranchPartyPredicate?.Clone()
             };
         }
 
@@ -572,6 +556,29 @@ namespace MMMapEditor
                 merged.BattleMonsterCount = currentState.BattleMonsterCount;
                 merged.BattleMonsterCountRange = new ValueRange8(currentState.BattleMonsterCount.Value, currentState.BattleMonsterCount.Value);
                 merged.IsBattleMonsterCountIndeterminate = false;
+            }
+
+            foreach (var kvp in currentState.PendingPersistentCounterProgressions ?? Enumerable.Empty<KeyValuePair<ushort, PersistentCounterProgressionInfo>>())
+                merged.PendingPersistentCounterProgressions[kvp.Key] = kvp.Value?.Clone();
+
+            foreach (var progression in currentState.PersistentCounterProgressions ?? Enumerable.Empty<PersistentCounterProgressionInfo>())
+            {
+                if (progression == null)
+                    continue;
+
+                string key = progression.GetIdentityKey();
+                if (!merged.PersistentCounterProgressions.Any(existing => existing != null && existing.GetIdentityKey() == key))
+                    merged.PersistentCounterProgressions.Add(progression.Clone());
+            }
+
+            foreach (var dependency in currentState.DynamicRandomBoundDependencies ?? Enumerable.Empty<DynamicRandomBoundDependencyInfo>())
+            {
+                if (dependency == null)
+                    continue;
+
+                string key = dependency.GetIdentityKey();
+                if (!merged.DynamicRandomBoundDependencies.Any(existing => existing != null && existing.GetIdentityKey() == key))
+                    merged.DynamicRandomBoundDependencies.Add(dependency.Clone());
             }
 
             foreach (var entry in currentState.BattleMonsterEntries)
@@ -973,6 +980,15 @@ namespace MMMapEditor
             clone.BattleMonsterCount = source.BattleMonsterCount;
             clone.BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max);
             clone.IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate;
+            clone.PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(source.PendingPersistentCounterProgressions);
+            clone.PersistentCounterProgressions = source.PersistentCounterProgressions?
+                .Where(info => info != null)
+                .Select(info => info.Clone())
+                .ToList() ?? new List<PersistentCounterProgressionInfo>();
+            clone.DynamicRandomBoundDependencies = source.DynamicRandomBoundDependencies?
+                .Where(info => info != null)
+                .Select(info => info.Clone())
+                .ToList() ?? new List<DynamicRandomBoundDependencyInfo>();
             clone.HasPartialBattlePattern = source.HasPartialBattlePattern;
             clone.IsInLoop = source.IsInLoop;
             clone.LoopSemantic = source.LoopSemantic;
@@ -1085,6 +1101,7 @@ namespace MMMapEditor
                     EmulatedPartyPointerBytes = alt.EmulatedPartyPointerBytes == null
                         ? new Dictionary<ushort, PartyPointerByteReference>()
                         : alt.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(alt.PendingPersistentCounterProgressions),
                     BranchStateValueConstraints = CloneStateValueConstraints(alt.BranchStateValueConstraints),
                     BranchPartyCondition = alt.BranchPartyCondition,
                     BranchPartyPredicate = alt.BranchPartyPredicate?.Clone()
@@ -1092,6 +1109,16 @@ namespace MMMapEditor
             }
 
             return clone;
+        }
+
+        private static Dictionary<ushort, PersistentCounterProgressionInfo> ClonePendingPersistentCounterProgressions(
+            Dictionary<ushort, PersistentCounterProgressionInfo> source)
+        {
+            return source == null
+                ? new Dictionary<ushort, PersistentCounterProgressionInfo>()
+                : source
+                    .Where(kvp => kvp.Value != null)
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Clone());
         }
 
         private PathVariantInfo CreatePathVariant(int pathId, decimal pathOrderKey, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source, int probabilityNumerator, int probabilityDenominator, List<BranchChoice> branchChoices)
@@ -1129,9 +1156,17 @@ namespace MMMapEditor
                 BattleMonsterCount = source.BattleMonsterCount,
                 BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                PersistentCounterProgressions = source.PersistentCounterProgressions?
+                    .Where(info => info != null)
+                    .Select(info => info.Clone())
+                    .ToList() ?? new List<PersistentCounterProgressionInfo>(),
+                DynamicRandomBoundDependencies = source.DynamicRandomBoundDependencies?
+                    .Where(info => info != null)
+                    .Select(info => info.Clone())
+                    .ToList() ?? new List<DynamicRandomBoundDependencyInfo>(),
                 BattleMonsters = CloneBattleMonsters(source),
                 PartiallyDefinedBattles = ClonePartialBattles(source),
-                HasAnyTableLoad = source.HasPartialBattlePattern,
+                HasAnyTableLoad = source.PartialBattleInfo.Any(ShouldExposeLoadedValue),
                 LoadedValues = CloneLoadedValues(source),
                 PartyEffects = semanticPartyEffects,
                 ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
@@ -1185,6 +1220,7 @@ namespace MMMapEditor
         private List<OvrObject.LoadedValueInfo> CloneLoadedValues(PathAnalysisResult source)
         {
             return source.PartialBattleInfo
+                .Where(ShouldExposeLoadedValue)
                 .OrderBy(i => i.BxIndex)
                 .ThenBy(i => i.SourceTableAddr ?? 0)
                 .ThenBy(i => i.SrcReg)
@@ -1198,6 +1234,11 @@ namespace MMMapEditor
                     IsSaved = false
                 })
                 .ToList();
+        }
+
+        private static bool ShouldExposeLoadedValue(PartialBattleInfo info)
+        {
+            return info != null && info.IsFromTable;
         }
 
         private bool HasAnyOutcome(PathVariantInfo variant)
@@ -1217,6 +1258,9 @@ namespace MMMapEditor
                 return true;
 
             if (variant.BattleMonsterCount.HasValue || variant.BattleMonsterCountRange != null || variant.IsBattleMonsterCountIndeterminate)
+                return true;
+
+            if (variant.DynamicRandomBoundDependencies != null && variant.DynamicRandomBoundDependencies.Count > 0)
                 return true;
 
             if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
@@ -1310,6 +1354,14 @@ namespace MMMapEditor
                 VariantTextsContain(variant, "FIELDS DEACTIVATED"))
             {
                 return 1;
+            }
+
+            if (VariantTextsContain(variant, "TOWN GUARDS: YOU'RE UNDER ARREST!") &&
+                variant.CallsRandomEncounter &&
+                ((variant.BattleMonsters != null && variant.BattleMonsters.Count > 0) ||
+                 (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0)))
+            {
+                return 2;
             }
 
             if (VariantTextsContain(variant, "IMPROPER") ||
@@ -1611,10 +1663,63 @@ namespace MMMapEditor
                     continue;
                 }
 
-                result.AddRange(groupItems.Where(v => !IsPromptOnlyLeaf(v)));
+                var survivors = groupItems
+                    .Where(v => !IsPromptOnlyLeaf(v) ||
+                                !IsPromptOnlyVariantShadowedByLoopEffect(v, groupItems))
+                    .ToList();
+
+                result.AddRange(survivors.Count > 0 ? survivors : groupItems);
             }
 
             return result;
+        }
+
+        private bool IsPromptOnlyVariantShadowedByLoopEffect(
+            PathVariantInfo promptOnlyVariant,
+            IEnumerable<PathVariantInfo> groupItems)
+        {
+            if (!IsPromptOnlyLeaf(promptOnlyVariant) || groupItems == null)
+                return false;
+
+            var stateChangingSiblings = groupItems
+                .Where(other => !ReferenceEquals(other, promptOnlyVariant) &&
+                                HasLoopDerivedStateChangingPartyEffects(other))
+                .ToList();
+
+            if (stateChangingSiblings.Count == 0)
+                return false;
+
+            if (stateChangingSiblings.Any(HasConditionalLoopSubsetOutcomeEffects))
+                return true;
+
+            var promptBranchKeys = BuildPromptShadowBranchChoiceKeySet(promptOnlyVariant);
+
+            return stateChangingSiblings.Any(other =>
+                IsBranchHistoryCoveredBy(
+                    promptBranchKeys,
+                    BuildPromptShadowBranchChoiceKeySet(other)));
+        }
+
+        private HashSet<string> BuildPromptShadowBranchChoiceKeySet(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?
+                .Where(choice => choice != null &&
+                                 !choice.HasGuardPredicate &&
+                                 !IsLoopLocalBranchChoiceForIdentity(choice))
+                .Select(choice => choice.GetIdentityKey())
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private bool IsBranchHistoryCoveredBy(HashSet<string> requiredKeys, HashSet<string> candidateKeys)
+        {
+            if (requiredKeys == null || requiredKeys.Count == 0)
+                return true;
+
+            if (candidateKeys == null || candidateKeys.Count == 0)
+                return false;
+
+            return requiredKeys.All(candidateKeys.Contains);
         }
 
         private bool ShouldCollapsePartyLoopTextGroup(List<PathVariantInfo> variants)
@@ -1710,6 +1815,8 @@ namespace MMMapEditor
                    !variant.BattleMonsterCount.HasValue &&
                    variant.BattleMonsterCountRange == null &&
                    !variant.IsBattleMonsterCountIndeterminate &&
+                   (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
+                   (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
                    (variant.BattleMonsters == null || variant.BattleMonsters.Count == 0) &&
                    (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
                    !variant.HasAnyTableLoad &&
@@ -1790,7 +1897,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleSkeleton = "<NO_BATTLE>";
             if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
@@ -1866,7 +1973,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -1904,6 +2011,28 @@ namespace MMMapEditor
             return string.Join(";", variant.PartyEffects
                 .Where(e => e != null && (includePredicate?.Invoke(e) ?? true))
                 .Select(PartyEffectSemantics.BuildSemanticKey)
+                .OrderBy(x => x));
+        }
+
+        private string BuildPersistentCounterProgressionKey(PathVariantInfo variant)
+        {
+            if (variant?.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0)
+                return "<NO_COUNTER_PROGRESSION>";
+
+            return string.Join(";", variant.PersistentCounterProgressions
+                .Where(info => info != null)
+                .Select(info => info.GetIdentityKey())
+                .OrderBy(x => x));
+        }
+
+        private string BuildDynamicRandomBoundDependencyKey(PathVariantInfo variant)
+        {
+            if (variant?.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0)
+                return "<NO_DYNAMIC_RANDOM_BOUND>";
+
+            return string.Join(";", variant.DynamicRandomBoundDependencies
+                .Where(info => info != null)
+                .Select(info => info.GetIdentityKey())
                 .OrderBy(x => x));
         }
 
@@ -1954,7 +2083,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -1993,7 +2122,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -2054,7 +2183,7 @@ namespace MMMapEditor
 
             var relevantChoices = variant.BranchChoices
                 .Where(choice => choice != null && (!filterLoopLocalChoices || !IsLoopLocalBranchChoiceForIdentity(choice)))
-                .Select(choice => $"{choice.Label}|{choice.Condition}|{choice.CompareRegister}|{choice.CompareValue?.ToString() ?? string.Empty}|{choice.IsLinear}")
+                .Select(choice => choice.GetIdentityKey())
                 .ToList();
 
             return relevantChoices.Count == 0
@@ -2204,14 +2333,7 @@ namespace MMMapEditor
                 Texts = source.Texts?.ToList() ?? new List<string>(),
                 BranchChoices = source.BranchChoices?
                     .Where(choice => choice != null)
-                    .Select(choice => new BranchChoice
-                    {
-                        Label = choice.Label,
-                        Condition = choice.Condition,
-                        CompareValue = choice.CompareValue,
-                        CompareRegister = choice.CompareRegister,
-                        IsLinear = choice.IsLinear
-                    })
+                    .Select(choice => choice.Clone())
                     .ToList() ?? new List<BranchChoice>(),
                 RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
                 RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,
@@ -2227,11 +2349,19 @@ namespace MMMapEditor
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
                 TeleportTargetYRange = source.TeleportTargetYRange == null ? null : new ValueRange8(source.TeleportTargetYRange.Min, source.TeleportTargetYRange.Max),
-                BattleMonsterCount = source.BattleMonsterCount,
-                BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
-                IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
-                BattleMonsters = source.BattleMonsters?
-                    .Select(m => new BattleMonster
+            BattleMonsterCount = source.BattleMonsterCount,
+            BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
+            IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+            PersistentCounterProgressions = source.PersistentCounterProgressions?
+                .Where(info => info != null)
+                .Select(info => info.Clone())
+                .ToList() ?? new List<PersistentCounterProgressionInfo>(),
+            DynamicRandomBoundDependencies = source.DynamicRandomBoundDependencies?
+                .Where(info => info != null)
+                .Select(info => info.Clone())
+                .ToList() ?? new List<DynamicRandomBoundDependencyInfo>(),
+            BattleMonsters = source.BattleMonsters?
+                .Select(m => new BattleMonster
                     {
                         Index = m.Index,
                         MonsterIndex1 = m.MonsterIndex1,
@@ -2307,6 +2437,26 @@ namespace MMMapEditor
                 source.OccurrenceRanges);
             target.HasRepeatedEventOccurrenceSensitivity |= source.HasRepeatedEventOccurrenceSensitivity;
             target.UsesInitialCoordinates |= source.UsesInitialCoordinates;
+
+            foreach (var progression in source.PersistentCounterProgressions ?? Enumerable.Empty<PersistentCounterProgressionInfo>())
+            {
+                if (progression == null)
+                    continue;
+
+                string key = progression.GetIdentityKey();
+                if (!target.PersistentCounterProgressions.Any(existing => existing != null && existing.GetIdentityKey() == key))
+                    target.PersistentCounterProgressions.Add(progression.Clone());
+            }
+
+            foreach (var dependency in source.DynamicRandomBoundDependencies ?? Enumerable.Empty<DynamicRandomBoundDependencyInfo>())
+            {
+                if (dependency == null)
+                    continue;
+
+                string key = dependency.GetIdentityKey();
+                if (!target.DynamicRandomBoundDependencies.Any(existing => existing != null && existing.GetIdentityKey() == key))
+                    target.DynamicRandomBoundDependencies.Add(dependency.Clone());
+            }
 
             if (string.IsNullOrWhiteSpace(target.OccurrenceDescription))
                 target.OccurrenceDescription = source.OccurrenceDescription;
@@ -2396,6 +2546,12 @@ namespace MMMapEditor
             if (!variant.IsBattleMonsterCountIndeterminate)
                 score += 10;
 
+            if (variant.PersistentCounterProgressions != null)
+                score += variant.PersistentCounterProgressions.Count * 25;
+
+            if (variant.DynamicRandomBoundDependencies != null)
+                score += variant.DynamicRandomBoundDependencies.Count * 20;
+
             if (variant.BattleMonsters != null)
             {
                 score += variant.BattleMonsters.Count(m => !m.IsIndeterminate) * 4;
@@ -2434,7 +2590,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters

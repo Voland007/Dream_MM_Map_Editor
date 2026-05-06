@@ -71,16 +71,26 @@ namespace MMMapEditor
     /// </summary>
     public class RegisterTracker
     {
+        public enum ExternalCallResultKind
+        {
+            Unknown,
+            Random,
+            UserInput
+        }
+
         private Dictionary<string, ushort> registers = new Dictionary<string, ushort>();
         private Dictionary<string, string> registerSources = new Dictionary<string, string>();
         private Dictionary<string, (ushort addr, bool fromTable, ushort originalBx, string sourceTable, bool sourceIndexExternallyDerived, ushort? sourceIndexProviderAddr)> registerSources2 =
             new Dictionary<string, (ushort, bool, ushort, string, bool, ushort?)>();
         private HashSet<string> externallyDerivedRegisters = new HashSet<string>();
         private HashSet<string> pendingExternalCallRegisters = new HashSet<string>();
+        private Dictionary<string, ExternalCallResultKind> pendingExternalCallResultKinds =
+            new Dictionary<string, ExternalCallResultKind>();
         private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
         private Dictionary<string, RegisterValueDistribution> registerRangeDistributions = new Dictionary<string, RegisterValueDistribution>();
         private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
+        private Dictionary<string, DynamicValueFormulaInfo> dynamicValueFormulas = new Dictionary<string, DynamicValueFormulaInfo>();
         private Dictionary<string, PartyPointerByteReference> partyPointerBytes = new Dictionary<string, PartyPointerByteReference>();
         private HashSet<string> coordinateSeedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public bool HasObservedCoordinateSeedRead { get; private set; }
@@ -224,7 +234,60 @@ namespace MMMapEditor
         {
             string regUpper = reg?.ToUpperInvariant();
             if (!string.IsNullOrWhiteSpace(regUpper))
+            {
                 partyFieldValues.Remove(regUpper);
+                ClearDynamicValueFormula(regUpper);
+            }
+        }
+
+        public void SetDynamicValueFormula(string reg, DynamicValueFormulaInfo value)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (value == null)
+            {
+                dynamicValueFormulas.Remove(regUpper);
+            }
+            else
+            {
+                dynamicValueFormulas[regUpper] = value.Clone();
+            }
+        }
+
+        public bool TryGetDynamicValueFormula(string reg, out DynamicValueFormulaInfo value)
+        {
+            value = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (!dynamicValueFormulas.TryGetValue(regUpper, out var existing) || existing == null)
+                return false;
+
+            value = existing.Clone();
+            return true;
+        }
+
+        public void ClearDynamicValueFormula(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            dynamicValueFormulas.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            dynamicValueFormulas.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                dynamicValueFormulas.Remove(lowReg);
+                dynamicValueFormulas.Remove(highReg);
+            }
         }
 
         public void SetPartyPointerByteValue(string reg, PartyPointerByteReference value)
@@ -357,6 +420,7 @@ namespace MMMapEditor
             if (regUpper != fullReg)
             {
                 partyPointerBytes.Remove(regUpper);
+                dynamicValueFormulas.Remove(regUpper);
                 RefreshPartyMemberBaseFromPointerBytes(fullReg);
             }
         }
@@ -370,6 +434,9 @@ namespace MMMapEditor
             partyPointerBytes.Remove(highReg);
             partyFieldValues.Remove(lowReg);
             partyFieldValues.Remove(highReg);
+            dynamicValueFormulas.Remove(regUpper);
+            dynamicValueFormulas.Remove(lowReg);
+            dynamicValueFormulas.Remove(highReg);
         }
 
         private void ClearCoordinateSeed(string regUpper)
@@ -386,6 +453,29 @@ namespace MMMapEditor
             coordinateSeedRegisters.Remove(fullReg);
             coordinateSeedRegisters.Remove(lowReg);
             coordinateSeedRegisters.Remove(highReg);
+        }
+
+        private void ClearRegisterSourceMetadata(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            registerSources.Remove(regUpper);
+            registerSources2.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            registerSources.Remove(fullReg);
+            registerSources2.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                registerSources.Remove(lowReg);
+                registerSources.Remove(highReg);
+                registerSources2.Remove(lowReg);
+                registerSources2.Remove(highReg);
+            }
         }
 
         public void MarkRegisterAsCoordinateSeed(string reg)
@@ -591,6 +681,7 @@ namespace MMMapEditor
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
+            ClearRegisterSourceMetadata(regUpper);
             ClearPartyMemberBase(regUpper);
             ClearPartyFieldValue(regUpper);
             ClearFullRegisterByteSemantics(regUpper);
@@ -854,47 +945,53 @@ namespace MMMapEditor
             return false;
         }
 
-        public void MarkRegisterAsPendingExternalCallResult(string reg)
+        public void MarkRegisterAsPendingExternalCallResult(string reg, ExternalCallResultKind kind = ExternalCallResultKind.Unknown)
         {
             string regUpper = reg.ToUpper();
-            pendingExternalCallRegisters.Add(regUpper);
+            AddPendingExternalCallRegister(regUpper, kind);
 
             if (regUpper == "AX")
             {
-                pendingExternalCallRegisters.Add("AL");
-                pendingExternalCallRegisters.Add("AH");
+                AddPendingExternalCallRegister("AL", kind);
+                AddPendingExternalCallRegister("AH", kind);
             }
             else if (regUpper == "BX")
             {
-                pendingExternalCallRegisters.Add("BL");
-                pendingExternalCallRegisters.Add("BH");
+                AddPendingExternalCallRegister("BL", kind);
+                AddPendingExternalCallRegister("BH", kind);
             }
             else if (regUpper == "CX")
             {
-                pendingExternalCallRegisters.Add("CL");
-                pendingExternalCallRegisters.Add("CH");
+                AddPendingExternalCallRegister("CL", kind);
+                AddPendingExternalCallRegister("CH", kind);
             }
             else if (regUpper == "DX")
             {
-                pendingExternalCallRegisters.Add("DL");
-                pendingExternalCallRegisters.Add("DH");
+                AddPendingExternalCallRegister("DL", kind);
+                AddPendingExternalCallRegister("DH", kind);
             }
             else if (regUpper == "AL" || regUpper == "AH")
             {
-                pendingExternalCallRegisters.Add("AX");
+                AddPendingExternalCallRegister("AX", kind);
             }
             else if (regUpper == "BL" || regUpper == "BH")
             {
-                pendingExternalCallRegisters.Add("BX");
+                AddPendingExternalCallRegister("BX", kind);
             }
             else if (regUpper == "CL" || regUpper == "CH")
             {
-                pendingExternalCallRegisters.Add("CX");
+                AddPendingExternalCallRegister("CX", kind);
             }
             else if (regUpper == "DL" || regUpper == "DH")
             {
-                pendingExternalCallRegisters.Add("DX");
+                AddPendingExternalCallRegister("DX", kind);
             }
+        }
+
+        private void AddPendingExternalCallRegister(string regUpper, ExternalCallResultKind kind)
+        {
+            pendingExternalCallRegisters.Add(regUpper);
+            pendingExternalCallResultKinds[regUpper] = kind;
         }
 
         public bool HasPendingExternalCallResult(string reg)
@@ -915,6 +1012,25 @@ namespace MMMapEditor
             return false;
         }
 
+        public bool TryGetPendingExternalCallResultKind(string reg, out ExternalCallResultKind kind)
+        {
+            string regUpper = reg.ToUpper();
+            if (pendingExternalCallResultKinds.TryGetValue(regUpper, out kind))
+                return true;
+
+            if (regUpper == "AL" || regUpper == "AH")
+                return pendingExternalCallResultKinds.TryGetValue("AX", out kind);
+            if (regUpper == "BL" || regUpper == "BH")
+                return pendingExternalCallResultKinds.TryGetValue("BX", out kind);
+            if (regUpper == "CL" || regUpper == "CH")
+                return pendingExternalCallResultKinds.TryGetValue("CX", out kind);
+            if (regUpper == "DL" || regUpper == "DH")
+                return pendingExternalCallResultKinds.TryGetValue("DX", out kind);
+
+            kind = ExternalCallResultKind.Unknown;
+            return false;
+        }
+
         public void MaterializePendingExternalCallResult(string reg)
         {
             if (HasPendingExternalCallResult(reg))
@@ -927,52 +1043,58 @@ namespace MMMapEditor
         public void ClearPendingExternalCallResult(string reg)
         {
             string regUpper = reg.ToUpper();
-            pendingExternalCallRegisters.Remove(regUpper);
+            RemovePendingExternalCallRegister(regUpper);
 
             if (regUpper == "AX")
             {
-                pendingExternalCallRegisters.Remove("AL");
-                pendingExternalCallRegisters.Remove("AH");
+                RemovePendingExternalCallRegister("AL");
+                RemovePendingExternalCallRegister("AH");
             }
             else if (regUpper == "BX")
             {
-                pendingExternalCallRegisters.Remove("BL");
-                pendingExternalCallRegisters.Remove("BH");
+                RemovePendingExternalCallRegister("BL");
+                RemovePendingExternalCallRegister("BH");
             }
             else if (regUpper == "CX")
             {
-                pendingExternalCallRegisters.Remove("CL");
-                pendingExternalCallRegisters.Remove("CH");
+                RemovePendingExternalCallRegister("CL");
+                RemovePendingExternalCallRegister("CH");
             }
             else if (regUpper == "DX")
             {
-                pendingExternalCallRegisters.Remove("DL");
-                pendingExternalCallRegisters.Remove("DH");
+                RemovePendingExternalCallRegister("DL");
+                RemovePendingExternalCallRegister("DH");
             }
             else if (regUpper == "AL" || regUpper == "AH")
             {
-                pendingExternalCallRegisters.Remove("AL");
-                pendingExternalCallRegisters.Remove("AH");
-                pendingExternalCallRegisters.Remove("AX");
+                RemovePendingExternalCallRegister("AL");
+                RemovePendingExternalCallRegister("AH");
+                RemovePendingExternalCallRegister("AX");
             }
             else if (regUpper == "BL" || regUpper == "BH")
             {
-                pendingExternalCallRegisters.Remove("BL");
-                pendingExternalCallRegisters.Remove("BH");
-                pendingExternalCallRegisters.Remove("BX");
+                RemovePendingExternalCallRegister("BL");
+                RemovePendingExternalCallRegister("BH");
+                RemovePendingExternalCallRegister("BX");
             }
             else if (regUpper == "CL" || regUpper == "CH")
             {
-                pendingExternalCallRegisters.Remove("CL");
-                pendingExternalCallRegisters.Remove("CH");
-                pendingExternalCallRegisters.Remove("CX");
+                RemovePendingExternalCallRegister("CL");
+                RemovePendingExternalCallRegister("CH");
+                RemovePendingExternalCallRegister("CX");
             }
             else if (regUpper == "DL" || regUpper == "DH")
             {
-                pendingExternalCallRegisters.Remove("DL");
-                pendingExternalCallRegisters.Remove("DH");
-                pendingExternalCallRegisters.Remove("DX");
+                RemovePendingExternalCallRegister("DL");
+                RemovePendingExternalCallRegister("DH");
+                RemovePendingExternalCallRegister("DX");
             }
+        }
+
+        private void RemovePendingExternalCallRegister(string regUpper)
+        {
+            pendingExternalCallRegisters.Remove(regUpper);
+            pendingExternalCallResultKinds.Remove(regUpper);
         }
 
         public void MarkRegisterAsExternallyDerived(string reg)
@@ -1208,6 +1330,8 @@ namespace MMMapEditor
                 registerSources2.Remove("AH");
                 partyFieldValues.Remove("AL");
                 partyFieldValues.Remove("AH");
+                dynamicValueFormulas.Remove("AL");
+                dynamicValueFormulas.Remove("AH");
                 partyPointerBytes.Remove("AL");
                 partyPointerBytes.Remove("AH");
             }
@@ -1221,6 +1345,8 @@ namespace MMMapEditor
                 registerSources2.Remove("BH");
                 partyFieldValues.Remove("BL");
                 partyFieldValues.Remove("BH");
+                dynamicValueFormulas.Remove("BL");
+                dynamicValueFormulas.Remove("BH");
                 partyPointerBytes.Remove("BL");
                 partyPointerBytes.Remove("BH");
             }
@@ -1234,6 +1360,8 @@ namespace MMMapEditor
                 registerSources2.Remove("CH");
                 partyFieldValues.Remove("CL");
                 partyFieldValues.Remove("CH");
+                dynamicValueFormulas.Remove("CL");
+                dynamicValueFormulas.Remove("CH");
                 partyPointerBytes.Remove("CL");
                 partyPointerBytes.Remove("CH");
             }
@@ -1247,6 +1375,8 @@ namespace MMMapEditor
                 registerSources2.Remove("DH");
                 partyFieldValues.Remove("DL");
                 partyFieldValues.Remove("DH");
+                dynamicValueFormulas.Remove("DL");
+                dynamicValueFormulas.Remove("DH");
                 partyPointerBytes.Remove("DL");
                 partyPointerBytes.Remove("DH");
             }
@@ -1259,10 +1389,12 @@ namespace MMMapEditor
             registerSources2.Clear();
             externallyDerivedRegisters.Clear();
             pendingExternalCallRegisters.Clear();
+            pendingExternalCallResultKinds.Clear();
             registerRanges.Clear();
             registerRangeDistributions.Clear();
             partyMemberBases.Clear();
             partyFieldValues.Clear();
+            dynamicValueFormulas.Clear();
             partyPointerBytes.Clear();
             ZeroFlag = false;
             CarryFlag = false;
@@ -1286,7 +1418,7 @@ namespace MMMapEditor
         }
 
         public void TrackPartialRegisterOperation(string fullReg, string partialReg,
-            byte value, uint address, string instruction)
+            byte value, uint address, string instruction, bool preserveSourceMetadata = false)
         {
             string fullRegUpper = fullReg.ToUpper();
             string partialRegUpper = partialReg.ToUpper();
@@ -1309,8 +1441,32 @@ namespace MMMapEditor
                 currentValue = existingValue;
             }
 
+            bool preserveZeroExtendedLowByteSource = false;
+            (ushort addr, bool fromTable, ushort originalBx, string sourceTable, bool sourceIndexExternallyDerived, ushort? sourceIndexProviderAddr) lowByteSource = default;
+            string lowByteSourceDescription = null;
+            if (!preserveSourceMetadata &&
+                value == 0 &&
+                TryGetByteRegisterFamily(partialRegUpper, out string familyFullReg, out string lowReg, out string highReg) &&
+                string.Equals(fullRegUpper, familyFullReg, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(partialRegUpper, highReg, StringComparison.OrdinalIgnoreCase) &&
+                registerSources2.TryGetValue(lowReg, out lowByteSource))
+            {
+                preserveZeroExtendedLowByteSource = true;
+                registerSources.TryGetValue(lowReg, out lowByteSourceDescription);
+            }
+
+            if (!preserveSourceMetadata)
+            {
+                ClearRegisterSourceMetadata(partialRegUpper);
+                if (preserveZeroExtendedLowByteSource)
+                {
+                    registerSources2[fullRegUpper] = lowByteSource;
+                    if (lowByteSourceDescription != null)
+                        registerSources[fullRegUpper] = lowByteSourceDescription;
+                }
+            }
             // Сохраняем информацию об источнике для полного регистра
-            if (registerSources2.TryGetValue(partialRegUpper, out var srcInfo))
+            else if (registerSources2.TryGetValue(partialRegUpper, out var srcInfo))
             {
                 // Если у нас есть информация о частичном регистре, сохраняем её для полного
                 if (!registerSources2.ContainsKey(fullRegUpper))
@@ -1479,6 +1635,10 @@ namespace MMMapEditor
             {
                 clone.pendingExternalCallRegisters.Add(reg);
             }
+            foreach (var kvp in pendingExternalCallResultKinds)
+            {
+                clone.pendingExternalCallResultKinds[kvp.Key] = kvp.Value;
+            }
             foreach (var kvp in registerRanges)
             {
                 clone.registerRanges[kvp.Key] = new ValueRange8(kvp.Value.Min, kvp.Value.Max);
@@ -1494,6 +1654,10 @@ namespace MMMapEditor
             foreach (var kvp in partyFieldValues)
             {
                 clone.partyFieldValues[kvp.Key] = kvp.Value?.Clone();
+            }
+            foreach (var kvp in dynamicValueFormulas)
+            {
+                clone.dynamicValueFormulas[kvp.Key] = kvp.Value?.Clone();
             }
             foreach (var kvp in partyPointerBytes)
             {

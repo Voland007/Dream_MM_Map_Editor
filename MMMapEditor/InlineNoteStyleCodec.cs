@@ -32,6 +32,8 @@ namespace MMMapEditor
         private const string InverseTokenPrefix = "[[INV:";
         private const string AggregateTemporaryStatTokenPrefix = "[[TMPSTAT:";
         private const string RandomEncounterRubiconWarningTokenPrefix = "[[RERUBICON:";
+        private const string PersistentCounterProgressionTokenPrefix = "[[PCOUNTER:";
+        private const string DynamicRandomBoundDependencyTokenPrefix = "[[DYNBOUND:";
         private const string RandomEncounterRubiconWarningPrefix =
             "Внимание: Если сумма уровней активной партии ";
         private const string RandomEncounterRubiconWarningSuffix =
@@ -56,15 +58,22 @@ namespace MMMapEditor
 
         public static string EncodeAggregateTemporaryStatText(string visibleText)
         {
-            if (string.IsNullOrEmpty(visibleText))
-                return visibleText ?? string.Empty;
-
-            return $"{AggregateTemporaryStatTokenPrefix}{visibleText}]]";
+            return EncodeTextStyleToken(AggregateTemporaryStatTokenPrefix, visibleText);
         }
 
         public static string EncodeRandomEncounterRubiconWarning(int partyLevelSumThreshold)
         {
             return $"{RandomEncounterRubiconWarningTokenPrefix}{partyLevelSumThreshold.ToString(CultureInfo.InvariantCulture)}]]";
+        }
+
+        public static string EncodePersistentCounterProgressionText(string visibleText)
+        {
+            return EncodeTextStyleToken(PersistentCounterProgressionTokenPrefix, visibleText);
+        }
+
+        public static string EncodeDynamicRandomBoundDependencyText(string visibleText)
+        {
+            return EncodeTextStyleToken(DynamicRandomBoundDependencyTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -99,6 +108,46 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.RandomEncounterRubiconThreshold
                     });
                     i += warningConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    PersistentCounterProgressionTokenPrefix,
+                    out string progressionText,
+                    out int progressionConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(progressionText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = progressionText.Length,
+                        Kind = NoteInlineStyleKind.PersistentCounterProgressionNote
+                    });
+                    AppendPersistentCounterProgressionDetailStyles(rendered.Styles, start, progressionText);
+                    i += progressionConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    DynamicRandomBoundDependencyTokenPrefix,
+                    out string dynamicBoundText,
+                    out int dynamicBoundConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(dynamicBoundText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = dynamicBoundText.Length,
+                        Kind = NoteInlineStyleKind.DynamicRandomBoundDependencyNote
+                    });
+                    AppendDynamicRandomBoundDependencyDetailStyles(rendered.Styles, start, dynamicBoundText);
+                    i += dynamicBoundConsumedLength;
                     continue;
                 }
 
@@ -137,6 +186,14 @@ namespace MMMapEditor
 
             rendered.Text = visibleText.ToString();
             return rendered;
+        }
+
+        private static string EncodeTextStyleToken(string tokenPrefix, string visibleText)
+        {
+            if (string.IsNullOrEmpty(visibleText))
+                return visibleText ?? string.Empty;
+
+            return $"{tokenPrefix}{visibleText}]]";
         }
 
         private static bool TryConsumeRandomEncounterRubiconWarningToken(
@@ -180,6 +237,55 @@ namespace MMMapEditor
             thresholdLength = thresholdText.Length;
             consumedLength = (closingIndex - startIndex) + 2;
             return true;
+        }
+
+        private static void AppendPersistentCounterProgressionDetailStyles(
+            List<NoteInlineStyleSpan> styles,
+            int lineStart,
+            string progressionText)
+        {
+            if (styles == null || string.IsNullOrEmpty(progressionText))
+                return;
+
+            foreach (Match numericValue in Regex.Matches(
+                progressionText,
+                @"(?<![\p{L}\p{N}_])x?\d+\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                if (!numericValue.Success || numericValue.Length <= 0)
+                    continue;
+
+                styles.Add(new NoteInlineStyleSpan
+                {
+                    Start = lineStart + numericValue.Index,
+                    Length = numericValue.Length,
+                    Kind = NoteInlineStyleKind.PersistentCounterProgressionValue
+                });
+            }
+        }
+
+        private static void AppendDynamicRandomBoundDependencyDetailStyles(
+            List<NoteInlineStyleSpan> styles,
+            int lineStart,
+            string dependencyText)
+        {
+            if (styles == null || string.IsNullOrEmpty(dependencyText))
+                return;
+
+            int formulaSeparator = dependencyText.LastIndexOf(": ", StringComparison.Ordinal);
+            int formulaStart = formulaSeparator >= 0
+                ? formulaSeparator + 2
+                : -1;
+
+            if (formulaStart < 0 || formulaStart >= dependencyText.Length)
+                return;
+
+            styles.Add(new NoteInlineStyleSpan
+            {
+                Start = lineStart + formulaStart,
+                Length = dependencyText.Length - formulaStart,
+                Kind = NoteInlineStyleKind.DynamicRandomBoundDependencyFormula
+            });
         }
 
         private static void AppendAggregateTemporaryStatDetailStyles(
@@ -238,23 +344,34 @@ namespace MMMapEditor
             out string visibleText,
             out int consumedLength)
         {
+            return TryConsumeTextStyleToken(
+                rawText,
+                startIndex,
+                AggregateTemporaryStatTokenPrefix,
+                out visibleText,
+                out consumedLength);
+        }
+
+        private static bool TryConsumeTextStyleToken(
+            string rawText,
+            int startIndex,
+            string tokenPrefix,
+            out string visibleText,
+            out int consumedLength)
+        {
             visibleText = string.Empty;
             consumedLength = 0;
 
             if (string.IsNullOrEmpty(rawText) ||
+                string.IsNullOrEmpty(tokenPrefix) ||
                 startIndex < 0 ||
-                startIndex + AggregateTemporaryStatTokenPrefix.Length + 2 > rawText.Length ||
-                string.CompareOrdinal(
-                    rawText,
-                    startIndex,
-                    AggregateTemporaryStatTokenPrefix,
-                    0,
-                    AggregateTemporaryStatTokenPrefix.Length) != 0)
+                startIndex + tokenPrefix.Length + 2 > rawText.Length ||
+                string.CompareOrdinal(rawText, startIndex, tokenPrefix, 0, tokenPrefix.Length) != 0)
             {
                 return false;
             }
 
-            int contentStart = startIndex + AggregateTemporaryStatTokenPrefix.Length;
+            int contentStart = startIndex + tokenPrefix.Length;
             int closingIndex = rawText.IndexOf("]]", contentStart, StringComparison.Ordinal);
             if (closingIndex < 0)
                 return false;
