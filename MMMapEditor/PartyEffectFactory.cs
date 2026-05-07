@@ -27,6 +27,11 @@ namespace MMMapEditor
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
 
+        private static bool IsKnownOrRawTechnicalField(PartyFieldKind field, byte? fieldOffset)
+        {
+            return IsTrackedByteField(field) || fieldOffset.HasValue;
+        }
+
         public static PartyEffect CreateHpHalvedEffect(PendingPartyStatOperation pending, LoopSemanticKind loopSemantic)
         {
             PartyConditionKind condition = pending == null
@@ -314,6 +319,17 @@ namespace MMMapEditor
             return effect;
         }
 
+        public static PartyEffect CreateRawTechnicalFieldReadEffect(PartyMemberReference member,
+            byte fieldOffset, uint instructionAddress, byte? exactValue = null)
+        {
+            return CreateTechnicalFieldReadEffectCore(
+                member,
+                PartyFieldKind.Unknown,
+                fieldOffset,
+                instructionAddress,
+                exactValue);
+        }
+
         public static PartyEffect CreateTrackedTechnicalFieldCompareEffect(PartyMemberReference member,
             PartyFieldKind field, uint instructionAddress, byte compareValue, bool isBitMask)
         {
@@ -335,6 +351,18 @@ namespace MMMapEditor
 
             effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
             return effect;
+        }
+
+        public static PartyEffect CreateRawTechnicalFieldCompareEffect(PartyMemberReference member,
+            byte fieldOffset, uint instructionAddress, byte compareValue, bool isBitMask)
+        {
+            return CreateTechnicalFieldCompareEffectCore(
+                member,
+                PartyFieldKind.Unknown,
+                fieldOffset,
+                instructionAddress,
+                compareValue,
+                isBitMask);
         }
 
         public static PartyEffect CreateTrackedTechnicalFieldWriteEffect(PartyMemberReference member,
@@ -360,6 +388,17 @@ namespace MMMapEditor
             return effect;
         }
 
+        public static PartyEffect CreateRawTechnicalFieldWriteEffect(PartyMemberReference member,
+            byte fieldOffset, uint instructionAddress, byte? exactValue = null)
+        {
+            return CreateTechnicalFieldWriteEffectCore(
+                member,
+                PartyFieldKind.Unknown,
+                fieldOffset,
+                instructionAddress,
+                exactValue);
+        }
+
         public static PartyEffect CreateTrackedTechnicalFieldBitEffect(PartyMemberReference member,
             PartyFieldKind field, PartyEffectOperation operation, byte mask, uint instructionAddress)
         {
@@ -378,6 +417,122 @@ namespace MMMapEditor
             {
                 Kind = PartyEffectKind.TechnicalFieldWritten,
                 Field = field,
+                Operation = operation,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = mask,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        public static PartyEffect CreateRawTechnicalFieldBitEffect(PartyMemberReference member,
+            byte fieldOffset, PartyEffectOperation operation, byte mask, uint instructionAddress)
+        {
+            return CreateTechnicalFieldBitEffectCore(
+                member,
+                PartyFieldKind.Unknown,
+                fieldOffset,
+                operation,
+                mask,
+                instructionAddress);
+        }
+
+        private static PartyEffect CreateTechnicalFieldReadEffectCore(PartyMemberReference member,
+            PartyFieldKind field, byte? fieldOffset, uint instructionAddress, byte? exactValue)
+        {
+            if (!IsKnownOrRawTechnicalField(field, fieldOffset))
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldRead,
+                Field = field,
+                TechnicalFieldOffset = fieldOffset,
+                Operation = PartyEffectOperation.Read,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        private static PartyEffect CreateTechnicalFieldCompareEffectCore(PartyMemberReference member,
+            PartyFieldKind field, byte? fieldOffset, uint instructionAddress, byte compareValue, bool isBitMask)
+        {
+            if (!IsKnownOrRawTechnicalField(field, fieldOffset))
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldCompared,
+                Field = field,
+                TechnicalFieldOffset = fieldOffset,
+                Operation = PartyEffectOperation.Compare,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = isBitMask ? PartyValueKnowledge.ExactDerived : PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = compareValue,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        private static PartyEffect CreateTechnicalFieldWriteEffectCore(PartyMemberReference member,
+            PartyFieldKind field, byte? fieldOffset, uint instructionAddress, byte? exactValue)
+        {
+            if (!IsKnownOrRawTechnicalField(field, fieldOffset))
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldWritten,
+                Field = field,
+                TechnicalFieldOffset = fieldOffset,
+                Operation = PartyEffectOperation.Write,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        private static PartyEffect CreateTechnicalFieldBitEffectCore(PartyMemberReference member,
+            PartyFieldKind field, byte? fieldOffset, PartyEffectOperation operation, byte mask, uint instructionAddress)
+        {
+            if (!IsKnownOrRawTechnicalField(field, fieldOffset))
+                return null;
+
+            if ((operation != PartyEffectOperation.BitSet &&
+                 operation != PartyEffectOperation.BitClear &&
+                 operation != PartyEffectOperation.BitToggle) ||
+                mask == 0)
+            {
+                return null;
+            }
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldWritten,
+                Field = field,
+                TechnicalFieldOffset = fieldOffset,
                 Operation = operation,
                 Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
                 MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,

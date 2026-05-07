@@ -171,6 +171,7 @@ namespace MMMapEditor
         public Dictionary<ushort, PersistentCounterProgressionInfo> PendingPersistentCounterProgressions { get; set; }
             = new Dictionary<ushort, PersistentCounterProgressionInfo>();
         public Dictionary<ushort, StateValueConstraintInfo> BranchStateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        public HashSet<ushort> BranchLocallyMaterializedStateValueConstraintAddresses { get; set; } = new HashSet<ushort>();
         public PartyConditionKind BranchPartyCondition { get; set; } = PartyConditionKind.None;
         public PartyPredicate BranchPartyPredicate { get; set; }
     }
@@ -360,6 +361,7 @@ namespace MMMapEditor
         public Dictionary<ushort, PersistentMemoryFirstAccessKind> PersistentMemoryFirstAccessKinds { get; set; }
             = new Dictionary<ushort, PersistentMemoryFirstAccessKind>();
         public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        public HashSet<ushort> LocallyMaterializedStateValueConstraintAddresses { get; set; } = new HashSet<ushort>();
         public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<ushort, ValueRange8> ExitEmulatedMemory8Ranges { get; set; } = new Dictionary<ushort, ValueRange8>();
         public Dictionary<ushort, RegisterValueDistribution> ExitEmulatedMemory8RangeDistributions { get; set; } = new Dictionary<ushort, RegisterValueDistribution>();
@@ -907,6 +909,7 @@ namespace MMMapEditor
     {
         public PartyEffectKind Kind { get; set; }
         public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
+        public byte? TechnicalFieldOffset { get; set; }
         public PartyFieldKind ComparedField { get; set; } = PartyFieldKind.Unknown;
         public PartyEffectOperation Operation { get; set; } = PartyEffectOperation.Unknown;
         public PartyEffectScope Scope { get; set; } = PartyEffectScope.Unknown;
@@ -973,6 +976,7 @@ namespace MMMapEditor
             {
                 Kind = Kind,
                 Field = Field,
+                TechnicalFieldOffset = TechnicalFieldOffset,
                 ComparedField = ComparedField,
                 Operation = Operation,
                 Scope = Scope,

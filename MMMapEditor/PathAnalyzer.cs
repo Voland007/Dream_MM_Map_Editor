@@ -93,6 +93,8 @@ namespace MMMapEditor
                     initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(path.PendingPersistentCounterProgressions));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
                 MergeStateValueConstraints(effectivePathResult.StateValueConstraints, path.BranchStateValueConstraints);
+                effectivePathResult.LocallyMaterializedStateValueConstraintAddresses.UnionWith(
+                    path.BranchLocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>());
 
                 // Формируем тексты для этого пути с сохранением порядка
                 if (reachableAddresses != null)
@@ -554,6 +556,13 @@ namespace MMMapEditor
             currentState = RebaseSpecialEventOrders(currentState, inheritedState.NextSpecialEventOrder);
 
             var merged = ClonePathAnalysisResult(inheritedState);
+            merged.ExitEmulatedMemory8 = currentState.ExitEmulatedMemory8 == null
+                ? new Dictionary<ushort, byte>()
+                : new Dictionary<ushort, byte>(currentState.ExitEmulatedMemory8);
+            merged.ExitEmulatedMemory8Ranges = CloneRangeDictionary(currentState.ExitEmulatedMemory8Ranges);
+            merged.ExitEmulatedMemory8RangeDistributions = currentState.ExitEmulatedMemory8RangeDistributions == null
+                ? new Dictionary<ushort, RegisterValueDistribution>()
+                : new Dictionary<ushort, RegisterValueDistribution>(currentState.ExitEmulatedMemory8RangeDistributions);
 
             if (currentState.RandomEncounterMonsterPowerCap.HasValue)
                 merged.RandomEncounterMonsterPowerCap = currentState.RandomEncounterMonsterPowerCap;
@@ -778,6 +787,8 @@ namespace MMMapEditor
             }
 
             MergeStateValueConstraints(merged.StateValueConstraints, currentState.StateValueConstraints);
+            merged.LocallyMaterializedStateValueConstraintAddresses.UnionWith(
+                currentState.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>());
 
             if (currentState.ExitEmulatedMemory8 != null && currentState.ExitEmulatedMemory8.Count > 0)
                 merged.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(currentState.ExitEmulatedMemory8);
@@ -1096,6 +1107,8 @@ namespace MMMapEditor
                 ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
                 : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds);
             clone.StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints);
+            clone.LocallyMaterializedStateValueConstraintAddresses =
+                new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>());
             clone.ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                 ? new Dictionary<ushort, byte>()
                 : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8);
@@ -1156,6 +1169,10 @@ namespace MMMapEditor
                         : alt.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(alt.PendingPersistentCounterProgressions),
                     BranchStateValueConstraints = CloneStateValueConstraints(alt.BranchStateValueConstraints),
+                    BranchLocallyMaterializedStateValueConstraintAddresses =
+                        alt.BranchLocallyMaterializedStateValueConstraintAddresses == null
+                            ? new HashSet<ushort>()
+                            : new HashSet<ushort>(alt.BranchLocallyMaterializedStateValueConstraintAddresses),
                     BranchPartyCondition = alt.BranchPartyCondition,
                     BranchPartyPredicate = alt.BranchPartyPredicate?.Clone()
                 });
@@ -1211,6 +1228,7 @@ namespace MMMapEditor
                 BattleMonsterCount = source.BattleMonsterCount,
                 BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(source.PendingPersistentCounterProgressions),
                 PersistentCounterProgressions = source.PersistentCounterProgressions?
                     .Where(info => info != null)
                     .Select(info => info.Clone())
@@ -1227,6 +1245,9 @@ namespace MMMapEditor
                 ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                     ? new Dictionary<ushort, byte>()
                     : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                AdjustedMemoryAddresses = source.AdjustedMemoryAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.AdjustedMemoryAddresses),
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
@@ -1234,6 +1255,8 @@ namespace MMMapEditor
                     ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
                     : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                LocallyMaterializedStateValueConstraintAddresses =
+                    new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
@@ -2688,12 +2711,13 @@ namespace MMMapEditor
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
                 TeleportTargetYRange = source.TeleportTargetYRange == null ? null : new ValueRange8(source.TeleportTargetYRange.Min, source.TeleportTargetYRange.Max),
-            BattleMonsterCount = source.BattleMonsterCount,
-            BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
-            IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
-            PersistentCounterProgressions = source.PersistentCounterProgressions?
-                .Where(info => info != null)
-                .Select(info => info.Clone())
+                BattleMonsterCount = source.BattleMonsterCount,
+                BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
+                IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(source.PendingPersistentCounterProgressions),
+                PersistentCounterProgressions = source.PersistentCounterProgressions?
+                    .Where(info => info != null)
+                    .Select(info => info.Clone())
                 .ToList() ?? new List<PersistentCounterProgressionInfo>(),
             DynamicRandomBoundDependencies = source.DynamicRandomBoundDependencies?
                 .Where(info => info != null)
@@ -2730,6 +2754,9 @@ namespace MMMapEditor
                 ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                     ? new Dictionary<ushort, byte>()
                     : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                AdjustedMemoryAddresses = source.AdjustedMemoryAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.AdjustedMemoryAddresses),
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
@@ -2737,7 +2764,10 @@ namespace MMMapEditor
                     ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
                     : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                LocallyMaterializedStateValueConstraintAddresses =
+                    new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
+                SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
@@ -2775,7 +2805,14 @@ namespace MMMapEditor
                 target.OccurrenceRanges,
                 source.OccurrenceRanges);
             target.HasRepeatedEventOccurrenceSensitivity |= source.HasRepeatedEventOccurrenceSensitivity;
+            target.SuppressRepeatedEventOccurrenceDescription |= source.SuppressRepeatedEventOccurrenceDescription;
             target.UsesInitialCoordinates |= source.UsesInitialCoordinates;
+
+            foreach (var kvp in source.PendingPersistentCounterProgressions ?? Enumerable.Empty<KeyValuePair<ushort, PersistentCounterProgressionInfo>>())
+            {
+                if (kvp.Value != null)
+                    target.PendingPersistentCounterProgressions[kvp.Key] = kvp.Value.Clone();
+            }
 
             foreach (var progression in source.PersistentCounterProgressions ?? Enumerable.Empty<PersistentCounterProgressionInfo>())
             {

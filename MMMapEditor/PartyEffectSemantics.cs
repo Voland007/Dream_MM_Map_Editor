@@ -33,6 +33,15 @@ namespace MMMapEditor
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
 
+        private static bool IsRawTechnicalByteField(PartyEffect effect)
+        {
+            return effect != null &&
+                   effect.TechnicalFieldOffset.HasValue &&
+                   (effect.Kind == PartyEffectKind.TechnicalFieldRead ||
+                    effect.Kind == PartyEffectKind.TechnicalFieldWritten ||
+                    effect.Kind == PartyEffectKind.TechnicalFieldCompared);
+        }
+
         private static string GetTrackedFieldLabel(PartyFieldKind field)
         {
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
@@ -75,10 +84,14 @@ namespace MMMapEditor
             string applicationCountKey = includeApplicationCount && IsApplicationCountSemanticallyRelevant(effect)
                 ? GetEffectiveApplicationCount(effect).ToString(CultureInfo.InvariantCulture)
                 : "1";
+            string technicalOffsetKey = effect.TechnicalFieldOffset.HasValue
+                ? effect.TechnicalFieldOffset.Value.ToString("X2", CultureInfo.InvariantCulture)
+                : "-";
 
             return string.Join("|",
                 effect.Kind,
                 GetEffectiveField(effect),
+                technicalOffsetKey,
                 effect.ComparedField,
                 GetEffectiveOperation(effect),
                 scope,
@@ -122,6 +135,9 @@ namespace MMMapEditor
             if (effect.ComparedField != PartyFieldKind.Unknown)
                 parts.Add($"ComparedField={effect.ComparedField}");
 
+            if (effect.TechnicalFieldOffset.HasValue)
+                parts.Add($"Offset=+0x{effect.TechnicalFieldOffset.Value:X2}");
+
             if (effect.ComparedMemberIndex.HasValue)
                 parts.Add($"ComparedMember={FormatMemberDisplay(effect.ComparedMemberIndex.Value)}");
 
@@ -157,6 +173,9 @@ namespace MMMapEditor
             var scope = GetEffectiveScope(effect);
             var condition = GetEffectiveCondition(effect);
             int applicationCount = GetEffectiveApplicationCount(effect);
+
+            if (IsRawTechnicalByteField(effect))
+                return BuildRawTechnicalFieldDescription(effect, scope, condition);
 
             if (IsTrackedByteField(field))
                 return BuildTrackedTechnicalFieldDescription(effect, field, scope, condition);
@@ -337,6 +356,9 @@ namespace MMMapEditor
         public static bool ShouldIncludeInNotes(PartyEffect effect, IEnumerable<PartyEffect> allEffects)
         {
             if (effect == null)
+                return false;
+
+            if (IsRawTechnicalByteField(effect))
                 return false;
 
             if (effect.IsSynchronizedTemporaryMirror)
@@ -1005,6 +1027,119 @@ namespace MMMapEditor
                 return BuildTemporaryStatFieldDescription(effect, field, scope, condition);
 
             return BuildRanalouQuestLineDescription(effect, field, scope, condition);
+        }
+
+        private static string BuildRawTechnicalFieldDescription(
+            PartyEffect effect,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || !effect.TechnicalFieldOffset.HasValue)
+                return null;
+
+            string fieldLabel = $"техническое байтовое поле персонажа +0x{effect.TechnicalFieldOffset.Value:X2}";
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            string body = operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})",
+                        $"читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel}",
+                        $"читается {fieldLabel}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? BuildRawTechnicalBitCompareDescription(
+                            targetPrefix,
+                            fieldLabel,
+                            (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}",
+                            $"проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Проверяется {fieldLabel}",
+                        $"проверяется {fieldLabel}"),
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "устанавливается",
+                        "устанавливаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "сбрасывается",
+                        "сбрасываются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "переключается",
+                        "переключаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}",
+                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+
+            return string.IsNullOrWhiteSpace(body)
+                ? body
+                : $"-=*{body}*=-";
+        }
+
+        private static string BuildRawTechnicalBitCompareDescription(string targetPrefix, string fieldLabel, byte mask)
+        {
+            int? bitIndex = TryGetSingleBitIndex(mask);
+            if (bitIndex.HasValue)
+            {
+                return string.IsNullOrWhiteSpace(targetPrefix)
+                    ? $"Проверяется бит {bitIndex.Value} (маска 0x{mask:X2}) в {fieldLabel}"
+                    : $"{targetPrefix}проверяется бит {bitIndex.Value} (маска 0x{mask:X2}) в {fieldLabel}";
+            }
+
+            return string.IsNullOrWhiteSpace(targetPrefix)
+                ? $"Проверяются биты маски 0x{mask:X2} в {fieldLabel}"
+                : $"{targetPrefix}проверяются биты маски 0x{mask:X2} в {fieldLabel}";
+        }
+
+        private static string BuildRawTechnicalBitOperationDescription(
+            string targetPrefix,
+            string fieldLabel,
+            string singularVerb,
+            string pluralVerb,
+            byte mask)
+        {
+            int? bitIndex = TryGetSingleBitIndex(mask);
+            if (bitIndex.HasValue)
+            {
+                return string.IsNullOrWhiteSpace(targetPrefix)
+                    ? $"В {fieldLabel} {singularVerb} бит {bitIndex.Value} (маска 0x{mask:X2})"
+                    : $"{targetPrefix}в {fieldLabel} {singularVerb} бит {bitIndex.Value} (маска 0x{mask:X2})";
+            }
+
+            return string.IsNullOrWhiteSpace(targetPrefix)
+                ? $"В {fieldLabel} {pluralVerb} биты маски 0x{mask:X2}"
+                : $"{targetPrefix}в {fieldLabel} {pluralVerb} биты маски 0x{mask:X2}";
         }
 
         private static string BuildTemporaryStatFieldDescription(

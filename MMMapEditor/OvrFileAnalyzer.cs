@@ -503,6 +503,7 @@ namespace MMMapEditor
             public int? NextInterestingOccurrence { get; set; }
             public Dictionary<ushort, byte> ScheduledState { get; set; } = new Dictionary<ushort, byte>();
             public Dictionary<ushort, StateValueConstraintInfo> ScheduledConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+            public HashSet<ushort> TransitionAddresses { get; set; } = new HashSet<ushort>();
         }
 
         private sealed class RepeatedEventProgressionPattern
@@ -585,6 +586,7 @@ namespace MMMapEditor
             int maxAnalyzedOccurrence = 0;
             int analyzedRepresentativeOccurrences = 0;
             Dictionary<int, PathVariantInfo> finalVariants = null;
+            bool canonicalOutcomeLimitReached = false;
 
             while (scheduledStates.Count > 0)
             {
@@ -622,6 +624,14 @@ namespace MMMapEditor
                 var canonicalVariantsForOccurrence = new List<PathVariantInfo>();
                 foreach (var currentStateInfo in currentStates.Values)
                 {
+                    bool lightOccurrenceTracking =
+                        canonicalOutcomeLimitReached &&
+                        finalVariants != null &&
+                        analyzeRepeatedEventOccurrences;
+                    var lockedCanonicalVariants = lightOccurrenceTracking
+                        ? finalVariants.Values.Where(variant => variant != null).ToList()
+                        : null;
+
                     OvrAnalysisPerfStats.RecordSingleOccurrencePass(perfKey);
                     var currentState = currentStateInfo.Memory;
                     var passResult = AnalyzeSingleOccurrenceVariants(
@@ -636,11 +646,64 @@ namespace MMMapEditor
                         currentState,
                         new HashSet<ushort>(currentState.Keys),
                         occurrence);
+                    var locallyMaterializedStateAddresses = BuildLocallyMaterializedStateAddresses(passResult.RawLeafVariants);
+                    var compatibleCanonicalVariants = passResult.CanonicalVariants.Values
+                        .Where(variant => IsVariantCompatibleWithCurrentRepeatedState(
+                            br,
+                            currentStateInfo,
+                            variant,
+                            locallyMaterializedStateAddresses))
+                        .ToList();
+                    var compatibleRawLeafVariants = passResult.RawLeafVariants
+                        .Where(variant => IsVariantCompatibleWithCurrentRepeatedState(
+                            br,
+                            currentStateInfo,
+                            variant,
+                            locallyMaterializedStateAddresses))
+                        .ToList();
 
-                    foreach (var variant in passResult.CanonicalVariants.Values)
+                    var occurrenceCanonicalTargets = lightOccurrenceTracking
+                        ? MapCompatibleVariantsToLockedCanonicalVariants(
+                            compatibleCanonicalVariants,
+                            lockedCanonicalVariants)
+                        : compatibleCanonicalVariants;
+
+                    if (debugMode)
+                    {
+                        int filteredCanonicalCount = passResult.CanonicalVariants.Count - compatibleCanonicalVariants.Count;
+                        int filteredRawLeafCount = passResult.RawLeafVariants.Count - compatibleRawLeafVariants.Count;
+                        if (filteredCanonicalCount > 0 || filteredRawLeafCount > 0)
+                        {
+                            AnalysisDebug.WriteLine(
+                                $"  Отфильтровано путей, несовместимых со стартовым состоянием события: canonical={filteredCanonicalCount}, raw={filteredRawLeafCount}");
+                        }
+                    }
+
+                    if (analyzeRepeatedEventOccurrences)
+                    {
+                        bool hasInputDependentRepeatedStateDivergence;
+                        foreach (var variant in FindInputDependentRepeatedStateOccurrenceVariants(
+                            br,
+                            currentStateInfo,
+                            compatibleRawLeafVariants,
+                            occurrenceCanonicalTargets,
+                            out hasInputDependentRepeatedStateDivergence))
+                        {
+                            variant.SuppressRepeatedEventOccurrenceDescription = true;
+                        }
+
+                        if (hasInputDependentRepeatedStateDivergence)
+                        {
+                            foreach (var variant in occurrenceCanonicalTargets.Where(HasInputChoiceBranch))
+                                variant.SuppressRepeatedEventOccurrenceDescription = true;
+                        }
+                    }
+
+                    foreach (var variant in occurrenceCanonicalTargets)
                     {
                         MarkVariantOccurrenceRange(variant, occurrence, occurrence);
-                        collectedVariants.Add(variant);
+                        if (!lightOccurrenceTracking)
+                            collectedVariants.Add(variant);
                         canonicalVariantsForOccurrence.Add(variant);
                     }
 
@@ -650,7 +713,8 @@ namespace MMMapEditor
                     if (!analyzeRepeatedEventOccurrences)
                         continue;
 
-                    foreach (var rawLeaf in passResult.RawLeafVariants)
+                    var processedRepeatedTransitionKeys = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var rawLeaf in compatibleRawLeafVariants)
                     {
                         var repeatedEventRelevantAddresses = BuildRepeatedEventRelevantAddresses(rawLeaf);
                         var carryOverState = BuildCarryOverState(
@@ -663,14 +727,67 @@ namespace MMMapEditor
                                 currentStateInfo.StateValueConstraints,
                                 rawLeaf.StateValueConstraints),
                             repeatedEventRelevantAddresses);
+                        RemoveConstraintsOverwrittenByExitState(
+                            nextConstraints,
+                            rawLeaf,
+                            repeatedEventRelevantAddresses);
+
+                        if (debugMode &&
+                            rawLeaf.AdjustedMemoryAddresses != null &&
+                            rawLeaf.AdjustedMemoryAddresses.Count > 0)
+                        {
+                            AnalysisDebug.WriteLine(
+                                $"  Repeated adjusted path={rawLeaf.PathId}: adjusted={BuildDebugAddressSet(rawLeaf.AdjustedMemoryAddresses)}, " +
+                                $"relevant={BuildDebugAddressSet(repeatedEventRelevantAddresses)}, " +
+                                $"carry={BuildMemoryStateKey(carryOverState)}, constraints={BuildMemoryStateKey(null, nextConstraints)}");
+                        }
 
                         var canonicalVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(
                             rawLeaf,
-                            passResult.CanonicalVariants.Values);
+                            lightOccurrenceTracking
+                                ? lockedCanonicalVariants
+                                : compatibleCanonicalVariants);
+
+                        string repeatedTransitionKey = BuildRepeatedEventTransitionProcessingKey(
+                            rawLeaf,
+                            canonicalVariant,
+                            carryOverState,
+                            nextConstraints,
+                            repeatedEventRelevantAddresses);
+                        if (!processedRepeatedTransitionKeys.Add(repeatedTransitionKey))
+                            continue;
+
+                        if (IsInitialRepeatedEventState(currentStateInfo) &&
+                            RepeatedStateCanRemainAtInitialOverlay(
+                                br,
+                                carryOverState,
+                                nextConstraints,
+                                repeatedEventRelevantAddresses))
+                        {
+                            if (canonicalVariant != null)
+                            {
+                                foreach (var coverageTarget in occurrenceCanonicalTargets
+                                    .Where(variant => variant != null)
+                                    .Distinct())
+                                {
+                                    AddOccurrenceCoverage(
+                                        coverageTarget,
+                                        occurrence + 1,
+                                        occurrence + 1,
+                                        isOpenEnded: true);
+                                }
+
+                                usedRepeatedEventAcceleration = true;
+                            }
+
+                            continue;
+                        }
+
                         if (canonicalVariant != null &&
                             rawLeaf.StateValueConstraints != null &&
                             rawLeaf.StateValueConstraints.Any(kvp =>
                                 repeatedEventRelevantAddresses.Contains(kvp.Key) &&
+                                !IsStateValueConstraintLocallyMaterialized(rawLeaf, kvp.Key) &&
                                 kvp.Value != null &&
                                 !kvp.Value.IsEmpty))
                         {
@@ -706,6 +823,35 @@ namespace MMMapEditor
                             {
                                 AddOccurrenceCoverage(canonicalVariant, occurrence + 1, fastForwardPlan.CoverageEndOccurrence, fastForwardPlan.IsOpenEnded);
                             }
+                            AddFastForwardCoverageForCompatibleIndependentVariants(
+                                occurrenceCanonicalTargets,
+                                canonicalVariant,
+                                fastForwardPlan,
+                                occurrence + 1);
+
+                            if (!(lightOccurrenceTracking && fastForwardPlan.IsOpenEnded) &&
+                                ShouldProbeImmediateRepeatedState(
+                                    occurrence,
+                                    currentStateInfo,
+                                    carryOverState,
+                                    nextConstraints,
+                                    fastForwardPlan))
+                            {
+                                ScheduleRepeatedEventState(
+                                    scheduledStates,
+                                    occurrence + 1,
+                                    new RepeatedEventStateInfo
+                                    {
+                                        Memory = carryOverState,
+                                        StateValueConstraints = nextConstraints
+                                    },
+                                    debugMode,
+                                    ref analysisTruncated,
+                                    occurrence);
+                            }
+
+                            if (analysisTruncated)
+                                break;
 
                             if (!fastForwardPlan.IsOpenEnded && fastForwardPlan.NextInterestingOccurrence.HasValue)
                             {
@@ -747,6 +893,7 @@ namespace MMMapEditor
                             carryOverState,
                             nextConstraints,
                             canonicalVariant,
+                            occurrenceCanonicalTargets,
                             stableStatePatterns,
                             stableStatePatternKeys))
                         {
@@ -783,6 +930,11 @@ namespace MMMapEditor
 
                             if (bridgedVariant != null)
                                 AddOccurrenceCoverage(bridgedVariant, occurrence + 1, bridgedPlan.CoverageEndOccurrence, bridgedPlan.IsOpenEnded);
+                            AddFastForwardCoverageForCompatibleIndependentVariants(
+                                occurrenceCanonicalTargets,
+                                bridgedVariant,
+                                bridgedPlan,
+                                occurrence + 1);
 
                             if (!bridgedPlan.IsOpenEnded && bridgedPlan.NextInterestingOccurrence.HasValue)
                             {
@@ -846,9 +998,19 @@ namespace MMMapEditor
                 finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
                 if (finalVariants.Count >= MaxRepeatedEventCanonicalOutcomes)
                 {
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"Достигнут лимит канонических outcomes ({MaxRepeatedEventCanonicalOutcomes})");
-                    break;
+                    if (!canonicalOutcomeLimitReached)
+                    {
+                        canonicalOutcomeLimitReached = true;
+                        if (debugMode)
+                        {
+                            AnalysisDebug.WriteLine(
+                                $"Достигнут лимит канонических outcomes ({MaxRepeatedEventCanonicalOutcomes}); " +
+                                "продолжаем лёгкий repeated-state прогон только для уже найденных outcomes");
+                        }
+                    }
+
+                    if (!analyzeRepeatedEventOccurrences)
+                        break;
                 }
 
                 if (analysisTruncated)
@@ -859,6 +1021,7 @@ namespace MMMapEditor
             {
                 finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
             }
+
             ApplyOccurrenceDescriptions(finalVariants.Values, maxAnalyzedOccurrence, analysisTruncated, usedRepeatedEventAcceleration);
             RegisterCachedObjectVariants(
                 analysisCacheScopeKey,
@@ -1148,6 +1311,8 @@ namespace MMMapEditor
                 $"partyEffects={partyEffects.Count}, " +
                 $"battleMonsters={rawVariant.BattleMonsters?.Count ?? 0}, " +
                 $"partialBattles={rawVariant.PartiallyDefinedBattles?.Count ?? 0}, " +
+                $"adjusted={BuildDebugAddressSet(rawVariant.AdjustedMemoryAddresses)}, " +
+                $"pendingCounters={rawVariant.PendingPersistentCounterProgressions?.Count ?? 0}, " +
                 $"counterProgressions={rawVariant.PersistentCounterProgressions?.Count ?? 0}, " +
                 $"dynamicRandomBounds={rawVariant.DynamicRandomBoundDependencies?.Count ?? 0}, " +
                 $"battleCount={BuildRawLeafBattleCountText(rawVariant)}, " +
@@ -1203,6 +1368,19 @@ namespace MMMapEditor
             return variant?.Texts != null && variant.Texts.Count > 0
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
+        }
+
+        private static string BuildDebugAddressSet(IEnumerable<ushort> addresses)
+        {
+            var ordered = (addresses ?? Enumerable.Empty<ushort>())
+                .Distinct()
+                .OrderBy(address => address)
+                .Select(address => address.ToString("X4"))
+                .ToList();
+
+            return ordered.Count == 0
+                ? "-"
+                : string.Join(",", ordered);
         }
 
         private string BuildRawLeafPartyEffectKey(PathVariantInfo variant)
@@ -1464,6 +1642,7 @@ namespace MMMapEditor
             Dictionary<ushort, byte> carryOverState,
             Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
             PathVariantInfo canonicalVariant,
+            IEnumerable<PathVariantInfo> stableStateCompatibleVariants,
             List<RepeatedEventStableStatePattern> stableStatePatterns,
             HashSet<string> stableStatePatternKeys)
         {
@@ -1482,7 +1661,16 @@ namespace MMMapEditor
             if (!string.Equals(currentStateKey, nextStateKey, StringComparison.Ordinal))
                 return false;
 
-            AddOccurrenceCoverage(canonicalVariant, occurrence + 1, occurrence + 1, isOpenEnded: true);
+            var coverageTargets = (stableStateCompatibleVariants ?? Enumerable.Empty<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .Distinct()
+                .ToList();
+            if (coverageTargets.Count == 0)
+                coverageTargets.Add(canonicalVariant);
+
+            foreach (var variant in coverageTargets)
+                AddOccurrenceCoverage(variant, occurrence + 1, occurrence + 1, isOpenEnded: true);
+
             RegisterRepeatedEventStableStatePattern(
                 stableStatePatterns,
                 stableStatePatternKeys,
@@ -1685,6 +1873,103 @@ namespace MMMapEditor
 
             NormalizeOccurrenceCoverage(variant);
             variant.OccurrenceDescription = null;
+        }
+
+        private void AddFastForwardCoverageForCompatibleIndependentVariants(
+            IEnumerable<PathVariantInfo> compatibleCanonicalVariants,
+            PathVariantInfo triggeringVariant,
+            RepeatedEventFastForwardPlan fastForwardPlan,
+            int startOccurrence)
+        {
+            if (compatibleCanonicalVariants == null ||
+                fastForwardPlan == null ||
+                startOccurrence <= 0 ||
+                fastForwardPlan.TransitionAddresses == null ||
+                fastForwardPlan.TransitionAddresses.Count == 0)
+            {
+                return;
+            }
+
+            if (!fastForwardPlan.IsOpenEnded &&
+                fastForwardPlan.CoverageEndOccurrence < startOccurrence)
+            {
+                return;
+            }
+
+            foreach (var variant in compatibleCanonicalVariants
+                .Where(variant => variant != null)
+                .Distinct())
+            {
+                if (ReferenceEquals(variant, triggeringVariant))
+                    continue;
+
+                if (VariantDependsOnRepeatedTransitionAddresses(variant, fastForwardPlan.TransitionAddresses))
+                    continue;
+
+                AddOccurrenceCoverage(
+                    variant,
+                    startOccurrence,
+                    fastForwardPlan.CoverageEndOccurrence,
+                    fastForwardPlan.IsOpenEnded);
+            }
+        }
+
+        private List<PathVariantInfo> MapCompatibleVariantsToLockedCanonicalVariants(
+            IEnumerable<PathVariantInfo> compatibleCanonicalVariants,
+            IEnumerable<PathVariantInfo> lockedCanonicalVariants)
+        {
+            var lockedList = (lockedCanonicalVariants ?? Enumerable.Empty<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .ToList();
+            if (lockedList.Count == 0)
+                return new List<PathVariantInfo>();
+
+            var result = new List<PathVariantInfo>();
+            var seen = new HashSet<PathVariantInfo>();
+            foreach (var variant in compatibleCanonicalVariants ?? Enumerable.Empty<PathVariantInfo>())
+            {
+                var lockedVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(variant, lockedList);
+                if (lockedVariant == null || !seen.Add(lockedVariant))
+                    continue;
+
+                result.Add(lockedVariant);
+            }
+
+            return result;
+        }
+
+        private bool VariantDependsOnRepeatedTransitionAddresses(
+            PathVariantInfo variant,
+            HashSet<ushort> transitionAddresses)
+        {
+            if (variant == null || transitionAddresses == null || transitionAddresses.Count == 0)
+                return false;
+
+            if (variant.StateValueConstraints != null &&
+                variant.StateValueConstraints.Any(kvp =>
+                    transitionAddresses.Contains(kvp.Key) &&
+                    !IsStateValueConstraintLocallyMaterialized(variant, kvp.Key) &&
+                    kvp.Value != null &&
+                    !kvp.Value.IsEmpty))
+            {
+                return true;
+            }
+
+            if (variant.MemoryReadBeforeWriteAddresses != null &&
+                variant.MemoryReadBeforeWriteAddresses.Any(transitionAddresses.Contains))
+            {
+                return true;
+            }
+
+            if (variant.PersistentMemoryFirstAccessKinds != null &&
+                variant.PersistentMemoryFirstAccessKinds.Any(kvp =>
+                    transitionAddresses.Contains(kvp.Key) &&
+                    kvp.Value == PersistentMemoryFirstAccessKind.Read))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private void NormalizeOccurrenceCoverage(PathVariantInfo variant)
@@ -1962,7 +2247,8 @@ namespace MMMapEditor
             plan = new RepeatedEventFastForwardPlan
             {
                 CoverageEndOccurrence = Math.Max(occurrence, coverageEndOccurrence),
-                IsOpenEnded = isOpenEnded
+                IsOpenEnded = isOpenEnded,
+                TransitionAddresses = new HashSet<ushort>(transitionList.Select(transition => transition.Address))
             };
 
             if (isOpenEnded)
@@ -1984,6 +2270,40 @@ namespace MMMapEditor
             }
 
             return true;
+        }
+
+        private bool ShouldProbeImmediateRepeatedState(
+            int occurrence,
+            RepeatedEventStateInfo currentStateInfo,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            RepeatedEventFastForwardPlan fastForwardPlan)
+        {
+            if (occurrence <= 0 ||
+                occurrence + 1 > MaxRepeatedEventOccurrences ||
+                currentStateInfo == null ||
+                carryOverState == null ||
+                nextConstraints == null ||
+                fastForwardPlan == null)
+            {
+                return false;
+            }
+
+            bool skipsImmediateRepresentative =
+                fastForwardPlan.IsOpenEnded ||
+                fastForwardPlan.CoverageEndOccurrence > occurrence + 1 ||
+                (fastForwardPlan.NextInterestingOccurrence.HasValue &&
+                 fastForwardPlan.NextInterestingOccurrence.Value > occurrence + 1);
+
+            if (!skipsImmediateRepresentative)
+                return false;
+
+            string currentStateKey = BuildMemoryStateKey(
+                currentStateInfo.Memory,
+                currentStateInfo.StateValueConstraints);
+            string nextStateKey = BuildMemoryStateKey(carryOverState, nextConstraints);
+
+            return !string.Equals(currentStateKey, nextStateKey, StringComparison.Ordinal);
         }
 
         private bool TryBuildRepeatedEventPlanFromConstraint(
@@ -2043,7 +2363,8 @@ namespace MMMapEditor
             plan = new RepeatedEventFastForwardPlan
             {
                 CoverageEndOccurrence = Math.Max(occurrence, coverageEndOccurrence),
-                IsOpenEnded = isOpenEnded
+                IsOpenEnded = isOpenEnded,
+                TransitionAddresses = new HashSet<ushort> { address }
             };
 
             if (isOpenEnded)
@@ -2119,6 +2440,385 @@ namespace MMMapEditor
             return TryReadOverlayByte(br, address, out value);
         }
 
+        private HashSet<ushort> BuildLocallyMaterializedStateAddresses(IEnumerable<PathVariantInfo> rawLeafVariants)
+        {
+            var addresses = new HashSet<ushort>();
+
+            foreach (var rawLeaf in rawLeafVariants ?? Enumerable.Empty<PathVariantInfo>())
+            {
+                addresses.UnionWith(rawLeaf.ExitEmulatedMemory8?.Keys ?? Enumerable.Empty<ushort>());
+            }
+
+            return addresses;
+        }
+
+        private bool IsVariantCompatibleWithCurrentRepeatedState(
+            BinaryReader br,
+            RepeatedEventStateInfo currentStateInfo,
+            PathVariantInfo variant,
+            HashSet<ushort> locallyMaterializedStateAddresses)
+        {
+            if (variant?.StateValueConstraints == null || variant.StateValueConstraints.Count == 0)
+                return true;
+
+            currentStateInfo ??= new RepeatedEventStateInfo();
+            var currentState = currentStateInfo.Memory ?? new Dictionary<ushort, byte>();
+            var currentConstraints = currentStateInfo.StateValueConstraints ?? new Dictionary<ushort, StateValueConstraintInfo>();
+            bool isInitialRepeatedEventState =
+                currentState.Count == 0 &&
+                currentConstraints.Count == 0;
+
+            foreach (var kvp in variant.StateValueConstraints)
+            {
+                ushort address = kvp.Key;
+                var requiredConstraint = kvp.Value;
+                if (requiredConstraint == null || requiredConstraint.IsEmpty)
+                    continue;
+
+                bool hasCurrentValue = currentState.TryGetValue(address, out byte currentValue);
+                bool hasCurrentConstraint =
+                    currentConstraints.TryGetValue(address, out var currentConstraint) &&
+                    currentConstraint != null &&
+                    !currentConstraint.IsEmpty;
+                bool isLocallyMaterialized =
+                    locallyMaterializedStateAddresses != null &&
+                    locallyMaterializedStateAddresses.Contains(address);
+
+                if (!hasCurrentValue && !hasCurrentConstraint && !isLocallyMaterialized)
+                    continue;
+
+                if (!hasCurrentValue && !hasCurrentConstraint && isLocallyMaterialized)
+                {
+                    if (isInitialRepeatedEventState &&
+                        ShouldEvaluateInitialOverlayConstraintForOccurrence(variant) &&
+                        TryEvaluateInitialReadBeforeWriteOverlayConstraint(
+                            br,
+                            variant,
+                            address,
+                            requiredConstraint,
+                            out bool initialOverlayAllowsVariant,
+                            out bool isExternallyPrimedResetLatch))
+                    {
+                        if (isExternallyPrimedResetLatch)
+                        {
+                            variant.SuppressRepeatedEventOccurrenceDescription = true;
+                            continue;
+                        }
+
+                        if (!initialOverlayAllowsVariant &&
+                            IsStateValueConstraintLocallyMaterialized(variant, address))
+                        {
+                            continue;
+                        }
+
+                        if (initialOverlayAllowsVariant)
+                            continue;
+
+                        AnalysisDebug.WriteLine(
+                            $"  Фильтр initial repeated-state: path={variant.PathId}, address=0x{address:X4}, " +
+                            $"required={BuildConstraintOnlyToken(requiredConstraint)}, locallyMaterialized={isLocallyMaterialized}");
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (hasCurrentValue && AllowsStateValue(requiredConstraint, currentValue))
+                    continue;
+
+                if (hasCurrentConstraint && ConstraintsMayIntersect(currentConstraint, requiredConstraint))
+                    continue;
+
+                if (LocalExitStateMaySatisfyConstraint(variant, address, requiredConstraint))
+                    continue;
+
+                AnalysisDebug.WriteLine(
+                    $"  Фильтр repeated-state: path={variant.PathId}, address=0x{address:X4}, " +
+                    $"required={BuildConstraintOnlyToken(requiredConstraint)}, " +
+                    $"hasCurrentValue={hasCurrentValue}, hasCurrentConstraint={hasCurrentConstraint}, " +
+                    $"locallyMaterialized={isLocallyMaterialized}");
+                return false;
+            }
+
+            return true;
+        }
+
+        private bool ShouldEvaluateInitialOverlayConstraintForOccurrence(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (IsPureEmptyNoOpVariantForOccurrenceSuppression(variant))
+                return false;
+
+            if (HasInputChoiceBranch(variant))
+                return false;
+
+            return true;
+        }
+
+        private bool TryEvaluateInitialReadBeforeWriteOverlayConstraint(
+            BinaryReader br,
+            PathVariantInfo variant,
+            ushort address,
+            StateValueConstraintInfo requiredConstraint,
+            out bool allowsVariant,
+            out bool isExternallyPrimedResetLatch)
+        {
+            allowsVariant = true;
+            isExternallyPrimedResetLatch = false;
+
+            if (br == null ||
+                variant == null ||
+                requiredConstraint == null ||
+                requiredConstraint.IsEmpty ||
+                IsRuntimeCoordinateAddress(address))
+            {
+                return false;
+            }
+
+            bool isReadBeforeLocalWrite =
+                (variant.PersistentMemoryFirstAccessKinds != null &&
+                 variant.PersistentMemoryFirstAccessKinds.TryGetValue(address, out var firstAccessKind) &&
+                 firstAccessKind == PersistentMemoryFirstAccessKind.Read) ||
+                (variant.PersistentMemoryFirstAccessKinds == null || variant.PersistentMemoryFirstAccessKinds.Count == 0) &&
+                (variant.MemoryReadBeforeWriteAddresses?.Contains(address) ?? false);
+
+            if (!isReadBeforeLocalWrite)
+                return false;
+
+            if (!TryReadOverlayByte(br, address, out byte initialValue))
+                return false;
+
+            allowsVariant = AllowsStateValue(requiredConstraint, initialValue);
+            if (!allowsVariant &&
+                variant.ExitEmulatedMemory8 != null &&
+                variant.ExitEmulatedMemory8.TryGetValue(address, out byte exitValue) &&
+                exitValue == initialValue)
+            {
+                // A read-before-write guard that immediately resets the byte back to its
+                // overlay value is usually a runtime latch prepared by earlier code, not
+                // a reliable static initial-state fact for this object entry.
+                allowsVariant = true;
+                isExternallyPrimedResetLatch = true;
+            }
+
+            return true;
+        }
+
+        private HashSet<PathVariantInfo> FindInputDependentRepeatedStateOccurrenceVariants(
+            BinaryReader br,
+            RepeatedEventStateInfo currentStateInfo,
+            IEnumerable<PathVariantInfo> compatibleRawLeafVariants,
+            IEnumerable<PathVariantInfo> compatibleCanonicalVariants,
+            out bool hasInputDependentRepeatedStateDivergence)
+        {
+            hasInputDependentRepeatedStateDivergence = false;
+            var result = new HashSet<PathVariantInfo>();
+            var canonicalVariants = (compatibleCanonicalVariants ?? Enumerable.Empty<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (canonicalVariants.Count == 0)
+                return result;
+
+            var currentState = currentStateInfo?.Memory ?? new Dictionary<ushort, byte>();
+            var currentConstraints = currentStateInfo?.StateValueConstraints;
+            var inputChoiceInitialCompatibilityKeys = new HashSet<bool>();
+            var candidatesByCanonicalVariant = new Dictionary<PathVariantInfo, InputDependentRepeatedStateCandidate>();
+
+            foreach (var rawLeaf in compatibleRawLeafVariants ?? Enumerable.Empty<PathVariantInfo>())
+            {
+                if (rawLeaf == null)
+                    continue;
+
+                if (!HasInputChoiceBranch(rawLeaf))
+                    continue;
+
+                var repeatedEventRelevantAddresses = BuildRepeatedEventRelevantAddresses(rawLeaf);
+                if (repeatedEventRelevantAddresses.Count == 0)
+                    continue;
+
+                var carryOverState = BuildCarryOverState(
+                    br,
+                    currentState,
+                    rawLeaf,
+                    repeatedEventRelevantAddresses);
+                var nextConstraints = FilterStateValueConstraintsForRepeatedEvent(
+                    MergeStateValueConstraints(
+                        currentConstraints,
+                        rawLeaf.StateValueConstraints),
+                    repeatedEventRelevantAddresses);
+                RemoveConstraintsOverwrittenByExitState(
+                    nextConstraints,
+                    rawLeaf,
+                    repeatedEventRelevantAddresses);
+
+                if (IsInitialRepeatedEventState(currentStateInfo) &&
+                    RepeatedStateCanRemainAtInitialOverlay(
+                        br,
+                        carryOverState,
+                        nextConstraints,
+                        repeatedEventRelevantAddresses))
+                {
+                    continue;
+                }
+
+                if (carryOverState.Count == 0 && nextConstraints.Count == 0)
+                    continue;
+
+                var canonicalVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(rawLeaf, canonicalVariants);
+                if (canonicalVariant == null)
+                    continue;
+
+                if (!candidatesByCanonicalVariant.TryGetValue(canonicalVariant, out var candidate))
+                {
+                    candidate = new InputDependentRepeatedStateCandidate();
+                    candidatesByCanonicalVariant[canonicalVariant] = candidate;
+                }
+
+                string stateKey = BuildMemoryStateKey(carryOverState, nextConstraints);
+                if (TryEvaluateInputChoiceInitialStateCompatibility(
+                    br,
+                    carryOverState,
+                    nextConstraints,
+                    repeatedEventRelevantAddresses,
+                    out bool canRemainInitial))
+                {
+                    inputChoiceInitialCompatibilityKeys.Add(canRemainInitial);
+                }
+
+                candidate.InputChoiceStateKeys.Add(stateKey);
+            }
+
+            if (inputChoiceInitialCompatibilityKeys.Count > 1)
+            {
+                hasInputDependentRepeatedStateDivergence = true;
+                foreach (var canonicalVariant in canonicalVariants.Where(HasInputChoiceBranch))
+                    result.Add(canonicalVariant);
+            }
+
+            foreach (var kvp in candidatesByCanonicalVariant)
+            {
+                var candidate = kvp.Value;
+                if (candidate.InputChoiceStateKeys.Count > 1)
+                    result.Add(kvp.Key);
+            }
+
+            return result;
+        }
+
+        private bool TryEvaluateInputChoiceInitialStateCompatibility(
+            BinaryReader br,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            HashSet<ushort> repeatedEventRelevantAddresses,
+            out bool canRemainInitial)
+        {
+            canRemainInitial = false;
+            bool sawInitialStateAddress = false;
+            bool allRelevantAddressesCanRemainInitial = true;
+
+            foreach (ushort address in repeatedEventRelevantAddresses ?? Enumerable.Empty<ushort>())
+            {
+                if (IsRuntimeCoordinateAddress(address))
+                    continue;
+
+                if (!TryReadOverlayByte(br, address, out byte initialValue))
+                    continue;
+
+                sawInitialStateAddress = true;
+                bool addressCanRemainInitial;
+                if (carryOverState != null && carryOverState.TryGetValue(address, out byte exactValue))
+                {
+                    addressCanRemainInitial = exactValue == initialValue;
+                }
+                else if (nextConstraints != null &&
+                         nextConstraints.TryGetValue(address, out var constraintInfo) &&
+                         constraintInfo != null &&
+                         !constraintInfo.IsEmpty)
+                {
+                    addressCanRemainInitial = AllowsStateValue(constraintInfo, initialValue);
+                }
+                else
+                {
+                    addressCanRemainInitial = true;
+                }
+
+                allRelevantAddressesCanRemainInitial &= addressCanRemainInitial;
+            }
+
+            if (!sawInitialStateAddress)
+                return false;
+
+            canRemainInitial = allRelevantAddressesCanRemainInitial;
+            return true;
+        }
+
+        private sealed class InputDependentRepeatedStateCandidate
+        {
+            public HashSet<string> InputChoiceStateKeys { get; } = new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private static bool HasInputChoiceBranch(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices != null &&
+                   variant.BranchChoices.Any(choice => IsInputChoiceBranchLabel(choice?.Label));
+        }
+
+        private static bool IsInputChoiceBranchLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string normalized = label.Trim();
+            if (normalized.EndsWith(")", StringComparison.Ordinal))
+                normalized = normalized.Substring(0, normalized.Length - 1).TrimEnd();
+
+            return string.Equals(normalized, "InputChoiceBranch", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "InputChoiceLinear", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool LocalExitStateMaySatisfyConstraint(
+            PathVariantInfo variant,
+            ushort address,
+            StateValueConstraintInfo constraintInfo)
+        {
+            if (variant == null || constraintInfo == null || constraintInfo.IsEmpty)
+                return false;
+
+            if (variant.ExitEmulatedMemory8 != null &&
+                variant.ExitEmulatedMemory8.TryGetValue(address, out byte exactValue))
+            {
+                return AllowsStateValue(constraintInfo, exactValue);
+            }
+
+            return false;
+        }
+
+        private bool IsStateValueConstraintLocallyMaterialized(
+            PathVariantInfo variant,
+            ushort address)
+        {
+            return variant?.LocallyMaterializedStateValueConstraintAddresses?.Contains(address) == true;
+        }
+
+        private bool ConstraintsMayIntersect(
+            StateValueConstraintInfo left,
+            StateValueConstraintInfo right)
+        {
+            if (left == null || left.IsEmpty || right == null || right.IsEmpty)
+                return true;
+
+            for (int value = 0; value <= 0xFF; value++)
+            {
+                if (AllowsStateValue(left, value) && AllowsStateValue(right, value))
+                    return true;
+            }
+
+            return false;
+        }
+
         private HashSet<ushort> BuildRepeatedEventRelevantAddresses(PathVariantInfo rawLeafVariant)
         {
             if (rawLeafVariant == null)
@@ -2138,13 +2838,89 @@ namespace MMMapEditor
                     relevantAddresses.UnionWith(firstAccessKinds
                         .Where(kvp => kvp.Value == PersistentMemoryFirstAccessKind.Read)
                         .Select(kvp => kvp.Key));
-                    continue;
+                }
+                else
+                {
+                    relevantAddresses.UnionWith(rawLeaf.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
                 }
 
-                relevantAddresses.UnionWith(rawLeaf.MemoryReadBeforeWriteAddresses ?? Enumerable.Empty<ushort>());
+                relevantAddresses.UnionWith(rawLeaf.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
+                relevantAddresses.UnionWith(rawLeaf.PendingPersistentCounterProgressions?.Keys ?? Enumerable.Empty<ushort>());
             }
 
             return relevantAddresses;
+        }
+
+        private string BuildRepeatedEventTransitionProcessingKey(
+            PathVariantInfo rawLeaf,
+            PathVariantInfo canonicalVariant,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            HashSet<ushort> relevantAddresses)
+        {
+            if (rawLeaf == null)
+                return "<NULL_RAW_LEAF>";
+
+            string targetKey = BuildRepeatedEventVariantTargetKey(canonicalVariant ?? rawLeaf);
+            string stateKey = BuildMemoryStateKey(carryOverState, nextConstraints);
+            string relevantKey = BuildDebugAddressSet(relevantAddresses);
+            string rawConstraintKey = BuildRelevantConstraintKey(rawLeaf.StateValueConstraints, relevantAddresses);
+            string readKey = BuildAddressSubsetKey(rawLeaf.MemoryReadBeforeWriteAddresses, relevantAddresses);
+            string localConstraintKey = BuildAddressSubsetKey(
+                rawLeaf.LocallyMaterializedStateValueConstraintAddresses,
+                relevantAddresses);
+
+            return string.Join("||", new[]
+            {
+                targetKey,
+                $"state:{stateKey}",
+                $"relevant:{relevantKey}",
+                $"rawConstraints:{rawConstraintKey}",
+                $"read:{readKey}",
+                $"localConstraints:{localConstraintKey}"
+            });
+        }
+
+        private string BuildRelevantConstraintKey(
+            Dictionary<ushort, StateValueConstraintInfo> constraints,
+            HashSet<ushort> relevantAddresses)
+        {
+            if (constraints == null || constraints.Count == 0)
+                return "<NO_CONSTRAINTS>";
+
+            var parts = constraints
+                .Where(kvp =>
+                    kvp.Value != null &&
+                    !kvp.Value.IsEmpty &&
+                    (relevantAddresses == null ||
+                     relevantAddresses.Count == 0 ||
+                     relevantAddresses.Contains(kvp.Key)))
+                .OrderBy(kvp => kvp.Key)
+                .Select(kvp => $"{kvp.Key:X4}:{BuildConstraintOnlyToken(kvp.Value)}")
+                .ToList();
+
+            return parts.Count == 0
+                ? "<NO_CONSTRAINTS>"
+                : string.Join(";", parts);
+        }
+
+        private string BuildAddressSubsetKey(
+            IEnumerable<ushort> addresses,
+            HashSet<ushort> relevantAddresses)
+        {
+            var parts = (addresses ?? Enumerable.Empty<ushort>())
+                .Where(address =>
+                    relevantAddresses == null ||
+                    relevantAddresses.Count == 0 ||
+                    relevantAddresses.Contains(address))
+                .Distinct()
+                .OrderBy(address => address)
+                .Select(address => address.ToString("X4"))
+                .ToList();
+
+            return parts.Count == 0
+                ? "-"
+                : string.Join(",", parts);
         }
 
         private Dictionary<ushort, StateValueConstraintInfo> FilterStateValueConstraintsForRepeatedEvent(
@@ -2167,6 +2943,28 @@ namespace MMMapEditor
                     kvp => kvp.Value.Clone());
         }
 
+        private void RemoveConstraintsOverwrittenByExitState(
+            Dictionary<ushort, StateValueConstraintInfo> constraints,
+            PathVariantInfo leafVariant,
+            HashSet<ushort> relevantAddresses)
+        {
+            if (constraints == null ||
+                constraints.Count == 0 ||
+                leafVariant?.ExitEmulatedMemory8 == null ||
+                leafVariant.ExitEmulatedMemory8.Count == 0)
+            {
+                return;
+            }
+
+            foreach (ushort address in leafVariant.ExitEmulatedMemory8.Keys.ToList())
+            {
+                if (relevantAddresses != null && !relevantAddresses.Contains(address))
+                    continue;
+
+                constraints.Remove(address);
+            }
+        }
+
         private Dictionary<ushort, byte> BuildCarryOverState(
             BinaryReader br,
             Dictionary<ushort, byte> currentState,
@@ -2181,16 +2979,36 @@ namespace MMMapEditor
 
             foreach (var addr in addressesToCarry.OrderBy(value => value))
             {
-                if (addr == 0x3C38 || addr == 0x3C39)
+                if (IsRuntimeCoordinateAddress(addr))
                     continue;
 
                 if (leafVariant.ExitEmulatedMemory8 != null &&
                     leafVariant.ExitEmulatedMemory8.TryGetValue(addr, out byte value))
                 {
+                    if ((currentState == null || !currentState.ContainsKey(addr)) &&
+                        ShouldSuppressLocallyMaterializedCarryOverAddress(leafVariant, addr))
+                    {
+                        continue;
+                    }
+
                     if (TryReadOverlayByte(br, addr, out byte overlayValue) && overlayValue == value)
                         continue;
 
                     result[addr] = value;
+                    continue;
+                }
+
+                if (leafVariant.PendingPersistentCounterProgressions != null &&
+                    leafVariant.PendingPersistentCounterProgressions.TryGetValue(addr, out var pendingProgression) &&
+                    pendingProgression != null)
+                {
+                    if (TryReadOverlayByte(br, addr, out byte overlayValue) &&
+                        overlayValue == pendingProgression.CurrentValue)
+                    {
+                        continue;
+                    }
+
+                    result[addr] = pendingProgression.CurrentValue;
                     continue;
                 }
 
@@ -2199,6 +3017,77 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private bool ShouldSuppressLocallyMaterializedCarryOverAddress(
+            PathVariantInfo variant,
+            ushort address)
+        {
+            if (!IsStateValueConstraintLocallyMaterialized(variant, address))
+                return false;
+
+            return !HasPersistentCounterProgressionForAddress(variant, address);
+        }
+
+        private bool IsInitialRepeatedEventState(RepeatedEventStateInfo stateInfo)
+        {
+            return (stateInfo?.Memory == null || stateInfo.Memory.Count == 0) &&
+                   (stateInfo?.StateValueConstraints == null || stateInfo.StateValueConstraints.Count == 0);
+        }
+
+        private bool RepeatedStateCanRemainAtInitialOverlay(
+            BinaryReader br,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints,
+            HashSet<ushort> relevantAddresses)
+        {
+            if (carryOverState != null && carryOverState.Count > 0)
+                return false;
+
+            if (nextConstraints == null || nextConstraints.Count == 0)
+                return true;
+
+            IEnumerable<ushort> addressesToCheck = relevantAddresses != null
+                ? relevantAddresses
+                : nextConstraints.Keys;
+
+            foreach (ushort address in addressesToCheck)
+            {
+                if (IsRuntimeCoordinateAddress(address))
+                    continue;
+
+                if (!nextConstraints.TryGetValue(address, out var constraintInfo) ||
+                    constraintInfo == null ||
+                    constraintInfo.IsEmpty)
+                {
+                    continue;
+                }
+
+                if (!TryReadOverlayByte(br, address, out byte initialValue))
+                    return false;
+
+                if (!AllowsStateValue(constraintInfo, initialValue))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private bool HasPersistentCounterProgressionForAddress(
+            PathVariantInfo variant,
+            ushort address)
+        {
+            return variant?.PersistentCounterProgressions?.Any(info =>
+                info != null &&
+                info.CounterAddress == address) == true ||
+                   variant?.PendingPersistentCounterProgressions?.ContainsKey(address) == true;
+        }
+
+        private bool IsRuntimeCoordinateAddress(ushort address)
+        {
+            return address == 0x3C38 ||
+                   address == 0x3C39 ||
+                   address == 0x3C3A;
         }
 
         private Dictionary<ushort, byte> BuildStateWithoutAddress(
@@ -2428,8 +3317,11 @@ namespace MMMapEditor
                     continue;
 
                 NormalizeOccurrenceCoverage(variant);
-                variant.OccurrenceDescription = suppressOccurrenceDescriptionFor.Contains(variant)
+                variant.OccurrenceDescription = suppressOccurrenceDescriptionFor.Contains(variant) ||
+                                                 IsPureEmptyNoOpVariantForOccurrenceSuppression(variant)
                     ? null
+                    : variant.SuppressRepeatedEventOccurrenceDescription
+                        ? null
                     : usedRepeatedEventAcceleration &&
                       !variant.HasRepeatedEventOccurrenceSensitivity &&
                       HasRepresentativeOccurrenceGaps(variant.OccurrenceRanges, maxAnalyzedOccurrence)
@@ -2465,7 +3357,7 @@ namespace MMMapEditor
             if (variant.Texts != null && variant.Texts.Count > 0)
                 return false;
 
-            if (variant.PartyEffects != null && variant.PartyEffects.Count > 0)
+            if (variant.PartyEffects != null && variant.PartyEffects.Any(IsVisiblePartyEffectForOccurrenceSuppression))
                 return false;
 
             return !variant.RandomEncounterMonsterPowerCap.HasValue &&
@@ -2482,12 +3374,27 @@ namespace MMMapEditor
                    !variant.BattleMonsterCount.HasValue &&
                    variant.BattleMonsterCountRange == null &&
                    !variant.IsBattleMonsterCountIndeterminate &&
-                   (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
-                   (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
                    !variant.HasAnyTableLoad &&
                    (variant.BattleMonsters == null || variant.BattleMonsters.Count == 0) &&
                    (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
                    (variant.LoadedValues == null || variant.LoadedValues.Count == 0);
+        }
+
+        private bool IsVisiblePartyEffectForOccurrenceSuppression(PartyEffect effect)
+        {
+            if (effect == null)
+                return false;
+
+            if (effect.Kind == PartyEffectKind.TechnicalFieldRead ||
+                effect.Kind == PartyEffectKind.TechnicalFieldWritten ||
+                effect.Kind == PartyEffectKind.TechnicalFieldCompared)
+            {
+                var field = PartyEffectSemantics.GetEffectiveField(effect);
+                return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+                       PartyTemporaryStatSemantics.IsTrackedField(field);
+            }
+
+            return true;
         }
 
         private bool HasConditionalLoopSubsetOutcomeEffectsForOccurrenceSuppression(PathVariantInfo variant)
@@ -3070,6 +3977,21 @@ namespace MMMapEditor
                         .OrderBy(address => address)
                         .Select(address => address.ToString("X4")));
 
+            string adjustedKey = variant.AdjustedMemoryAddresses == null || variant.AdjustedMemoryAddresses.Count == 0
+                ? "<NO_ADJUSTED>"
+                : string.Join(",",
+                    variant.AdjustedMemoryAddresses
+                        .OrderBy(address => address)
+                        .Select(address => address.ToString("X4")));
+            string pendingCounterKey = variant.PendingPersistentCounterProgressions == null ||
+                                       variant.PendingPersistentCounterProgressions.Count == 0
+                ? "<NO_PENDING_COUNTERS>"
+                : string.Join(";",
+                    variant.PendingPersistentCounterProgressions
+                        .Where(kvp => kvp.Value != null)
+                        .OrderBy(kvp => kvp.Key)
+                        .Select(kvp => kvp.Value.GetIdentityKey()));
+
             string firstAccessKey = variant.PersistentMemoryFirstAccessKinds == null || variant.PersistentMemoryFirstAccessKinds.Count == 0
                 ? "<NO_FIRST_ACCESS>"
                 : string.Join(";",
@@ -3084,6 +4006,14 @@ namespace MMMapEditor
                         .Where(kvp => kvp.Value != null && !kvp.Value.IsEmpty)
                         .OrderBy(kvp => kvp.Key)
                         .Select(kvp => $"{kvp.Key:X4}:{BuildConstraintOnlyToken(kvp.Value)}"));
+            string locallyMaterializedConstraintKey =
+                variant.LocallyMaterializedStateValueConstraintAddresses == null ||
+                variant.LocallyMaterializedStateValueConstraintAddresses.Count == 0
+                    ? "<NO_LOCAL_CONSTRAINTS>"
+                    : string.Join(",",
+                        variant.LocallyMaterializedStateValueConstraintAddresses
+                            .OrderBy(address => address)
+                            .Select(address => address.ToString("X4")));
 
             return string.Join("||", new[]
             {
@@ -3091,8 +4021,11 @@ namespace MMMapEditor
                 $"leaf:{variant.IsLeaf}",
                 $"exit:{exitMemoryKey}",
                 $"read:{readKey}",
+                $"adjusted:{adjustedKey}",
+                $"pendingCounters:{pendingCounterKey}",
                 $"first:{firstAccessKey}",
                 $"constraints:{constraintKey}",
+                $"localConstraints:{locallyMaterializedConstraintKey}",
                 $"coord:{variant.UsesInitialCoordinates}",
                 $"repeat:{variant.HasRepeatedEventOccurrenceSensitivity}",
                 $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
@@ -3145,6 +4078,7 @@ namespace MMMapEditor
                 BattleMonsterCount = source.BattleMonsterCount,
                 BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(source.PendingPersistentCounterProgressions),
                 PersistentCounterProgressions = source.PersistentCounterProgressions?
                     .Where(info => info != null)
                     .Select(info => info.Clone())
@@ -3184,6 +4118,9 @@ namespace MMMapEditor
                 ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                     ? new Dictionary<ushort, byte>()
                     : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                AdjustedMemoryAddresses = source.AdjustedMemoryAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.AdjustedMemoryAddresses),
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
@@ -3191,7 +4128,10 @@ namespace MMMapEditor
                     ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
                     : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
+                LocallyMaterializedStateValueConstraintAddresses =
+                    new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
+                SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
@@ -3210,6 +4150,16 @@ namespace MMMapEditor
                 TerminatedByTerminalRet = source.TerminatedByTerminalRet,
                 HasBranchSpecificContribution = source.HasBranchSpecificContribution
             };
+        }
+
+        private static Dictionary<ushort, PersistentCounterProgressionInfo> ClonePendingPersistentCounterProgressions(
+            Dictionary<ushort, PersistentCounterProgressionInfo> source)
+        {
+            return source == null
+                ? new Dictionary<ushort, PersistentCounterProgressionInfo>()
+                : source
+                    .Where(kvp => kvp.Value != null)
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Clone());
         }
 
         private string BuildOccurrenceDescription(
@@ -3633,6 +4583,7 @@ namespace MMMapEditor
                 BattleMonsterCount = source.BattleMonsterCount,
                 BattleMonsterCountRange = source.BattleMonsterCountRange == null ? null : new ValueRange8(source.BattleMonsterCountRange.Min, source.BattleMonsterCountRange.Max),
                 IsBattleMonsterCountIndeterminate = source.IsBattleMonsterCountIndeterminate,
+                PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(source.PendingPersistentCounterProgressions),
                 PersistentCounterProgressions = source.PersistentCounterProgressions?
                     .Where(info => info != null)
                     .Select(info => info.Clone())
@@ -3676,12 +4627,22 @@ namespace MMMapEditor
                 ExitEmulatedMemory8 = source.ExitEmulatedMemory8 == null
                     ? new Dictionary<ushort, byte>()
                     : new Dictionary<ushort, byte>(source.ExitEmulatedMemory8),
+                AdjustedMemoryAddresses = source.AdjustedMemoryAddresses == null
+                    ? new HashSet<ushort>()
+                    : new HashSet<ushort>(source.AdjustedMemoryAddresses),
                 MemoryReadBeforeWriteAddresses = source.MemoryReadBeforeWriteAddresses == null
                     ? new HashSet<ushort>()
                     : new HashSet<ushort>(source.MemoryReadBeforeWriteAddresses),
                 PersistentMemoryFirstAccessKinds = source.PersistentMemoryFirstAccessKinds == null
                     ? new Dictionary<ushort, PersistentMemoryFirstAccessKind>()
                     : new Dictionary<ushort, PersistentMemoryFirstAccessKind>(source.PersistentMemoryFirstAccessKinds),
+                StateValueConstraints = source.StateValueConstraints == null
+                    ? new Dictionary<ushort, StateValueConstraintInfo>()
+                    : source.StateValueConstraints.ToDictionary(
+                        kvp => kvp.Key,
+                        kvp => kvp.Value?.Clone() ?? new StateValueConstraintInfo()),
+                LocallyMaterializedStateValueConstraintAddresses =
+                    new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 UsesInitialCoordinates = source.UsesInitialCoordinates
             };
         }

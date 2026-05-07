@@ -955,6 +955,8 @@ namespace MMMapEditor
         public byte? BattleMonsterCount { get; set; }
         public ValueRange8 BattleMonsterCountRange { get; set; }
         public bool IsBattleMonsterCountIndeterminate { get; set; }
+        public Dictionary<ushort, PersistentCounterProgressionInfo> PendingPersistentCounterProgressions { get; set; }
+            = new Dictionary<ushort, PersistentCounterProgressionInfo>();
         public List<PersistentCounterProgressionInfo> PersistentCounterProgressions { get; set; }
             = new List<PersistentCounterProgressionInfo>();
         public List<DynamicRandomBoundDependencyInfo> DynamicRandomBoundDependencies { get; set; }
@@ -967,11 +969,14 @@ namespace MMMapEditor
         public List<OvrObject.LoadedValueInfo> LoadedValues { get; set; } = new List<OvrObject.LoadedValueInfo>();
         public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
         public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
+        public HashSet<ushort> AdjustedMemoryAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> MemoryReadBeforeWriteAddresses { get; set; } = new HashSet<ushort>();
         public Dictionary<ushort, PersistentMemoryFirstAccessKind> PersistentMemoryFirstAccessKinds { get; set; }
             = new Dictionary<ushort, PersistentMemoryFirstAccessKind>();
         public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
+        public HashSet<ushort> LocallyMaterializedStateValueConstraintAddresses { get; set; } = new HashSet<ushort>();
         public bool HasRepeatedEventOccurrenceSensitivity { get; set; } = false;
+        public bool SuppressRepeatedEventOccurrenceDescription { get; set; } = false;
         public bool UsesInitialCoordinates { get; set; } = false;
         public List<int> OccurrenceIndices { get; set; } = new List<int>();
         public List<OccurrenceRangeInfo> OccurrenceRanges { get; set; } = new List<OccurrenceRangeInfo>();

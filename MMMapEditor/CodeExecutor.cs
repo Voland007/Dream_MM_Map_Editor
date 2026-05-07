@@ -1155,7 +1155,11 @@ namespace MMMapEditor
                 Offset = resolvedOffset,
                 EffectiveAddress = effectiveAddress,
                 FieldOffset = resolvedOffset >= byte.MinValue && resolvedOffset <= byte.MaxValue ? (byte)resolvedOffset : (byte?)null,
-                FieldName = field != PartyFieldKind.Unknown ? GetPartyFieldLabel(field) : null
+                FieldName = field != PartyFieldKind.Unknown
+                    ? GetPartyFieldLabel(field)
+                    : resolvedOffset >= byte.MinValue && resolvedOffset <= byte.MaxValue
+                        ? $"техническое байтовое поле персонажа +0x{resolvedOffset:X2}"
+                        : null
             };
 
             return true;
@@ -2079,6 +2083,8 @@ namespace MMMapEditor
                 Member = fieldRef.Member?.Clone(),
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
+                FieldOffset = fieldRef.FieldOffset,
+                FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsRead = true
             });
@@ -2121,6 +2127,20 @@ namespace MMMapEditor
                     currentCondition,
                     debugPrefix: GetPartyFieldLabel(fieldRef.Field));
             }
+            else if (IsRawTechnicalPartyField(fieldRef))
+            {
+                AddResolvedPartyEffect(
+                    result,
+                    PartyEffectFactory.CreateRawTechnicalFieldReadEffect(
+                        fieldRef.Member,
+                        fieldRef.FieldOffset.Value,
+                        instructionAddress,
+                        exactValue),
+                    fieldRef.Member,
+                    registerTracker,
+                    currentCondition,
+                    debugPrefix: GetRawTechnicalPartyFieldLabel(fieldRef));
+            }
         }
 
         private void RegisterPartyFieldWrite(PathAnalysisResult result, PartyFieldReference fieldRef,
@@ -2137,6 +2157,8 @@ namespace MMMapEditor
                 Member = fieldRef.Member?.Clone(),
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
+                FieldOffset = fieldRef.FieldOffset,
+                FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsWrite = true
             });
@@ -2276,6 +2298,45 @@ namespace MMMapEditor
                         exactValue));
                 }
             }
+            else if (IsRawTechnicalPartyField(fieldRef))
+            {
+                bool sameRawSourceField =
+                    sourceFieldValue != null &&
+                    sourceFieldValue.Field == PartyFieldKind.Unknown &&
+                    sourceFieldValue.FieldOffset.HasValue &&
+                    sourceFieldValue.FieldOffset.Value == fieldRef.FieldOffset.Value;
+
+                if (sameRawSourceField &&
+                    sourceFieldValue.BitTransform != null &&
+                    !sourceFieldValue.BitTransform.IsIdentity)
+                {
+                    effects.AddRange(BuildRawTechnicalFieldEffectsFromBitTransform(
+                        fieldRef.Member,
+                        fieldRef.FieldOffset.Value,
+                        sourceFieldValue.BitTransform,
+                        instructionAddress));
+                }
+                else if (bitMask.HasValue &&
+                         (bitOperation == PartyEffectOperation.BitSet ||
+                          bitOperation == PartyEffectOperation.BitClear ||
+                          bitOperation == PartyEffectOperation.BitToggle))
+                {
+                    effects.Add(PartyEffectFactory.CreateRawTechnicalFieldBitEffect(
+                        fieldRef.Member,
+                        fieldRef.FieldOffset.Value,
+                        bitOperation,
+                        bitMask.Value,
+                        instructionAddress));
+                }
+                else
+                {
+                    effects.Add(PartyEffectFactory.CreateRawTechnicalFieldWriteEffect(
+                        fieldRef.Member,
+                        fieldRef.FieldOffset.Value,
+                        instructionAddress,
+                        exactValue));
+                }
+            }
 
             foreach (var effect in effects.Where(e => e != null))
             {
@@ -2289,6 +2350,8 @@ namespace MMMapEditor
                     PartyFieldKind.Status => "Статус персонажа",
                     _ when IsTrackedPartyField(fieldRef.Field)
                         => GetPartyFieldLabel(fieldRef.Field),
+                    _ when IsRawTechnicalPartyField(fieldRef)
+                        => GetRawTechnicalPartyFieldLabel(fieldRef),
                     _ => null
                 };
 
@@ -2409,6 +2472,8 @@ namespace MMMapEditor
                 Member = fieldRef.Member?.Clone(),
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
+                FieldOffset = fieldRef.FieldOffset,
+                FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsRead = true,
                 IsCompare = true
@@ -2429,15 +2494,62 @@ namespace MMMapEditor
                 debugMode: debugMode);
         }
 
+        private void RegisterRawTechnicalFieldCompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
+            RegisterTracker registerTracker, uint instructionAddress, byte compareValue, bool isBitMask, bool debugMode)
+        {
+            if (result == null || fieldRef == null || !IsRawTechnicalPartyField(fieldRef))
+                return;
+
+            result.PartyFieldAccesses.Add(new PartyFieldReference
+            {
+                Member = fieldRef.Member?.Clone(),
+                Field = fieldRef.Field,
+                Offset = fieldRef.Offset,
+                FieldOffset = fieldRef.FieldOffset,
+                FieldName = fieldRef.FieldName,
+                EffectiveAddress = fieldRef.EffectiveAddress,
+                IsRead = true,
+                IsCompare = true
+            });
+
+            AddResolvedPartyEffect(
+                result,
+                PartyEffectFactory.CreateRawTechnicalFieldCompareEffect(
+                    fieldRef.Member,
+                    fieldRef.FieldOffset.Value,
+                    instructionAddress,
+                    compareValue,
+                    isBitMask),
+                fieldRef.Member,
+                registerTracker,
+                GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic),
+                debugPrefix: GetRawTechnicalPartyFieldLabel(fieldRef),
+                debugMode: debugMode);
+        }
+
         private void RegisterPartyFieldCompareEffect(PathAnalysisResult result, PartyFieldReference fieldRef,
             RegisterTracker registerTracker, uint instructionAddress, byte compareValue, bool debugMode)
         {
-            if (result == null || fieldRef == null || !IsComparablePartyField(fieldRef.Field))
+            if (result == null || fieldRef == null ||
+                (!IsComparablePartyField(fieldRef.Field) && !IsRawTechnicalPartyField(fieldRef)))
                 return;
 
             if (IsTrackedPartyField(fieldRef.Field))
             {
                 RegisterTrackedTechnicalFieldCompareEffect(
+                    result,
+                    fieldRef,
+                    registerTracker,
+                    instructionAddress,
+                    compareValue,
+                    isBitMask: false,
+                    debugMode);
+                return;
+            }
+
+            if (IsRawTechnicalPartyField(fieldRef))
+            {
+                RegisterRawTechnicalFieldCompareEffect(
                     result,
                     fieldRef,
                     registerTracker,
@@ -2696,6 +2808,36 @@ namespace MMMapEditor
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
 
+        private static bool IsRawTechnicalPartyField(PartyFieldReference fieldRef)
+        {
+            return fieldRef?.Field == PartyFieldKind.Unknown &&
+                   fieldRef.FieldOffset.HasValue;
+        }
+
+        private static bool IsTrackablePartyField(PartyFieldReference fieldRef)
+        {
+            return fieldRef != null &&
+                   (fieldRef.Field != PartyFieldKind.Unknown || IsRawTechnicalPartyField(fieldRef));
+        }
+
+        private static string GetRawTechnicalPartyFieldLabel(PartyFieldReference fieldRef)
+        {
+            return fieldRef?.FieldOffset.HasValue == true
+                ? $"техническое байтовое поле персонажа +0x{fieldRef.FieldOffset.Value:X2}"
+                : null;
+        }
+
+        private static byte GetRawTechnicalPartyFieldRelevantMask(PartyEffectOperation operation, byte immediateValue)
+        {
+            return operation switch
+            {
+                PartyEffectOperation.BitSet => immediateValue,
+                PartyEffectOperation.BitClear => unchecked((byte)~immediateValue),
+                PartyEffectOperation.BitToggle => immediateValue,
+                _ => 0
+            };
+        }
+
         private static byte GetTrackedPartyFieldRelevantMask(PartyFieldKind field,
             PartyEffectOperation operation, byte immediateValue)
         {
@@ -2791,6 +2933,45 @@ namespace MMMapEditor
                 PartyEffect unknownEffect = PartyEffectFactory.CreateTrackedTechnicalFieldWriteEffect(
                     member,
                     field,
+                    instructionAddress);
+                if (unknownEffect != null)
+                    effects.Add(unknownEffect);
+            }
+
+            return effects;
+        }
+
+        private List<PartyEffect> BuildRawTechnicalFieldEffectsFromBitTransform(PartyMemberReference member,
+            byte fieldOffset, PartyFieldBitTransform bitTransform, uint instructionAddress)
+        {
+            var effects = new List<PartyEffect>();
+            if (bitTransform == null || bitTransform.IsIdentity)
+                return effects;
+
+            void AddEffect(PartyEffectOperation operation, byte mask)
+            {
+                if (mask == 0)
+                    return;
+
+                PartyEffect effect = PartyEffectFactory.CreateRawTechnicalFieldBitEffect(
+                    member,
+                    fieldOffset,
+                    operation,
+                    mask,
+                    instructionAddress);
+                if (effect != null)
+                    effects.Add(effect);
+            }
+
+            AddEffect(PartyEffectOperation.BitSet, bitTransform.SetMask);
+            AddEffect(PartyEffectOperation.BitClear, bitTransform.ClearMask);
+            AddEffect(PartyEffectOperation.BitToggle, bitTransform.ToggleMask);
+
+            if (effects.Count == 0)
+            {
+                PartyEffect unknownEffect = PartyEffectFactory.CreateRawTechnicalFieldWriteEffect(
+                    member,
+                    fieldOffset,
                     instructionAddress);
                 if (unknownEffect != null)
                     effects.Add(unknownEffect);
@@ -4317,6 +4498,10 @@ namespace MMMapEditor
                                 : altPath.EmulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                             PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(altPath.PendingPersistentCounterProgressions),
                             BranchStateValueConstraints = CloneStateValueConstraints(altPath.BranchStateValueConstraints),
+                            BranchLocallyMaterializedStateValueConstraintAddresses =
+                                altPath.BranchLocallyMaterializedStateValueConstraintAddresses == null
+                                    ? new HashSet<ushort>()
+                                    : new HashSet<ushort>(altPath.BranchLocallyMaterializedStateValueConstraintAddresses),
                             BranchPartyCondition = altPath.BranchPartyCondition,
                             BranchPartyPredicate = altPath.BranchPartyPredicate?.Clone()
                         });
@@ -4578,6 +4763,8 @@ namespace MMMapEditor
             }
 
             MergeStateValueConstraints(target.StateValueConstraints, source.StateValueConstraints);
+            target.LocallyMaterializedStateValueConstraintAddresses.UnionWith(
+                source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>());
 
             if (source.ExitEmulatedMemory8 != null && source.ExitEmulatedMemory8.Count > 0)
                 target.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(source.ExitEmulatedMemory8);
@@ -5073,6 +5260,12 @@ namespace MMMapEditor
                         EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                         PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
                         BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                        BranchLocallyMaterializedStateValueConstraintAddresses =
+                            BuildLocallyMaterializedStateValueConstraintAddressesForBranch(
+                                result,
+                                registerTracker,
+                                insn.Mnemonic,
+                                branchTaken: true),
                         BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                         BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, (uint)insn.Address)
                     };
@@ -5113,6 +5306,12 @@ namespace MMMapEditor
                         EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                         PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
                         BranchStateValueConstraints = BuildStateValueConstraintsForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                        BranchLocallyMaterializedStateValueConstraintAddresses =
+                            BuildLocallyMaterializedStateValueConstraintAddressesForBranch(
+                                result,
+                                registerTracker,
+                                insn.Mnemonic,
+                                branchTaken: false),
                         BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                         BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, (uint)insn.Address)
                     };
@@ -5812,7 +6011,25 @@ namespace MMMapEditor
                 }
 
                 info.MergeFrom(kvp.Value);
+
+                if (result.MemoryWrittenAddresses?.Contains(kvp.Key) == true)
+                    result.LocallyMaterializedStateValueConstraintAddresses.Add(kvp.Key);
             }
+        }
+
+        private HashSet<ushort> BuildLocallyMaterializedStateValueConstraintAddressesForBranch(
+            PathAnalysisResult result,
+            RegisterTracker registerTracker,
+            string mnemonic,
+            bool branchTaken)
+        {
+            var constraints = BuildStateValueConstraintsForBranch(registerTracker, mnemonic, branchTaken);
+            if (constraints.Count == 0 || result?.MemoryWrittenAddresses == null)
+                return new HashSet<ushort>();
+
+            return constraints.Keys
+                .Where(address => result.MemoryWrittenAddresses.Contains(address))
+                .ToHashSet();
         }
 
         private Dictionary<ushort, StateValueConstraintInfo> BuildStateValueConstraintsForBranch(
@@ -5821,9 +6038,7 @@ namespace MMMapEditor
             bool branchTaken)
         {
             var result = new Dictionary<ushort, StateValueConstraintInfo>();
-            if (registerTracker == null ||
-                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
-                !registerTracker.LastCompareImmediate.HasValue)
+            if (registerTracker == null)
             {
                 return result;
             }
@@ -5843,14 +6058,50 @@ namespace MMMapEditor
                 return result;
             }
 
-            var boundary = GetStateValueBoundaryForJump(mnemonic, branchTaken, registerTracker.LastCompareImmediate.Value);
-            if (!boundary.HasValue)
-                return result;
-
             var info = new StateValueConstraintInfo();
-            info.Add(boundary.Value.kind, boundary.Value.value);
+
+            if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastCompareImmediate.HasValue)
+            {
+                var boundary = GetStateValueBoundaryForJump(mnemonic, branchTaken, registerTracker.LastCompareImmediate.Value);
+                if (!boundary.HasValue)
+                    return result;
+
+                info.Add(boundary.Value.kind, boundary.Value.value);
+            }
+            else if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.Test &&
+                     registerTracker.LastTestMask == 0xFF)
+            {
+                var zeroBoundary = GetStateValueBoundaryForZeroTestJump(mnemonic, branchTaken);
+                if (!zeroBoundary.HasValue)
+                    return result;
+
+                info.Add(zeroBoundary.Value.kind, zeroBoundary.Value.value);
+            }
+            else
+            {
+                return result;
+            }
+
             result[sourceAddress.Value] = info;
             return result;
+        }
+
+        private (StateValueBoundaryKind kind, byte value)? GetStateValueBoundaryForZeroTestJump(
+            string mnemonic,
+            bool branchTaken)
+        {
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            return jump switch
+            {
+                "JE" or "JZ" => branchTaken
+                    ? (StateValueBoundaryKind.Exact, (byte)0)
+                    : (StateValueBoundaryKind.Excluded, (byte)0),
+                "JNE" or "JNZ" => branchTaken
+                    ? (StateValueBoundaryKind.Excluded, (byte)0)
+                    : (StateValueBoundaryKind.Exact, (byte)0),
+                _ => ((StateValueBoundaryKind kind, byte value)?)null
+            };
         }
 
         private (StateValueBoundaryKind kind, byte value)? GetStateValueBoundaryForJump(
@@ -8068,8 +8319,7 @@ namespace MMMapEditor
             if (!TryDisassembleNext(br, compareAddress, out X86Instruction compareInsn) ||
                 compareInsn == null ||
                 (uint)(compareInsn.Address + compareInsn.Bytes.Length) != currentAddress ||
-                string.IsNullOrWhiteSpace(counterRegister) ||
-                !TryFindPartyScanCounterMemoryBeforeCompare(br, compareAddress, counterRegister, out ushort counterMemoryAddress))
+                string.IsNullOrWhiteSpace(counterRegister))
             {
                 return false;
             }
@@ -8080,6 +8330,12 @@ namespace MMMapEditor
             {
                 return false;
             }
+
+            bool hasCounterMemoryAddress = TryFindPartyScanCounterMemoryBeforeCompare(
+                br,
+                compareAddress,
+                counterRegister,
+                out ushort counterMemoryAddress);
 
             if (!TryDisassembleNext(br, nextAddress, out X86Instruction backJumpInsn) ||
                 backJumpInsn == null ||
@@ -8097,18 +8353,23 @@ namespace MMMapEditor
             registerTracker.ClearConcreteByteRegisterValueKeepSemantic(counterRegister);
             registerTracker.SetRegisterRange(counterRegister, finalCounterMin, finalCounterMax, RegisterValueDistribution.Unknown);
 
-            byte finalStoredMin = (byte)Math.Max(0, currentCounterValue - 1);
-            byte finalStoredMax = PARTY_MEMBER_COUNT - 1;
-            ApplyTrackedByteRangeWrite(
-                counterMemoryAddress,
-                new ValueRange8(finalStoredMin, finalStoredMax),
-                RegisterValueDistribution.Unknown,
-                result,
-                targetX,
-                targetY,
-                branchInsn,
-                debugMode,
-                "схлопнутый party member scan loop");
+            byte? finalStoredMin = null;
+            byte? finalStoredMax = null;
+            if (hasCounterMemoryAddress)
+            {
+                finalStoredMin = (byte)Math.Max(0, currentCounterValue - 1);
+                finalStoredMax = PARTY_MEMBER_COUNT - 1;
+                ApplyTrackedByteRangeWrite(
+                    counterMemoryAddress,
+                    new ValueRange8(finalStoredMin.Value, finalStoredMax.Value),
+                    RegisterValueDistribution.Unknown,
+                    result,
+                    targetX,
+                    targetY,
+                    branchInsn,
+                    debugMode,
+                    "схлопнутый party member scan loop");
+            }
 
             registerTracker.ZeroFlag = true;
             registerTracker.CarryFlag = false;
@@ -8137,10 +8398,13 @@ namespace MMMapEditor
 
             if (debugMode)
             {
+                string counterStorageText = hasCounterMemoryAddress
+                    ? $", [0x{counterMemoryAddress:X4}]=0x{finalStoredMin.Value:X2}..0x{finalStoredMax.Value:X2}"
+                    : ", счётчик только в регистре";
                 AnalysisDebug.WriteLine(
                     $"      Схлопнут party member scan loop 0x{loopBodyStartAddress:X4}..0x{currentAddress:X4}: " +
-                    $"{counterRegister}=0x{currentCounterValue:X2}->0x{finalCounterMin:X2}..0x{finalCounterMax:X2}, " +
-                    $"[0x{counterMemoryAddress:X4}]=0x{finalStoredMin:X2}..0x{finalStoredMax:X2}, выход 0x{condJumpTarget:X4}");
+                    $"{counterRegister}=0x{currentCounterValue:X2}->0x{finalCounterMin:X2}..0x{finalCounterMax:X2}" +
+                    $"{counterStorageText}, выход 0x{condJumpTarget:X4}");
             }
 
             controlFlowResult = new ControlFlowResult
@@ -8868,7 +9132,15 @@ namespace MMMapEditor
                             EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
                             EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                             EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
-                            PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions)
+                            PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
+                            BranchStateValueConstraints = new Dictionary<ushort, StateValueConstraintInfo>
+                            {
+                                [memAddr] = new StateValueConstraintInfo
+                                {
+                                    ExactValues = new HashSet<byte> { (byte)candidate }
+                                }
+                            },
+                            BranchLocallyMaterializedStateValueConstraintAddresses = new HashSet<ushort> { memAddr }
                         });
                     }
 
@@ -8965,7 +9237,7 @@ namespace MMMapEditor
                             registerTracker,
                             hasExactMemAddr ? memAddr : (ushort?)null,
                             out rawPartyFieldRef);
-                        PartyFieldReference partyFieldRef = hasRawPartyFieldRef && rawPartyFieldRef?.Field != PartyFieldKind.Unknown
+                        PartyFieldReference partyFieldRef = hasRawPartyFieldRef && IsTrackablePartyField(rawPartyFieldRef)
                             ? rawPartyFieldRef
                             : null;
                         bool hasPartyFieldRef = partyFieldRef != null;
@@ -9084,7 +9356,7 @@ namespace MMMapEditor
                         registerTracker,
                         hasExactMemAddr ? memAddr : (ushort?)null,
                         out rawPartyFieldRef);
-                    PartyFieldReference partyFieldRef = hasRawPartyFieldRef && rawPartyFieldRef?.Field != PartyFieldKind.Unknown
+                    PartyFieldReference partyFieldRef = hasRawPartyFieldRef && IsTrackablePartyField(rawPartyFieldRef)
                         ? rawPartyFieldRef
                         : null;
                     bool hasPartyFieldRef = partyFieldRef != null;
@@ -9413,7 +9685,13 @@ namespace MMMapEditor
                         TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out _, out eaText);
 
                     PartyFieldReference partyFieldRef = null;
-                    bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+                    bool hasPartyFieldRef =
+                        TryResolvePartyMemberFieldAccess(
+                            instructionBytes,
+                            registerTracker,
+                            hasExactMemAddr ? memAddr : (ushort?)null,
+                            out partyFieldRef) &&
+                        IsTrackablePartyField(partyFieldRef);
                     PartyPointerByteReference pointerByteSemantic8A = null;
                     bool hasPointerByteSemantic8A = hasExactMemAddr
                         ? TryResolveTrackedPartyPointerByte(memAddr, out pointerByteSemantic8A)
@@ -10182,12 +10460,12 @@ namespace MMMapEditor
                     registerComparedField != null;
                 PartyFieldReference memoryComparedField = null!;
                 bool hasMemoryComparedField = mod != 0x03 &&
-                    TryResolvePartyFieldAccess(
+                    TryResolvePartyMemberFieldAccess(
                         instructionBytes,
                         registerTracker,
                         hasExactMemAddress ? memAddr : (ushort?)null,
                         out memoryComparedField) &&
-                    memoryComparedField != null;
+                    IsTrackablePartyField(memoryComparedField);
 
                 bool comparesByteRegisterWithMemory =
                     mod != 0x03 &&
@@ -10300,7 +10578,7 @@ namespace MMMapEditor
                 bool hasComparedPartyField = registerTracker.TryGetPartyFieldValue("AL", out var comparedPartyField) &&
                     comparedPartyField != null;
                 bool hasComparablePartyField = hasComparedPartyField &&
-                    IsComparablePartyField(comparedPartyField.Field);
+                    (IsComparablePartyField(comparedPartyField.Field) || IsRawTechnicalPartyField(comparedPartyField));
 
                 if (hasKnownAlForCompare)
                 {
@@ -10357,7 +10635,7 @@ namespace MMMapEditor
                 byte immediateValue = instructionBytes[1];
                 bool hasTrackedTechnicalFieldCompare = registerTracker.TryGetPartyFieldValue("AL", out var testedPartyField) &&
                     testedPartyField != null &&
-                    IsTrackedPartyField(testedPartyField.Field);
+                    (IsTrackedPartyField(testedPartyField.Field) || IsRawTechnicalPartyField(testedPartyField));
 
                 if (TryGetExactByteRegisterOrRange(registerTracker, "AL", out byte alValue))
                 {
@@ -10379,14 +10657,28 @@ namespace MMMapEditor
 
                 if (hasTrackedTechnicalFieldCompare)
                 {
-                    RegisterTrackedTechnicalFieldCompareEffect(
-                        result,
-                        testedPartyField,
-                        registerTracker,
-                        address,
-                        immediateValue,
-                        isBitMask: true,
-                        debugMode);
+                    if (IsRawTechnicalPartyField(testedPartyField))
+                    {
+                        RegisterRawTechnicalFieldCompareEffect(
+                            result,
+                            testedPartyField,
+                            registerTracker,
+                            address,
+                            immediateValue,
+                            isBitMask: true,
+                            debugMode);
+                    }
+                    else
+                    {
+                        RegisterTrackedTechnicalFieldCompareEffect(
+                            result,
+                            testedPartyField,
+                            registerTracker,
+                            address,
+                            immediateValue,
+                            isBitMask: true,
+                            debugMode);
+                    }
                 }
             }
 
@@ -10413,6 +10705,19 @@ namespace MMMapEditor
                 byte mode = (byte)((modRm >> 6) & 0x03);
                 byte regIndex = (byte)(modRm & 0x07);
                 byte immediateValue = instructionBytes[2];
+                if (mode != 0x03 &&
+                    TryDecode16BitMemoryOperandSyntax(
+                        instructionBytes,
+                        out _,
+                        out _,
+                        out _,
+                        out int decodedLengthForImmediate,
+                        out _) &&
+                    decodedLengthForImmediate >= 2 &&
+                    decodedLengthForImmediate < instructionBytes.Length)
+                {
+                    immediateValue = instructionBytes[decodedLengthForImmediate];
+                }
 
                 if (mode == 0x03 && operation == 0x07)
                 {
@@ -10422,7 +10727,7 @@ namespace MMMapEditor
                     bool hasComparablePartyField = !string.IsNullOrWhiteSpace(regName) &&
                         registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
                         comparedPartyField != null &&
-                        IsComparablePartyField(comparedPartyField.Field);
+                        (IsComparablePartyField(comparedPartyField.Field) || IsRawTechnicalPartyField(comparedPartyField));
 
                     if (!string.IsNullOrWhiteSpace(regName) &&
                         TryGetExactByteRegisterOrRange(registerTracker, regName, out byte regValue))
@@ -10479,11 +10784,12 @@ namespace MMMapEditor
                     {
                         bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _);
                         PartyFieldReference comparedFieldRef = null;
-                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(
+                        bool hasPartyFieldRef = TryResolvePartyMemberFieldAccess(
                             instructionBytes,
                             registerTracker,
                             hasExactMemAddr ? memAddr : (ushort?)null,
-                            out comparedFieldRef);
+                            out comparedFieldRef) &&
+                            IsTrackablePartyField(comparedFieldRef);
 
                         if (hasExactMemAddr &&
                             TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
@@ -10496,7 +10802,9 @@ namespace MMMapEditor
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
                         }
-                        else if (hasPartyFieldRef && comparedFieldRef != null && IsComparablePartyField(comparedFieldRef.Field))
+                        else if (hasPartyFieldRef &&
+                                 comparedFieldRef != null &&
+                                 (IsComparablePartyField(comparedFieldRef.Field) || IsRawTechnicalPartyField(comparedFieldRef)))
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.CompareImmediate, address);
@@ -10504,7 +10812,7 @@ namespace MMMapEditor
 
                         bool hasComparableComparedField = hasPartyFieldRef &&
                                                          comparedFieldRef != null &&
-                                                         IsComparablePartyField(comparedFieldRef.Field);
+                                                         (IsComparablePartyField(comparedFieldRef.Field) || IsRawTechnicalPartyField(comparedFieldRef));
                         if (hasComparableComparedField)
                         {
                             PartyFieldReference comparableComparedField = comparedFieldRef!;
@@ -10528,11 +10836,18 @@ namespace MMMapEditor
                             TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out _, out eaText);
 
                         PartyFieldReference partyFieldRef = null;
-                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(instructionBytes, registerTracker, hasExactMemAddr ? memAddr : (ushort?)null, out partyFieldRef);
+                        bool hasPartyFieldRef =
+                            TryResolvePartyMemberFieldAccess(
+                                instructionBytes,
+                                registerTracker,
+                                hasExactMemAddr ? memAddr : (ushort?)null,
+                                out partyFieldRef) &&
+                            IsTrackablePartyField(partyFieldRef);
 
                         if (hasPartyFieldRef &&
                             (partyFieldRef.Field == PartyFieldKind.Status ||
-                             IsTrackedPartyField(partyFieldRef.Field)))
+                             IsTrackedPartyField(partyFieldRef.Field) ||
+                             IsRawTechnicalPartyField(partyFieldRef)))
                         {
                             byte? exactByteValue = null;
                             byte? currentByteValue = null;
@@ -10546,9 +10861,11 @@ namespace MMMapEditor
 
                             byte relevantMask = partyFieldRef.Field == PartyFieldKind.Status
                                 ? GetRelevantStatusMask(memoryOperation, immediateValue)
-                                : GetTrackedPartyFieldRelevantMask(partyFieldRef.Field, memoryOperation, immediateValue);
+                                : IsRawTechnicalPartyField(partyFieldRef)
+                                    ? GetRawTechnicalPartyFieldRelevantMask(memoryOperation, immediateValue)
+                                    : GetTrackedPartyFieldRelevantMask(partyFieldRef.Field, memoryOperation, immediateValue);
 
-                            if (IsTrackedPartyField(partyFieldRef.Field))
+                            if (IsTrackedPartyField(partyFieldRef.Field) || IsRawTechnicalPartyField(partyFieldRef))
                                 RegisterPartyFieldRead(
                                     result,
                                     partyFieldRef,
@@ -10577,7 +10894,9 @@ namespace MMMapEditor
                                     : string.Empty;
                                 string fieldText = partyFieldRef.Field == PartyFieldKind.Status
                                     ? "статуса персонажа"
-                                    : GetPartyFieldLabel(partyFieldRef.Field);
+                                    : IsRawTechnicalPartyField(partyFieldRef)
+                                        ? GetRawTechnicalPartyFieldLabel(partyFieldRef)
+                                        : GetPartyFieldLabel(partyFieldRef.Field);
                                 AnalysisDebug.WriteLine($"        Распознано изменение {fieldText} через byte ptr {eaText}, 0x{immediateValue:X2}{valueText}");
                             }
                         }
@@ -10603,7 +10922,7 @@ namespace MMMapEditor
                         bool hasTrackedTechnicalFieldCompare = !string.IsNullOrWhiteSpace(regName) &&
                             registerTracker.TryGetPartyFieldValue(regName, out comparedPartyField) &&
                             comparedPartyField != null &&
-                            IsTrackedPartyField(comparedPartyField.Field);
+                            (IsTrackedPartyField(comparedPartyField.Field) || IsRawTechnicalPartyField(comparedPartyField));
 
                         if (!string.IsNullOrWhiteSpace(regName) && registerTracker.TryGetByteRegisterValue(regName, out byte regValue))
                         {
@@ -10631,25 +10950,40 @@ namespace MMMapEditor
 
                         if (hasTrackedTechnicalFieldCompare)
                         {
-                            RegisterTrackedTechnicalFieldCompareEffect(
-                                result,
-                                comparedPartyField,
-                                registerTracker,
-                                address,
-                                immediateValue,
-                                isBitMask: true,
-                                debugMode);
+                            if (IsRawTechnicalPartyField(comparedPartyField))
+                            {
+                                RegisterRawTechnicalFieldCompareEffect(
+                                    result,
+                                    comparedPartyField,
+                                    registerTracker,
+                                    address,
+                                    immediateValue,
+                                    isBitMask: true,
+                                    debugMode);
+                            }
+                            else
+                            {
+                                RegisterTrackedTechnicalFieldCompareEffect(
+                                    result,
+                                    comparedPartyField,
+                                    registerTracker,
+                                    address,
+                                    immediateValue,
+                                    isBitMask: true,
+                                    debugMode);
+                            }
                         }
                     }
                     else
                     {
                         bool hasExactMemAddr = TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out _);
                         PartyFieldReference testedFieldRef = null;
-                        bool hasPartyFieldRef = TryResolvePartyFieldAccess(
+                        bool hasPartyFieldRef = TryResolvePartyMemberFieldAccess(
                             instructionBytes,
                             registerTracker,
                             hasExactMemAddr ? memAddr : (ushort?)null,
-                            out testedFieldRef);
+                            out testedFieldRef) &&
+                            IsTrackablePartyField(testedFieldRef);
 
                         if (hasExactMemAddr &&
                             TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
@@ -10665,7 +10999,7 @@ namespace MMMapEditor
                         }
                         else if (hasPartyFieldRef &&
                                  testedFieldRef != null &&
-                                 IsTrackedPartyField(testedFieldRef.Field))
+                                 (IsTrackedPartyField(testedFieldRef.Field) || IsRawTechnicalPartyField(testedFieldRef)))
                         {
                             registerTracker.FlagsKnown = false;
                             registerTracker.SetFlagsMetadata(null, RegisterTracker.FlagsOriginKind.Test, address);
@@ -10674,16 +11008,30 @@ namespace MMMapEditor
 
                         if (hasPartyFieldRef &&
                             testedFieldRef != null &&
-                            IsTrackedPartyField(testedFieldRef.Field))
+                            (IsTrackedPartyField(testedFieldRef.Field) || IsRawTechnicalPartyField(testedFieldRef)))
                         {
-                            RegisterTrackedTechnicalFieldCompareEffect(
-                                result,
-                                testedFieldRef,
-                                registerTracker,
-                                address,
-                                immediateValue,
-                                isBitMask: true,
-                                debugMode);
+                            if (IsRawTechnicalPartyField(testedFieldRef))
+                            {
+                                RegisterRawTechnicalFieldCompareEffect(
+                                    result,
+                                    testedFieldRef,
+                                    registerTracker,
+                                    address,
+                                    immediateValue,
+                                    isBitMask: true,
+                                    debugMode);
+                            }
+                            else
+                            {
+                                RegisterTrackedTechnicalFieldCompareEffect(
+                                    result,
+                                    testedFieldRef,
+                                    registerTracker,
+                                    address,
+                                    immediateValue,
+                                    isBitMask: true,
+                                    debugMode);
+                            }
                         }
                     }
                 }
