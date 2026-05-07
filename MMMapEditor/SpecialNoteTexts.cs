@@ -38,5 +38,9 @@ namespace MMMapEditor
         public const ushort RedDragonResurrectionAddress = 0xC9B6;
         public const string RedDragonResurrection =
             "***Воскрешение RED DRAGON на клетке (11,3)***";
+
+        public const ushort WaterMonsterResurrectionAddress = 0xC993;
+        public const string WaterMonsterResurrection =
+            "***Вода стихает. Но в её глубине всё ещё что-то ждёт (Водяное чудище (7,9) воскресает при выполнении ряда условий)***";
     }
 }

@@ -782,6 +782,48 @@ namespace MMMapEditor
                 "89 88 88 88 88 88 88 88 88 50 45 44 00 04 04 C0"
             },
             },
+            ["AREAA4.OVR"] = new OvrFileConfig
+            {
+                StartAddress = 0x2A7,
+                First16Lines = new[]
+                    {
+                "FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF",
+                "FF FF FF FF BF BF 3F FF FF FF FF FF FF FF FF FF",
+                "FF FF FF EF 8A 88 A0 FE FF FF FF FF FF FF FF FF",
+                "FF FF FF FF FB FB FB FF FF FF FF FF FF FF FF FF",
+                "FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF",
+                "FF FF FF FF BF BF BF FF FF FF FF FF FF FF FF FF",
+                "FF FF 0F 6C 8A 88 28 4E 3C FF FF FF FF FF FF FF",
+                "FF FF 13 05 08 88 A0 16 31 FF FF FF FF FF FF FF",
+                "FF FF 13 41 40 08 48 50 31 FF FF BF FF FF FF FF",
+                "FF FF C3 C4 C4 C0 C4 C4 F0 FF EF AA FE FF FF FF",
+                "FF FF FF FF FF FF FF FF FF BF FF BB FF FF FF FF",
+                "FF FF FF FF FF FF FF FF EF AA EE AA FE FF FF FF",
+                "FF FF FF FF FF FF FF FF FF FB FF FB FF BF FF FF",
+                "FF FF FF FF FF FF FF FF FF FF FF FF EF AA FE BF",
+                "FF FF FF FF FF FF FF FF FF FF FF FF FF FB AF 2A",
+                "FF FF FF FF FF FF FF FF FF FF FF FF FF EF 8A A0"
+            },
+                Second16Lines = new[]
+                   {
+                "8D 8C 8C 8C 8C 8C 8C 8C 8D 8C 8C 8C 8C 8C 8C 8C",
+                "89 88 88 88 40 40 00 88 89 88 88 88 88 88 88 88",
+                "89 88 88 10 C5 44 50 01 89 88 88 88 88 88 88 88",
+                "89 88 88 88 04 04 04 88 89 88 88 88 88 88 88 88",
+                "89 88 88 88 88 88 88 88 89 88 88 88 88 88 88 88",
+                "8D 8C 8C 8C 44 44 44 8C 88 88 88 88 88 88 88 88",
+                "89 88 00 10 C5 44 14 01 00 88 88 88 88 88 88 88",
+                "89 88 00 00 04 44 D0 01 00 88 88 88 88 88 88 88",
+                "89 88 00 00 00 04 04 00 00 88 88 00 88 88 88 88",
+                "89 88 00 00 00 00 00 00 00 88 10 D1 01 88 88 88",
+                "89 88 88 88 88 88 88 88 88 40 88 44 88 88 88 88",
+                "89 88 88 88 88 88 88 88 00 D4 11 95 01 88 88 88",
+                "89 88 88 88 88 88 88 88 88 04 88 00 88 40 88 88",
+                "89 88 88 88 88 88 88 88 88 88 88 88 00 D4 01 00",
+                "89 88 88 88 88 88 88 88 88 88 88 88 88 04 50 91",
+                "89 88 88 88 88 88 88 88 88 88 88 88 88 10 C5 50"
+            },
+            },
 
             // Другие файлы
         };

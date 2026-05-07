@@ -1621,7 +1621,8 @@ namespace MMMapEditor
             string[] targetTexts =
             {
                 SpecialNoteTexts.SecretPassageToDoomCastle,
-                SpecialNoteTexts.RedDragonResurrection
+                SpecialNoteTexts.RedDragonResurrection,
+                SpecialNoteTexts.WaterMonsterResurrection
             };
 
             foreach (string targetText in targetTexts)
