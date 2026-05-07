@@ -35,6 +35,7 @@ namespace MMMapEditor
         private const string PersistentCounterProgressionTokenPrefix = "[[PCOUNTER:";
         private const string DynamicRandomBoundDependencyTokenPrefix = "[[DYNBOUND:";
         private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
+        private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RandomEncounterRubiconWarningPrefix =
             "Внимание: Если сумма уровней активной партии ";
         private const string RandomEncounterRubiconWarningSuffix =
@@ -80,6 +81,11 @@ namespace MMMapEditor
         public static string EncodeMutedParentheticalNoteText(string visibleText)
         {
             return EncodeTextStyleToken(MutedParentheticalNoteTokenPrefix, visibleText);
+        }
+
+        public static string EncodeWheelRewardExplanationText(string visibleText)
+        {
+            return EncodeTextStyleToken(WheelRewardExplanationTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -169,6 +175,25 @@ namespace MMMapEditor
                     });
                     AppendAggregateTemporaryStatDetailStyles(rendered.Styles, start, aggregateText);
                     i += aggregateConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    WheelRewardExplanationTokenPrefix,
+                    out string wheelRewardText,
+                    out int wheelRewardConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(wheelRewardText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = wheelRewardText.Length,
+                        Kind = NoteInlineStyleKind.WheelRewardExplanation
+                    });
+                    i += wheelRewardConsumedLength;
                     continue;
                 }
 

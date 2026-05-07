@@ -2422,6 +2422,9 @@ namespace MMMapEditor
 
                 // Семантические пользовательские заметки могут прийти из старых/ручных карт без inline-spans.
                 FormatGeneratedSemanticNotes(notesTextBox, noteText);
+
+                // Подсветка остаётся рабочей и для plain-text копий заметки без inline-spans.
+                FormatWheelRewardExplanationBlocks(notesTextBox, noteText);
             }
         }
 
@@ -2502,6 +2505,10 @@ namespace MMMapEditor
 
                     case NoteInlineStyleKind.MutedParentheticalNote:
                         ApplyMutedParentheticalNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.WheelRewardExplanation:
+                        ApplyWheelRewardExplanationStyle(rt);
                         break;
                 }
             }
@@ -2584,6 +2591,13 @@ namespace MMMapEditor
             rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
         }
 
+        private void ApplyWheelRewardExplanationStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(238, 241, 226);
+            rt.SelectionBackColor = Color.FromArgb(35, 49, 40);
+            rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Regular);
+        }
+
         private void FormatGeneratedSemanticNotes(RichTextBox rt, string noteText)
         {
             if (rt == null || string.IsNullOrEmpty(noteText))
@@ -2592,6 +2606,28 @@ namespace MMMapEditor
             FormatPersistentCounterProgressionNotes(rt, noteText);
             FormatDynamicRandomBoundDependencyNotes(rt, noteText);
             FormatMutedParentheticalNotes(rt, noteText);
+            rt.Select(0, 0);
+        }
+
+        private void FormatWheelRewardExplanationBlocks(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К КОЛЕСУ)[\s\S]*?^={10,}$";
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                pattern,
+                RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyWheelRewardExplanationStyle(rt);
+            }
+
             rt.Select(0, 0);
         }
 

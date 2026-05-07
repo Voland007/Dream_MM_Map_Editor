@@ -146,6 +146,9 @@ namespace MMMapEditor
                     fileNameOnly,
                     config,
                     obj);
+                string specialPlayerExplanation = TryBuildSpecialPlayerExplanation(
+                    fileNameOnly,
+                    obj);
 
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
@@ -220,6 +223,14 @@ namespace MMMapEditor
                                 AppendRenderedText(newNotes, inlineStyles, "\n");
                         }
                     }
+                }
+
+                if (!string.IsNullOrWhiteSpace(specialPlayerExplanation))
+                {
+                    if (newNotes.Length > 0)
+                        AppendRenderedText(newNotes, inlineStyles, "\n\n");
+
+                    AppendRenderedText(newNotes, inlineStyles, specialPlayerExplanation);
                 }
 
                 result.NotesPerCell[pos] = newNotes.Length > 0
@@ -3922,6 +3933,103 @@ private static string BuildHierarchicalVariantNotes(
                 return null;
 
             return BuildSpoilerAnswerLine(answer);
+        }
+
+        private static string TryBuildSpecialPlayerExplanation(string fileNameOnly, OvrObject obj)
+        {
+            if (!string.Equals(fileNameOnly, "AREAA3.OVR", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            if (obj == null ||
+                obj.X != 3 ||
+                obj.Y != 6 ||
+                obj.PatchAddress != 0x011C)
+            {
+                return null;
+            }
+
+            return InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
+                BuildAreaA3MountainWheelExplanation());
+        }
+
+        private static string BuildAreaA3MountainWheelExplanation()
+        {
+            string[] lines =
+            {
+                "ПОЯСНЕНИЕ К КОЛЕСУ",
+                "",
+                "Если выбрать N:",
+                "ничего не происходит.",
+                "Если выбрать Y:",
+                "колесо обрабатывает каждого члена партии отдельно.",
+                "",
+                "Для каждого персонажа считается число убитых боссов (0-4).",
+                "0: LOSER автоматически.",
+                "1-4: случайный результат:",
+                "  50% LOSER",
+                "  16,67% EXP",
+                "  16,67% GEMS",
+                "  16,67% GOLD",
+                "",
+                "Боссы | GEMS  | GOLD  | EXP",
+                "0     | LOSER | LOSER | LOSER",
+                "1     | 30    | 1000  | 4000",
+                "2     | 60    | 2000  | 8000",
+                "3     | 120   | 4000  | 16000",
+                "4     | 240   | 8000  | 32000"
+            };
+
+            return BuildAsciiFrame(lines, 60);
+        }
+
+        private static string BuildAsciiFrame(IEnumerable<string> lines, int contentWidth)
+        {
+            contentWidth = Math.Max(contentWidth, 1);
+            var sb = new StringBuilder();
+            string border = new string('=', contentWidth + 6);
+
+            sb.AppendLine(border);
+
+            foreach (string line in lines ?? Enumerable.Empty<string>())
+            {
+                foreach (string segment in WrapFrameLine(line ?? string.Empty, contentWidth))
+                {
+                    sb.Append("|| ");
+                    sb.Append(segment.PadRight(contentWidth));
+                    sb.AppendLine(" ||");
+                }
+            }
+
+            sb.Append(border);
+            return sb.ToString();
+        }
+
+        private static IEnumerable<string> WrapFrameLine(string line, int contentWidth)
+        {
+            if (string.IsNullOrEmpty(line))
+            {
+                yield return string.Empty;
+                yield break;
+            }
+
+            int index = 0;
+            while (index < line.Length)
+            {
+                int take = Math.Min(contentWidth, line.Length - index);
+                if (take == contentWidth && index + take < line.Length)
+                {
+                    int breakAt = line.LastIndexOf(' ', index + take - 1, take);
+                    if (breakAt > index)
+                        take = breakAt - index;
+                }
+
+                string segment = line.Substring(index, take).TrimEnd();
+                yield return segment;
+
+                index += take;
+                while (index < line.Length && line[index] == ' ')
+                    index++;
+            }
         }
 
         private static string TryReadCave4AccessCode(string filename, OvrFileConfig config)

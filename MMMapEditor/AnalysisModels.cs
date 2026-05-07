@@ -297,7 +297,8 @@ namespace MMMapEditor
         PersistentCounterProgressionValue = 8,
         DynamicRandomBoundDependencyNote = 9,
         DynamicRandomBoundDependencyFormula = 10,
-        MutedParentheticalNote = 11
+        MutedParentheticalNote = 11,
+        WheelRewardExplanation = 12
     }
 
     public sealed class NoteInlineStyleSpan
