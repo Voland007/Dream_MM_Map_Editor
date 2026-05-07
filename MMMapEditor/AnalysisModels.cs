@@ -299,7 +299,8 @@ namespace MMMapEditor
         DynamicRandomBoundDependencyNote = 9,
         DynamicRandomBoundDependencyFormula = 10,
         MutedParentheticalNote = 11,
-        WheelRewardExplanation = 12
+        WheelRewardExplanation = 12,
+        RawOverlayText = 13
     }
 
     public sealed class NoteInlineStyleSpan

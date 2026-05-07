@@ -104,6 +104,7 @@ namespace MMMapEditor
         private RichTextBox notesTextBox;
         private Dictionary<Point, string> notesPerCell = new Dictionary<Point, string>();
         private Dictionary<Point, List<NoteInlineStyleSpan>> noteStyleSpansPerCell = new Dictionary<Point, List<NoteInlineStyleSpan>>();
+        private bool isUpdatingNotesTextBoxProgrammatically;
         private PictureBox cellImageBox;
         private Button bufferPasteImageButton;
         private Button deleteImageButton;
@@ -2312,11 +2313,11 @@ namespace MMMapEditor
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                string noteText = notesPerCell[pos];
+                string sourceNoteText = notesPerCell[pos];
+                string noteText = NormalizeNoteLineEndings(sourceNoteText);
 
                 // Очищаем выделение
-                notesTextBox.DeselectAll();
-                notesTextBox.Text = noteText;
+                SetNotesTextProgrammatically(noteText);
                 notesTextBox.BackColor = Color.Black;
                 notesTextBox.ForeColor = Color.White;
 
@@ -2416,9 +2417,6 @@ namespace MMMapEditor
                 // Отдельная подсветка специальных заметок
                 FormatSpecialHighlightedNotes(notesTextBox, noteText);
 
-                if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
-                    ApplyInlineNoteStyles(notesTextBox, noteText, inlineSpans);
-
                 FormatRandomEncounterRubiconWarnings(notesTextBox, noteText);
 
                 // Семантические пользовательские заметки могут прийти из старых/ручных карт без inline-spans.
@@ -2426,7 +2424,134 @@ namespace MMMapEditor
 
                 // Подсветка остаётся рабочей и для plain-text копий заметки без inline-spans.
                 FormatWheelRewardExplanationBlocks(notesTextBox, noteText);
+
+                if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
+                {
+                    var displayInlineSpans = NormalizeInlineStyleSpansForDisplayText(sourceNoteText, noteText, inlineSpans);
+                    ApplyInlineNoteStyles(notesTextBox, noteText, displayInlineSpans);
+                    ResetRawOverlayTextFormatting(notesTextBox, noteText, displayInlineSpans);
+                }
             }
+        }
+
+        private void SetNotesTextProgrammatically(string noteText)
+        {
+            bool previous = isUpdatingNotesTextBoxProgrammatically;
+            isUpdatingNotesTextBoxProgrammatically = true;
+            try
+            {
+                notesTextBox.DeselectAll();
+                notesTextBox.Text = noteText ?? string.Empty;
+            }
+            finally
+            {
+                isUpdatingNotesTextBoxProgrammatically = previous;
+            }
+        }
+
+        private static string NormalizeNoteLineEndings(string text)
+        {
+            return string.IsNullOrEmpty(text)
+                ? string.Empty
+                : text.Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        private static List<NoteInlineStyleSpan> NormalizeInlineStyleSpansForDisplayText(
+            string sourceText,
+            string displayText,
+            List<NoteInlineStyleSpan> inlineSpans)
+        {
+            if (string.IsNullOrEmpty(sourceText) ||
+                sourceText == displayText ||
+                inlineSpans == null ||
+                inlineSpans.Count == 0)
+            {
+                return inlineSpans;
+            }
+
+            int[] indexMap = BuildLineEndingNormalizationIndexMap(sourceText);
+            return inlineSpans
+                .Where(span => span != null)
+                .Select(span =>
+                {
+                    var clone = span.Clone();
+                    if (clone.Length <= 0 || clone.Start < 0 || clone.Start >= sourceText.Length)
+                        return clone;
+
+                    int sourceStart = Math.Min(clone.Start, sourceText.Length);
+                    int sourceEnd = Math.Min(clone.Start + clone.Length, sourceText.Length);
+                    int displayStart = indexMap[sourceStart];
+                    int displayEnd = indexMap[sourceEnd];
+
+                    clone.Start = displayStart;
+                    clone.Length = Math.Max(0, displayEnd - displayStart);
+                    return clone;
+                })
+                .ToList();
+        }
+
+        private static int[] BuildLineEndingNormalizationIndexMap(string sourceText)
+        {
+            var indexMap = new int[sourceText.Length + 1];
+            int sourceIndex = 0;
+            int normalizedIndex = 0;
+
+            while (sourceIndex < sourceText.Length)
+            {
+                indexMap[sourceIndex] = normalizedIndex;
+
+                if (sourceText[sourceIndex] == '\r')
+                {
+                    if (sourceIndex + 1 < sourceText.Length && sourceText[sourceIndex + 1] == '\n')
+                    {
+                        indexMap[sourceIndex + 1] = normalizedIndex;
+                        sourceIndex += 2;
+                    }
+                    else
+                    {
+                        sourceIndex++;
+                    }
+
+                    normalizedIndex++;
+                }
+                else
+                {
+                    sourceIndex++;
+                    normalizedIndex++;
+                }
+            }
+
+            indexMap[sourceText.Length] = normalizedIndex;
+            return indexMap;
+        }
+
+        private void ResetRawOverlayTextFormatting(RichTextBox rt, string noteText, List<NoteInlineStyleSpan> inlineSpans)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText) || inlineSpans == null || inlineSpans.Count == 0)
+                return;
+
+            foreach (var span in inlineSpans)
+            {
+                if (span == null ||
+                    span.Kind != NoteInlineStyleKind.RawOverlayText ||
+                    span.Length <= 0 ||
+                    span.Start < 0 ||
+                    span.Start >= noteText.Length)
+                {
+                    continue;
+                }
+
+                int length = Math.Min(span.Length, noteText.Length - span.Start);
+                if (length <= 0)
+                    continue;
+
+                rt.Select(span.Start, length);
+                rt.SelectionColor = Color.White;
+                rt.SelectionBackColor = Color.Black;
+                rt.SelectionFont = rt.Font;
+            }
+
+            rt.Select(0, 0);
         }
 
         private void ApplyInlineNoteStyles(RichTextBox rt, string noteText, List<NoteInlineStyleSpan> inlineSpans)
@@ -2510,6 +2635,9 @@ namespace MMMapEditor
 
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.RawOverlayText:
                         break;
                 }
             }
@@ -4529,7 +4657,8 @@ namespace MMMapEditor
                     if (previousNote != newNoteText)
                     {
                         notesPerCell[pos] = newNoteText;
-                        notesTextBox.Text = newNoteText;
+                        noteStyleSpansPerCell.Remove(pos);
+                        SetNotesTextProgrammatically(newNoteText);
                         UpdateNotesFormatting();
                         isMapModified = true;
                     }
@@ -4539,6 +4668,9 @@ namespace MMMapEditor
 
         private void NotesTextBox_TextChanged(object sender, EventArgs e)
         {
+            if (isUpdatingNotesTextBoxProgrammatically)
+                return;
+
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
@@ -4605,7 +4737,7 @@ namespace MMMapEditor
                 centerComboBox.SelectedItem = centralOption;
             }
 
-            notesTextBox.Text = notesPerCell[pos];
+            SetNotesTextProgrammatically(notesPerCell[pos]);
             // Обновляем изображение в PictureBox
             if (imagesPerCell.TryGetValue(pos, out var image))
             {

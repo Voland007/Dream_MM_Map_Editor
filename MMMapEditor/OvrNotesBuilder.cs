@@ -118,6 +118,7 @@ namespace MMMapEditor
                         .Select(span => span.Clone())
                         .ToList()
                     : new List<NoteInlineStyleSpan>();
+                var rawOverlayTexts = CollectRawOverlayVisibleTexts(obj);
 
                 if (obj.IsFromTable)
                 {
@@ -236,9 +237,17 @@ namespace MMMapEditor
                     AppendRenderedText(newNotes, inlineStyles, specialPlayerExplanation);
                 }
 
-                result.NotesPerCell[pos] = newNotes.Length > 0
-                    ? newNotes.ToString().TrimEnd('\n')
+                string finalNoteText = newNotes.Length > 0
+                    ? newNotes.ToString().TrimEnd('\r', '\n')
                     : existingCellNotes;
+
+                string normalizedFinalNoteText = NormalizeNoteLineEndings(finalNoteText);
+                NormalizeInlineStyleSpansForLineEndings(finalNoteText, normalizedFinalNoteText, inlineStyles);
+                finalNoteText = normalizedFinalNoteText;
+
+                AppendRawOverlayTextSpans(finalNoteText, inlineStyles, rawOverlayTexts);
+
+                result.NotesPerCell[pos] = finalNoteText;
                 result.NoteStyleSpansPerCell[pos] = inlineStyles
                     .Where(span => span != null && span.Length > 0 && span.Start >= 0)
                     .Select(span => span.Clone())
@@ -303,6 +312,192 @@ namespace MMMapEditor
                     Length = span.Length,
                     Kind = span.Kind
                 });
+            }
+        }
+
+        private static List<string> CollectRawOverlayVisibleTexts(OvrObject obj)
+        {
+            var result = new List<string>();
+            if (obj == null)
+                return result;
+
+            foreach (string rawText in EnumerateRawTextEntries(obj))
+            {
+                if (!TryExtractRawOverlayVisibleText(rawText, out string visibleText))
+                    continue;
+
+                AddRawOverlayVisibleText(result, visibleText);
+                foreach (string line in Regex.Split(visibleText, @"\r\n|\r|\n"))
+                    AddRawOverlayVisibleText(result, line);
+            }
+
+            return result;
+        }
+
+        private static void AddRawOverlayVisibleText(List<string> result, string visibleText)
+        {
+            if (result == null || string.IsNullOrWhiteSpace(visibleText))
+                return;
+
+            string normalized = visibleText.TrimEnd('\r', '\n');
+            if (string.IsNullOrWhiteSpace(normalized))
+                return;
+
+            if (!result.Contains(normalized, StringComparer.Ordinal))
+                result.Add(normalized);
+        }
+
+        private static string NormalizeNoteLineEndings(string text)
+        {
+            return string.IsNullOrEmpty(text)
+                ? string.Empty
+                : text.Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        private static void NormalizeInlineStyleSpansForLineEndings(
+            string sourceText,
+            string normalizedText,
+            List<NoteInlineStyleSpan> inlineStyles)
+        {
+            if (string.IsNullOrEmpty(sourceText) ||
+                sourceText == normalizedText ||
+                inlineStyles == null ||
+                inlineStyles.Count == 0)
+            {
+                return;
+            }
+
+            int[] indexMap = BuildLineEndingNormalizationIndexMap(sourceText);
+            foreach (var span in inlineStyles)
+            {
+                if (span == null || span.Length <= 0 || span.Start < 0 || span.Start >= sourceText.Length)
+                    continue;
+
+                int sourceStart = Math.Min(span.Start, sourceText.Length);
+                int sourceEnd = Math.Min(span.Start + span.Length, sourceText.Length);
+                int normalizedStart = indexMap[sourceStart];
+                int normalizedEnd = indexMap[sourceEnd];
+
+                span.Start = normalizedStart;
+                span.Length = Math.Max(0, normalizedEnd - normalizedStart);
+            }
+        }
+
+        private static int[] BuildLineEndingNormalizationIndexMap(string sourceText)
+        {
+            var indexMap = new int[sourceText.Length + 1];
+            int sourceIndex = 0;
+            int normalizedIndex = 0;
+
+            while (sourceIndex < sourceText.Length)
+            {
+                indexMap[sourceIndex] = normalizedIndex;
+
+                if (sourceText[sourceIndex] == '\r')
+                {
+                    if (sourceIndex + 1 < sourceText.Length && sourceText[sourceIndex + 1] == '\n')
+                    {
+                        indexMap[sourceIndex + 1] = normalizedIndex;
+                        sourceIndex += 2;
+                    }
+                    else
+                    {
+                        sourceIndex++;
+                    }
+
+                    normalizedIndex++;
+                }
+                else
+                {
+                    sourceIndex++;
+                    normalizedIndex++;
+                }
+            }
+
+            indexMap[sourceText.Length] = normalizedIndex;
+            return indexMap;
+        }
+
+        private static IEnumerable<string> EnumerateRawTextEntries(OvrObject obj)
+        {
+            if (obj == null)
+                yield break;
+
+            foreach (var text in obj.PathTextsOrdered?
+                .OrderBy(kvp => kvp.Key)
+                .SelectMany(kvp => kvp.Value ?? new List<string>()) ?? Enumerable.Empty<string>())
+            {
+                yield return text;
+            }
+
+            foreach (var text in obj.PathTexts?
+                .OrderBy(kvp => kvp.Key)
+                .SelectMany(kvp => kvp.Value ?? new HashSet<string>()) ?? Enumerable.Empty<string>())
+            {
+                yield return text;
+            }
+
+            foreach (var text in obj.PathVariants?
+                .OrderBy(kvp => kvp.Key)
+                .SelectMany(kvp => kvp.Value?.Texts ?? new List<string>()) ?? Enumerable.Empty<string>())
+            {
+                yield return text;
+            }
+        }
+
+        private static bool TryExtractRawOverlayVisibleText(string rawText, out string visibleText)
+        {
+            visibleText = string.Empty;
+
+            if (!IsRawOverlayTextEntry(rawText))
+                return false;
+
+            string decodedText = ExtractNoteText(rawText);
+            if (string.IsNullOrEmpty(decodedText))
+                return false;
+
+            visibleText = InlineNoteStyleCodec.RenderTextWithStyles(decodedText).Text;
+            return !string.IsNullOrEmpty(visibleText);
+        }
+
+        private static void AppendRawOverlayTextSpans(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles,
+            List<string> rawOverlayTexts)
+        {
+            if (string.IsNullOrEmpty(noteText) ||
+                inlineStyles == null ||
+                rawOverlayTexts == null ||
+                rawOverlayTexts.Count == 0)
+            {
+                return;
+            }
+
+            var seenSpans = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string rawOverlayText in rawOverlayTexts
+                .Where(text => !string.IsNullOrEmpty(text))
+                .OrderByDescending(text => text.Length))
+            {
+                int searchStart = 0;
+                while (searchStart < noteText.Length)
+                {
+                    int matchIndex = noteText.IndexOf(rawOverlayText, searchStart, StringComparison.Ordinal);
+                    if (matchIndex < 0)
+                        break;
+
+                    string key = $"{matchIndex}:{rawOverlayText.Length}";
+                    if (seenSpans.Add(key))
+                    {
+                        inlineStyles.Add(new NoteInlineStyleSpan
+                        {
+                            Start = matchIndex,
+                            Length = rawOverlayText.Length,
+                            Kind = NoteInlineStyleKind.RawOverlayText
+                        });
+                    }
+
+                    searchStart = matchIndex + rawOverlayText.Length;
+                }
             }
         }
 
@@ -5594,6 +5789,12 @@ private static string BuildHierarchicalVariantNotes(
                 return null;
 
             return decodedText.TrimEnd('\r');
+        }
+
+        private static bool IsRawOverlayTextEntry(string rawText)
+        {
+            return rawText != null &&
+                rawText.TrimStart().StartsWith("Text at 0x", StringComparison.Ordinal);
         }
 
         private static string DecodeTextString(string encodedText)
