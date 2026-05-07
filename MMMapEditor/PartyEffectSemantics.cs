@@ -22,6 +22,9 @@ namespace MMMapEditor
 {
     public static class PartyEffectSemantics
     {
+        private const string StandardActivePartyMemberGuardKey =
+            "Status|LessThan|ExactImmediate|128|-|Dynamic:Loop:-:-:-";
+
         private static string FormatMemberDisplay(int memberIndex)
         {
             return PartyMemberReference.FormatDisplayIndex(memberIndex);
@@ -277,8 +280,11 @@ namespace MMMapEditor
                         if (condition == PartyConditionKind.FemaleOnly)
                             return $"CONDITION женщин в партии изменяется на {conditionStatusesText}";
 
-                        if (ShouldRenderStatusSubsetAsWholeParty(effect))
+                        if (IsStandardActivePartyStatusGuardedLoop(effect))
                             return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
+
+                        if (HasEffectiveGuardPredicates(effect))
+                            return $"CONDITION подходящих членов партии изменяется на {conditionStatusesText}";
 
                         return $"CONDITION части партии изменяется на {conditionStatusesText}";
                     }
@@ -488,25 +494,16 @@ namespace MMMapEditor
             return GetEffectiveGuardPredicates(effect).Count > 0;
         }
 
-        private static bool ShouldRenderStatusSubsetAsWholeParty(PartyEffect effect)
+        public static bool IsStandardActivePartyStatusGuardedLoop(PartyEffect effect)
         {
-            if (effect == null)
-                return false;
-
-            if (GetEffectiveField(effect) != PartyFieldKind.Status)
-                return false;
-
-            if (GetEffectiveScope(effect) != PartyEffectScope.PartySubset)
-                return false;
-
-            if (GetEffectiveCondition(effect) != PartyConditionKind.None)
-                return false;
-
-            string guardKey = BuildGuardPredicatesKey(effect);
-            return string.Equals(
-                guardKey,
-                "Status|LessThan|ExactImmediate|128|-|Dynamic:Loop:-:-:-",
-                StringComparison.Ordinal);
+            return effect != null &&
+                   GetEffectiveField(effect) == PartyFieldKind.Status &&
+                   GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
+                   GetEffectiveCondition(effect) == PartyConditionKind.None &&
+                   string.Equals(
+                       BuildGuardPredicatesKey(effect),
+                       StandardActivePartyMemberGuardKey,
+                       StringComparison.Ordinal);
         }
 
         public static bool HaveEquivalentGuardPredicates(PartyEffect left, PartyEffect right)

@@ -25,6 +25,9 @@ namespace MMMapEditor
             new Lazy<HashSet<string>>(BuildKnownLootItemNames);
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
+        private const string WholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
+        private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего члена партии изменяется на ";
+        private const ushort PartyCountAddress = 0x3BC0;
         private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
 
         public static OvrNotesBuildResult BuildNotes(
@@ -343,6 +346,17 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
+            var partyScanContents = BuildFlatPartyScanVariantContents(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+            if (partyScanContents != null)
+                return partyScanContents;
+
             var variantContents = new Dictionary<int, List<string>>();
 
             foreach (var kvp in obj.PathVariants.OrderBy(p => p.Key))
@@ -371,6 +385,178 @@ namespace MMMapEditor
             }
 
             return variantContents;
+        }
+
+        private static Dictionary<int, List<string>> BuildFlatPartyScanVariantContents(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
+        {
+            var items = BuildVariantRenderItems(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+
+            if (items.Count <= 1)
+                return null;
+
+            items = DeduplicateDisplayedVariantItems(items);
+            if (items.Count <= 1)
+                return null;
+
+            var groups = BuildTopLevelVariantGroups(items);
+            if (groups.Count == 0)
+                return null;
+
+            bool containsPartyScan = false;
+            var flatVariants = new List<List<string>>();
+            foreach (var group in groups)
+            {
+                var lines = BuildFlatVariantLinesFromTree(group.TreeRoot, out bool groupContainsPartyScan);
+                containsPartyScan |= groupContainsPartyScan;
+                flatVariants.AddRange(lines);
+            }
+
+            if (!containsPartyScan || flatVariants.Count == 0)
+                return null;
+
+            var result = new Dictionary<int, List<string>>();
+            int key = int.MinValue;
+            foreach (var lines in flatVariants)
+            {
+                var normalizedLines = (lines ?? new List<string>())
+                    .Where(line => !string.IsNullOrWhiteSpace(line))
+                    .ToList();
+                if (normalizedLines.Count == 0)
+                    normalizedLines.Add("Ничего не происходит");
+
+                result[key++] = normalizedLines;
+            }
+
+            return result;
+        }
+
+        private static List<List<string>> BuildFlatVariantLinesFromTree(
+            VariantTreeNode node,
+            out bool containsPartyScan)
+        {
+            return BuildFlatVariantLinesFromTree(node, new List<string>(), out containsPartyScan);
+        }
+
+        private static List<List<string>> BuildFlatVariantLinesFromTree(
+            VariantTreeNode node,
+            List<string> inheritedLines,
+            out bool containsPartyScan)
+        {
+            containsPartyScan = false;
+            var result = new List<List<string>>();
+            if (!IsRenderableStructuralNode(node))
+                return result;
+
+            var prefix = new List<string>(inheritedLines ?? new List<string>());
+            prefix.AddRange(node.CommonLines ?? new List<string>());
+
+            if (TryBuildFlatPartyScanOutcomeLines(node, prefix, out var partyScanLines))
+            {
+                containsPartyScan = true;
+                return partyScanLines;
+            }
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
+            var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
+                .Where(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildren.Count))
+                .ToList();
+
+            if (renderableChildren.Count == 0 && renderableDirectVariants.Count == 0)
+            {
+                if (prefix.Any(line => !string.IsNullOrWhiteSpace(line)))
+                    result.Add(prefix);
+                return result;
+            }
+
+            var syntheticChoiceLabels = BuildSyntheticChoiceLabels(node, renderableDirectVariants, renderableChildren);
+            foreach (var entry in BuildOrderedRenderEntries(
+                node,
+                renderableChildren,
+                renderableDirectVariants,
+                syntheticChoiceLabels))
+            {
+                if (entry.ChildNode != null)
+                {
+                    var childLines = BuildFlatVariantLinesFromTree(
+                        entry.ChildNode,
+                        prefix,
+                        out bool childContainsPartyScan);
+                    containsPartyScan |= childContainsPartyScan;
+                    result.AddRange(childLines);
+                    continue;
+                }
+
+                if (entry.DirectVariant == null)
+                    continue;
+
+                var variantLines = new List<string>(prefix);
+                variantLines.AddRange(entry.DirectVariant.Lines ?? new List<string>());
+                if (variantLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                    result.Add(variantLines);
+            }
+
+            return result;
+        }
+
+        private static bool TryBuildFlatPartyScanOutcomeLines(
+            VariantTreeNode node,
+            List<string> prefix,
+            out List<List<string>> result)
+        {
+            result = new List<List<string>>();
+
+            var scanNode = FindImmediatePartyScanPromptNode(node);
+            if (scanNode == null || !PartyScanSiblingsAreAggregateOnly(node, scanNode))
+                return false;
+
+            var branches = CollectPartyScanOutcomeBranches(scanNode);
+            if (branches.Count < 2)
+                return false;
+
+            var summaries = BuildPartyScanOutcomeSummaries(branches);
+            if (summaries.Count < 2)
+                return false;
+
+            var aggregateLines = BuildPartyScanAggregateLines(node, scanNode, summaries);
+            if (TryAttachPartyScanAggregateLinesToOutcome(summaries, aggregateLines))
+                aggregateLines = new List<string>();
+
+            foreach (var summary in summaries
+                .OrderBy(summary => summary.OrderKey)
+                .ThenBy(summary => summary.Label ?? string.Empty, StringComparer.Ordinal))
+            {
+                var lines = new List<string>(prefix ?? new List<string>());
+                lines.AddRange(scanNode.CommonLines ?? new List<string>());
+                if (!string.IsNullOrWhiteSpace(summary.Label))
+                    lines.Add(summary.Label);
+                lines.AddRange(summary.Lines ?? new List<string>());
+                result.Add(lines);
+            }
+
+            if (aggregateLines.Count > 0)
+            {
+                foreach (var lines in result)
+                    lines.AddRange(aggregateLines);
+            }
+
+            return result.Count > 0;
         }
 
         private static Dictionary<int, List<string>> BuildVariantContentsFromObjectTexts(
@@ -1164,6 +1350,25 @@ namespace MMMapEditor
             public List<string> Lines { get; set; } = new List<string>();
         }
 
+        private sealed class PartyScanOutcomeBranch
+        {
+            public VariantRenderItem Variant { get; set; }
+            public string Label { get; set; }
+            public List<string> Lines { get; set; } = new List<string>();
+            public decimal OrderKey { get; set; }
+            public bool HasAdjustedMemory { get; set; }
+        }
+
+        private sealed class PartyScanOutcomeSummary
+        {
+            public string Label { get; set; }
+            public List<string> Lines { get; set; } = new List<string>();
+            public List<string> AggregateLines { get; set; } = new List<string>();
+            public decimal OrderKey { get; set; }
+            public bool HasCorrectText { get; set; }
+            public bool HasAdjustedMemory { get; set; }
+        }
+
 private static string BuildHierarchicalVariantNotes(
     OvrObject obj,
     byte defaultRandomEncounterMonsterPowerCap,
@@ -1177,35 +1382,14 @@ private static string BuildHierarchicalVariantNotes(
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
 
-            var items = new List<VariantRenderItem>();
-            foreach (var variant in obj.PathVariants.Values
-                .Where(v => v != null)
-                .OrderBy(GetPathOrderKey))
-            {
-                var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
-                var narrativeLines = DecodeNoteTexts(variant.Texts);
-                var lines = BuildVariantLinesForHierarchy(
-                    variantObject,
-                    variant.Texts,
-                    defaultRandomEncounterMonsterPowerCap,
-                    defaultRandomEncounterMonsterLevelCap,
-                    defaultRandomEncounterMonsterBatchCountCap,
-                    defaultDarkeningLevel,
-                    defaultRandomEncounterChance,
-                    inlineSpecialSpoilerLine);
-
-                lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
-
-                if (ShouldSkipHierarchicalVariant(lines, narrativeLines))
-                    continue;
-
-                items.Add(new VariantRenderItem
-                {
-                    Variant = variant,
-                    Lines = lines,
-                    NarrativeLines = narrativeLines
-                });
-            }
+            var items = BuildVariantRenderItems(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
 
             if (items.Count <= 1)
                 return null;
@@ -1254,6 +1438,51 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static List<VariantRenderItem> BuildVariantRenderItems(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
+        {
+            var items = new List<VariantRenderItem>();
+            if (obj?.PathVariants == null || obj.PathVariants.Count == 0)
+                return items;
+
+            foreach (var variant in obj.PathVariants.Values
+                .Where(v => v != null)
+                .OrderBy(GetPathOrderKey))
+            {
+                var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
+                var narrativeLines = DecodeNoteTexts(variant.Texts);
+                var lines = BuildVariantLinesForHierarchy(
+                    variantObject,
+                    variant.Texts,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
+                    defaultDarkeningLevel,
+                    defaultRandomEncounterChance,
+                    inlineSpecialSpoilerLine);
+
+                lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
+
+                if (ShouldSkipHierarchicalVariant(lines, narrativeLines))
+                    continue;
+
+                items.Add(new VariantRenderItem
+                {
+                    Variant = variant,
+                    Lines = lines,
+                    NarrativeLines = narrativeLines
+                });
+            }
+
+            return items;
         }
 
         private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(List<VariantRenderItem> items)
@@ -2636,10 +2865,127 @@ private static string BuildHierarchicalVariantNotes(
                 .ToList();
 
             return GetOrderedDisplayablePartyEffects(effects, includePredicate)
-                .Select(PartyEffectSemantics.BuildHumanDescription)
+                .Select(effect => BuildPartyEffectDisplayDescription(effect, item?.Variant))
                 .Where(text => !string.IsNullOrWhiteSpace(text))
                 .Distinct()
                 .ToList();
+        }
+
+        private static string BuildPartyEffectDisplayDescription(
+            PartyEffect effect,
+            PathVariantInfo variantContext = null)
+        {
+            string description = PartyEffectSemantics.BuildHumanDescription(effect);
+            if (!ShouldRenderStandardStatusLoopAsCurrentMember(variantContext, effect))
+                return description;
+
+            return ReplaceWholePartyConditionTargetWithCurrentMember(description);
+        }
+
+        private static string ReplaceWholePartyConditionTargetWithCurrentMember(string description)
+        {
+            if (string.IsNullOrWhiteSpace(description) ||
+                !description.StartsWith(WholePartyConditionChangePrefix, StringComparison.Ordinal))
+            {
+                return description;
+            }
+
+            return CurrentPartyMemberConditionChangePrefix + description.Substring(WholePartyConditionChangePrefix.Length);
+        }
+
+        private static bool ShouldRenderStandardStatusLoopAsCurrentMember(
+            PathVariantInfo variant,
+            PartyEffect effect)
+        {
+            if (variant?.BranchChoices == null ||
+                !PartyEffectSemantics.IsStandardActivePartyStatusGuardedLoop(effect) ||
+                !IsConditionalLoopSubsetOutcomeEffect(effect))
+            {
+                return false;
+            }
+
+            var choices = variant.BranchChoices
+                .Where(choice => choice != null)
+                .ToList();
+            int guardIndex = choices.FindIndex(choice => IsMatchingLoopGuardChoice(effect, choice));
+            if (guardIndex < 0)
+                return false;
+
+            return choices
+                .Skip(guardIndex + 1)
+                .Any(IsOutcomeBranchChoiceAfterLoopGuard);
+        }
+
+        private static bool IsMatchingLoopGuardChoice(PartyEffect effect, BranchChoice choice)
+        {
+            if (effect == null || choice?.GuardPredicate == null)
+                return false;
+
+            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
+            if (string.IsNullOrWhiteSpace(choicePredicateKey))
+                return false;
+
+            return PartyEffectSemantics.GetEffectiveGuardPredicates(effect)
+                .Select(PartyEffectSemantics.BuildPredicateKey)
+                .Any(key => string.Equals(key, choicePredicateKey, StringComparison.Ordinal));
+        }
+
+        private static string BuildLoopNormalizedPredicateKey(PartyPredicate predicate)
+        {
+            var normalized = PartyEffectSemantics
+                .NormalizeGuardPredicatesForLoopAggregation(new[] { predicate })
+                .FirstOrDefault();
+
+            return normalized == null
+                ? null
+                : PartyEffectSemantics.BuildPredicateKey(normalized);
+        }
+
+        private static bool IsOutcomeBranchChoiceAfterLoopGuard(BranchChoice choice)
+        {
+            if (choice == null || choice.HasGuardPredicate || IsPartyLoopTraversalBranchChoice(choice))
+                return false;
+
+            return !string.IsNullOrWhiteSpace(ExtractBranchMnemonic(choice));
+        }
+
+        private static bool IsPartyLoopTraversalBranchChoice(BranchChoice choice)
+        {
+            string mnemonic = ExtractBranchMnemonic(choice);
+            if (!IsLowByteRegisterName(choice?.CompareRegister) ||
+                choice?.CompareMemoryAddress != PartyCountAddress)
+            {
+                return false;
+            }
+
+            return string.Equals(mnemonic, "JB", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JC", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNAE", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JAE", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNB", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(mnemonic, "JNC", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLowByteRegisterName(string registerName)
+        {
+            string reg = registerName?.ToUpperInvariant();
+            return reg == "AL" || reg == "CL" || reg == "DL" || reg == "BL";
+        }
+
+        private static string ExtractBranchMnemonic(BranchChoice choice)
+        {
+            string condition = choice?.Condition?.Trim();
+            if (string.IsNullOrWhiteSpace(condition))
+                return string.Empty;
+
+            const string linearPrefix = "LINEAR after ";
+            if (condition.StartsWith(linearPrefix, StringComparison.OrdinalIgnoreCase))
+                condition = condition.Substring(linearPrefix.Length).TrimStart();
+
+            int separatorIndex = condition.IndexOf(' ');
+            return separatorIndex >= 0
+                ? condition.Substring(0, separatorIndex).Trim()
+                : condition;
         }
 
         private static List<string> GetSharedPartyEffectLines(
@@ -3566,6 +3912,460 @@ private static string BuildHierarchicalVariantNotes(
                    ShouldRenderAsNoChoiceVariant(item);
         }
 
+        private static bool TryRenderPartyScanLoopBody(
+            VariantTreeNode node,
+            StringBuilder sb,
+            List<int> numbering,
+            int depth,
+            bool headerContainsProbability)
+        {
+            var scanNode = FindImmediatePartyScanPromptNode(node);
+            if (scanNode == null || !PartyScanSiblingsAreAggregateOnly(node, scanNode))
+                return false;
+
+            var branches = CollectPartyScanOutcomeBranches(scanNode);
+            if (branches.Count < 2)
+                return false;
+
+            var summaries = BuildPartyScanOutcomeSummaries(branches);
+            if (summaries.Count < 2)
+                return false;
+
+            string indent = new string(' ', depth * 3);
+            if ((node.CommonLines?.Count ?? 0) > 0)
+                sb.AppendLine();
+
+            AppendIndentedDisplayLines(
+                sb,
+                indent + "      ",
+                scanNode.CommonLines,
+                headerContainsProbability);
+
+            var aggregateLines = BuildPartyScanAggregateLines(node, scanNode, summaries);
+            if (TryAttachPartyScanAggregateLinesToOutcome(summaries, aggregateLines))
+                aggregateLines = new List<string>();
+
+            int nestedIndex = 1;
+            bool wroteAnyOutcome = false;
+            foreach (var summary in summaries
+                .OrderBy(summary => summary.OrderKey)
+                .ThenBy(summary => summary.Label ?? string.Empty, StringComparer.Ordinal))
+            {
+                if (wroteAnyOutcome || (scanNode.CommonLines?.Count ?? 0) > 0)
+                    sb.AppendLine();
+
+                RenderPartyScanOutcomeSummary(
+                    summary,
+                    sb,
+                    new List<int>(numbering) { nestedIndex++ },
+                    depth + 1,
+                    headerContainsProbability);
+                wroteAnyOutcome = true;
+            }
+
+            if (aggregateLines.Count > 0)
+            {
+                sb.AppendLine();
+                AppendIndentedDisplayLine(
+                    sb,
+                    indent + "   ",
+                    BuildPartyScanAggregateHeader(summaries),
+                    headerContainsProbability);
+                AppendIndentedDisplayLines(
+                    sb,
+                    indent + "      ",
+                    aggregateLines,
+                    headerContainsProbability);
+            }
+
+            return true;
+        }
+
+        private static VariantTreeNode FindImmediatePartyScanPromptNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            var candidates = (node.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .Where(child => HasPartyScanPromptLines(child.CommonLines))
+                .Where(ContainsConditionalPartyScanOutcome)
+                .ToList();
+
+            return candidates.Count == 1 ? candidates[0] : null;
+        }
+
+        private static bool HasPartyScanPromptLines(IEnumerable<string> lines)
+        {
+            string promptText = string.Join("\n", lines ?? Enumerable.Empty<string>());
+            if (string.IsNullOrWhiteSpace(promptText))
+                return false;
+
+            return ExtractPromptOptionLabels(promptText).Count >= 2;
+        }
+
+        private static bool ContainsConditionalPartyScanOutcome(VariantTreeNode node)
+        {
+            return GetAllVariants(node)
+                .Any(item => item?.Variant?.PartyEffects?.Any(IsConditionalLoopSubsetOutcomeEffect) == true);
+        }
+
+        private static bool HasConditionalPartyScanOutcome(VariantRenderItem item)
+        {
+            return item?.Variant?.PartyEffects?.Any(IsConditionalLoopSubsetOutcomeEffect) == true;
+        }
+
+        private static bool PartyScanSiblingsAreAggregateOnly(VariantTreeNode node, VariantTreeNode scanNode)
+        {
+            if (node == null || scanNode == null)
+                return false;
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (ReferenceEquals(child, scanNode) || !IsRenderableStructuralNode(child))
+                    continue;
+
+                if (!IsPartyScanAggregateOnlyNode(child))
+                    return false;
+            }
+
+            foreach (var variant in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                if (!IsPartyScanAggregateOnlyVariant(variant))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsPartyScanAggregateOnlyNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return true;
+
+            if ((node.CommonLines ?? new List<string>())
+                .Any(line => !IsIgnorablePartyScanAggregateLine(line)))
+            {
+                return false;
+            }
+
+            if ((node.DirectVariants ?? new List<VariantRenderItem>())
+                .Any(variant => !IsPartyScanAggregateOnlyVariant(variant)))
+            {
+                return false;
+            }
+
+            return (node.Children ?? new List<VariantTreeNode>())
+                .All(IsPartyScanAggregateOnlyNode);
+        }
+
+        private static bool IsPartyScanAggregateOnlyVariant(VariantRenderItem item)
+        {
+            if (item == null)
+                return true;
+
+            if (HasConditionalPartyScanOutcome(item))
+                return false;
+
+            var meaningfulLines = (item.Lines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            if (meaningfulLines.Count == 0 || IsNoOpOnly(meaningfulLines))
+                return true;
+
+            return meaningfulLines.All(IsPartyScanAggregateLine);
+        }
+
+        private static bool IsIgnorablePartyScanAggregateLine(string line)
+        {
+            return string.IsNullOrWhiteSpace(line) ||
+                   IsPartyScanAggregateLine(line) ||
+                   string.Equals(line.Trim(), "Ничего не происходит", StringComparison.Ordinal) ||
+                   string.Equals(line.Trim(), "Ничего не происходит (не выполнены условия для наступления ни одного варианта)", StringComparison.Ordinal);
+        }
+
+        private static bool IsPartyScanAggregateLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.TrimStart();
+            return trimmed.StartsWith("Телепорт на ", StringComparison.Ordinal);
+        }
+
+        private static List<PartyScanOutcomeBranch> CollectPartyScanOutcomeBranches(VariantTreeNode scanNode)
+        {
+            var result = new List<PartyScanOutcomeBranch>();
+            CollectPartyScanOutcomeBranches(scanNode, new List<string>(), null, result);
+            return result;
+        }
+
+        private static void CollectPartyScanOutcomeBranches(
+            VariantTreeNode node,
+            List<string> inheritedLines,
+            string inheritedLabel,
+            List<PartyScanOutcomeBranch> result)
+        {
+            if (node == null || result == null)
+                return;
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (child == null || !IsRenderableStructuralNode(child))
+                    continue;
+
+                var childLines = new List<string>(inheritedLines ?? new List<string>());
+                childLines.AddRange(child.CommonLines ?? new List<string>());
+
+                string childLabel = !string.IsNullOrWhiteSpace(child.Label)
+                    ? NormalizeChoiceLabel(child.Label)
+                    : inheritedLabel;
+
+                CollectPartyScanOutcomeBranches(child, childLines, childLabel, result);
+            }
+
+            foreach (var item in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                if (!HasConditionalPartyScanOutcome(item))
+                    continue;
+
+                var lines = new List<string>(inheritedLines ?? new List<string>());
+                lines.AddRange(item.Lines ?? new List<string>());
+
+                result.Add(new PartyScanOutcomeBranch
+                {
+                    Variant = item,
+                    Label = NormalizeChoiceLabel(inheritedLabel),
+                    Lines = lines,
+                    OrderKey = GetVariantRenderOrderKey(item),
+                    HasAdjustedMemory = (item?.Variant?.AdjustedMemoryAddresses?.Count ?? 0) > 0
+                });
+            }
+        }
+
+        private static string BuildPartyScanOutcomeLabel(string inheritedLabel, IEnumerable<string> lines)
+        {
+            var meaningfulLines = (lines ?? Enumerable.Empty<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+
+            if (meaningfulLines.Any(line => line.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0))
+                return meaningfulLines.First(line => line.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            if (meaningfulLines.Any(line => line.IndexOf("WRONG", StringComparison.OrdinalIgnoreCase) >= 0))
+                return meaningfulLines.First(line => line.IndexOf("WRONG", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            return NormalizeChoiceLabel(inheritedLabel);
+        }
+
+        private static List<PartyScanOutcomeSummary> BuildPartyScanOutcomeSummaries(
+            IEnumerable<PartyScanOutcomeBranch> branches)
+        {
+            var summaries = new Dictionary<string, PartyScanOutcomeSummary>(StringComparer.Ordinal);
+
+            foreach (var branch in branches ?? Enumerable.Empty<PartyScanOutcomeBranch>())
+            {
+                if (branch == null)
+                    continue;
+
+                var perMemberLines = (branch.Lines ?? new List<string>())
+                    .Where(line => !IsPartyScanAggregateLine(line))
+                    .Where(line => !string.IsNullOrWhiteSpace(line))
+                    .ToList();
+                string label = BuildPartyScanOutcomeLabel(branch.Label, perMemberLines);
+                perMemberLines = RemovePartyScanOutcomeHeaderLine(perMemberLines, label);
+
+                if (perMemberLines.Count == 0 && string.IsNullOrWhiteSpace(label))
+                    continue;
+
+                string key = string.Join("\n", new[] { label ?? string.Empty }
+                    .Concat(perMemberLines.Select(line => line ?? string.Empty)));
+                if (!summaries.TryGetValue(key, out var summary))
+                {
+                    summary = new PartyScanOutcomeSummary
+                    {
+                        Label = label,
+                        Lines = perMemberLines,
+                        OrderKey = branch.OrderKey,
+                        HasCorrectText = HasCorrectPartyScanOutcome(label, perMemberLines),
+                        HasAdjustedMemory = branch.HasAdjustedMemory
+                    };
+                    summaries[key] = summary;
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(summary.Label))
+                        summary.Label = label;
+                    summary.OrderKey = Math.Min(summary.OrderKey, branch.OrderKey);
+                    summary.HasCorrectText |= HasCorrectPartyScanOutcome(label, perMemberLines);
+                    summary.HasAdjustedMemory |= branch.HasAdjustedMemory;
+                }
+
+                foreach (var aggregateLine in (branch.Lines ?? new List<string>())
+                    .Where(IsPartyScanAggregateLine))
+                {
+                    if (!summary.AggregateLines.Contains(aggregateLine, StringComparer.Ordinal))
+                        summary.AggregateLines.Add(aggregateLine);
+                }
+            }
+
+            return summaries.Values.ToList();
+        }
+
+        private static List<string> RemovePartyScanOutcomeHeaderLine(IEnumerable<string> lines, string label)
+        {
+            var result = new List<string>();
+            bool removed = false;
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+            {
+                if (!removed &&
+                    !string.IsNullOrWhiteSpace(label) &&
+                    string.Equals(line?.Trim(), label.Trim(), StringComparison.Ordinal))
+                {
+                    removed = true;
+                    continue;
+                }
+
+                result.Add(line);
+            }
+
+            return result;
+        }
+
+        private static bool HasCorrectPartyScanOutcome(string label, IEnumerable<string> lines)
+        {
+            return (!string.IsNullOrWhiteSpace(label) &&
+                    label.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0) ||
+                   (lines ?? Enumerable.Empty<string>())
+                   .Any(line => line?.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static bool TryAttachPartyScanAggregateLinesToOutcome(
+            List<PartyScanOutcomeSummary> summaries,
+            List<string> aggregateLines)
+        {
+            if (summaries == null || aggregateLines == null || aggregateLines.Count == 0)
+                return false;
+
+            var targets = summaries
+                .Where(summary => summary != null && summary.HasCorrectText && summary.HasAdjustedMemory)
+                .ToList();
+            if (targets.Count != 1)
+                return false;
+
+            foreach (var line in aggregateLines)
+            {
+                if (!targets[0].Lines.Contains(line, StringComparer.Ordinal))
+                    targets[0].Lines.Add(line);
+            }
+
+            return true;
+        }
+
+        private static List<string> BuildPartyScanAggregateLines(
+            VariantTreeNode parentNode,
+            VariantTreeNode scanNode,
+            IEnumerable<PartyScanOutcomeSummary> summaries)
+        {
+            var result = new List<string>();
+
+            foreach (var line in (summaries ?? Enumerable.Empty<PartyScanOutcomeSummary>())
+                .SelectMany(summary => summary?.AggregateLines ?? new List<string>()))
+            {
+                AddDistinctPartyScanAggregateLine(result, line);
+            }
+
+            foreach (var item in parentNode?.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                if (!IsPartyScanAggregateOnlyVariant(item))
+                    continue;
+
+                foreach (var line in item.Lines ?? new List<string>())
+                    AddDistinctPartyScanAggregateLine(result, line);
+            }
+
+            foreach (var child in parentNode?.Children ?? new List<VariantTreeNode>())
+            {
+                if (ReferenceEquals(child, scanNode) || !IsPartyScanAggregateOnlyNode(child))
+                    continue;
+
+                foreach (var line in GetPartyScanAggregateLines(child))
+                    AddDistinctPartyScanAggregateLine(result, line);
+            }
+
+            return result;
+        }
+
+        private static List<string> GetPartyScanAggregateLines(VariantTreeNode node)
+        {
+            var result = new List<string>();
+            if (node == null)
+                return result;
+
+            foreach (var line in node.CommonLines ?? new List<string>())
+                AddDistinctPartyScanAggregateLine(result, line);
+
+            foreach (var item in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                foreach (var line in item?.Lines ?? new List<string>())
+                    AddDistinctPartyScanAggregateLine(result, line);
+            }
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                foreach (var line in GetPartyScanAggregateLines(child))
+                    AddDistinctPartyScanAggregateLine(result, line);
+            }
+
+            return result;
+        }
+
+        private static void AddDistinctPartyScanAggregateLine(List<string> target, string line)
+        {
+            if (target == null || !IsPartyScanAggregateLine(line))
+                return;
+
+            if (!target.Contains(line, StringComparer.Ordinal))
+                target.Add(line);
+        }
+
+        private static string BuildPartyScanAggregateHeader(IEnumerable<PartyScanOutcomeSummary> summaries)
+        {
+            bool hasCorrectAdjustedOutcome = (summaries ?? Enumerable.Empty<PartyScanOutcomeSummary>())
+                .Any(summary => summary != null && summary.HasCorrectText && summary.HasAdjustedMemory);
+
+            return hasCorrectAdjustedOutcome
+                ? "После обработки партии, если был хотя бы один правильный ответ:"
+                : "После обработки партии, если итоговое условие выполнено:";
+        }
+
+        private static void RenderPartyScanOutcomeSummary(
+            PartyScanOutcomeSummary summary,
+            StringBuilder sb,
+            List<int> numbering,
+            int depth,
+            bool headerContainsProbability)
+        {
+            if (summary == null)
+                return;
+
+            string indent = new string(' ', depth * 3);
+            string header = $"{indent}Вариант {string.Join(".", numbering)}";
+            if (!string.IsNullOrWhiteSpace(summary.Label))
+                header += $": {summary.Label}";
+            else
+                header += ":";
+
+            sb.AppendLine(header);
+            AppendIndentedDisplayLines(
+                sb,
+                indent + "   ",
+                summary.Lines,
+                headerContainsProbability);
+        }
+
         private static void RenderVariantTreeNode(
             VariantTreeNode node,
             StringBuilder sb,
@@ -3636,6 +4436,16 @@ private static string BuildHierarchicalVariantNotes(
                 indent + "   ",
                 node.CommonLines,
                 headerContainsProbability);
+
+            if (TryRenderPartyScanLoopBody(
+                    node,
+                    sb,
+                    numbering,
+                    depth,
+                    headerContainsProbability))
+            {
+                return;
+            }
 
             if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
             {
@@ -4174,13 +4984,14 @@ private static string BuildHierarchicalVariantNotes(
 
             var orderedEntries = new List<(uint Address, int KindOrder, string Text, int SortBucket, int ExecutionOrder)>();
             var seenPartyLines = new HashSet<string>(StringComparer.Ordinal);
+            var variantContext = GetSinglePathVariantContext(obj);
             var effects = (obj.PartyEffects ?? new List<PartyEffect>())
                 .Where(effect => effect != null)
                 .ToList();
 
             foreach (var effect in GetOrderedDisplayablePartyEffects(effects))
             {
-                string description = PartyEffectSemantics.BuildHumanDescription(effect);
+                string description = BuildPartyEffectDisplayDescription(effect, variantContext);
                 if (string.IsNullOrWhiteSpace(description) || !seenPartyLines.Add(description))
                     continue;
 
@@ -4213,6 +5024,14 @@ private static string BuildHierarchicalVariantNotes(
                 .Select(entry => entry.Text));
 
             return lines;
+        }
+
+        private static PathVariantInfo GetSinglePathVariantContext(OvrObject obj)
+        {
+            if (obj?.PathVariants == null || obj.PathVariants.Count != 1)
+                return null;
+
+            return obj.PathVariants.Values.FirstOrDefault();
         }
 
         private static int GetSpecialLineSortBucket(int executionOrder)
