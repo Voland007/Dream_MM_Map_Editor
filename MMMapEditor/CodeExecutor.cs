@@ -5786,29 +5786,8 @@ namespace MMMapEditor
             numerator *= numeratorFactor;
             denominator *= denominatorFactor;
 
-            long gcd = GreatestCommonDivisor(numerator, denominator);
-            if (gcd > 1)
-            {
-                numerator /= gcd;
-                denominator /= gcd;
-            }
-
             result.InlineProbabilityNumerator = numerator > int.MaxValue ? int.MaxValue : (int)numerator;
             result.InlineProbabilityDenominator = denominator > int.MaxValue ? int.MaxValue : (int)denominator;
-        }
-
-        private static long GreatestCommonDivisor(long a, long b)
-        {
-            a = Math.Abs(a);
-            b = Math.Abs(b);
-            while (b != 0)
-            {
-                long remainder = a % b;
-                a = b;
-                b = remainder;
-            }
-
-            return a == 0 ? 1 : a;
         }
 
         private void TrackStateValueConstraintForCurrentFlags(

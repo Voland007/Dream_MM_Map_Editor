@@ -1141,12 +1141,6 @@ namespace MMMapEditor
                 numerator = 1;
                 denominator = 1;
             }
-            else
-            {
-                int gcd = GreatestCommonDivisor(numerator, denominator);
-                numerator /= gcd;
-                denominator /= gcd;
-            }
 
             double percent = 100.0 * numerator / denominator;
             string percentText = percent % 1.0 == 0.0
@@ -1158,21 +1152,6 @@ namespace MMMapEditor
                 : "Вероятность";
 
             return $"{label}: {percentText}% ({numerator}/{denominator})";
-        }
-
-        private static int GreatestCommonDivisor(int a, int b)
-        {
-            a = Math.Abs(a);
-            b = Math.Abs(b);
-
-            while (b != 0)
-            {
-                int t = a % b;
-                a = b;
-                b = t;
-            }
-
-            return a == 0 ? 1 : a;
         }
 
         public string GetOccurrenceDescription()

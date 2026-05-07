@@ -232,7 +232,6 @@ namespace MMMapEditor
             {
                 long numerator = (long)probabilityNumerator * pathResult.InlineProbabilityNumerator;
                 long denominator = (long)probabilityDenominator * Math.Max(1, pathResult.InlineProbabilityDenominator);
-                NormalizeProbability(ref numerator, ref denominator);
                 probabilityNumerator = numerator > int.MaxValue ? int.MaxValue : (int)numerator;
                 probabilityDenominator = denominator > int.MaxValue ? int.MaxValue : (int)denominator;
             }
@@ -241,11 +240,6 @@ namespace MMMapEditor
                 probabilityApplicable = true;
                 probabilityNumerator = pathResult.InlineProbabilityNumerator;
                 probabilityDenominator = Math.Max(1, pathResult.InlineProbabilityDenominator);
-                long numerator = probabilityNumerator;
-                long denominator = probabilityDenominator;
-                NormalizeProbability(ref numerator, ref denominator);
-                probabilityNumerator = (int)numerator;
-                probabilityDenominator = (int)denominator;
             }
         }
 
@@ -267,12 +261,9 @@ namespace MMMapEditor
                 return;
             }
 
-            long normalizedNumerator = numerator;
-            long normalizedDenominator = denominator;
-            NormalizeProbability(ref normalizedNumerator, ref normalizedDenominator);
-
-            numerator = normalizedNumerator > int.MaxValue ? int.MaxValue : (int)normalizedNumerator;
-            denominator = normalizedDenominator > int.MaxValue ? int.MaxValue : (int)normalizedDenominator;
+            // Сохраняем исходную дробь пути: 1/6, 2/12 и 3/18 имеют один процент,
+            // но описывают разные вложенные случайные ветки и не должны схлопываться
+            // в один отображаемый outcome.
         }
 
         private static int ToDebugPathId(decimal pathOrderKey)
@@ -1390,10 +1381,15 @@ namespace MMMapEditor
             return false;
         }
 
-        private int GetVariantOutcomeDisplayPriority(PathVariantInfo variant)
+        private int GetVariantOutcomeDisplayPriority(
+            PathVariantInfo variant,
+            bool preferPromptOnlyBeforeMixedPartyScan = false)
         {
             if (variant == null)
                 return int.MaxValue;
+
+            if (preferPromptOnlyBeforeMixedPartyScan && IsPromptOnlyLeaf(variant))
+                return -1;
 
             if (variant.HasTeleportTarget && (variant.Texts == null || variant.Texts.Count == 0))
                 return 0;
@@ -1550,12 +1546,18 @@ namespace MMMapEditor
                 }
             }
 
-            var orderedUniqueVariants = CollapseConditionalLoopSubsetOutcomeVariants(
+            var collapsedVariants = AddMixedPartyScanSubsetOutcomeVariants(
+                CollapseConditionalLoopSubsetOutcomeVariants(
                     CollapseShadowedConditionalLoopSubsetCoverageVariants(
-                    CollapsePromptOnlyVariantsShadowedByLoopEffects(
-                        CollapseGuardOnlyPartyLoopVariants(
-                            CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))))
-                .OrderBy(GetVariantOutcomeDisplayPriority)
+                        CollapsePromptOnlyVariantsShadowedByLoopEffects(
+                            CollapseGuardOnlyPartyLoopVariants(
+                                CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values))))))
+                .ToList();
+
+            bool preferPromptOnlyBeforeMixedPartyScan = collapsedVariants.Any(IsMixedPartyScanSubsetSummaryVariant);
+
+            var orderedUniqueVariants = collapsedVariants
+                .OrderBy(variant => GetVariantOutcomeDisplayPriority(variant, preferPromptOnlyBeforeMixedPartyScan))
                 .ThenBy(GetPathOrderKey)
                 .ToList();
 
@@ -1635,6 +1637,62 @@ namespace MMMapEditor
                 result.Add(MergeConditionalLoopSubsetGroup(groupItems));
             }
 
+            return result;
+        }
+
+        private IEnumerable<PathVariantInfo> AddMixedPartyScanSubsetOutcomeVariants(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var result = variants
+                .Where(variant => variant != null)
+                .OrderBy(GetPathOrderKey)
+                .ToList();
+
+            if (result.Count < 2)
+                return result;
+
+            var existingKeys = result
+                .Select(BuildVariantIdentityKey)
+                .ToHashSet(StringComparer.Ordinal);
+            var additions = new List<PathVariantInfo>();
+
+            foreach (var group in result
+                .Where(HasConditionalLoopSubsetOutcomeEffects)
+                .GroupBy(BuildMixedPartyScanSubsetCombinationKey))
+            {
+                var groupItems = group
+                    .Where(HasConditionalLoopSubsetOutcomeEffects)
+                    .OrderBy(GetPathOrderKey)
+                    .ToList();
+
+                if (groupItems.Count < 2)
+                    continue;
+
+                var conditionalEffects = groupItems
+                    .SelectMany(variant => variant.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+                    .Where(IsConditionalLoopSubsetOutcomeEffect)
+                    .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                    .Select(effectGroup => effectGroup.First().Clone())
+                    .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+                    .ToList();
+
+                if (!CanBuildMixedPartyScanSubsetOutcome(conditionalEffects))
+                    continue;
+
+                var combined = BuildMixedPartyScanSubsetOutcomeVariant(groupItems, conditionalEffects);
+                if (combined == null)
+                    continue;
+
+                string identityKey = BuildVariantIdentityKey(combined);
+                if (!existingKeys.Add(identityKey))
+                    continue;
+
+                additions.Add(combined);
+            }
+
+            result.AddRange(additions);
             return result;
         }
 
@@ -1907,6 +1965,19 @@ namespace MMMapEditor
                    variant.PartyEffects.Any(IsConditionalLoopSubsetOutcomeEffect);
         }
 
+        private bool IsMixedPartyScanSubsetSummaryVariant(PathVariantInfo variant)
+        {
+            var conditionalEffects = variant?.PartyEffects?
+                .Where(IsConditionalLoopSubsetOutcomeEffect)
+                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                .Select(group => group.First().Clone())
+                .ToList();
+
+            return conditionalEffects != null &&
+                   conditionalEffects.Count >= 2 &&
+                   CanBuildMixedPartyScanSubsetOutcome(conditionalEffects);
+        }
+
         private bool HasOnlyGuardLikePartyEffects(PathVariantInfo variant)
         {
             return variant?.PartyEffects != null &&
@@ -1979,9 +2050,16 @@ namespace MMMapEditor
                 : "<NO_PARTIAL>";
 
             string partyKey = BuildPartyEffectsKey(variant);
-            string probabilityKey = BuildNormalizedProbabilityKey(variant);
+            string probabilityKey = BuildRawProbabilityKey(variant);
 
             return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}||{probabilityKey}";
+        }
+
+        private string BuildRawProbabilityKey(PathVariantInfo variant)
+        {
+            int numerator = Math.Max(0, variant?.ProbabilityNumerator ?? 1);
+            int denominator = Math.Max(1, variant?.ProbabilityDenominator ?? 1);
+            return $"{numerator}/{denominator}";
         }
 
         private string BuildNormalizedProbabilityKey(PathVariantInfo variant)
@@ -2182,7 +2260,7 @@ namespace MMMapEditor
 
             string branchKey = BuildBranchHistoryKeyForIdentity(variant);
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{partitionFamilyKey}||{branchKey}";
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{partitionFamilyKey}||{branchKey}||{BuildRawProbabilityKey(variant)}";
         }
 
         private string BuildConditionalLoopSubsetCoverageShadowKey(PathVariantInfo variant)
@@ -2222,7 +2300,7 @@ namespace MMMapEditor
             // даже если у части из них пока нет ни одного conditional subset effect.
             // Иначе "пустой" outcome (без сработавшего subset-эффекта) никогда не увидит
             // более содержательный sibling и не будет отброшен как shadowed.
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}";
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{BuildRawProbabilityKey(variant)}";
         }
 
         private string BuildPartyEffectsKeyExcludingConditionalLoopSubsetOutcomes(PathVariantInfo variant)
@@ -2361,6 +2439,184 @@ namespace MMMapEditor
                 return false;
 
             return right.All(left.Contains);
+        }
+
+        private bool CanBuildMixedPartyScanSubsetOutcome(List<PartyEffect> conditionalEffects)
+        {
+            if (conditionalEffects == null || conditionalEffects.Count < 2)
+                return false;
+
+            int distinctPredicatePartitions = conditionalEffects
+                .Select(BuildMixedPartyScanEffectPredicatePartitionKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.Ordinal)
+                .Count();
+
+            if (distinctPredicatePartitions < 2)
+                return false;
+
+            return !HasConflictingMixedPartyScanSubsetEffects(conditionalEffects);
+        }
+
+        private bool HasConflictingMixedPartyScanSubsetEffects(List<PartyEffect> conditionalEffects)
+        {
+            if (conditionalEffects == null || conditionalEffects.Count < 2)
+                return false;
+
+            return conditionalEffects
+                .GroupBy(BuildMixedPartyScanEffectExclusiveSlotKey)
+                .Any(group => group
+                    .Select(PartyEffectSemantics.BuildSemanticKey)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() > 1);
+        }
+
+        private string BuildMixedPartyScanEffectPredicatePartitionKey(PartyEffect effect)
+        {
+            if (effect == null)
+                return null;
+
+            return string.Join("|",
+                PartyEffectSemantics.GetEffectiveCondition(effect),
+                PartyEffectSemantics.BuildGuardPredicatesKey(effect));
+        }
+
+        private string BuildMixedPartyScanEffectExclusiveSlotKey(PartyEffect effect)
+        {
+            if (effect == null)
+                return null;
+
+            return string.Join("|",
+                effect.Kind,
+                PartyEffectSemantics.GetEffectiveField(effect),
+                effect.ComparedField,
+                PartyEffectSemantics.GetEffectiveOperation(effect),
+                PartyEffectSemantics.GetEffectiveScope(effect),
+                PartyEffectSemantics.GetEffectiveCondition(effect),
+                PartyEffectSemantics.BuildGuardPredicatesKey(effect),
+                effect.ComparedMemberIndex?.ToString() ?? "-",
+                PartyEffectSemantics.IsLoopDerived(effect) ? "Loop" : "Direct");
+        }
+
+        private string BuildMixedPartyScanSubsetCombinationKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            if (!HasConditionalLoopSubsetOutcomeEffects(variant))
+                return $"<NO_MIXED_PARTY_SCAN>|{BuildVariantIdentityKey(variant)}";
+
+            return string.Join("||",
+                BuildConditionalLoopSubsetCoverageShadowKey(variant),
+                BuildRawProbabilityKey(variant),
+                BuildMixedPartyScanBranchHistoryKey(variant));
+        }
+
+        private string BuildMixedPartyScanBranchHistoryKey(PathVariantInfo variant)
+        {
+            if (variant?.BranchChoices == null || variant.BranchChoices.Count == 0)
+                return "<NO_BRANCHES>";
+
+            var relevantChoices = variant.BranchChoices
+                .Where(choice => choice != null && !IsMixedPartyScanLocalBranchChoice(variant, choice))
+                .Select(choice => choice.GetIdentityKey())
+                .ToList();
+
+            return relevantChoices.Count == 0
+                ? "<NO_BRANCHES>"
+                : string.Join(";", relevantChoices);
+        }
+
+        private bool IsMixedPartyScanLocalBranchChoice(PathVariantInfo variant, BranchChoice choice)
+        {
+            return IsLoopLocalBranchChoiceForIdentity(choice) ||
+                   IsPartyLoopGuardBranchChoice(variant, choice);
+        }
+
+        private bool IsPartyLoopGuardBranchChoice(PathVariantInfo variant, BranchChoice choice)
+        {
+            if (choice?.GuardPredicate == null ||
+                variant?.PartyEffects == null ||
+                variant.PartyEffects.Count == 0)
+            {
+                return false;
+            }
+
+            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
+            if (string.IsNullOrWhiteSpace(choicePredicateKey))
+                return false;
+
+            return variant.PartyEffects
+                .Where(IsConditionalLoopSubsetOutcomeEffect)
+                .SelectMany(effect => PartyEffectSemantics.GetEffectiveGuardPredicates(effect))
+                .Select(PartyEffectSemantics.BuildPredicateKey)
+                .Any(key => string.Equals(key, choicePredicateKey, StringComparison.Ordinal));
+        }
+
+        private string BuildLoopNormalizedPredicateKey(PartyPredicate predicate)
+        {
+            var normalized = PartyEffectSemantics
+                .NormalizeGuardPredicatesForLoopAggregation(new[] { predicate })
+                .FirstOrDefault();
+
+            return normalized == null
+                ? null
+                : PartyEffectSemantics.BuildPredicateKey(normalized);
+        }
+
+        private PathVariantInfo BuildMixedPartyScanSubsetOutcomeVariant(
+            List<PathVariantInfo> variants,
+            List<PartyEffect> conditionalEffects)
+        {
+            if (variants == null || variants.Count == 0 ||
+                conditionalEffects == null || conditionalEffects.Count < 2)
+            {
+                return null;
+            }
+
+            var preferred = variants
+                .OrderByDescending(variant =>
+                    variant.PartyEffects?.Count(IsConditionalLoopSubsetOutcomeEffect) ?? 0)
+                .ThenByDescending(GetVariantPrecisionScore)
+                .ThenBy(GetPathOrderKey)
+                .FirstOrDefault();
+
+            if (preferred == null)
+                return null;
+
+            var combined = CloneVariantInfo(preferred);
+            combined.PathId = variants.Min(variant => variant.PathId);
+            combined.PathOrderKey = variants.Max(GetPathOrderKey) + 0.0001m;
+            combined.BranchChoices = BuildMixedPartyScanSummaryBranchChoices(preferred);
+            combined.PartyEffects = variants
+                .SelectMany(variant => variant.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+                .Where(effect => effect != null && !IsConditionalLoopSubsetOutcomeEffect(effect))
+                .Concat(conditionalEffects)
+                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                .Select(effectGroup => effectGroup.First().Clone())
+                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+                .ToList();
+
+            foreach (var effect in combined.PartyEffects.Where(effect =>
+                         effect != null &&
+                         PartyEffectSemantics.IsLoopDerived(effect) &&
+                         PartyEffectSemantics.GetEffectiveScope(effect) != PartyEffectScope.SingleMember))
+            {
+                effect.ObservedMemberIndex = null;
+            }
+
+            foreach (var variant in variants)
+                MergeVariantOccurrences(combined, variant);
+
+            return combined;
+        }
+
+        private List<BranchChoice> BuildMixedPartyScanSummaryBranchChoices(PathVariantInfo preferred)
+        {
+            return preferred?.BranchChoices?
+                .Where(choice => choice != null && !IsMixedPartyScanLocalBranchChoice(preferred, choice))
+                .Select(choice => choice.Clone())
+                .ToList() ?? new List<BranchChoice>();
         }
 
         private PathVariantInfo MergeConditionalLoopSubsetGroup(List<PathVariantInfo> variants)
@@ -2699,7 +2955,7 @@ namespace MMMapEditor
 
             string branchKey = BuildBranchHistoryKeyForIdentity(variant);
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}";
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}||{BuildRawProbabilityKey(variant)}";
         }
     }
 }

@@ -3270,17 +3270,21 @@ private static string BuildHierarchicalVariantNotes(
         {
             var result = new List<OrderedRenderEntry>();
             var promptChoiceOrder = BuildPromptChoiceOrder(parentNode?.CommonLines);
+            var childList = (children ?? Enumerable.Empty<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+            bool canPromoteNoToChoice = childList.Count > 0 && !HasNodeWithLabel(parentNode, "N)");
 
-            foreach (var child in children ?? Enumerable.Empty<VariantTreeNode>())
+            foreach (var child in childList)
             {
-                if (child == null)
-                    continue;
-
                 bool hasChoiceOrder = TryGetChoiceOrderKey(child.Label, promptChoiceOrder, out int choiceOrderKey);
+                bool mixedPartyScanCancelChoice =
+                    ContainsMixedPartyScanSubsetSummary(parentNode) &&
+                    IsLikelyCancelNode(child);
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
-                    DisplayPriority = 0,
+                    DisplayPriority = mixedPartyScanCancelChoice ? -1 : 0,
                     PathOrderKey = GetNodeRenderOrderKey(child),
                     ChoiceOrderKey = choiceOrderKey,
                     HasChoiceOrderKey = hasChoiceOrder,
@@ -3296,10 +3300,11 @@ private static string BuildHierarchicalVariantNotes(
                 string syntheticLabel = null;
                 syntheticDirectLabels?.TryGetValue(variant, out syntheticLabel);
                 bool hasChoiceOrder = TryGetChoiceOrderKey(syntheticLabel, promptChoiceOrder, out int choiceOrderKey);
+                bool promotedNoChoice = canPromoteNoToChoice && ShouldRenderAsNoChoiceVariant(variant);
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetVariantOccurrenceOrderKey(variant),
-                    DisplayPriority = IsEmptyOrNoOpVariant(variant) ? 1 : 0,
+                    DisplayPriority = promotedNoChoice ? -1 : (IsEmptyOrNoOpVariant(variant) ? 1 : 0),
                     PathOrderKey = GetVariantRenderOrderKey(variant),
                     ChoiceOrderKey = choiceOrderKey,
                     HasChoiceOrderKey = hasChoiceOrder,
@@ -3320,7 +3325,8 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return result
-                .OrderBy(entry => entry.OccurrenceOrderKey)
+                .OrderBy(entry => entry.DisplayPriority < 0 ? entry.DisplayPriority : 0)
+                .ThenBy(entry => entry.OccurrenceOrderKey)
                 .ThenBy(entry => entry.DisplayPriority)
                 .ThenBy(entry => entry.PathOrderKey)
                 .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
@@ -3730,6 +3736,35 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return false;
+        }
+
+        private static bool ContainsMixedPartyScanSubsetSummary(VariantTreeNode node)
+        {
+            return GetAllVariants(node)
+                .Where(item => item?.Variant != null)
+                .Any(item => HasMixedPartyScanSubsetSummary(item.Variant));
+        }
+
+        private static bool HasMixedPartyScanSubsetSummary(PathVariantInfo variant)
+        {
+            int distinctConditionalEffects = variant?.PartyEffects?
+                .Where(IsConditionalLoopSubsetOutcomeEffect)
+                .Select(PartyEffectSemantics.BuildSemanticKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.Ordinal)
+                .Count() ?? 0;
+
+            return distinctConditionalEffects >= 2;
+        }
+
+        private static bool IsConditionalLoopSubsetOutcomeEffect(PartyEffect effect)
+        {
+            return effect != null &&
+                   PartyEffectSemantics.IsStateChanging(effect) &&
+                   PartyEffectSemantics.IsLoopDerived(effect) &&
+                   PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
+                   (PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None ||
+                    PartyEffectSemantics.HasEffectiveGuardPredicates(effect));
         }
 
         private static void RenderChoiceLeaf(
