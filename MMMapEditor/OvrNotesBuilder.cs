@@ -970,16 +970,30 @@ namespace MMMapEditor
                 return false;
             }
 
-            var battleVariants = variants
-                .Where(kvp => kvp.Key != noOpEntry.Key)
-                .Select(kvp => kvp.Value)
+            var battleEntries = variants
+                .Where(kvp => IsPlainPartialBattleVariant(kvp.Value))
                 .ToList();
 
-            if (battleVariants.Count < 2 ||
-                battleVariants.Any(variant => !IsPlainPartialBattleVariant(variant)))
+            if (battleEntries.Count < 2)
             {
                 return false;
             }
+
+            var battleEntryKeys = new HashSet<int>(battleEntries.Select(kvp => kvp.Key));
+            var passthroughEntries = variants
+                .Where(kvp => kvp.Key != noOpEntry.Key && !battleEntryKeys.Contains(kvp.Key))
+                .ToList();
+
+            if (passthroughEntries.Any(kvp => !CanRenderBesideCollapsedPartialBattle(
+                    kvp.Value,
+                    variantContents.TryGetValue(kvp.Key, out var lines) ? lines : null)))
+            {
+                return false;
+            }
+
+            var battleVariants = battleEntries
+                .Select(kvp => kvp.Value)
+                .ToList();
 
             var dynamicDependencies = battleVariants
                 .SelectMany(variant => variant.DynamicRandomBoundDependencies ?? new List<DynamicRandomBoundDependencyInfo>())
@@ -1004,9 +1018,14 @@ namespace MMMapEditor
             if (battleOptions.Count < 2)
                 return false;
 
-            int encounterNumerator = noOpVariant.ProbabilityDenominator - noOpVariant.ProbabilityNumerator;
-            int encounterDenominator = noOpVariant.ProbabilityDenominator;
-            ReduceFraction(ref encounterNumerator, ref encounterDenominator);
+            if (!TryBuildCollapsedPartialBattleProbability(
+                    noOpVariant,
+                    passthroughEntries.Select(kvp => kvp.Value),
+                    out int encounterNumerator,
+                    out int encounterDenominator))
+            {
+                return false;
+            }
 
             string encounterProbability = BuildProbabilityHeaderAnnotation(
                 BuildStandaloneProbabilityLine(encounterNumerator, encounterDenominator));
@@ -1021,12 +1040,24 @@ namespace MMMapEditor
 
             var sb = new StringBuilder();
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
-            sb.AppendLine($"{BuildVariantHeader(obj, noOpEntry.Key, 1)}:");
+            int displayVariantNumber = 1;
+
+            sb.AppendLine($"{BuildVariantHeader(obj, noOpEntry.Key, displayVariantNumber++)}:");
             AppendLines(sb, variantContents.TryGetValue(noOpEntry.Key, out var noOpLines)
                 ? noOpLines
                 : new List<string> { "Ничего не происходит" });
+
+            foreach (var passthroughEntry in passthroughEntries.OrderBy(kvp => GetPathOrderKey(kvp.Value)))
+            {
+                sb.AppendLine();
+                sb.AppendLine($"{BuildVariantHeader(obj, passthroughEntry.Key, displayVariantNumber++)}:");
+                AppendLines(sb, variantContents.TryGetValue(passthroughEntry.Key, out var passthroughLines)
+                    ? passthroughLines
+                    : new List<string>());
+            }
+
             sb.AppendLine();
-            sb.AppendLine($"Вариант 2 ({encounterProbability}):");
+            sb.AppendLine($"Вариант {displayVariantNumber} ({encounterProbability}):");
             sb.AppendLine($"Частично определённая битва. {battleOptions.Count} вариант(ов):");
             sb.AppendLine(dynamicVariantCountLine);
 
@@ -1044,6 +1075,124 @@ namespace MMMapEditor
                 sb.AppendLine(rubiconWarning);
 
             notes = sb.ToString().TrimEnd('\r', '\n');
+            return true;
+        }
+
+        private static bool CanRenderBesideCollapsedPartialBattle(PathVariantInfo variant, List<string> lines)
+        {
+            if (variant == null || IsPlainPartialBattleVariant(variant))
+                return false;
+
+            bool hasDisplayableLines = (lines ?? new List<string>())
+                .Any(line => !string.IsNullOrWhiteSpace(line));
+            if (!hasDisplayableLines)
+                return false;
+
+            bool isSimpleNarrativeOutcome =
+                (variant.Texts != null && variant.Texts.Count > 0) ||
+                variant.HasTeleportTarget;
+
+            if (!isSimpleNarrativeOutcome)
+                return false;
+
+            return !variant.HasMonsterStatChanges &&
+                   !variant.HasBattleLikeInfo &&
+                   (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
+                   (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
+                   !variant.HasAnyTableLoad &&
+                   (variant.LoadedValues == null || variant.LoadedValues.Count == 0) &&
+                   !variant.HasStateGuardInfo &&
+                   (variant.PartyEffects == null || variant.PartyEffects.Count == 0);
+        }
+
+        private static bool TryBuildCollapsedPartialBattleProbability(
+            PathVariantInfo noOpVariant,
+            IEnumerable<PathVariantInfo> passthroughVariants,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 1;
+            denominator = 1;
+
+            var excludedVariants = new List<PathVariantInfo> { noOpVariant };
+            excludedVariants.AddRange(passthroughVariants ?? Enumerable.Empty<PathVariantInfo>());
+
+            foreach (var variant in excludedVariants)
+            {
+                if (!TryGetVariantProbabilityFraction(variant, out int variantNumerator, out int variantDenominator))
+                    return false;
+
+                if (!TrySubtractProbability(
+                        numerator,
+                        denominator,
+                        variantNumerator,
+                        variantDenominator,
+                        out numerator,
+                        out denominator))
+                {
+                    return false;
+                }
+            }
+
+            if (numerator <= 0)
+                return false;
+
+            ReduceFraction(ref numerator, ref denominator);
+            return true;
+        }
+
+        private static bool TryGetVariantProbabilityFraction(
+            PathVariantInfo variant,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 0;
+            denominator = 1;
+
+            if (variant == null || !variant.HasProbabilityInfo || variant.ProbabilityDenominator <= 0)
+                return false;
+
+            numerator = Math.Max(0, variant.ProbabilityNumerator);
+            denominator = Math.Max(1, variant.ProbabilityDenominator);
+            if (numerator >= denominator && numerator > 0)
+            {
+                numerator = 1;
+                denominator = 1;
+            }
+
+            ReduceFraction(ref numerator, ref denominator);
+            return true;
+        }
+
+        private static bool TrySubtractProbability(
+            int leftNumerator,
+            int leftDenominator,
+            int rightNumerator,
+            int rightDenominator,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 0;
+            denominator = 1;
+
+            if (leftDenominator <= 0 || rightDenominator <= 0)
+                return false;
+
+            long gcd = GreatestCommonDivisor(Math.Abs(leftDenominator), Math.Abs(rightDenominator));
+            long lcm = (long)leftDenominator / gcd * rightDenominator;
+            if (lcm <= 0 || lcm > int.MaxValue)
+                return false;
+
+            long adjustedNumerator =
+                (long)leftNumerator * (lcm / leftDenominator) -
+                (long)rightNumerator * (lcm / rightDenominator);
+
+            if (adjustedNumerator < int.MinValue || adjustedNumerator > int.MaxValue)
+                return false;
+
+            numerator = (int)adjustedNumerator;
+            denominator = (int)lcm;
+            ReduceFraction(ref numerator, ref denominator);
             return true;
         }
 
