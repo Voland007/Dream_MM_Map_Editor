@@ -201,11 +201,11 @@ namespace MMMapEditor
                 if (scope == PartyEffectScope.PartySubset)
                     return $"{statLabel} части партии {effectText}";
                 if (scope == PartyEffectScope.CurrentLoopMember)
-                    return $"{statLabel} текущего члена партии {effectText}";
+                    return $"{statLabel} текущего персонажа партии {effectText}";
                 if (scope == PartyEffectScope.RandomMember)
-                    return $"{statLabel} случайного члена партии {effectText}";
+                    return $"{statLabel} случайного персонажа партии {effectText}";
                 if (scope == PartyEffectScope.SelectedMember)
-                    return $"{statLabel} выбранного члена партии {effectText}";
+                    return $"{statLabel} выбранного персонажа партии {effectText}";
                 return $"{statLabel} персонажа {effectText}";
             }
 
@@ -234,10 +234,10 @@ namespace MMMapEditor
                     return $"У части партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.RandomMember)
-                    return $"У случайного члена партии {verb} {amount} {statLabel}";
+                    return $"У случайного персонажа партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.SelectedMember)
-                    return $"У выбранного члена партии {verb} {amount} {statLabel}";
+                    return $"У выбранного персонажа партии {verb} {amount} {statLabel}";
 
                 if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
                     return $"У персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} {verb} {amount} {statLabel}";
@@ -284,7 +284,7 @@ namespace MMMapEditor
                             return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
 
                         if (HasEffectiveGuardPredicates(effect))
-                            return $"CONDITION подходящих членов партии изменяется на {conditionStatusesText}";
+                            return $"CONDITION подходящих персонажей партии изменяется на {conditionStatusesText}";
 
                         return $"CONDITION части партии изменяется на {conditionStatusesText}";
                     }
@@ -1555,9 +1555,9 @@ namespace MMMapEditor
                     : effect.ObservedMemberIndex.HasValue
                         ? $"У персонажа {FormatMemberDisplay(effect.ObservedMemberIndex.Value)} "
                         : string.Empty,
-                PartyEffectScope.RandomMember => "У случайного члена партии ",
-                PartyEffectScope.SelectedMember => "У выбранного члена партии ",
-                PartyEffectScope.CurrentLoopMember => "У текущего члена партии ",
+                PartyEffectScope.RandomMember => "У случайного персонажа партии ",
+                PartyEffectScope.SelectedMember => "У выбранного персонажа партии ",
+                PartyEffectScope.CurrentLoopMember => "У текущего персонажа партии ",
                 PartyEffectScope.PartySubset => condition switch
                 {
                     PartyConditionKind.MaleOnly => "У мужчин в партии ",
@@ -1642,16 +1642,16 @@ namespace MMMapEditor
                 PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
                     ? $"Персонаж {FormatMemberDisplay(effect.MemberIndex.Value)}"
                     : "Персонаж",
-                PartyEffectScope.RandomMember => "Случайный член партии",
-                PartyEffectScope.SelectedMember => "Выбранный член партии",
-                PartyEffectScope.CurrentLoopMember => "Текущий член партии",
+                PartyEffectScope.RandomMember => "Случайный персонаж партии",
+                PartyEffectScope.SelectedMember => "Выбранный персонаж партии",
+                PartyEffectScope.CurrentLoopMember => "Текущий персонаж партии",
                 PartyEffectScope.PartySubset => condition switch
                 {
                     PartyConditionKind.MaleOnly => "Мужчины в партии",
                     PartyConditionKind.FemaleOnly => "Женщины в партии",
                     _ => "Часть партии"
                 },
-                PartyEffectScope.WholeParty => "Члены партии",
+                PartyEffectScope.WholeParty => "Персонажи партии",
                 _ => "Персонаж"
             };
         }
@@ -1697,22 +1697,22 @@ namespace MMMapEditor
             if (scope == PartyEffectScope.CurrentLoopMember)
             {
                 return isZero
-                    ? $"{statLabel} текущего члена партии обнуляется"
-                    : $"{statLabel} текущего члена партии становится равным {value}";
+                    ? $"{statLabel} текущего персонажа партии обнуляется"
+                    : $"{statLabel} текущего персонажа партии становится равным {value}";
             }
 
             if (scope == PartyEffectScope.RandomMember)
             {
                 return isZero
-                    ? $"{statLabel} случайного члена партии обнуляется"
-                    : $"{statLabel} случайного члена партии становится равным {value}";
+                    ? $"{statLabel} случайного персонажа партии обнуляется"
+                    : $"{statLabel} случайного персонажа партии становится равным {value}";
             }
 
             if (scope == PartyEffectScope.SelectedMember)
             {
                 return isZero
-                    ? $"{statLabel} выбранного члена партии обнуляется"
-                    : $"{statLabel} выбранного члена партии становится равным {value}";
+                    ? $"{statLabel} выбранного персонажа партии обнуляется"
+                    : $"{statLabel} выбранного персонажа партии становится равным {value}";
             }
 
             if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
@@ -1735,19 +1735,19 @@ namespace MMMapEditor
                     ? $"персонажа {FormatMemberDisplay(effect.MemberIndex.Value)}"
                     : "персонажа партии",
                 PartyEffectScope.RandomMember => IsScalarPartyStatField(field)
-                    ? "случайного члена партии"
-                    : "у случайного члена партии",
+                    ? "случайного персонажа партии"
+                    : "у случайного персонажа партии",
                 PartyEffectScope.SelectedMember => IsScalarPartyStatField(field)
-                    ? "выбранного члена партии"
-                    : "у выбранного члена партии",
-                PartyEffectScope.CurrentLoopMember => "текущего члена партии",
+                    ? "выбранного персонажа партии"
+                    : "у выбранного персонажа партии",
+                PartyEffectScope.CurrentLoopMember => "текущего персонажа партии",
                 PartyEffectScope.PartySubset => condition switch
                 {
                     PartyConditionKind.MaleOnly => IsScalarPartyStatField(field) ? "мужчин в партии" : "у мужчин в партии",
                     PartyConditionKind.FemaleOnly => IsScalarPartyStatField(field) ? "женщин в партии" : "у женщин в партии",
                     _ => IsScalarPartyStatField(field) ? "части партии" : "у части партии"
                 },
-                PartyEffectScope.WholeParty => IsScalarPartyStatField(field) ? "членов партии" : "у членов партии",
+                PartyEffectScope.WholeParty => IsScalarPartyStatField(field) ? "персонажей партии" : "у персонажей партии",
                 _ => IsScalarPartyStatField(field) ? "персонажа" : "персонажа партии"
             };
         }

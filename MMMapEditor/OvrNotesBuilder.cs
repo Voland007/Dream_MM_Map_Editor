@@ -26,7 +26,7 @@ namespace MMMapEditor
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
         private const string WholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
-        private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего члена партии изменяется на ";
+        private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
         private const ushort PartyCountAddress = 0x3BC0;
         private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
 
@@ -5115,7 +5115,7 @@ private static string BuildHierarchicalVariantNotes(
                 "Если выбрать N:",
                 "ничего не происходит.",
                 "Если выбрать Y:",
-                "колесо обрабатывает каждого члена партии отдельно.",
+                "колесо обрабатывает каждого персонажа партии отдельно.",
                 "",
                 "Для каждого персонажа считается число убитых боссов (0-4).",
                 "0: LOSER автоматически.",

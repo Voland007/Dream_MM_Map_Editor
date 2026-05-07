@@ -640,10 +640,10 @@ namespace MMMapEditor
                 return $"! {statLabel} каждого персонажа партии уменьшается вдвое !";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
-                return $"{statLabel} случайного члена партии уменьшается вдвое";
+                return $"{statLabel} случайного персонажа партии уменьшается вдвое";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
-                return $"{statLabel} выбранного члена партии уменьшается вдвое";
+                return $"{statLabel} выбранного персонажа партии уменьшается вдвое";
 
             if (member?.MemberIndex.HasValue == true)
                 return $"{statLabel} персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)} уменьшается вдвое";
@@ -672,10 +672,10 @@ namespace MMMapEditor
             }
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
-                return $"У случайного члена партии {verb} {amount} {statLabel}";
+                return $"У случайного персонажа партии {verb} {amount} {statLabel}";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
-                return $"У выбранного члена партии {verb} {amount} {statLabel}";
+                return $"У выбранного персонажа партии {verb} {amount} {statLabel}";
 
             if (member?.MemberIndex.HasValue == true)
                 return $"У персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)} {verb} {amount} {statLabel}";
@@ -770,13 +770,13 @@ namespace MMMapEditor
         private static string BuildStatusSubject(PartyMemberReference member)
         {
             if (IsLoopTarget(member, LoopSemanticKind.None))
-                return "Члены партии";
+                return "Персонажи партии";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
-                return "Случайный член партии";
+                return "Случайный персонаж партии";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Dynamic)
-                return "Выбранный член партии";
+                return "Выбранный персонаж партии";
 
             if (member?.MemberIndex.HasValue == true)
                 return $"Персонаж {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)}";
