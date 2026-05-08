@@ -9304,6 +9304,9 @@ namespace MMMapEditor
             if (counterValue > result.LoopIteration)
                 result.LoopIteration = counterValue;
 
+            PromoteRangedSequentialBattleFill(result, counterValue, result.BattleMonsterCountRange, debugMode);
+            MaterializeBattleLoopExitCounterRange(registerTracker, result.BattleMonsterCountRange, debugMode);
+
             result.IsIndeterminateLoop = false;
 
             if (debugMode)
@@ -9313,6 +9316,123 @@ namespace MMMapEditor
             }
 
             return true;
+        }
+
+        private void MaterializeBattleLoopExitCounterRange(
+            RegisterTracker registerTracker,
+            ValueRange8 countRange,
+            bool debugMode)
+        {
+            if (registerTracker == null || countRange == null)
+                return;
+
+            RegisterValueDistribution distribution =
+                _emulatedMemory8RangeDistributions.TryGetValue(BATTLE_MONSTER_COUNT_ADDRESS, out var knownDistribution)
+                    ? knownDistribution
+                    : RegisterValueDistribution.Unknown;
+
+            registerTracker.InvalidateRegister("BX");
+            registerTracker.ClearRegisterRange("BL");
+            registerTracker.ClearRegisterRange("BH");
+            registerTracker.SetRegisterRange("BX", countRange.Min, countRange.Max, distribution);
+            registerTracker.SetRegisterRange("BL", countRange.Min, countRange.Max, distribution);
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Диапазонный выход из battle-loop: BX/BL = {countRange.Min}-{countRange.Max}");
+            }
+        }
+
+        private static void PromoteRangedSequentialBattleFill(
+            PathAnalysisResult result,
+            byte observedCounterValue,
+            ValueRange8 countRange,
+            bool debugMode)
+        {
+            if (result == null ||
+                countRange == null ||
+                countRange.IsExact ||
+                observedCounterValue == 0 ||
+                countRange.Max == 0)
+            {
+                return;
+            }
+
+            int observedCount = Math.Min((int)observedCounterValue, BATTLE_MONSTER_TABLE_SLOT_COUNT);
+            int maxCount = Math.Min((int)countRange.Max, BATTLE_MONSTER_TABLE_SLOT_COUNT);
+            int minCount = Math.Min((int)countRange.Min, maxCount);
+            if (observedCount <= 0 || maxCount <= 0)
+                return;
+
+            byte? fillVal1 = null;
+            byte? fillVal2 = null;
+
+            for (int slot = 0; slot < observedCount; slot++)
+            {
+                if (!result.BattleMonsterEntries.TryGetValue(slot, out var entry) ||
+                    entry.val1 == 0 ||
+                    entry.val2 == 0 ||
+                    !IsDirectSequentialBattleFillObservation(result, slot))
+                {
+                    return;
+                }
+
+                if (!fillVal1.HasValue)
+                {
+                    fillVal1 = entry.val1;
+                    fillVal2 = entry.val2;
+                }
+                else if (fillVal1.Value != entry.val1 || fillVal2.Value != entry.val2)
+                {
+                    return;
+                }
+            }
+
+            if (!fillVal1.HasValue || !fillVal2.HasValue)
+                return;
+
+            for (int slot = 0; slot < maxCount; slot++)
+            {
+                UpsertBattleMonsterEntry(
+                    result,
+                    slot,
+                    fillVal1.Value,
+                    fillVal2.Value,
+                    slot >= minCount);
+            }
+
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+            {
+                string fixedText = minCount == 1 ? "1 обязательный слот" : $"{minCount} обязательных слотов";
+                string optionalText = maxCount > minCount
+                    ? $", {maxCount - minCount} условных"
+                    : string.Empty;
+                AnalysisDebug.WriteLine(
+                    $"        Развёрнут диапазонный battle-fill: val1=0x{fillVal1.Value:X2}, val2=0x{fillVal2.Value:X2}, {fixedText}{optionalText}");
+            }
+        }
+
+        private static bool IsDirectSequentialBattleFillObservation(PathAnalysisResult result, int slot)
+        {
+            if (result?.PartialBattleInfo == null)
+                return true;
+
+            var slotObservations = result.PartialBattleInfo
+                .Where(info => info.BxIndex == slot &&
+                               (info.DestAddr == BATTLE_MONSTER_FIRST_TABLE_ADDRESS ||
+                                info.DestAddr == BATTLE_MONSTER_SECOND_TABLE_ADDRESS))
+                .ToList();
+
+            if (slotObservations.Count == 0)
+                return true;
+
+            return slotObservations.All(info =>
+                !info.IsFromTable &&
+                info.SourceIndexBehavior != BattleSourceIndexBehavior.AdvancesWithLoop &&
+                info.SourceIndexBehavior != BattleSourceIndexBehavior.ExternalRandom);
         }
 
         private static bool HasObservedSequentialBattleProgress(PathAnalysisResult result, RegisterTracker registerTracker)
@@ -9827,6 +9947,15 @@ namespace MMMapEditor
                                 $"MOV byte ptr {eaText}, 0x{immValue:X2}",
                                 trackBattleMonsterTableWrite: true);
                         }
+                        else if (TryApplyTrackedByteWriteToRangedBattleTable(
+                                     instructionBytes,
+                                     registerTracker,
+                                     immValue,
+                                     result,
+                                     debugMode,
+                                     $"MOV byte ptr {eaText}, 0x{immValue:X2}"))
+                        {
+                        }
                     }
                 }
             }
@@ -9946,6 +10075,15 @@ namespace MMMapEditor
 
                             if (registerTracker.TryGetPartyPointerByteValue(regName, out var pointerByte))
                                 ApplyTrackedPartyPointerByteWrite(memAddr, pointerByte);
+                        }
+                        else if (TryApplyTrackedByteWriteToRangedBattleTable(
+                                     instructionBytes,
+                                     registerTracker,
+                                     regValue,
+                                     result,
+                                     debugMode,
+                                     $"MOV byte ptr {eaText}, {regName}"))
+                        {
                         }
                     }
                     else if (hasPartyFieldRef)
@@ -12529,6 +12667,118 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryDecode16BitEffectiveAddressRange(
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            out ushort baseAddress,
+            out ValueRange8 offsetRange,
+            out RegisterValueDistribution distribution,
+            out int decodedLength,
+            out string eaText)
+        {
+            baseAddress = 0;
+            offsetRange = null;
+            distribution = RegisterValueDistribution.Unknown;
+            decodedLength = 0;
+            eaText = null;
+
+            if (registerTracker == null ||
+                !TryDecode16BitMemoryOperandSyntax(
+                    instructionBytes,
+                    out byte mod,
+                    out byte rm,
+                    out int signedDisp,
+                    out decodedLength,
+                    out eaText))
+            {
+                return false;
+            }
+
+            if (mod == 0x00 && rm == 0x06)
+                return false;
+
+            int baseContribution = signedDisp;
+            ValueRange8 rangedOffset = null;
+            RegisterValueDistribution rangedDistribution = RegisterValueDistribution.Unknown;
+
+            bool AccumulateComponent(string regName)
+            {
+                if (registerTracker.TryGetRegisterValue(regName, out ushort exactValue))
+                {
+                    baseContribution += exactValue;
+                    return true;
+                }
+
+                if (registerTracker.TryGetRegisterRange(regName, out var rangeValue) && rangeValue != null)
+                {
+                    if (rangedOffset != null)
+                        return false;
+
+                    rangedOffset = new ValueRange8(rangeValue.Min, rangeValue.Max);
+                    registerTracker.TryGetRegisterDistribution(regName, out rangedDistribution);
+                    return true;
+                }
+
+                return false;
+            }
+
+            switch (rm)
+            {
+                case 0x00:
+                    if (!AccumulateComponent("BX") || !AccumulateComponent("SI"))
+                        return false;
+                    break;
+                case 0x01:
+                    if (!AccumulateComponent("BX") || !AccumulateComponent("DI"))
+                        return false;
+                    break;
+                case 0x02:
+                    if (!AccumulateComponent("BP") || !AccumulateComponent("SI"))
+                        return false;
+                    break;
+                case 0x03:
+                    if (!AccumulateComponent("BP") || !AccumulateComponent("DI"))
+                        return false;
+                    break;
+                case 0x04:
+                    if (!AccumulateComponent("SI"))
+                        return false;
+                    break;
+                case 0x05:
+                    if (!AccumulateComponent("DI"))
+                        return false;
+                    break;
+                case 0x06:
+                    if (!AccumulateComponent("BP"))
+                        return false;
+                    break;
+                case 0x07:
+                    if (!AccumulateComponent("BX"))
+                        return false;
+                    break;
+                default:
+                    return false;
+            }
+
+            if (rangedOffset == null)
+                return false;
+
+            int minAddress = baseContribution + rangedOffset.Min;
+            int maxAddress = baseContribution + rangedOffset.Max;
+            if (baseContribution < 0 ||
+                baseContribution > ushort.MaxValue ||
+                minAddress < 0 ||
+                maxAddress > ushort.MaxValue)
+            {
+                return false;
+            }
+
+            baseAddress = (ushort)baseContribution;
+            offsetRange = rangedOffset;
+            distribution = rangedDistribution;
+            return true;
+        }
+
         private bool TryGet16BitAddressBase(RegisterTracker registerTracker, byte rm, out ushort baseValue, out string baseText)
         {
             baseValue = 0;
@@ -12762,6 +13012,164 @@ namespace MMMapEditor
                 UpsertTrackedBattleMonsterComponent(result, secondSlot, value, false);
                 if (debugMode)
                     AnalysisDebug.WriteLine($"        Семантика [0x{BATTLE_MONSTER_SECOND_TABLE_ADDRESS:X4}+{secondSlot}]: второй индекс монстра = 0x{value:X2}");
+            }
+        }
+
+        private bool TryApplyTrackedByteWriteToRangedBattleTable(
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            byte value,
+            PathAnalysisResult result,
+            bool debugMode,
+            string sourceDescription)
+        {
+            if (result == null ||
+                !TryDecode16BitEffectiveAddressRange(
+                    instructionBytes,
+                    registerTracker,
+                    out ushort baseAddress,
+                    out ValueRange8 offsetRange,
+                    out _,
+                    out _,
+                    out string eaText))
+            {
+                return false;
+            }
+
+            if (TryGetBattleMonsterSlotRange(
+                    baseAddress,
+                    offsetRange,
+                    BATTLE_MONSTER_FIRST_TABLE_ADDRESS,
+                    out int firstSlotMin,
+                    out int firstSlotMax) &&
+                TryGetAppendSlotForRangedBattleFill(result, offsetRange, firstSlotMax, out int firstSyntheticSlot))
+            {
+                ApplyRangedBattleTableComponentWrite(
+                    result,
+                    BATTLE_MONSTER_FIRST_TABLE_ADDRESS,
+                    firstSlotMin,
+                    firstSlotMax,
+                    firstSyntheticSlot,
+                    value,
+                    isFirstComponent: true,
+                    debugMode,
+                    sourceDescription,
+                    eaText);
+                return true;
+            }
+
+            if (TryGetBattleMonsterSlotRange(
+                    baseAddress,
+                    offsetRange,
+                    BATTLE_MONSTER_SECOND_TABLE_ADDRESS,
+                    out int secondSlotMin,
+                    out int secondSlotMax) &&
+                TryGetAppendSlotForRangedBattleFill(result, offsetRange, secondSlotMax, out int secondSyntheticSlot))
+            {
+                ApplyRangedBattleTableComponentWrite(
+                    result,
+                    BATTLE_MONSTER_SECOND_TABLE_ADDRESS,
+                    secondSlotMin,
+                    secondSlotMax,
+                    secondSyntheticSlot,
+                    value,
+                    isFirstComponent: false,
+                    debugMode,
+                    sourceDescription,
+                    eaText);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetBattleMonsterSlotRange(
+            ushort baseAddress,
+            ValueRange8 offsetRange,
+            ushort tableBaseAddress,
+            out int slotMin,
+            out int slotMax)
+        {
+            slotMin = 0;
+            slotMax = 0;
+
+            if (offsetRange == null)
+                return false;
+
+            int minAddress = baseAddress + offsetRange.Min;
+            int maxAddress = baseAddress + offsetRange.Max;
+            int tableEndAddress = tableBaseAddress + BATTLE_MONSTER_TABLE_SLOT_COUNT - 1;
+
+            if (minAddress < tableBaseAddress || maxAddress > tableEndAddress)
+                return false;
+
+            slotMin = minAddress - tableBaseAddress;
+            slotMax = maxAddress - tableBaseAddress;
+            return slotMin >= 0 && slotMax >= slotMin && slotMax < BATTLE_MONSTER_TABLE_SLOT_COUNT;
+        }
+
+        private static bool TryGetAppendSlotForRangedBattleFill(
+            PathAnalysisResult result,
+            ValueRange8 offsetRange,
+            int slotMax,
+            out int syntheticSlot)
+        {
+            syntheticSlot = 0;
+
+            if (result == null ||
+                offsetRange == null ||
+                result.BattleMonsterCountRange == null ||
+                result.BattleMonsterCountRange.Min != offsetRange.Min ||
+                result.BattleMonsterCountRange.Max != offsetRange.Max ||
+                slotMax != offsetRange.Max ||
+                slotMax >= BATTLE_MONSTER_TABLE_SLOT_COUNT)
+            {
+                return false;
+            }
+
+            for (int slot = 0; slot < slotMax; slot++)
+            {
+                if (!result.BattleMonsterEntries.ContainsKey(slot))
+                    return false;
+            }
+
+            syntheticSlot = slotMax;
+            return true;
+        }
+
+        private void ApplyRangedBattleTableComponentWrite(
+            PathAnalysisResult result,
+            ushort tableBaseAddress,
+            int slotMin,
+            int slotMax,
+            int syntheticSlot,
+            byte value,
+            bool isFirstComponent,
+            bool debugMode,
+            string sourceDescription,
+            string eaText)
+        {
+            for (int slot = slotMin; slot <= slotMax; slot++)
+            {
+                ushort possibleAddress = unchecked((ushort)(tableBaseAddress + slot));
+                _emulatedMemory8.Remove(possibleAddress);
+                _emulatedMemory8Ranges.Remove(possibleAddress);
+                _emulatedMemory8RangeDistributions.Remove(possibleAddress);
+                _emulatedPartyPointerBytes.Remove(possibleAddress);
+                _emulatedPartyPointers.Remove(possibleAddress);
+                _emulatedPartyPointers.Remove(unchecked((ushort)(possibleAddress - 1)));
+                RegisterMemoryWrite(result, possibleAddress);
+            }
+
+            UpsertTrackedBattleMonsterComponent(result, syntheticSlot, value, isFirstComponent);
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+            {
+                string componentText = isFirstComponent ? "первый индекс" : "второй индекс";
+                AnalysisDebug.WriteLine(
+                    $"        {sourceDescription}: диапазонная запись {eaText} затрагивает [{tableBaseAddress:X4}+{slotMin}..{slotMax}], " +
+                    $"семантически добавлен хвостовой слот {syntheticSlot}: {componentText} = 0x{value:X2}");
             }
         }
 
