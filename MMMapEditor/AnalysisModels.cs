@@ -300,7 +300,8 @@ namespace MMMapEditor
         DynamicRandomBoundDependencyFormula = 10,
         MutedParentheticalNote = 11,
         WheelRewardExplanation = 12,
-        RawOverlayText = 13
+        RepeatedBattleWarning = 13,
+        RawOverlayText = 14
     }
 
     public sealed class NoteInlineStyleSpan
@@ -406,6 +407,7 @@ namespace MMMapEditor
         public bool TerminatedByRepeatedBackEdge { get; set; } = false;
         public bool TerminatedByPromptLoopBackEdge { get; set; } = false;
         public bool TerminatedByTerminalRet { get; set; } = false;
+        public bool DisablesCurrentMapEvent { get; set; } = false;
         public bool CallsRandomEncounter { get; set; } = false;
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;

@@ -36,6 +36,9 @@ namespace MMMapEditor
         private const string DynamicRandomBoundDependencyTokenPrefix = "[[DYNBOUND:";
         private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
+        private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
+        public const string RepeatedBattleWarningText =
+            "!! ВНИМАНИЕ! Битва запускается два раза; результат каждого (победа или побег) не влияет на запуск следующего !!";
         private const string RandomEncounterRubiconWarningPrefix =
             "Внимание: Если сумма уровней активной партии ";
         private const string RandomEncounterRubiconWarningSuffix =
@@ -86,6 +89,11 @@ namespace MMMapEditor
         public static string EncodeWheelRewardExplanationText(string visibleText)
         {
             return EncodeTextStyleToken(WheelRewardExplanationTokenPrefix, visibleText);
+        }
+
+        public static string EncodeRepeatedBattleWarningText(string visibleText)
+        {
+            return EncodeTextStyleToken(RepeatedBattleWarningTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -194,6 +202,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.WheelRewardExplanation
                     });
                     i += wheelRewardConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    RepeatedBattleWarningTokenPrefix,
+                    out string repeatedBattleWarningText,
+                    out int repeatedBattleWarningConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(repeatedBattleWarningText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = repeatedBattleWarningText.Length,
+                        Kind = NoteInlineStyleKind.RepeatedBattleWarning
+                    });
+                    i += repeatedBattleWarningConsumedLength;
                     continue;
                 }
 

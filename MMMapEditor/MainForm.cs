@@ -2418,6 +2418,7 @@ namespace MMMapEditor
                 FormatSpecialHighlightedNotes(notesTextBox, noteText);
 
                 FormatRandomEncounterRubiconWarnings(notesTextBox, noteText);
+                FormatRepeatedBattleWarnings(notesTextBox, noteText);
 
                 // Семантические пользовательские заметки могут прийти из старых/ручных карт без inline-spans.
                 FormatGeneratedSemanticNotes(notesTextBox, noteText);
@@ -2637,6 +2638,10 @@ namespace MMMapEditor
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.RepeatedBattleWarning:
+                        ApplyRepeatedBattleWarningStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.RawOverlayText:
                         break;
                 }
@@ -2725,6 +2730,36 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(238, 241, 226);
             rt.SelectionBackColor = Color.FromArgb(35, 49, 40);
             rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Regular);
+        }
+
+        private void ApplyRepeatedBattleWarningStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 86, 86);
+            rt.SelectionBackColor = Color.FromArgb(82, 58, 18);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void FormatRepeatedBattleWarnings(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            int startIndex = 0;
+            while (startIndex < noteText.Length)
+            {
+                int matchIndex = noteText.IndexOf(
+                    InlineNoteStyleCodec.RepeatedBattleWarningText,
+                    startIndex,
+                    StringComparison.Ordinal);
+                if (matchIndex < 0)
+                    break;
+
+                rt.Select(matchIndex, InlineNoteStyleCodec.RepeatedBattleWarningText.Length);
+                ApplyRepeatedBattleWarningStyle(rt);
+                startIndex = matchIndex + InlineNoteStyleCodec.RepeatedBattleWarningText.Length;
+            }
+
+            rt.Select(0, 0);
         }
 
         private void FormatGeneratedSemanticNotes(RichTextBox rt, string noteText)

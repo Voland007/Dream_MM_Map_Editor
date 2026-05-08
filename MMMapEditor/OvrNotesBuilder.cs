@@ -153,6 +153,7 @@ namespace MMMapEditor
                 string specialPlayerExplanation = TryBuildSpecialPlayerExplanation(
                     fileNameOnly,
                     obj);
+                string trailingRepeatedBattleWarningLine = BuildTrailingRepeatedBattleWarningLine(obj);
 
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
@@ -235,6 +236,14 @@ namespace MMMapEditor
                         AppendRenderedText(newNotes, inlineStyles, "\n\n");
 
                     AppendRenderedText(newNotes, inlineStyles, specialPlayerExplanation);
+                }
+
+                if (!string.IsNullOrWhiteSpace(trailingRepeatedBattleWarningLine))
+                {
+                    if (newNotes.Length > 0)
+                        AppendRenderedText(newNotes, inlineStyles, "\n");
+
+                    AppendRenderedText(newNotes, inlineStyles, trailingRepeatedBattleWarningLine);
                 }
 
                 string finalNoteText = newNotes.Length > 0
@@ -1501,6 +1510,80 @@ namespace MMMapEditor
             return variant.GetOccurrenceDescription();
         }
 
+        private static string BuildTrailingRepeatedBattleWarningLine(OvrObject obj)
+        {
+            if (obj?.PathVariants == null || obj.PathVariants.Count != 1)
+                return null;
+
+            var variant = obj.PathVariants.Values.FirstOrDefault();
+            if (!ShouldShowRepeatedBattleWarning(variant))
+                return null;
+
+            return InlineNoteStyleCodec.EncodeRepeatedBattleWarningText(InlineNoteStyleCodec.RepeatedBattleWarningText);
+        }
+
+        private static bool ShouldShowRepeatedBattleWarning(PathVariantInfo variant)
+        {
+            return HasExactlyFirstTwoOccurrenceCoverage(variant) &&
+                   HasBattleLaunchOutcome(variant);
+        }
+
+        private static bool HasExactlyFirstTwoOccurrenceCoverage(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            bool hasCoverage = false;
+            var covered = new HashSet<int>();
+
+            foreach (var range in variant.OccurrenceRanges ?? Enumerable.Empty<OccurrenceRangeInfo>())
+            {
+                if (range == null || range.Start <= 0)
+                    continue;
+
+                hasCoverage = true;
+                if (range.IsOpenEnded)
+                    return false;
+
+                int end = Math.Max(range.Start, range.End);
+                if (range.Start < 1 || end > 2)
+                    return false;
+
+                for (int occurrence = range.Start; occurrence <= end; occurrence++)
+                    covered.Add(occurrence);
+            }
+
+            foreach (int occurrence in variant.OccurrenceIndices ?? Enumerable.Empty<int>())
+            {
+                if (occurrence <= 0)
+                    continue;
+
+                hasCoverage = true;
+                if (occurrence < 1 || occurrence > 2)
+                    return false;
+
+                covered.Add(occurrence);
+            }
+
+            return hasCoverage &&
+                   covered.Count == 2 &&
+                   covered.Contains(1) &&
+                   covered.Contains(2);
+        }
+
+        private static bool HasBattleLaunchOutcome(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            return variant.CallsRandomEncounter ||
+                   variant.BattleMonsterCount.HasValue ||
+                   variant.BattleMonsterCountRange != null ||
+                   variant.IsBattleMonsterCountIndeterminate ||
+                   (variant.BattleMonsters?.Count ?? 0) > 0 ||
+                   (variant.PartiallyDefinedBattles?.Count ?? 0) > 0;
+        }
+
         private static string BuildProbabilityHeaderAnnotation(
             string probabilityLine,
             bool conditionAlreadyVisible = false)
@@ -1598,8 +1681,11 @@ namespace MMMapEditor
             var annotations = new List<string>();
 
             string occurrence = BuildOccurrenceLine(variant);
-            if (!string.IsNullOrWhiteSpace(occurrence))
+            if (!string.IsNullOrWhiteSpace(occurrence) &&
+                !ShouldSuppressSelfDisableOccurrenceHeaderAnnotation(variant, occurrence))
+            {
                 annotations.Add(occurrence);
+            }
 
             string guard = BuildGuardHeaderAnnotation(variant, suppressedGuardKey);
             if (!string.IsNullOrWhiteSpace(guard))
@@ -1619,6 +1705,59 @@ namespace MMMapEditor
                 annotations.Add(probabilityAnnotation);
 
             return annotations;
+        }
+
+        private static bool ShouldSuppressSelfDisableOccurrenceHeaderAnnotation(
+            PathVariantInfo variant,
+            string occurrence)
+        {
+            if (variant?.DisablesCurrentMapEvent != true ||
+                string.IsNullOrWhiteSpace(occurrence))
+            {
+                return false;
+            }
+
+            return HasFirstOccurrenceOnlyCoverage(variant) ||
+                   string.Equals(occurrence, "только при 1-м наступлениях", StringComparison.Ordinal);
+        }
+
+        private static bool HasFirstOccurrenceOnlyCoverage(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            bool hasCoverage = false;
+            var covered = new HashSet<int>();
+
+            foreach (var range in variant.OccurrenceRanges ?? Enumerable.Empty<OccurrenceRangeInfo>())
+            {
+                if (range == null || range.Start <= 0)
+                    continue;
+
+                hasCoverage = true;
+                if (range.IsOpenEnded)
+                    return false;
+
+                int end = Math.Max(range.Start, range.End);
+                if (range.Start != 1 || end != 1)
+                    return false;
+
+                covered.Add(1);
+            }
+
+            foreach (int occurrenceIndex in variant.OccurrenceIndices ?? Enumerable.Empty<int>())
+            {
+                if (occurrenceIndex <= 0)
+                    continue;
+
+                hasCoverage = true;
+                if (occurrenceIndex != 1)
+                    return false;
+
+                covered.Add(1);
+            }
+
+            return hasCoverage && covered.Count == 1 && covered.Contains(1);
         }
 
         private static void MergeObjectMetaIntoVariants(

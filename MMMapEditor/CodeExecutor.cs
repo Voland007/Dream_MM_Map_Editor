@@ -121,6 +121,7 @@ namespace MMMapEditor
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
         private const uint DISPLAY_TEXT_ROUTINE_ADDRESS = 0x4FB5;
+        private const uint CURRENT_MAP_EVENT_DISABLE_ROUTINE_ADDRESS = 0x4FC8;
         private const uint POSITIONED_TEXT_ROUTINE_ADDRESS = 0x4C60;
         private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
         private const ushort TEXT_CURSOR_COLUMN_ADDRESS = 0x3BC4;
@@ -4721,6 +4722,20 @@ namespace MMMapEditor
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
             }
 
+            if (callTarget == CURRENT_MAP_EVENT_DISABLE_ROUTINE_ADDRESS)
+            {
+                result.DisablesCurrentMapEvent = true;
+                result.HasSignificantCode = true;
+
+                if (debugMode)
+                {
+                    AnalysisDebug.WriteLine(
+                        "        Распознана SUB_4FC8: сбрасывает бит события текущей клетки во втором слое карты");
+                }
+
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            }
+
             if (callTarget == 0x4C55)
             {
                 AppendPrintedCharToLastText(result, registerTracker, (uint)insn.Address, debugMode);
@@ -5006,6 +5021,7 @@ namespace MMMapEditor
                 target.RandomEncounterRubicon = source.RandomEncounterRubicon;
 
             target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
+            target.DisablesCurrentMapEvent = target.DisablesCurrentMapEvent || source.DisablesCurrentMapEvent;
             MultiplyInlineProbability(target, source.InlineProbabilityNumerator, source.InlineProbabilityDenominator);
 
             if (source.RandomEncounterInstructionAddress != 0 &&

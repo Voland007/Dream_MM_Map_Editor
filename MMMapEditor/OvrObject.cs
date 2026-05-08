@@ -975,6 +975,7 @@ namespace MMMapEditor
             = new Dictionary<ushort, PersistentMemoryFirstAccessKind>();
         public Dictionary<ushort, StateValueConstraintInfo> StateValueConstraints { get; set; } = new Dictionary<ushort, StateValueConstraintInfo>();
         public HashSet<ushort> LocallyMaterializedStateValueConstraintAddresses { get; set; } = new HashSet<ushort>();
+        public bool DisablesCurrentMapEvent { get; set; } = false;
         public bool HasRepeatedEventOccurrenceSensitivity { get; set; } = false;
         public bool SuppressRepeatedEventOccurrenceDescription { get; set; } = false;
         public bool UsesInitialCoordinates { get; set; } = false;

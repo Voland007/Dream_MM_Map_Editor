@@ -577,6 +577,7 @@ namespace MMMapEditor
             if (currentState.RandomEncounterRubicon.HasValue)
                 merged.RandomEncounterRubicon = currentState.RandomEncounterRubicon;
             merged.CallsRandomEncounter = merged.CallsRandomEncounter || currentState.CallsRandomEncounter;
+            merged.DisablesCurrentMapEvent = merged.DisablesCurrentMapEvent || currentState.DisablesCurrentMapEvent;
             if (currentState.RandomEncounterInstructionAddress != 0 &&
                 (merged.RandomEncounterInstructionAddress == 0 ||
                  currentState.RandomEncounterInstructionAddress < merged.RandomEncounterInstructionAddress))
@@ -1126,6 +1127,7 @@ namespace MMMapEditor
             clone.TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge;
             clone.TerminatedByPromptLoopBackEdge = source.TerminatedByPromptLoopBackEdge;
             clone.TerminatedByTerminalRet = source.TerminatedByTerminalRet;
+            clone.DisablesCurrentMapEvent = source.DisablesCurrentMapEvent;
             clone.PartyFieldAccesses = source.PartyFieldAccesses?.Select(a => a?.Clone()).Where(a => a != null).ToList() ?? new List<PartyFieldReference>();
             clone.PendingPartyHpOperation = source.PendingPartyHpOperation?.Clone();
             clone.PendingPartySpOperation = source.PendingPartySpOperation?.Clone();
@@ -1257,6 +1259,7 @@ namespace MMMapEditor
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
                 LocallyMaterializedStateValueConstraintAddresses =
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
+                DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
@@ -2766,6 +2769,7 @@ namespace MMMapEditor
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
                 LocallyMaterializedStateValueConstraintAddresses =
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
+                DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,

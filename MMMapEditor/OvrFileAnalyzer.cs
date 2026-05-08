@@ -748,6 +748,28 @@ namespace MMMapEditor
                                 ? lockedCanonicalVariants
                                 : compatibleCanonicalVariants);
 
+                        if (ShouldTerminateRepeatedEventOnSelfDisable(rawLeaf))
+                        {
+                            maxAnalyzedOccurrence = Math.Max(maxAnalyzedOccurrence, occurrence + 1);
+                            if (canonicalVariant != null)
+                                canonicalVariant.HasRepeatedEventOccurrenceSensitivity = true;
+
+                            if (debugMode)
+                            {
+                                AnalysisDebug.WriteLine(
+                                    $"  Repeated self-disable path={rawLeaf.PathId}: SUB_4FC8 очищает бит события; " +
+                                    $"наступление #{occurrence + 1} не планируется");
+                            }
+
+                            continue;
+                        }
+                        else if (debugMode && rawLeaf.DisablesCurrentMapEvent)
+                        {
+                            AnalysisDebug.WriteLine(
+                                $"  Repeated self-disable path={rawLeaf.PathId}: SUB_4FC8 встречена в небоевой ветке; " +
+                                "повторные наступления продолжают анализироваться");
+                        }
+
                         string repeatedTransitionKey = BuildRepeatedEventTransitionProcessingKey(
                             rawLeaf,
                             canonicalVariant,
@@ -1315,6 +1337,7 @@ namespace MMMapEditor
                 $"pendingCounters={rawVariant.PendingPersistentCounterProgressions?.Count ?? 0}, " +
                 $"counterProgressions={rawVariant.PersistentCounterProgressions?.Count ?? 0}, " +
                 $"dynamicRandomBounds={rawVariant.DynamicRandomBoundDependencies?.Count ?? 0}, " +
+                $"selfDisable={rawVariant.DisablesCurrentMapEvent}, " +
                 $"battleCount={BuildRawLeafBattleCountText(rawVariant)}, " +
                 $"teleport={BuildRawLeafTeleportText(rawVariant)}, " +
                 $"callsRandomEncounter={rawVariant.CallsRandomEncounter}");
@@ -4028,6 +4051,7 @@ namespace MMMapEditor
                 $"localConstraints:{locallyMaterializedConstraintKey}",
                 $"coord:{variant.UsesInitialCoordinates}",
                 $"repeat:{variant.HasRepeatedEventOccurrenceSensitivity}",
+                $"selfDisable:{variant.DisablesCurrentMapEvent}",
                 $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
                 $"branch:{variant.HasBranchSpecificContribution}"
             });
@@ -4130,6 +4154,7 @@ namespace MMMapEditor
                 StateValueConstraints = CloneStateValueConstraints(source.StateValueConstraints),
                 LocallyMaterializedStateValueConstraintAddresses =
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
+                DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
@@ -4285,6 +4310,22 @@ namespace MMMapEditor
                 (variant.LoadedValues?.Count ?? 0) > 0 ||
                 (variant.PartyEffects?.Count ?? 0) > 0 ||
                 variant.HasTeleportTarget);
+        }
+
+        private static bool ShouldTerminateRepeatedEventOnSelfDisable(PathVariantInfo variant)
+        {
+            return variant?.DisablesCurrentMapEvent == true && HasBattleLaunchOutcome(variant);
+        }
+
+        private static bool HasBattleLaunchOutcome(PathVariantInfo variant)
+        {
+            return variant != null &&
+                (variant.CallsRandomEncounter ||
+                 variant.BattleMonsterCount.HasValue ||
+                 variant.BattleMonsterCountRange != null ||
+                 variant.IsBattleMonsterCountIndeterminate ||
+                 (variant.BattleMonsters?.Count ?? 0) > 0 ||
+                 (variant.PartiallyDefinedBattles?.Count ?? 0) > 0);
         }
 
         private List<OvrObject> ProcessDefaultPath(BinaryReader br, List<X86Instruction> allInstructions,
@@ -4643,6 +4684,7 @@ namespace MMMapEditor
                         kvp => kvp.Value?.Clone() ?? new StateValueConstraintInfo()),
                 LocallyMaterializedStateValueConstraintAddresses =
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
+                DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 UsesInitialCoordinates = source.UsesInitialCoordinates
             };
         }
