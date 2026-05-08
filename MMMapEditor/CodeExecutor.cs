@@ -116,6 +116,8 @@ namespace MMMapEditor
         private const int PARTY_QUEST_LORD3_OFFSET = PartyQuestLordFieldSemantics.Lord3FieldOffset;
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
+        private const uint DISPLAY_TEXT_ROUTINE_ADDRESS = 0x4FB5;
+        private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
 
         public CodeExecutor(OvrFileConfig config, InstructionAnalyzer instructionAnalyzer)
         {
@@ -320,6 +322,9 @@ namespace MMMapEditor
                                 currentPendingReturnAddresses,
                                 currentCallDepth);
                         }
+
+                        TryAddDisplayedTextFromExternalCall(insn, br, result, targetX, targetY,
+                            currentCallDepth, debugMode, ref textOrderCounter);
 
                         // Анализ частичных битв
                         if (result.PartialBattleInfo.Count > 0)
@@ -3429,6 +3434,68 @@ namespace MMMapEditor
                 string scope = isContextual ? "контекстный" : "локальный";
                 AnalysisDebug.WriteLine($"        Синтетически добавлен {scope} outcome-текст: {text}");
             }
+        }
+
+        private bool TryAddDisplayedTextFromExternalCall(X86Instruction insn, BinaryReader br,
+            PathAnalysisResult result, byte targetX, byte targetY, int callDepth,
+            bool debugMode, ref int textOrderCounter)
+        {
+            string mnemonicUpper = insn?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            if (!mnemonicUpper.StartsWith("CALL", StringComparison.Ordinal))
+                return false;
+
+            uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
+            if (callTarget != DISPLAY_TEXT_ROUTINE_ADDRESS)
+                return false;
+
+            if (!TryResolveTrackedWordValue(br, ACTIVE_TEXT_POINTER_ADDRESS, result, targetX, targetY, out ushort textAddress))
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        CALL 0x{DISPLAY_TEXT_ROUTINE_ADDRESS:X4}: не удалось прочитать указатель текста из [0x{ACTIVE_TEXT_POINTER_ADDRESS:X4}]");
+
+                return false;
+            }
+
+            string text = ExtractText(br, textAddress);
+            if (string.IsNullOrEmpty(text) ||
+                text == "(empty string)" ||
+                text.StartsWith("Cannot locate", StringComparison.OrdinalIgnoreCase))
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        CALL 0x{DISPLAY_TEXT_ROUTINE_ADDRESS:X4}: указатель [0x{ACTIVE_TEXT_POINTER_ADDRESS:X4}] = 0x{textAddress:X4}, текст не найден");
+
+                return false;
+            }
+
+            if (HasOverlayTextEntry(result, textAddress, text, callDepth))
+                return false;
+
+            AddSyntheticOutcomeText(
+                result,
+                $"Text at 0x{textAddress:X4}: {text}",
+                callDepth,
+                (uint)insn.Address,
+                debugMode,
+                ref textOrderCounter);
+
+            return true;
+        }
+
+        private static bool HasOverlayTextEntry(PathAnalysisResult result, ushort textAddress, string text, int callDepth)
+        {
+            if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
+                return false;
+
+            bool isContextual = callDepth > 0;
+            string addressPrefix = $"Text at 0x{textAddress:X4}";
+            string textSuffix = $": {text}";
+
+            return result.OrderedTexts.Any(entry =>
+                entry != null &&
+                entry.IsContextual == isContextual &&
+                !string.IsNullOrEmpty(entry.Text) &&
+                entry.Text.StartsWith(addressPrefix, StringComparison.Ordinal) &&
+                entry.Text.EndsWith(textSuffix, StringComparison.Ordinal));
         }
 
         private bool TryAddSyntheticRangeLootText(BinaryReader br, PathAnalysisResult result, ushort memAddr,
