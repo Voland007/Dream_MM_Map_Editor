@@ -85,6 +85,9 @@ namespace MMMapEditor
         private const int MAX_DEPTH = 24;
         private const byte KEYBOARD_INPUT_MIN = 0x00;
         private const byte KEYBOARD_INPUT_MAX = 0x7F;
+        private const ushort LEGACY_INPUT_INDEX_ADDRESS = 0x3BBA;
+        private const ushort OVERLAY_INPUT_INDEX_ADDRESS = 0xC9BB;
+        private const ushort INPUT_BUFFER_ADDRESS = 0x3CB8;
         private const ushort PARTY_POINTER_TABLE = 0x3CA8;
         private const ushort PARTY_COUNT_ADDRESS = 0x3BC0;
         private const ushort BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS = 0x3C1C;
@@ -122,6 +125,8 @@ namespace MMMapEditor
         private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
         private const ushort TEXT_CURSOR_COLUMN_ADDRESS = 0x3BC4;
         private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
+        private const byte PARTY_INVENTORY_FIRST_SLOT_OFFSET = 0x46;
+        private const byte PARTY_INVENTORY_LAST_SLOT_OFFSET = 0x4B;
 
         public CodeExecutor(OvrFileConfig config, InstructionAnalyzer instructionAnalyzer)
         {
@@ -5608,6 +5613,29 @@ namespace MMMapEditor
                     };
                 }
 
+                if (IsRepeatedPartyInventoryScanMatchBranch(insn, br, fileLength, currentAddress, nextAddress,
+                        condJumpTarget, registerTracker) &&
+                    processedBackEdges != null &&
+                    !processedBackEdges.Add((currentAddress, condJumpTarget)))
+                {
+                    ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
+                        (uint)insn.Address, debugMode);
+
+                    if (debugMode)
+                    {
+                        AnalysisDebug.WriteLine(
+                            $"      Повторная проверка слота инвентаря 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}: found-исход уже учтён, продолжаем сканирование");
+                    }
+
+                    return new ControlFlowResult
+                    {
+                        ShouldReturn = false,
+                        NextAddress = nextAddress,
+                        UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                        UpdatedCallDepth = callDepth
+                    };
+                }
+
                 var takenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: true);
                 var notTakenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: false);
 
@@ -5930,7 +5958,8 @@ namespace MMMapEditor
                     return false;
 
                 ushort indexAddress = br.ReadUInt16();
-                if (indexAddress != 0x3BBA)
+                if (indexAddress != LEGACY_INPUT_INDEX_ADDRESS &&
+                    indexAddress != OVERLAY_INPUT_INDEX_ADDRESS)
                     return false;
 
                 if (br.ReadByte() != 0xB7 || br.ReadByte() != 0x00)
@@ -5942,7 +5971,7 @@ namespace MMMapEditor
                     br.BaseStream.Seek(address, SeekOrigin.Begin);
                     if (br.ReadByte() == 0x88 &&
                         br.ReadByte() == 0x87 &&
-                        br.ReadUInt16() == 0x3CB8)
+                        br.ReadUInt16() == INPUT_BUFFER_ADDRESS)
                     {
                         return true;
                     }
@@ -5988,12 +6017,20 @@ namespace MMMapEditor
                 if (br.ReadByte() != 0xBB || br.ReadByte() != 0x00 || br.ReadByte() != 0x00)
                     return false;
 
-                uint scanEnd = (uint)Math.Min(fileLength, condJumpTarget + 0x14);
+                uint scanEnd = (uint)Math.Min(fileLength, condJumpTarget + 0x18);
                 for (uint address = condJumpTarget + 3; address + 1 < scanEnd; address++)
                 {
                     br.BaseStream.Seek(address, SeekOrigin.Begin);
-                    if (br.ReadByte() == 0x0A && br.ReadByte() == 0xC0)
+                    byte opcode = br.ReadByte();
+                    byte operand = br.ReadByte();
+                    if (opcode == 0x0A && operand == 0xC0)
                         return true;
+
+                    if (opcode == 0x3A &&
+                        IsAlComparedWithBxIndexedMemoryModRm(operand))
+                    {
+                        return true;
+                    }
                 }
             }
             catch
@@ -6006,6 +6043,144 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private static bool IsAlComparedWithBxIndexedMemoryModRm(byte modRm)
+        {
+            byte mode = (byte)((modRm >> 6) & 0x03);
+            byte reg = (byte)((modRm >> 3) & 0x07);
+            byte rm = (byte)(modRm & 0x07);
+
+            return mode == 0x02 &&
+                   reg == 0x00 &&
+                   rm == 0x07;
+        }
+
+        private bool IsRepeatedPartyInventoryScanMatchBranch(X86Instruction insn, BinaryReader br, long fileLength,
+            uint currentAddress, uint nextAddress, uint condJumpTarget, RegisterTracker registerTracker)
+        {
+            if (insn == null ||
+                br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                registerTracker == null ||
+                condJumpTarget <= currentAddress ||
+                condJumpTarget >= fileLength ||
+                registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
+                !string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase) ||
+                !registerTracker.LastCompareImmediate.HasValue)
+            {
+                return false;
+            }
+
+            string jump = insn.Mnemonic?.ToUpperInvariant();
+            if (jump != "JE" && jump != "JZ")
+                return false;
+
+            var comparedField = registerTracker.LastComparedPartyField;
+            if (!IsRawTechnicalPartyField(comparedField) ||
+                !comparedField.FieldOffset.HasValue ||
+                comparedField.FieldOffset.Value < PARTY_INVENTORY_FIRST_SLOT_OFFSET ||
+                comparedField.FieldOffset.Value > PARTY_INVENTORY_LAST_SLOT_OFFSET)
+            {
+                return false;
+            }
+
+            if (!LooksLikeSimpleTerminalByteStateWrite(br, fileLength, condJumpTarget))
+                return false;
+
+            return WindowContainsPartyInventoryScanExhaustion(br, fileLength, nextAddress, currentAddress, condJumpTarget);
+        }
+
+        private bool WindowContainsPartyInventoryScanExhaustion(BinaryReader br, long fileLength,
+            uint scanStartAddress, uint matchBranchAddress, uint matchBranchTarget)
+        {
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                scanStartAddress >= fileLength ||
+                matchBranchTarget <= scanStartAddress)
+            {
+                return false;
+            }
+
+            uint scanEnd = (uint)Math.Min(fileLength, Math.Min(matchBranchTarget, scanStartAddress + 0x50));
+            bool sawSlotBackEdge = false;
+            bool sawPartyBackEdge = false;
+            bool sawExhaustedTerminalWrite = false;
+            uint address = scanStartAddress;
+            var seenAddresses = new HashSet<uint>();
+
+            while (address < scanEnd && seenAddresses.Add(address))
+            {
+                if (LooksLikeSimpleTerminalByteStateWrite(br, fileLength, address))
+                    sawExhaustedTerminalWrite = true;
+
+                if (!TryDisassembleNext(br, address, out X86Instruction instruction) ||
+                    instruction?.Bytes == null ||
+                    instruction.Bytes.Length == 0 ||
+                    (uint)instruction.Address != address)
+                {
+                    break;
+                }
+
+                if (IsConditionalJump(instruction, out uint targetAddress) &&
+                    targetAddress <= matchBranchAddress &&
+                    IsCarrySetJump(instruction.Mnemonic))
+                {
+                    if (InstructionImmediatelyFollowsCmpClImmediate(br, address))
+                        sawSlotBackEdge = true;
+                    else if (InstructionImmediatelyFollowsCmpBlAgainstPartyCount(br, address))
+                        sawPartyBackEdge = true;
+                }
+
+                uint nextAddress = (uint)(instruction.Address + instruction.Bytes.Length);
+                if (nextAddress <= address)
+                    break;
+
+                address = nextAddress;
+            }
+
+            return sawSlotBackEdge && sawPartyBackEdge && sawExhaustedTerminalWrite;
+        }
+
+        private bool LooksLikeSimpleTerminalByteStateWrite(BinaryReader br, long fileLength, uint address)
+        {
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                address + 8 > fileLength)
+            {
+                return false;
+            }
+
+            byte[] bytes = ReadBytesAt(br, address, 8);
+            return bytes.Length >= 8 &&
+                   bytes[0] == 0xB0 &&
+                   bytes[2] == 0xA2 &&
+                   bytes[5] == 0xB0 &&
+                   bytes[7] == 0xC3;
+        }
+
+        private bool InstructionImmediatelyFollowsCmpClImmediate(BinaryReader br, uint instructionAddress)
+        {
+            if (instructionAddress < 3)
+                return false;
+
+            byte[] bytes = ReadBytesAt(br, instructionAddress - 3, 3);
+            return bytes.Length == 3 &&
+                   bytes[0] == 0x80 &&
+                   bytes[1] == 0xF9;
+        }
+
+        private bool InstructionImmediatelyFollowsCmpBlAgainstPartyCount(BinaryReader br, uint instructionAddress)
+        {
+            if (instructionAddress < 4)
+                return false;
+
+            byte[] bytes = ReadBytesAt(br, instructionAddress - 4, 4);
+            return bytes.Length == 4 &&
+                   bytes[0] == 0x3A &&
+                   bytes[1] == 0x1E &&
+                   bytes[2] == (byte)(PARTY_COUNT_ADDRESS & 0xFF) &&
+                   bytes[3] == (byte)(PARTY_COUNT_ADDRESS >> 8);
         }
 
         private bool IsCmpAlAgainstBxIndexedMemoryImmediatelyBefore(BinaryReader br, long fileLength, uint currentAddress)
