@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -3367,6 +3368,18 @@ namespace MMMapEditor
                 return updated ? OrderedTextMergeOutcome.UpdatedExisting : OrderedTextMergeOutcome.UnchangedExisting;
             }
 
+            var existingEquivalentOverlayText = result.OrderedTexts.FirstOrDefault(entry =>
+                entry != null &&
+                IsEquivalentOverlayTextEntry(entry.Text, text));
+
+            if (existingEquivalentOverlayText != null)
+            {
+                bool updated = PromoteOrderedTextMetadata(existingEquivalentOverlayText, candidate);
+                AddLegacyText(result, text, isContextual);
+                foundTextsInThisPath?.Add(text);
+                return updated ? OrderedTextMergeOutcome.UpdatedExisting : OrderedTextMergeOutcome.UnchangedExisting;
+            }
+
             if (TryReplacePendingInferredLootContainerIntro(result, candidate, foundTextsInThisPath, debugMode))
                 return OrderedTextMergeOutcome.UpdatedExisting;
 
@@ -3467,7 +3480,7 @@ namespace MMMapEditor
                 return false;
             }
 
-            if (HasOverlayTextEntry(result, textAddress, text, callDepth))
+            if (HasOverlayTextEntry(result, textAddress, text))
                 return false;
 
             AddSyntheticOutcomeText(
@@ -3481,21 +3494,55 @@ namespace MMMapEditor
             return true;
         }
 
-        private static bool HasOverlayTextEntry(PathAnalysisResult result, ushort textAddress, string text, int callDepth)
+        private static bool HasOverlayTextEntry(PathAnalysisResult result, ushort textAddress, string text)
         {
             if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
                 return false;
 
-            bool isContextual = callDepth > 0;
-            string addressPrefix = $"Text at 0x{textAddress:X4}";
-            string textSuffix = $": {text}";
+            string candidateText = $"Text at 0x{textAddress:X4}: {text}";
 
             return result.OrderedTexts.Any(entry =>
                 entry != null &&
-                entry.IsContextual == isContextual &&
-                !string.IsNullOrEmpty(entry.Text) &&
-                entry.Text.StartsWith(addressPrefix, StringComparison.Ordinal) &&
-                entry.Text.EndsWith(textSuffix, StringComparison.Ordinal));
+                IsEquivalentOverlayTextEntry(entry.Text, candidateText));
+        }
+
+        private static bool IsEquivalentOverlayTextEntry(string left, string right)
+        {
+            if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
+                return false;
+
+            if (string.Equals(left, right, StringComparison.Ordinal))
+                return true;
+
+            return TrySplitOverlayTextEntry(left, out ushort leftAddress, out string leftText) &&
+                   TrySplitOverlayTextEntry(right, out ushort rightAddress, out string rightText) &&
+                   leftAddress == rightAddress &&
+                   string.Equals(leftText, rightText, StringComparison.Ordinal);
+        }
+
+        private static bool TrySplitOverlayTextEntry(string rawText, out ushort textAddress, out string visibleText)
+        {
+            textAddress = 0;
+            visibleText = string.Empty;
+
+            const string prefix = "Text at 0x";
+            if (string.IsNullOrEmpty(rawText) ||
+                !rawText.StartsWith(prefix, StringComparison.Ordinal) ||
+                rawText.Length < prefix.Length + 4)
+            {
+                return false;
+            }
+
+            string addressText = rawText.Substring(prefix.Length, 4);
+            if (!ushort.TryParse(addressText, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out textAddress))
+                return false;
+
+            int separatorIndex = rawText.IndexOf(": ", prefix.Length + 4, StringComparison.Ordinal);
+            if (separatorIndex < 0)
+                return false;
+
+            visibleText = rawText.Substring(separatorIndex + 2);
+            return true;
         }
 
         private bool TryAddSyntheticRangeLootText(BinaryReader br, PathAnalysisResult result, ushort memAddr,
