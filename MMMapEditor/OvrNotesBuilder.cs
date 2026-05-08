@@ -824,7 +824,7 @@ namespace MMMapEditor
             string inlineSpecialSpoilerLine)
         {
             var lines = new List<string>();
-            var narrativeLines = DecodeNoteTexts(rawTexts);
+            var narrativeLines = RemoveAdjacentDuplicatePromptLines(DecodeNoteTexts(rawTexts));
             InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
             var monsterStatLines = GetMonsterStatLines(
                 variantObject,
@@ -872,6 +872,35 @@ namespace MMMapEditor
                 .ToList();
         }
 
+        private static List<string> RemoveAdjacentDuplicatePromptLines(List<string> lines)
+        {
+            if (lines == null || lines.Count < 2)
+                return lines ?? new List<string>();
+
+            var result = new List<string>();
+            foreach (var line in lines)
+            {
+                if (result.Count > 0 &&
+                    IsPromptLine(line) &&
+                    string.Equals(result[result.Count - 1], line, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                result.Add(line);
+            }
+
+            return result;
+        }
+
+        private static bool IsPromptLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return ExtractPromptOptionLabels(line).Count >= 2;
+        }
+
         private static List<string> BuildVariantLinesForHierarchy(
             OvrObject variantObject,
             IEnumerable<string> rawTexts,
@@ -883,7 +912,7 @@ namespace MMMapEditor
             string inlineSpecialSpoilerLine)
         {
             var lines = new List<string>();
-            var narrativeLines = DecodeNoteTexts(rawTexts);
+            var narrativeLines = RemoveAdjacentDuplicatePromptLines(DecodeNoteTexts(rawTexts));
             InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
             var specialNoteLines = GetSpecialNoteLines(variantObject);
 
@@ -1859,6 +1888,7 @@ private static string BuildHierarchicalVariantNotes(
                 IntroduceSharedPromptHierarchyAcrossChoiceChildren(root);
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
+                RemoveRedundantInheritedLines(root);
                 group.TreeRoot = PruneDecorativeSingleChoiceLeaves(
                     SimplifyGenericChoiceTree(
                         CompressVariantTree(root)));
@@ -3083,6 +3113,65 @@ private static string BuildHierarchicalVariantNotes(
         private static string BuildCommonLinesKey(IEnumerable<string> lines)
         {
             return string.Join("\n---\n", (lines ?? Enumerable.Empty<string>()).Select(line => line ?? string.Empty));
+        }
+
+        private static void RemoveRedundantInheritedLines(VariantTreeNode node)
+        {
+            RemoveRedundantInheritedLines(node, new List<string>());
+        }
+
+        private static void RemoveRedundantInheritedLines(VariantTreeNode node, List<string> inheritedLines)
+        {
+            if (node == null)
+                return;
+
+            node.CommonLines = RemoveLeadingInheritedSuffix(node.CommonLines, inheritedLines);
+
+            var nextInheritedLines = new List<string>(inheritedLines ?? new List<string>());
+            nextInheritedLines.AddRange(node.CommonLines ?? new List<string>());
+
+            foreach (var variant in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                if (variant != null)
+                    variant.Lines = RemoveLeadingInheritedSuffix(variant.Lines, nextInheritedLines);
+            }
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                RemoveRedundantInheritedLines(child, nextInheritedLines);
+        }
+
+        private static List<string> RemoveLeadingInheritedSuffix(List<string> lines, List<string> inheritedLines)
+        {
+            if (lines == null || lines.Count == 0 || inheritedLines == null || inheritedLines.Count == 0)
+                return lines ?? new List<string>();
+
+            int duplicateCount = GetLeadingInheritedSuffixLength(lines, inheritedLines);
+            return duplicateCount > 0
+                ? lines.Skip(duplicateCount).ToList()
+                : lines;
+        }
+
+        private static int GetLeadingInheritedSuffixLength(List<string> lines, List<string> inheritedLines)
+        {
+            int maxLength = Math.Min(lines?.Count ?? 0, inheritedLines?.Count ?? 0);
+            for (int length = maxLength; length > 0; length--)
+            {
+                int inheritedStart = inheritedLines.Count - length;
+                bool matches = true;
+                for (int i = 0; i < length; i++)
+                {
+                    if (!string.Equals(lines[i], inheritedLines[inheritedStart + i], StringComparison.Ordinal))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                    return length;
+            }
+
+            return 0;
         }
 
         private static void PromoteConditionalPartyNotesBeforeBattle(VariantTreeNode node)
@@ -5920,13 +6009,27 @@ private static string BuildHierarchicalVariantNotes(
 
             int colonIndex = rawText.IndexOf(':');
             string candidate;
+            bool isRawOverlayText = IsRawOverlayTextEntry(rawText);
 
             if (colonIndex >= 0)
             {
-                string afterColon = rawText.Substring(colonIndex + 1).Trim();
-                candidate = !string.IsNullOrEmpty(afterColon)
-                    ? afterColon
-                    : rawText.Trim();
+                string afterColonWithSeparator = rawText.Substring(colonIndex + 1);
+                string payload = afterColonWithSeparator.StartsWith(" ", StringComparison.Ordinal)
+                    ? afterColonWithSeparator.Substring(1)
+                    : afterColonWithSeparator;
+                string afterColon = payload.Trim();
+                if (!string.IsNullOrEmpty(afterColon))
+                {
+                    candidate = afterColon;
+                }
+                else if (isRawOverlayText && payload.Length > 0)
+                {
+                    return PreserveWhitespaceOnlyRawOverlayText(DecodeTextString(payload));
+                }
+                else
+                {
+                    candidate = rawText.Trim();
+                }
             }
             else
             {
@@ -5935,6 +6038,19 @@ private static string BuildHierarchicalVariantNotes(
 
             string decodedText = DecodeTextString(candidate);
             if (string.IsNullOrWhiteSpace(decodedText))
+            {
+                if (isRawOverlayText && !string.IsNullOrEmpty(decodedText))
+                    return PreserveWhitespaceOnlyRawOverlayText(decodedText);
+
+                return null;
+            }
+
+            return decodedText.TrimEnd('\r');
+        }
+
+        private static string PreserveWhitespaceOnlyRawOverlayText(string decodedText)
+        {
+            if (string.IsNullOrEmpty(decodedText))
                 return null;
 
             return decodedText.TrimEnd('\r');

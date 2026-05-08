@@ -118,7 +118,10 @@ namespace MMMapEditor
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
         private const uint DISPLAY_TEXT_ROUTINE_ADDRESS = 0x4FB5;
+        private const uint POSITIONED_TEXT_ROUTINE_ADDRESS = 0x4C60;
         private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
+        private const ushort TEXT_CURSOR_COLUMN_ADDRESS = 0x3BC4;
+        private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
 
         public CodeExecutor(OvrFileConfig config, InstructionAnalyzer instructionAnalyzer)
         {
@@ -324,7 +327,7 @@ namespace MMMapEditor
                                 currentCallDepth);
                         }
 
-                        TryAddDisplayedTextFromExternalCall(insn, br, result, targetX, targetY,
+                        TryAddDisplayedTextFromExternalCall(insn, br, registerTracker, result, targetX, targetY,
                             currentCallDepth, debugMode, ref textOrderCounter);
 
                         // Анализ частичных битв
@@ -3450,7 +3453,7 @@ namespace MMMapEditor
         }
 
         private bool TryAddDisplayedTextFromExternalCall(X86Instruction insn, BinaryReader br,
-            PathAnalysisResult result, byte targetX, byte targetY, int callDepth,
+            RegisterTracker registerTracker, PathAnalysisResult result, byte targetX, byte targetY, int callDepth,
             bool debugMode, ref int textOrderCounter)
         {
             string mnemonicUpper = insn?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
@@ -3458,13 +3461,13 @@ namespace MMMapEditor
                 return false;
 
             uint callTarget = GetInstructionTargetAddress(insn, br.BaseStream.Length);
-            if (callTarget != DISPLAY_TEXT_ROUTINE_ADDRESS)
+            if (!IsActiveTextDisplayRoutine(callTarget))
                 return false;
 
             if (!TryResolveTrackedWordValue(br, ACTIVE_TEXT_POINTER_ADDRESS, result, targetX, targetY, out ushort textAddress))
             {
                 if (debugMode)
-                    AnalysisDebug.WriteLine($"        CALL 0x{DISPLAY_TEXT_ROUTINE_ADDRESS:X4}: не удалось прочитать указатель текста из [0x{ACTIVE_TEXT_POINTER_ADDRESS:X4}]");
+                    AnalysisDebug.WriteLine($"        CALL 0x{callTarget:X4}: не удалось прочитать указатель текста из [0x{ACTIVE_TEXT_POINTER_ADDRESS:X4}]");
 
                 return false;
             }
@@ -3475,13 +3478,30 @@ namespace MMMapEditor
                 text.StartsWith("Cannot locate", StringComparison.OrdinalIgnoreCase))
             {
                 if (debugMode)
-                    AnalysisDebug.WriteLine($"        CALL 0x{DISPLAY_TEXT_ROUTINE_ADDRESS:X4}: указатель [0x{ACTIVE_TEXT_POINTER_ADDRESS:X4}] = 0x{textAddress:X4}, текст не найден");
+                    AnalysisDebug.WriteLine($"        CALL 0x{callTarget:X4}: указатель [0x{ACTIVE_TEXT_POINTER_ADDRESS:X4}] = 0x{textAddress:X4}, текст не найден");
 
                 return false;
             }
 
-            if (HasOverlayTextEntry(result, textAddress, text))
+            if (TryAddDisplayedTextPointerTableAlternatives(
+                    br,
+                    registerTracker,
+                    result,
+                    textAddress,
+                    callTarget,
+                    callDepth,
+                    (uint)insn.Address,
+                    debugMode,
+                    ref textOrderCounter))
+            {
+                return true;
+            }
+
+            if (HasOverlayTextEntry(result, textAddress, text) ||
+                callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS && HasOverlayTextEntryWithSameVisibleText(result, text))
+            {
                 return false;
+            }
 
             AddSyntheticOutcomeText(
                 result,
@@ -3494,6 +3514,225 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryAddDisplayedTextPointerTableAlternatives(BinaryReader br, RegisterTracker registerTracker,
+            PathAnalysisResult result, ushort currentTextAddress, uint callTarget, int callDepth,
+            uint instructionAddress, bool debugMode, ref int textOrderCounter)
+        {
+            if (!ShouldExpandDisplayedTextPointerTable(registerTracker, result) ||
+                !TryGetActiveTextPointerTableBase(registerTracker, currentTextAddress, out ushort tableBase))
+            {
+                return false;
+            }
+
+            var options = ReadTextPointerTableOptions(br, tableBase);
+            if (options.Count <= 1 || options.All(option => option.Address != currentTextAddress))
+                return false;
+
+            bool addedAny = false;
+            foreach (var option in options)
+            {
+                if (HasOverlayTextEntry(result, option.Address, option.Text) ||
+                    callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS &&
+                    HasOverlayTextEntryWithSameVisibleText(result, option.Text))
+                {
+                    continue;
+                }
+
+                AddSyntheticOutcomeText(
+                    result,
+                    $"Text at 0x{option.Address:X4}: {option.Text}",
+                    callDepth,
+                    instructionAddress,
+                    debugMode,
+                    ref textOrderCounter);
+                addedAny = true;
+            }
+
+            if (addedAny && debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        CALL 0x{callTarget:X4}: раскрыта таблица текстовых указателей 0x{tableBase:X4}, вариантов: {options.Count}");
+            }
+
+            return addedAny;
+        }
+
+        private static bool ShouldExpandDisplayedTextPointerTable(RegisterTracker registerTracker, PathAnalysisResult result)
+        {
+            if (registerTracker == null)
+                return false;
+
+            if (registerTracker.IsFromTable("AX") ||
+                registerTracker.GetSourceIndexExternallyDerived("AX") ||
+                registerTracker.HasPendingExternalCallResult("AX") ||
+                registerTracker.IsRegisterExternallyDerived("AX"))
+            {
+                return true;
+            }
+
+            return result?.InlineBranchChoices?.Any(choice =>
+                choice != null &&
+                string.Equals(choice.CompareRegister, "AL", StringComparison.OrdinalIgnoreCase) &&
+                choice.CompareValue.HasValue &&
+                choice.CompareValue.Value >= (byte)'0' &&
+                choice.CompareValue.Value <= (byte)'9') == true;
+        }
+
+        private bool TryGetActiveTextPointerTableBase(RegisterTracker registerTracker,
+            ushort currentTextAddress, out ushort tableBase)
+        {
+            tableBase = 0;
+
+            if (registerTracker == null ||
+                !registerTracker.TryGetRegisterValue("AX", out ushort axValue) ||
+                axValue != currentTextAddress ||
+                !registerTracker.IsFromTable("AX"))
+            {
+                return false;
+            }
+
+            ushort? sourceAddress = registerTracker.GetSourceAddress("AX");
+            if (!sourceAddress.HasValue || sourceAddress.Value < OvrFileConfig.OverlayTextStartAddress)
+                return false;
+
+            ushort originalIndex = registerTracker.GetOriginalBx("AX") ?? 0;
+            int baseAddress = sourceAddress.Value - originalIndex;
+            if (baseAddress < OvrFileConfig.OverlayTextStartAddress || baseAddress > 0xFFFF)
+                return false;
+
+            tableBase = (ushort)baseAddress;
+            return true;
+        }
+
+        private List<(ushort Address, string Text)> ReadTextPointerTableOptions(BinaryReader br, ushort tableBase)
+        {
+            var options = new List<(ushort Address, string Text)>();
+            var seenAddresses = new HashSet<ushort>();
+
+            for (int i = 0; i < MAX_TEXT_POINTER_TABLE_OPTIONS; i++)
+            {
+                ushort pointerAddress = unchecked((ushort)(tableBase + i * 2));
+                if (!TryReadOverlayWord(br, pointerAddress, out ushort textAddress) ||
+                    textAddress < OvrFileConfig.OverlayTextStartAddress ||
+                    !seenAddresses.Add(textAddress))
+                {
+                    break;
+                }
+
+                string text = ExtractText(br, textAddress);
+                if (string.IsNullOrEmpty(text) ||
+                    text == "(empty string)" ||
+                    text.StartsWith("Cannot locate", StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                options.Add((textAddress, text));
+            }
+
+            return options;
+        }
+
+        private static bool IsActiveTextDisplayRoutine(uint callTarget)
+        {
+            return callTarget == DISPLAY_TEXT_ROUTINE_ADDRESS ||
+                   callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS;
+        }
+
+        private void AdvancePositionedTextCursorForExternalCall(X86Instruction insn, BinaryReader br,
+            RegisterTracker registerTracker, PathAnalysisResult result, byte targetX, byte targetY, bool debugMode)
+        {
+            if (insn == null ||
+                !TryResolveTrackedWordValue(br, ACTIVE_TEXT_POINTER_ADDRESS, result, targetX, targetY, out ushort textAddress))
+            {
+                return;
+            }
+
+            string text = ExtractText(br, textAddress);
+            if (!TryGetSingleLineDisplayAdvance(text, out int advance) || advance <= 0)
+                return;
+
+            if (!TryResolveTrackedByteValue(br, TEXT_CURSOR_COLUMN_ADDRESS, result, targetX, targetY, out byte currentColumn))
+                return;
+
+            byte nextColumn = (byte)Math.Min(byte.MaxValue, currentColumn + advance);
+            ApplyTrackedByteWrite(
+                TEXT_CURSOR_COLUMN_ADDRESS,
+                nextColumn,
+                result,
+                targetX,
+                targetY,
+                insn,
+                debugMode,
+                $"CALL 0x{POSITIONED_TEXT_ROUTINE_ADDRESS:X4}: advance text cursor by {advance}");
+
+            registerTracker?.TrackPartialRegisterOperation(
+                "AX",
+                "AL",
+                nextColumn,
+                (uint)insn.Address,
+                $"CALL 0x{POSITIONED_TEXT_ROUTINE_ADDRESS:X4}: cursor column");
+        }
+
+        private static bool TryGetSingleLineDisplayAdvance(string text, out int advance)
+        {
+            advance = 0;
+            if (string.IsNullOrEmpty(text) ||
+                text == "(empty string)" ||
+                text.StartsWith("Cannot locate", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                char ch = text[i];
+                if (ch != '\\')
+                {
+                    advance++;
+                    continue;
+                }
+
+                if (i + 1 >= text.Length)
+                    return false;
+
+                char escaped = text[++i];
+                switch (escaped)
+                {
+                    case 'r':
+                    case 'n':
+                        return false;
+                    case 't':
+                    case '"':
+                    case '\\':
+                        advance++;
+                        break;
+                    case 'x':
+                        if (i + 2 >= text.Length ||
+                            !IsHexDigit(text[i + 1]) ||
+                            !IsHexDigit(text[i + 2]))
+                        {
+                            return false;
+                        }
+
+                        i += 2;
+                        advance++;
+                        break;
+                    default:
+                        return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsHexDigit(char ch)
+        {
+            return (ch >= '0' && ch <= '9') ||
+                   (ch >= 'A' && ch <= 'F') ||
+                   (ch >= 'a' && ch <= 'f');
+        }
+
         private static bool HasOverlayTextEntry(PathAnalysisResult result, ushort textAddress, string text)
         {
             if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
@@ -3504,6 +3743,17 @@ namespace MMMapEditor
             return result.OrderedTexts.Any(entry =>
                 entry != null &&
                 IsEquivalentOverlayTextEntry(entry.Text, candidateText));
+        }
+
+        private static bool HasOverlayTextEntryWithSameVisibleText(PathAnalysisResult result, string text)
+        {
+            if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
+                return false;
+
+            return result.OrderedTexts.Any(entry =>
+                entry != null &&
+                TrySplitOverlayTextEntry(entry.Text, out _, out string existingText) &&
+                string.Equals(existingText, text, StringComparison.Ordinal));
         }
 
         private static bool IsEquivalentOverlayTextEntry(string left, string right)
@@ -4469,6 +4719,20 @@ namespace MMMapEditor
             if (callTarget == 0x4C55)
             {
                 AppendPrintedCharToLastText(result, registerTracker, (uint)insn.Address, debugMode);
+                return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
+            }
+
+            if (callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS)
+            {
+                AdvancePositionedTextCursorForExternalCall(
+                    insn,
+                    br,
+                    registerTracker,
+                    result,
+                    targetX,
+                    targetY,
+                    debugMode);
+
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
             }
 
@@ -12273,6 +12537,11 @@ namespace MMMapEditor
         private bool TryReadOverlayByte(BinaryReader br, ushort memAddr, out byte value)
         {
             return OvrOverlayAddressReader.TryReadByte(br, _config, memAddr, out value);
+        }
+
+        private bool TryReadOverlayWord(BinaryReader br, ushort memAddr, out ushort value)
+        {
+            return OvrOverlayAddressReader.TryReadWord(br, _config, memAddr, out value);
         }
 
         private static bool TryGetBattleMonsterSlot(ushort memAddr, ushort tableBaseAddress, out int slotIndex)
