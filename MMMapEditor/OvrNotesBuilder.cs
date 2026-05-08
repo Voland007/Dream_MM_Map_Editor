@@ -5304,17 +5304,36 @@ private static string BuildHierarchicalVariantNotes(
             OvrFileConfig config,
             OvrObject obj)
         {
-            if (!string.Equals(fileNameOnly, "CAVE7.OVR", StringComparison.OrdinalIgnoreCase))
-                return null;
+            if (string.Equals(fileNameOnly, "CAVE7.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (obj?.PatchAddress != 0x005C)
+                    return null;
 
-            if (obj?.PatchAddress != 0x005C)
-                return null;
+                string cave7Answer = TryReadCave7RiddleAnswer(filename, config);
+                if (string.IsNullOrWhiteSpace(cave7Answer))
+                    return null;
 
-            string answer = TryReadCave7RiddleAnswer(filename, config);
-            if (string.IsNullOrWhiteSpace(answer))
-                return null;
+                return BuildSpoilerAnswerLine(cave7Answer);
+            }
 
-            return BuildSpoilerAnswerLine(answer);
+            if (string.Equals(fileNameOnly, "AREAB2.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (obj == null ||
+                    obj.X != 4 ||
+                    obj.Y != 4 ||
+                    obj.PatchAddress != 0x005F)
+                {
+                    return null;
+                }
+
+                string areaB2Answer = TryReadAreaB2IcePrincessAnswer(filename, config);
+                if (string.IsNullOrWhiteSpace(areaB2Answer))
+                    return null;
+
+                return BuildSpoilerAnswerLine(areaB2Answer);
+            }
+
+            return null;
         }
 
         private static string TryBuildSpecialPlayerExplanation(string fileNameOnly, OvrObject obj)
@@ -5426,6 +5445,13 @@ private static string BuildHierarchicalVariantNotes(
             // В CAVE7 правильный ответ лежит в оверлее в зашифрованном виде:
             // к каждому байту нужно прибавить 0x1E до сравнения с введённым символом.
             return TryReadShiftedOverlayText(filename, config, 0xCBBC, 32, 0x1E);
+        }
+
+        private static string TryReadAreaB2IcePrincessAnswer(string filename, OvrFileConfig config)
+        {
+            // В AREAB2 клетка (4,4) сравнивает первые 4 символа ввода так:
+            // (inputChar & 0x7F) + 0x40 == storedByte at 0xC9E7 + index.
+            return TryReadShiftedOverlayText(filename, config, 0xC9E7, 4, unchecked((byte)-0x40));
         }
 
         private static string TryReadShiftedOverlayText(
