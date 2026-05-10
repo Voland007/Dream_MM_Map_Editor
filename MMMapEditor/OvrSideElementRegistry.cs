@@ -251,6 +251,15 @@ namespace MMMapEditor
                         "OutdoorWater",
                         CreateBorder("\u0414\u0443\u0431\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
                         CreateBorder("\u0413\u043E\u0440\u044B (\u0441\u043D\u0435\u0433)"),
+                        CreateBorder("\u0412\u043E\u0434\u0430")),
+                [new OvrSideLayoutFamilyKey(
+                    new OvrSideKey(0x02, 0x0D),
+                    new OvrSideKey(0x01, 0x0A),
+                    new OvrSideKey(0x05, 0x1A),
+                    0x01)] = CreateLayoutTemplate(
+                        "AreaB4",
+                        CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
+                        CreateBorder("\u0413\u043E\u0440\u044B"),
                         CreateBorder("\u0412\u043E\u0434\u0430"))
             };
 
