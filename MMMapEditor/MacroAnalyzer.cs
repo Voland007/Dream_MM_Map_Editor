@@ -823,6 +823,10 @@ namespace MMMapEditor
         {
             AnalysisDebug.WriteLine("Поиск пути по умолчанию после табличного цикла...");
 
+            uint? staticMapDispatchPath = FindPackedCoordinateStaticMapDispatchDefaultPath(allInstructions);
+            if (staticMapDispatchPath.HasValue)
+                return staticMapDispatchPath;
+
             for (int i = 0; i < allInstructions.Count - 10; i++)
             {
                 // Ищем паттерн: MOV AL, [3C3A]
@@ -932,6 +936,180 @@ namespace MMMapEditor
 
             AnalysisDebug.WriteLine("  Путь по умолчанию не найден");
             return null;
+        }
+
+        private uint? FindPackedCoordinateStaticMapDispatchDefaultPath(List<X86Instruction> allInstructions)
+        {
+            if (allInstructions == null || allInstructions.Count < 3)
+                return null;
+
+            for (int i = 0; i < allInstructions.Count - 2; i++)
+            {
+                if (!TryMatchPackedCoordinateStaticMapDispatchStart(allInstructions, i, out ushort mapBaseAddress))
+                    continue;
+
+                uint entryAddress = (uint)allInstructions[i].Address;
+                if (!HasIncomingJumpFromEarlierInstruction(allInstructions, i, entryAddress))
+                    continue;
+
+                AnalysisDebug.WriteLine(
+                    $"  Найден default-path как packed-coordinate static-map dispatch: 0x{entryAddress:X4} " +
+                    $"([0x{mapBaseAddress:X4} + [0x3C3A]])");
+                return entryAddress;
+            }
+
+            return null;
+        }
+
+        private bool TryMatchPackedCoordinateStaticMapDispatchStart(
+            List<X86Instruction> allInstructions,
+            int index,
+            out ushort mapBaseAddress)
+        {
+            mapBaseAddress = 0;
+
+            if (!TryDecodeMovReg16FromDirectMemory(
+                    allInstructions[index],
+                    out string indexRegister,
+                    out ushort sourceAddress) ||
+                sourceAddress != 0x3C3A)
+            {
+                return false;
+            }
+
+            int loadIndex = index + 1;
+            if (loadIndex < allInstructions.Count &&
+                IsAndReg16With00FF(allInstructions[loadIndex], indexRegister))
+            {
+                loadIndex++;
+            }
+
+            if (loadIndex >= allInstructions.Count)
+                return false;
+
+            return TryDecodeMovAlFromIndexedMemory(
+                allInstructions[loadIndex],
+                indexRegister,
+                out mapBaseAddress) &&
+                IsStaticMapLayerBaseAddress(mapBaseAddress);
+        }
+
+        private bool TryDecodeMovReg16FromDirectMemory(
+            X86Instruction instruction,
+            out string destRegister,
+            out ushort sourceAddress)
+        {
+            destRegister = null;
+            sourceAddress = 0;
+
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 4 || bytes[0] != 0x8B)
+                return false;
+
+            byte modRm = bytes[1];
+            if ((modRm & 0xC0) != 0x00 || (modRm & 0x07) != 0x06)
+                return false;
+
+            destRegister = DecodeReg16FromRegField(modRm);
+            sourceAddress = BitConverter.ToUInt16(bytes, 2);
+            return !string.IsNullOrWhiteSpace(destRegister);
+        }
+
+        private bool IsAndReg16With00FF(X86Instruction instruction, string register)
+        {
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 4 || bytes[0] != 0x81)
+                return false;
+
+            byte modRm = bytes[1];
+            if ((modRm & 0xC0) != 0xC0 || ((modRm >> 3) & 0x07) != 4)
+                return false;
+
+            string targetRegister = DecodeReg16FromRmField(modRm);
+            if (!string.Equals(targetRegister, register, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            ushort immediate = BitConverter.ToUInt16(bytes, 2);
+            return immediate == 0x00FF;
+        }
+
+        private bool TryDecodeMovAlFromIndexedMemory(
+            X86Instruction instruction,
+            string indexRegister,
+            out ushort displacement)
+        {
+            displacement = 0;
+
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 4 || bytes[0] != 0x8A)
+                return false;
+
+            byte modRm = bytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte reg = (byte)((modRm >> 3) & 0x07);
+            if (mod != 0x02 || reg != 0)
+                return false;
+
+            string baseRegister = DecodeSingleBaseRegisterFromRmField(modRm);
+            if (!string.Equals(baseRegister, indexRegister, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            displacement = BitConverter.ToUInt16(bytes, 2);
+            return true;
+        }
+
+        private bool HasIncomingJumpFromEarlierInstruction(
+            List<X86Instruction> allInstructions,
+            int targetIndex,
+            uint targetAddress)
+        {
+            for (int i = 0; i < targetIndex; i++)
+            {
+                if (IsConditionalJump(allInstructions[i], out uint conditionalTarget) &&
+                    conditionalTarget == targetAddress)
+                {
+                    return true;
+                }
+
+                if (IsUnconditionalJump(allInstructions[i], out uint unconditionalTarget) &&
+                    unconditionalTarget == targetAddress)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsStaticMapLayerBaseAddress(ushort address)
+        {
+            return address == 0x3CFA || address == 0x3DFA;
+        }
+
+        private string DecodeReg16FromRegField(byte modRm)
+        {
+            string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            int reg = (modRm >> 3) & 0x07;
+            return reg >= 0 && reg < regNames16.Length ? regNames16[reg] : null;
+        }
+
+        private string DecodeReg16FromRmField(byte modRm)
+        {
+            string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            int rm = modRm & 0x07;
+            return rm >= 0 && rm < regNames16.Length ? regNames16[rm] : null;
+        }
+
+        private string DecodeSingleBaseRegisterFromRmField(byte modRm)
+        {
+            switch (modRm & 0x07)
+            {
+                case 4: return "SI";
+                case 5: return "DI";
+                case 6: return "BP";
+                case 7: return "BX";
+                default: return null;
+            }
         }
     }
 }

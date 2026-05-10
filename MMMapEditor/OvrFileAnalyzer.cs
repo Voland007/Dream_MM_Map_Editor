@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using Gee.External.Capstone.X86;
@@ -88,12 +89,16 @@ namespace MMMapEditor
                 comparisons = FilterComparisonsOutsideTableCode(comparisons, tableReachableAddresses);
                 AnalysisDebug.WriteLine($"Сравнений координат после исключения кода табличных объектов: {comparisons.Count}");
 
+                uint? defaultPathAddress = _macroAnalyzer.FindDefaultPathAfterTableLoop(allInstructions);
+                comparisons = FilterComparisonsOutsideDefaultPath(comparisons, allInstructions, defaultPathAddress);
+                AnalysisDebug.WriteLine($"Сравнений координат после исключения default-path: {comparisons.Count}");
+
                 // Обработка макросов (второй режим)
-                var macroObjects = ProcessMacros(br, comparisons, tableObjectCoords, existingCentralOptions);
+                var macroObjects = ProcessMacros(br, allInstructions, comparisons, tableObjectCoords, existingCentralOptions);
                 objects.AddRange(macroObjects);
 
                 // Обработка пути по умолчанию (третий режим)
-                var defaultPathObjects = ProcessDefaultPath(br, allInstructions, tableObjectCoords, existingCentralOptions, objects);
+                var defaultPathObjects = ProcessDefaultPath(br, allInstructions, tableObjectCoords, existingCentralOptions, objects, defaultPathAddress);
                 objects.AddRange(defaultPathObjects);
 
                 AnalysisDebug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
@@ -150,6 +155,56 @@ namespace MMMapEditor
                 if (compareInTableCode || targetInTableCode)
                 {
                     AnalysisDebug.WriteLine($"Пропускаем comparison 0x{comparison.CompareAddress:X4} -> 0x{comparison.JumpTarget:X4}: адрес относится к коду табличного объекта");
+                    continue;
+                }
+
+                filtered.Add(comparison);
+            }
+
+            return filtered;
+        }
+
+        private List<CoordinateComparison> FilterComparisonsOutsideDefaultPath(
+            List<CoordinateComparison> comparisons,
+            List<X86Instruction> allInstructions,
+            uint? defaultPathAddress)
+        {
+            if (comparisons == null || comparisons.Count == 0 || !defaultPathAddress.HasValue)
+                return comparisons ?? new List<CoordinateComparison>();
+
+            var instructionByAddress = BuildInstructionAddressMap(allInstructions);
+            var staticMapDispatches = FindStaticMapDispatches(allInstructions)
+                .Where(dispatch =>
+                    dispatch != null &&
+                    (CanReachAddress(instructionByAddress, defaultPathAddress.Value, dispatch.LoadAddress) ||
+                     CanReachAddress(instructionByAddress, defaultPathAddress.Value, dispatch.ChainStartAddress)))
+                .ToList();
+
+            if (staticMapDispatches.Count == 0)
+                return comparisons;
+
+            var filtered = new List<CoordinateComparison>();
+
+            foreach (var comparison in comparisons)
+            {
+                uint macroEntryAddress = comparison.MacroEntryAddress != 0
+                    ? comparison.MacroEntryAddress
+                    : comparison.JumpTarget;
+
+                bool macroEntryInDefaultPath = CanReachAddress(
+                    instructionByAddress,
+                    defaultPathAddress.Value,
+                    macroEntryAddress);
+
+                bool macroEntryBelongsToStaticMapDispatch = staticMapDispatches.Any(dispatch =>
+                    DispatchCanReachAddress(dispatch, instructionByAddress, comparison.CompareAddress) ||
+                    DispatchCanReachAddress(dispatch, instructionByAddress, macroEntryAddress));
+
+                if (macroEntryInDefaultPath && macroEntryBelongsToStaticMapDispatch)
+                {
+                    AnalysisDebug.WriteLine(
+                        $"Пропускаем comparison 0x{comparison.CompareAddress:X4} -> 0x{comparison.JumpTarget:X4}: " +
+                        $"адрес относится к static-map default-path 0x{defaultPathAddress.Value:X4}");
                     continue;
                 }
 
@@ -244,11 +299,12 @@ namespace MMMapEditor
             }
         }
 
-        private List<OvrObject> ProcessMacros(BinaryReader br, List<CoordinateComparison> comparisons,
+        private List<OvrObject> ProcessMacros(BinaryReader br, List<X86Instruction> allInstructions, List<CoordinateComparison> comparisons,
             HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions)
         {
             var objects = new List<OvrObject>();
             var processedMacroCells = new HashSet<string>();
+            var staticMapDispatches = FindStaticMapDispatches(allInstructions);
 
             foreach (var comparison in comparisons)
             {
@@ -272,6 +328,11 @@ namespace MMMapEditor
                 }
 
                 var targetCells = GetTargetCells(comparison, isX, isY, isFull, packedTargetX, packedTargetY);
+                var staticDispatchEntries = ResolveStaticMapDispatchEntriesForComparison(
+                    staticMapDispatches,
+                    allInstructions,
+                    comparison,
+                    targetCells);
 
                 var cellsNotInTable = targetCells
                     .Where(p => !tableObjectCoords.Contains($"{p.X},{p.Y}"))
@@ -279,6 +340,9 @@ namespace MMMapEditor
 
                 var validCells = cellsNotInTable
                     .Where(p => existingCentralOptions.TryGetValue(p, out string option) && option == "Случайная встреча")
+                    .Where(p =>
+                        staticDispatchEntries == null ||
+                        staticDispatchEntries.ContainsKey(p))
                     .ToList();
 
                 if (validCells.Count == 0)
@@ -297,7 +361,14 @@ namespace MMMapEditor
 
                     using (AnalysisDebug.BeginCellScope(cellX, cellY))
                     {
-                        string macroCellKey = $"{macroStartAddress:X4}:{cellX},{cellY}";
+                        uint effectiveMacroStartAddress = macroStartAddress;
+                        if (staticDispatchEntries != null &&
+                            staticDispatchEntries.TryGetValue(cellPos, out uint staticDispatchEntryAddress))
+                        {
+                            effectiveMacroStartAddress = staticDispatchEntryAddress;
+                        }
+
+                        string macroCellKey = $"{effectiveMacroStartAddress:X4}:{cellX},{cellY}";
                         if (processedMacroCells.Contains(macroCellKey))
                         {
                             AnalysisDebug.WriteLine("  -> пропуск: клетка уже обработана для этого macro-entry");
@@ -305,19 +376,24 @@ namespace MMMapEditor
                         }
 
                         AnalysisDebug.WriteLine($"  -> анализ результатов макроса для клетки ({cellX},{cellY})");
+                        if (effectiveMacroStartAddress != macroStartAddress)
+                        {
+                            AnalysisDebug.WriteLine(
+                                $"     static-map dispatch переносит старт анализа с 0x{macroStartAddress:X4} на 0x{effectiveMacroStartAddress:X4}");
+                        }
 
                         var finalVariants = AnalyzeObjectVariants(
                             br,
-                            macroStartAddress,
+                            effectiveMacroStartAddress,
                             cellX,
                             cellY,
                             predefinedAlternativePaths: null,
                             reachableAddresses: null,
                             initializeRegisters: tracker =>
                             {
-                                tracker.SetRegisterValue("BL", cellX, macroStartAddress, $"Macro init BL = X ({cellX})");
-                                tracker.SetRegisterValue("BH", 0, macroStartAddress, "Macro init BH = 0");
-                                tracker.SetRegisterValue("BX", (ushort)cellX, macroStartAddress, $"Macro init BX = X ({cellX})");
+                                tracker.SetRegisterValue("BL", cellX, effectiveMacroStartAddress, $"Macro init BL = X ({cellX})");
+                                tracker.SetRegisterValue("BH", 0, effectiveMacroStartAddress, "Macro init BH = 0");
+                                tracker.SetRegisterValue("BX", (ushort)cellX, effectiveMacroStartAddress, $"Macro init BX = X ({cellX})");
                                 tracker.MarkRegisterAsCoordinateSeed("BX");
 
                                 // В macro-mode нельзя слепо подставлять AL=Y/AH=0 для YCoord.
@@ -327,8 +403,8 @@ namespace MMMapEditor
                                 if (isFull)
                                 {
                                     ushort packed = (ushort)(((cellY & 0x0F) << 4) | (cellX & 0x0F));
-                                    tracker.SetRegisterValue("AX", packed, macroStartAddress, $"Macro init AX = packed XY 0x{packed:X2}");
-                                    tracker.SetRegisterValue("AL", packed, macroStartAddress, $"Macro init AL = packed XY 0x{packed:X2}");
+                                    tracker.SetRegisterValue("AX", packed, effectiveMacroStartAddress, $"Macro init AX = packed XY 0x{packed:X2}");
+                                    tracker.SetRegisterValue("AL", packed, effectiveMacroStartAddress, $"Macro init AL = packed XY 0x{packed:X2}");
                                     tracker.MarkRegisterAsCoordinateSeed("AX");
                                 }
                             },
@@ -444,6 +520,736 @@ namespace MMMapEditor
             }
 
             return objects;
+        }
+
+        private const ushort StaticMapFirstLayerBaseAddress = 0x3CFA;
+        private const ushort StaticMapSecondLayerBaseAddress = 0x3DFA;
+        private const int StaticMapLayerWidth = 16;
+        private const int StaticMapLayerHeight = 16;
+        private const int StaticMapLayerByteCount = StaticMapLayerWidth * StaticMapLayerHeight;
+        private const int StaticMapDispatchReachabilityLimit = 512;
+
+        private sealed class StaticMapDispatchInfo
+        {
+            public uint LoadAddress { get; set; }
+            public uint ChainStartAddress { get; set; }
+            public int ChainStartIndex { get; set; }
+            public ushort MapBaseAddress { get; set; }
+            public string DispatchRegister { get; set; }
+            public List<StaticMapDispatchBranch> Branches { get; set; } = new List<StaticMapDispatchBranch>();
+            public uint DefaultEntryAddress { get; set; }
+        }
+
+        private sealed class StaticMapDispatchBranch
+        {
+            public byte CompareValue { get; set; }
+            public string JumpType { get; set; }
+            public uint JumpTarget { get; set; }
+        }
+
+        private List<StaticMapDispatchInfo> FindStaticMapDispatches(List<X86Instruction> allInstructions)
+        {
+            var result = new List<StaticMapDispatchInfo>();
+            if (allInstructions == null || allInstructions.Count == 0)
+                return result;
+
+            var seenStarts = new HashSet<uint>();
+
+            for (int i = 0; i < allInstructions.Count - 1; i++)
+            {
+                if (!IsCompareWithImmediateInstruction(allInstructions[i], out _, out string reg))
+                    continue;
+
+                if (!IsConditionalJumpInstruction(allInstructions[i + 1], out _))
+                    continue;
+
+                if (!TryFindStaticMapIndexedLoadForRegister(
+                        allInstructions,
+                        i,
+                        reg,
+                        out int loadIndex,
+                        out ushort mapBaseAddress))
+                {
+                    continue;
+                }
+
+                int chainStartIndex = FindDispatchChainStartIndex(allInstructions, loadIndex, i, reg);
+                if (chainStartIndex < 0)
+                    continue;
+
+                uint chainStartAddress = (uint)allInstructions[chainStartIndex].Address;
+                if (seenStarts.Contains(chainStartAddress))
+                    continue;
+
+                if (!TryBuildStaticMapDispatch(
+                        allInstructions,
+                        chainStartIndex,
+                        reg,
+                        mapBaseAddress,
+                        out var dispatch))
+                {
+                    continue;
+                }
+
+                dispatch.LoadAddress = (uint)allInstructions[loadIndex].Address;
+                result.Add(dispatch);
+                seenStarts.Add(chainStartAddress);
+            }
+
+            return result;
+        }
+
+        private Dictionary<Point, uint> ResolveStaticMapDispatchEntriesForComparison(
+            List<StaticMapDispatchInfo> dispatches,
+            List<X86Instruction> allInstructions,
+            CoordinateComparison comparison,
+            List<Point> targetCells)
+        {
+            if (dispatches == null || dispatches.Count == 0 ||
+                comparison == null ||
+                targetCells == null || targetCells.Count == 0)
+            {
+                return null;
+            }
+
+            var instructionByAddress = BuildInstructionAddressMap(allInstructions);
+            var relevantDispatch = dispatches
+                .Where(dispatch => dispatch != null && dispatch.ChainStartAddress < comparison.CompareAddress)
+                .OrderByDescending(dispatch => dispatch.ChainStartAddress)
+                .FirstOrDefault(dispatch => DispatchCanReachAddress(
+                    dispatch,
+                    instructionByAddress,
+                    comparison.CompareAddress));
+
+            if (relevantDispatch == null)
+                return null;
+
+            var result = new Dictionary<Point, uint>();
+            int resolvedCount = 0;
+
+            foreach (var cell in targetCells)
+            {
+                byte cellX = (byte)cell.X;
+                byte cellY = (byte)cell.Y;
+
+                if (!TryResolveStaticMapDispatchEntry(
+                        relevantDispatch,
+                        instructionByAddress,
+                        cellX,
+                        cellY,
+                        out uint entryAddress,
+                        out byte mapValue))
+                {
+                    result[cell] = comparison.MacroEntryAddress != 0
+                        ? comparison.MacroEntryAddress
+                        : comparison.JumpTarget;
+                    continue;
+                }
+
+                resolvedCount++;
+                if (CanReachAddress(instructionByAddress, entryAddress, comparison.CompareAddress))
+                {
+                    result[cell] = entryAddress;
+                    continue;
+                }
+
+                using (AnalysisDebug.BeginCellScope(cellX, cellY))
+                {
+                    AnalysisDebug.WriteLine(
+                        $"  -> static-map dispatch 0x{relevantDispatch.ChainStartAddress:X4}: " +
+                        $"значение 0x{mapValue:X2} ведёт в 0x{entryAddress:X4}; " +
+                        $"сравнение 0x{comparison.CompareAddress:X4} недостижимо");
+                }
+            }
+
+            if (resolvedCount == 0)
+                return null;
+
+            if (result.Count != targetCells.Count)
+            {
+                AnalysisDebug.WriteLine(
+                    $"  Учтён static-map dispatch 0x{relevantDispatch.ChainStartAddress:X4}: " +
+                    $"{targetCells.Count} -> {result.Count} клеток");
+            }
+
+            return result;
+        }
+
+        private bool DispatchCanReachAddress(
+            StaticMapDispatchInfo dispatch,
+            Dictionary<uint, X86Instruction> instructionByAddress,
+            uint targetAddress)
+        {
+            if (dispatch == null)
+                return false;
+
+            foreach (var branch in dispatch.Branches ?? new List<StaticMapDispatchBranch>())
+            {
+                uint branchEntry = NormalizeJumpTrampoline(instructionByAddress, branch.JumpTarget);
+                if (CanReachAddress(instructionByAddress, branchEntry, targetAddress))
+                    return true;
+            }
+
+            uint defaultEntry = NormalizeJumpTrampoline(instructionByAddress, dispatch.DefaultEntryAddress);
+            return CanReachAddress(instructionByAddress, defaultEntry, targetAddress);
+        }
+
+        private bool TryResolveStaticMapDispatchEntry(
+            StaticMapDispatchInfo dispatch,
+            Dictionary<uint, X86Instruction> instructionByAddress,
+            byte x,
+            byte y,
+            out uint entryAddress,
+            out byte mapValue)
+        {
+            entryAddress = 0;
+            mapValue = 0;
+
+            if (dispatch == null)
+                return false;
+
+            byte packed = (byte)(((y & 0x0F) << 4) | (x & 0x0F));
+            ushort effectiveAddress = unchecked((ushort)(dispatch.MapBaseAddress + packed));
+            if (!TryReadStaticMapDataByte(effectiveAddress, out mapValue))
+                return false;
+
+            foreach (var branch in dispatch.Branches ?? new List<StaticMapDispatchBranch>())
+            {
+                if (CheckCondition(mapValue, branch.CompareValue, branch.JumpType))
+                {
+                    entryAddress = NormalizeJumpTrampoline(instructionByAddress, branch.JumpTarget);
+                    return true;
+                }
+            }
+
+            entryAddress = NormalizeJumpTrampoline(instructionByAddress, dispatch.DefaultEntryAddress);
+            return true;
+        }
+
+        private bool TryBuildStaticMapDispatch(
+            List<X86Instruction> instructions,
+            int chainStartIndex,
+            string reg,
+            ushort mapBaseAddress,
+            out StaticMapDispatchInfo dispatch)
+        {
+            dispatch = null;
+
+            if (instructions == null ||
+                chainStartIndex < 0 ||
+                chainStartIndex >= instructions.Count - 1)
+            {
+                return false;
+            }
+
+            var branches = new List<StaticMapDispatchBranch>();
+            int cursor = chainStartIndex;
+
+            while (cursor + 1 < instructions.Count &&
+                   IsCompareWithImmediateInstruction(instructions[cursor], out byte compareValue, out string compareReg) &&
+                   string.Equals(compareReg, reg, StringComparison.OrdinalIgnoreCase) &&
+                   IsConditionalJumpInstruction(instructions[cursor + 1], out uint jumpTarget))
+            {
+                branches.Add(new StaticMapDispatchBranch
+                {
+                    CompareValue = compareValue,
+                    JumpType = instructions[cursor + 1].Mnemonic?.ToUpperInvariant() ?? string.Empty,
+                    JumpTarget = jumpTarget
+                });
+
+                cursor += 2;
+            }
+
+            if (branches.Count == 0 || cursor >= instructions.Count)
+                return false;
+
+            uint defaultEntryAddress = (uint)instructions[cursor].Address;
+            if (IsUnconditionalJumpInstruction(instructions[cursor], out uint defaultJumpTarget))
+            {
+                defaultEntryAddress = defaultJumpTarget;
+            }
+
+            dispatch = new StaticMapDispatchInfo
+            {
+                ChainStartAddress = (uint)instructions[chainStartIndex].Address,
+                ChainStartIndex = chainStartIndex,
+                MapBaseAddress = mapBaseAddress,
+                DispatchRegister = reg,
+                Branches = branches,
+                DefaultEntryAddress = defaultEntryAddress
+            };
+
+            return true;
+        }
+
+        private int FindDispatchChainStartIndex(
+            List<X86Instruction> instructions,
+            int loadIndex,
+            int compareIndex,
+            string reg)
+        {
+            if (instructions == null || loadIndex < 0 || compareIndex <= loadIndex)
+                return -1;
+
+            for (int i = loadIndex + 1; i <= compareIndex && i + 1 < instructions.Count; i++)
+            {
+                if (!IsCompareWithImmediateInstruction(instructions[i], out _, out string compareReg) ||
+                    !string.Equals(compareReg, reg, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (IsConditionalJumpInstruction(instructions[i + 1], out _))
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private bool TryFindStaticMapIndexedLoadForRegister(
+            List<X86Instruction> instructions,
+            int compareIndex,
+            string reg,
+            out int loadIndex,
+            out ushort mapBaseAddress)
+        {
+            loadIndex = -1;
+            mapBaseAddress = 0;
+
+            if (instructions == null || compareIndex <= 0 || string.IsNullOrWhiteSpace(reg))
+                return false;
+
+            int start = Math.Max(0, compareIndex - 32);
+            for (int i = compareIndex - 1; i >= start; i--)
+            {
+                var insn = instructions[i];
+                if (TryDecodeStaticMapIndexedLoad(insn, reg, out string indexRegister, out ushort displacement) &&
+                    IsAddressInStaticMapLayer(displacement) &&
+                    IsRegisterLoadedFromPackedCoordinate(instructions, i, indexRegister))
+                {
+                    loadIndex = i;
+                    mapBaseAddress = displacement;
+                    return true;
+                }
+
+                if (IsRegisterWriteInstruction(insn, reg))
+                    break;
+            }
+
+            return false;
+        }
+
+        private bool TryDecodeStaticMapIndexedLoad(
+            X86Instruction instruction,
+            string targetReg,
+            out string indexRegister,
+            out ushort displacement)
+        {
+            indexRegister = null;
+            displacement = 0;
+
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 4 || bytes[0] != 0x8A)
+                return false;
+
+            byte modRm = bytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            if (mod != 0x02)
+                return false;
+
+            string destReg = DecodeReg8FromRegField(modRm);
+            if (!string.Equals(destReg, targetReg, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            indexRegister = DecodeSingleBaseRegisterFromRmField(modRm);
+            if (string.IsNullOrWhiteSpace(indexRegister))
+                return false;
+
+            displacement = BitConverter.ToUInt16(bytes, 2);
+            return true;
+        }
+
+        private bool IsRegisterLoadedFromPackedCoordinate(
+            List<X86Instruction> instructions,
+            int beforeIndex,
+            string register)
+        {
+            if (instructions == null || beforeIndex <= 0 || string.IsNullOrWhiteSpace(register))
+                return false;
+
+            int start = Math.Max(0, beforeIndex - 12);
+            for (int i = beforeIndex - 1; i >= start; i--)
+            {
+                var insn = instructions[i];
+                if (IsMovReg16FromMemory(insn, register, 0x3C3A))
+                    return true;
+
+                if (IsAndReg16With00FF(insn, register))
+                    continue;
+
+                if (IsRegisterWriteInstruction(insn, register))
+                    break;
+            }
+
+            return false;
+        }
+
+        private bool IsAndReg16With00FF(X86Instruction instruction, string register)
+        {
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 4 || bytes[0] != 0x81 || string.IsNullOrWhiteSpace(register))
+                return false;
+
+            byte modRm = bytes[1];
+            if ((modRm & 0xC0) != 0xC0 || ((modRm >> 3) & 0x07) != 0x04)
+                return false;
+
+            string targetRegister = DecodeReg16FromRmField(modRm);
+            if (!string.Equals(targetRegister, register, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            ushort mask = BitConverter.ToUInt16(bytes, 2);
+            return mask == 0x00FF;
+        }
+
+        private bool IsMovReg16FromMemory(X86Instruction instruction, string register, ushort memAddr)
+        {
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 4 || bytes[0] != 0x8B)
+                return false;
+
+            byte modRm = bytes[1];
+            if ((modRm & 0xC0) != 0x00)
+                return false;
+
+            ushort sourceAddr = BitConverter.ToUInt16(bytes, 2);
+            if (sourceAddr != memAddr)
+                return false;
+
+            string destReg = DecodeReg16FromRegField(modRm);
+            return string.Equals(destReg, register, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsRegisterWriteInstruction(X86Instruction instruction, string register)
+        {
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length == 0 || string.IsNullOrWhiteSpace(register))
+                return false;
+
+            string reg = register.ToUpperInvariant();
+            if (reg.Length == 2 && reg[1] == 'L' || reg.Length == 2 && reg[1] == 'H')
+            {
+                switch (reg)
+                {
+                    case "AL": return bytes.Length >= 2 && (bytes[0] & 0xF8) == 0xB0;
+                    case "CL": return bytes.Length >= 2 && bytes[0] == 0xB1;
+                    case "DL": return bytes.Length >= 2 && bytes[0] == 0xB2;
+                    case "BL": return bytes.Length >= 2 && bytes[0] == 0xB3;
+                    case "AH": return bytes.Length >= 2 && bytes[0] == 0xB4;
+                    case "CH": return bytes.Length >= 2 && bytes[0] == 0xB5;
+                    case "DH": return bytes.Length >= 2 && bytes[0] == 0xB6;
+                    case "BH": return bytes.Length >= 2 && bytes[0] == 0xB7;
+                }
+            }
+
+            string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            int regIndex = Array.IndexOf(regNames16, reg);
+            if (regIndex < 0)
+                return false;
+
+            if (bytes.Length >= 3 && bytes[0] >= 0xB8 && bytes[0] <= 0xBF)
+                return bytes[0] - 0xB8 == regIndex;
+
+            if (bytes.Length >= 2 && (bytes[0] == 0x8B || bytes[0] == 0x89 || bytes[0] == 0xC7))
+            {
+                byte modRm = bytes[1];
+                return ((modRm >> 3) & 0x07) == regIndex;
+            }
+
+            if (bytes.Length >= 4 && bytes[0] == 0x81)
+            {
+                byte modRm = bytes[1];
+                return (modRm & 0xC0) == 0xC0 && (modRm & 0x07) == regIndex;
+            }
+
+            return false;
+        }
+
+        private Dictionary<uint, X86Instruction> BuildInstructionAddressMap(List<X86Instruction> instructions)
+        {
+            return instructions == null
+                ? new Dictionary<uint, X86Instruction>()
+                : instructions
+                    .GroupBy(insn => (uint)insn.Address)
+                    .ToDictionary(group => group.Key, group => group.First());
+        }
+
+        private bool CanReachAddress(
+            Dictionary<uint, X86Instruction> instructionByAddress,
+            uint startAddress,
+            uint targetAddress)
+        {
+            if (startAddress == targetAddress)
+                return true;
+
+            if (instructionByAddress == null || instructionByAddress.Count == 0)
+                return false;
+
+            var pending = new Queue<uint>();
+            var visited = new HashSet<uint>();
+            pending.Enqueue(startAddress);
+
+            while (pending.Count > 0 && visited.Count < StaticMapDispatchReachabilityLimit)
+            {
+                uint address = pending.Dequeue();
+                if (address == targetAddress)
+                    return true;
+
+                if (!visited.Add(address))
+                    continue;
+
+                if (!instructionByAddress.TryGetValue(address, out var instruction))
+                    continue;
+
+                uint nextAddress = (uint)(instruction.Address + instruction.Bytes.Length);
+                string mnemonic = instruction.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+
+                if (IsConditionalJumpInstruction(instruction, out uint conditionalTarget))
+                {
+                    EnqueueIfKnown(pending, visited, instructionByAddress, conditionalTarget);
+                    EnqueueIfKnown(pending, visited, instructionByAddress, nextAddress);
+                    continue;
+                }
+
+                if (IsUnconditionalJumpInstruction(instruction, out uint jumpTarget))
+                {
+                    EnqueueIfKnown(pending, visited, instructionByAddress, jumpTarget);
+                    continue;
+                }
+
+                if (IsReturnMnemonic(mnemonic))
+                    continue;
+
+                EnqueueIfKnown(pending, visited, instructionByAddress, nextAddress);
+            }
+
+            return false;
+        }
+
+        private static void EnqueueIfKnown(
+            Queue<uint> pending,
+            HashSet<uint> visited,
+            Dictionary<uint, X86Instruction> instructionByAddress,
+            uint address)
+        {
+            if (instructionByAddress.ContainsKey(address) && !visited.Contains(address))
+                pending.Enqueue(address);
+        }
+
+        private uint NormalizeJumpTrampoline(
+            Dictionary<uint, X86Instruction> instructionByAddress,
+            uint address)
+        {
+            var visited = new HashSet<uint>();
+            uint current = address;
+
+            while (visited.Add(current) &&
+                   instructionByAddress != null &&
+                   instructionByAddress.TryGetValue(current, out var instruction) &&
+                   IsUnconditionalJumpInstruction(instruction, out uint target) &&
+                   instructionByAddress.ContainsKey(target))
+            {
+                current = target;
+            }
+
+            return current;
+        }
+
+        private bool IsCompareWithImmediateInstruction(X86Instruction instruction, out byte immValue, out string reg)
+        {
+            immValue = 0;
+            reg = null;
+
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length == 0)
+                return false;
+
+            if (bytes.Length >= 2 && bytes[0] == 0x3C)
+            {
+                immValue = bytes[1];
+                reg = "AL";
+                return true;
+            }
+
+            if (bytes.Length >= 3 && bytes[0] == 0x80)
+            {
+                byte modRm = bytes[1];
+                if ((modRm & 0xF8) == 0xF8)
+                {
+                    immValue = bytes[2];
+                    reg = DecodeReg8FromRmField(modRm);
+                    return !string.IsNullOrWhiteSpace(reg);
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsConditionalJumpInstruction(X86Instruction instruction, out uint target)
+        {
+            target = 0;
+            string mnemonic = instruction?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+
+            string[] conditionalJumps =
+            {
+                "JZ", "JE", "JNZ", "JNE", "JB", "JNAE", "JC",
+                "JNB", "JAE", "JNC", "JBE", "JNA", "JA", "JNBE",
+                "JL", "JNGE", "JGE", "JNL", "JLE", "JNG", "JG", "JNLE",
+                "JP", "JPE", "JNP", "JPO", "JCXZ", "JECXZ"
+            };
+
+            if (!conditionalJumps.Contains(mnemonic))
+                return false;
+
+            target = GetInstructionTargetAddress(instruction);
+            return target != 0;
+        }
+
+        private bool IsUnconditionalJumpInstruction(X86Instruction instruction, out uint target)
+        {
+            target = 0;
+            string mnemonic = instruction?.Mnemonic?.ToUpperInvariant() ?? string.Empty;
+            if (mnemonic != "JMP")
+                return false;
+
+            target = GetInstructionTargetAddress(instruction);
+            return target != 0;
+        }
+
+        private uint GetInstructionTargetAddress(X86Instruction instruction)
+        {
+            string operand = instruction?.Operand ?? string.Empty;
+            int hexIndex = operand.IndexOf("0x", StringComparison.OrdinalIgnoreCase);
+            if (hexIndex >= 0)
+            {
+                string hexPart = operand.Substring(hexIndex + 2);
+                hexPart = new string(hexPart
+                    .TakeWhile(c =>
+                        (c >= '0' && c <= '9') ||
+                        (c >= 'A' && c <= 'F') ||
+                        (c >= 'a' && c <= 'f'))
+                    .ToArray());
+
+                if (uint.TryParse(
+                        hexPart,
+                        NumberStyles.HexNumber,
+                        CultureInfo.InvariantCulture,
+                        out uint targetAddress))
+                {
+                    return targetAddress;
+                }
+            }
+
+            return 0;
+        }
+
+        private static bool IsReturnMnemonic(string mnemonic)
+        {
+            return mnemonic == "RET" ||
+                   mnemonic == "RETF" ||
+                   mnemonic == "RETN" ||
+                   mnemonic == "IRET" ||
+                   mnemonic == "IRETD";
+        }
+
+        private string DecodeReg8FromRegField(byte modRm)
+        {
+            string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+            int reg = (modRm >> 3) & 0x07;
+            return reg >= 0 && reg < regNames.Length ? regNames[reg] : null;
+        }
+
+        private string DecodeReg8FromRmField(byte modRm)
+        {
+            string[] regNames = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+            int rm = modRm & 0x07;
+            return rm >= 0 && rm < regNames.Length ? regNames[rm] : null;
+        }
+
+        private string DecodeReg16FromRegField(byte modRm)
+        {
+            string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            int reg = (modRm >> 3) & 0x07;
+            return reg >= 0 && reg < regNames.Length ? regNames[reg] : null;
+        }
+
+        private string DecodeReg16FromRmField(byte modRm)
+        {
+            string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+            int rm = modRm & 0x07;
+            return rm >= 0 && rm < regNames.Length ? regNames[rm] : null;
+        }
+
+        private string DecodeSingleBaseRegisterFromRmField(byte modRm)
+        {
+            switch (modRm & 0x07)
+            {
+                case 4: return "SI";
+                case 5: return "DI";
+                case 6: return "BP";
+                case 7: return "BX";
+                default: return null;
+            }
+        }
+
+        private bool IsAddressInStaticMapLayer(ushort memAddr)
+        {
+            return IsAddressInStaticMapLayer(memAddr, StaticMapFirstLayerBaseAddress) ||
+                   IsAddressInStaticMapLayer(memAddr, StaticMapSecondLayerBaseAddress);
+        }
+
+        private static bool IsAddressInStaticMapLayer(ushort memAddr, ushort layerBaseAddress)
+        {
+            int offset = memAddr - layerBaseAddress;
+            return offset >= 0 && offset < StaticMapLayerByteCount;
+        }
+
+        private bool TryReadStaticMapDataByte(ushort memAddr, out byte value)
+        {
+            value = 0;
+
+            int firstLayerOffset = memAddr - StaticMapFirstLayerBaseAddress;
+            if (firstLayerOffset >= 0 && firstLayerOffset < StaticMapLayerByteCount)
+                return TryReadStaticMapLayerCell(_config?.First16Lines, firstLayerOffset, out value);
+
+            int secondLayerOffset = memAddr - StaticMapSecondLayerBaseAddress;
+            if (secondLayerOffset >= 0 && secondLayerOffset < StaticMapLayerByteCount)
+                return TryReadStaticMapLayerCell(_config?.Second16Lines, secondLayerOffset, out value);
+
+            return false;
+        }
+
+        private static bool TryReadStaticMapLayerCell(string[] lines, int offset, out byte value)
+        {
+            value = 0;
+
+            if (lines == null || lines.Length < StaticMapLayerHeight ||
+                offset < 0 || offset >= StaticMapLayerByteCount)
+            {
+                return false;
+            }
+
+            int y = offset / StaticMapLayerWidth;
+            int x = offset % StaticMapLayerWidth;
+            string line = lines[y];
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            var tokens = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length <= x)
+                return false;
+
+            return byte.TryParse(tokens[x], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
         }
 
         private const int MaxRepeatedEventOccurrences = 64;
@@ -4386,13 +5192,18 @@ namespace MMMapEditor
                  (variant.PartiallyDefinedBattles?.Count ?? 0) > 0);
         }
 
-        private List<OvrObject> ProcessDefaultPath(BinaryReader br, List<X86Instruction> allInstructions,
-    HashSet<string> tableObjectCoords, Dictionary<Point, string> existingCentralOptions,
-    List<OvrObject> existingObjects)
+        private List<OvrObject> ProcessDefaultPath(
+            BinaryReader br,
+            List<X86Instruction> allInstructions,
+            HashSet<string> tableObjectCoords,
+            Dictionary<Point, string> existingCentralOptions,
+            List<OvrObject> existingObjects,
+            uint? defaultPathAddress = null)
         {
             var objects = new List<OvrObject>();
 
-            uint? defaultPathAddress = _macroAnalyzer.FindDefaultPathAfterTableLoop(allInstructions);
+            if (!defaultPathAddress.HasValue)
+                defaultPathAddress = _macroAnalyzer.FindDefaultPathAfterTableLoop(allInstructions);
 
             if (!defaultPathAddress.HasValue)
                 return objects;
