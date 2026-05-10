@@ -589,7 +589,7 @@ namespace MMMapEditor
 
         private string FormatProbability(double probability)
         {
-            return probability.ToString("0.##").Replace('.', ',') + "%";
+            return ProbabilityFormatter.FormatPercent(probability) + "%";
         }
 
         private void ProcessGemsTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,

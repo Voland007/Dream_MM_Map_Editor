@@ -1149,10 +1149,7 @@ namespace MMMapEditor
                 denominator = 1;
             }
 
-            double percent = 100.0 * numerator / denominator;
-            string percentText = percent % 1.0 == 0.0
-                ? percent.ToString("0")
-                : percent.ToString("0.##");
+            string percentText = ProbabilityFormatter.FormatPercent(numerator, denominator);
 
             string label = HasStateGuardInfo
                 ? "Вероятность при выполнении условий"

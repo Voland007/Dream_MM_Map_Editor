@@ -1652,10 +1652,7 @@ namespace MMMapEditor
             if (denominator <= 1)
                 return null;
 
-            double percent = 100.0 * numerator / denominator;
-            string percentText = percent % 1.0 == 0.0
-                ? percent.ToString("0")
-                : percent.ToString("0.##");
+            string percentText = ProbabilityFormatter.FormatPercent(numerator, denominator);
 
             return $"Вероятность: {percentText}% ({numerator}/{denominator})";
         }
