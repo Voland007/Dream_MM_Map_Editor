@@ -28,7 +28,7 @@ namespace MMMapEditor
         public const string TempAnyStatFieldLabel = "одно из временных полей характеристик (INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL)";
 
         public const string TempIntellectFieldLabel = "временный интеллект (INTELLECT, +0x16)";
-        public const string TempMightFieldLabel = "временная сила (MIGHT, +0x18)";
+        public const string TempMightFieldLabel = "временная сила (MIGHT)";
         public const string TempPersonalityFieldLabel = "временная харизма (PERSONALITY, +0x1A)";
         public const string TempEnduranceFieldLabel = "временная выносливость (ENDURANCE, +0x1C)";
         public const string TempSpeedFieldLabel = "временная скорость (SPEED, +0x1E)";

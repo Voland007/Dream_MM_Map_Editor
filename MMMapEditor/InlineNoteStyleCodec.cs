@@ -45,6 +45,7 @@ namespace MMMapEditor
             " или больше, то к битве будут ещё добавлены случайные монстры";
         private const string AggregateTemporaryStatGroupText =
             "(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL)";
+        private const string TemporaryMightGroupText = "(MIGHT)";
 
         public static bool TryDecodePrintableOverlayChar(byte rawValue, out char visibleChar, out bool isInverse)
         {
@@ -380,6 +381,17 @@ namespace MMMapEditor
                 {
                     Start = lineStart + statGroupIndex,
                     Length = AggregateTemporaryStatGroupText.Length,
+                    Kind = NoteInlineStyleKind.AggregateTemporaryStatGroup
+                });
+            }
+
+            int tempMightGroupIndex = aggregateText.IndexOf(TemporaryMightGroupText, StringComparison.Ordinal);
+            if (tempMightGroupIndex >= 0)
+            {
+                styles.Add(new NoteInlineStyleSpan
+                {
+                    Start = lineStart + tempMightGroupIndex,
+                    Length = TemporaryMightGroupText.Length,
                     Kind = NoteInlineStyleKind.AggregateTemporaryStatGroup
                 });
             }

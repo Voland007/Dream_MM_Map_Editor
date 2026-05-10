@@ -1233,7 +1233,11 @@ namespace MMMapEditor
                     : fieldLabel
             };
 
-            return isAggregateField && operation == PartyEffectOperation.Write
+            bool shouldEncodeTemporaryStatStyle =
+                operation == PartyEffectOperation.Write &&
+                (isAggregateField || (field == PartyFieldKind.TempMight && effect.ImmediateValue.HasValue));
+
+            return shouldEncodeTemporaryStatStyle
                 ? InlineNoteStyleCodec.EncodeAggregateTemporaryStatText(body)
                 : body;
         }

@@ -2874,7 +2874,7 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(noteText))
                 return;
 
-            const string statGroupPattern = @"\(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL\)";
+            const string statGroupPattern = @"\(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL\)|\(MIGHT\)";
             var lineMatches = Regex.Matches(
                 noteText,
                 $@"^[^\r\n]*{statGroupPattern}[^\r\n]*$",
