@@ -25,6 +25,8 @@ namespace MMMapEditor
 {
     public class OvrFileAnalyzer
     {
+        private const uint DefaultPathStartAddress = 0x34;
+
         private enum RepeatedEventAnalysisMode
         {
             IncludeRepeatedOccurrences,
@@ -32,7 +34,6 @@ namespace MMMapEditor
         }
 
         private readonly OvrFileConfig _config;
-        private readonly MacroAnalyzer _macroAnalyzer;
         private readonly InstructionAnalyzer _instructionAnalyzer;
         private readonly CodeExecutor _codeExecutor;
         private readonly PathAnalyzer _pathAnalyzer;
@@ -47,7 +48,6 @@ namespace MMMapEditor
             _instructionAnalyzer = new InstructionAnalyzer(config);
             _codeExecutor = new CodeExecutor(config, _instructionAnalyzer);
             _pathAnalyzer = new PathAnalyzer(config, _codeExecutor);
-            _macroAnalyzer = new MacroAnalyzer(config);
         }
 
         public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config,
@@ -78,27 +78,9 @@ namespace MMMapEditor
                     tableObjectCoords.Add(coordKey);
                 }
 
-                // Дизассемблирование всего файла
-                fs.Seek(0, SeekOrigin.Begin);
-                var allInstructions = DisassembleAll(br);
-
-                // Поиск макросов
-                var comparisons = _macroAnalyzer.FindAllCoordinateComparisons(br, allInstructions);
-                AnalysisDebug.WriteLine($"Найдено сравнений координат: {comparisons.Count}");
-
-                comparisons = FilterComparisonsOutsideTableCode(comparisons, tableReachableAddresses);
-                AnalysisDebug.WriteLine($"Сравнений координат после исключения кода табличных объектов: {comparisons.Count}");
-
-                uint? defaultPathAddress = _macroAnalyzer.FindDefaultPathAfterTableLoop(allInstructions);
-                comparisons = FilterComparisonsOutsideDefaultPath(comparisons, allInstructions, defaultPathAddress);
-                AnalysisDebug.WriteLine($"Сравнений координат после исключения default-path: {comparisons.Count}");
-
-                // Обработка макросов (второй режим)
-                var macroObjects = ProcessMacros(br, allInstructions, comparisons, tableObjectCoords, existingCentralOptions);
-                objects.AddRange(macroObjects);
-
-                // Обработка пути по умолчанию (третий режим)
-                var defaultPathObjects = ProcessDefaultPath(br, allInstructions, tableObjectCoords, existingCentralOptions, objects, defaultPathAddress);
+                // Обработка пути по умолчанию для всех клеток случайных встреч,
+                // которые не покрыты табличными объектами.
+                var defaultPathObjects = ProcessDefaultPath(br, tableObjectCoords, existingCentralOptions, objects);
                 objects.AddRange(defaultPathObjects);
 
                 AnalysisDebug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
@@ -5194,22 +5176,15 @@ namespace MMMapEditor
 
         private List<OvrObject> ProcessDefaultPath(
             BinaryReader br,
-            List<X86Instruction> allInstructions,
             HashSet<string> tableObjectCoords,
             Dictionary<Point, string> existingCentralOptions,
-            List<OvrObject> existingObjects,
-            uint? defaultPathAddress = null)
+            List<OvrObject> existingObjects)
         {
             var objects = new List<OvrObject>();
-
-            if (!defaultPathAddress.HasValue)
-                defaultPathAddress = _macroAnalyzer.FindDefaultPathAfterTableLoop(allInstructions);
-
-            if (!defaultPathAddress.HasValue)
-                return objects;
+            const uint defaultPathAddress = DefaultPathStartAddress;
 
             AnalysisDebug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
-            AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress.Value:X4}");
+            AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress:X4}");
 
             int objectsCreated = 0;
 
@@ -5257,14 +5232,17 @@ namespace MMMapEditor
 
                         var finalVariants = AnalyzeObjectVariants(
                             br,
-                            defaultPathAddress.Value,
+                            defaultPathAddress,
                             x,
                             y,
                             predefinedAlternativePaths: null,
                             reachableAddresses: null,
                             initializeRegisters: tracker =>
-                                SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress.Value),
-                            analysisCacheScopeKey: "default");
+                                SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress),
+                            analysisCacheScopeKey: "default",
+                            // Default-path описывает текущее наступление клетки; persistent counters
+                            // остаются progression-метаданными, а не отдельными будущими outcomes.
+                            repeatedEventAnalysisMode: RepeatedEventAnalysisMode.SingleOccurrenceOnly);
 
                         bool hasSignificantCode = HasSignificantVariants(finalVariants);
                         if (!hasSignificantCode)
