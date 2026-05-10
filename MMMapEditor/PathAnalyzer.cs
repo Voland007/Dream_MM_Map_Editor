@@ -303,6 +303,32 @@ namespace MMMapEditor
                 kvp => kvp.Value == null ? null : new ValueRange8(kvp.Value.Min, kvp.Value.Max));
         }
 
+        private static Dictionary<ushort, byte> CloneStaticMapDataReads(Dictionary<ushort, byte> source)
+        {
+            return source == null || source.Count == 0
+                ? new Dictionary<ushort, byte>()
+                : new Dictionary<ushort, byte>(source);
+        }
+
+        private static void MergeStaticMapDataReads(Dictionary<ushort, byte> target, Dictionary<ushort, byte> source)
+        {
+            if (target == null || source == null || source.Count == 0)
+                return;
+
+            foreach (var kvp in source)
+                target[kvp.Key] = kvp.Value;
+        }
+
+        private static string BuildStaticMapDataReadKey(PathVariantInfo variant)
+        {
+            return variant?.StaticMapDataReads == null || variant.StaticMapDataReads.Count == 0
+                ? "<NO_STATIC_MAP_READS>"
+                : string.Join(";",
+                    variant.StaticMapDataReads
+                        .OrderBy(kvp => kvp.Key)
+                        .Select(kvp => $"{kvp.Key:X4}:{kvp.Value:X2}"));
+        }
+
         private void NormalizeProbability(ref long numerator, ref long denominator)
         {
             if (denominator <= 0)
@@ -773,6 +799,7 @@ namespace MMMapEditor
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             merged.UsesInitialCoordinates = merged.UsesInitialCoordinates || inheritedState.UsesInitialCoordinates || currentState.UsesInitialCoordinates;
             merged.UsesStaticMapData = merged.UsesStaticMapData || inheritedState.UsesStaticMapData || currentState.UsesStaticMapData;
+            MergeStaticMapDataReads(merged.StaticMapDataReads, currentState.StaticMapDataReads);
             AppendBranchChoices(merged.InlineBranchChoices, currentState.InlineBranchChoices);
             merged.MemoryReadAddresses.UnionWith(currentState.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             merged.MemoryWrittenAddresses.UnionWith(currentState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
@@ -1066,6 +1093,7 @@ namespace MMMapEditor
             clone.HasSignificantCode = source.HasSignificantCode;
             clone.UsesInitialCoordinates = source.UsesInitialCoordinates;
             clone.UsesStaticMapData = source.UsesStaticMapData;
+            clone.StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads);
             clone.InlineProbabilityNumerator = source.InlineProbabilityNumerator;
             clone.InlineProbabilityDenominator = source.InlineProbabilityDenominator;
             clone.InlineBranchChoices = CloneBranchChoices(source.InlineBranchChoices);
@@ -1264,6 +1292,7 @@ namespace MMMapEditor
                 DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 UsesStaticMapData = source.UsesStaticMapData,
+                StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads),
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
@@ -2080,8 +2109,9 @@ namespace MMMapEditor
 
             string partyKey = BuildPartyEffectsKey(variant);
             string probabilityKey = BuildRawProbabilityKey(variant);
+            string staticMapKey = BuildStaticMapDataReadKey(variant);
 
-            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}||{probabilityKey}";
+            return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}||{staticMapKey}||{probabilityKey}";
         }
 
         private string BuildRawProbabilityKey(PathVariantInfo variant)
@@ -2777,6 +2807,7 @@ namespace MMMapEditor
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 UsesStaticMapData = source.UsesStaticMapData,
+                StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads),
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
                     .Distinct()
@@ -2816,6 +2847,7 @@ namespace MMMapEditor
             target.SuppressRepeatedEventOccurrenceDescription |= source.SuppressRepeatedEventOccurrenceDescription;
             target.UsesInitialCoordinates |= source.UsesInitialCoordinates;
             target.UsesStaticMapData |= source.UsesStaticMapData;
+            MergeStaticMapDataReads(target.StaticMapDataReads, source.StaticMapDataReads);
 
             foreach (var kvp in source.PendingPersistentCounterProgressions ?? Enumerable.Empty<KeyValuePair<ushort, PersistentCounterProgressionInfo>>())
             {
@@ -3000,8 +3032,9 @@ namespace MMMapEditor
             string partyKey = BuildPartyEffectsKey(variant);
 
             string branchKey = BuildBranchHistoryKeyForIdentity(variant);
+            string staticMapKey = BuildStaticMapDataReadKey(variant);
 
-            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}||{BuildRawProbabilityKey(variant)}";
+            return $"{textKey}||{statKey}||{battleKey}||{partialKey}||{loadKey}||{partyKey}||{branchKey}||{staticMapKey}||{BuildRawProbabilityKey(variant)}";
         }
     }
 }

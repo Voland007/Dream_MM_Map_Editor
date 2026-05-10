@@ -462,6 +462,7 @@ namespace MMMapEditor
             public HashSet<uint> VisitedAddresses { get; set; } = new HashSet<uint>();
             public bool UsesInitialCoordinates { get; set; }
             public bool UsesStaticMapData { get; set; }
+            public Dictionary<ushort, byte> StaticMapDataReads { get; set; } = new Dictionary<ushort, byte>();
         }
 
         private sealed class SingleOccurrenceAnalysisCacheEntry
@@ -1202,7 +1203,12 @@ namespace MMMapEditor
                     allResults.Any(variant => variant?.UsesInitialCoordinates ?? false),
                 UsesStaticMapData =
                     mainPathResult.UsesStaticMapData ||
-                    allResults.Any(variant => variant?.UsesStaticMapData ?? false)
+                    allResults.Any(variant => variant?.UsesStaticMapData ?? false),
+                StaticMapDataReads = MergeStaticMapDataReads(
+                    mainPathResult.StaticMapDataReads,
+                    allResults
+                        .Where(variant => variant?.StaticMapDataReads != null)
+                        .Select(variant => variant.StaticMapDataReads))
             };
 
             RegisterSingleOccurrenceAnalysis(
@@ -3949,6 +3955,46 @@ namespace MMMapEditor
             return source.ToDictionary(kvp => kvp.Key, kvp => CloneVariantInfo(kvp.Value));
         }
 
+        private static Dictionary<ushort, byte> CloneStaticMapDataReads(Dictionary<ushort, byte> source)
+        {
+            return source == null || source.Count == 0
+                ? new Dictionary<ushort, byte>()
+                : new Dictionary<ushort, byte>(source);
+        }
+
+        private static Dictionary<ushort, byte> MergeStaticMapDataReads(
+            Dictionary<ushort, byte> first,
+            IEnumerable<Dictionary<ushort, byte>> others)
+        {
+            var result = CloneStaticMapDataReads(first);
+
+            foreach (var source in others ?? Enumerable.Empty<Dictionary<ushort, byte>>())
+            {
+                if (source == null)
+                    continue;
+
+                foreach (var kvp in source)
+                    result[kvp.Key] = kvp.Value;
+            }
+
+            return result;
+        }
+
+        private static string BuildStaticMapDataReadKey(Dictionary<ushort, byte> staticMapDataReads)
+        {
+            return staticMapDataReads == null || staticMapDataReads.Count == 0
+                ? "<NO_STATIC_MAP_READS>"
+                : string.Join(";",
+                    staticMapDataReads
+                        .OrderBy(kvp => kvp.Key)
+                        .Select(kvp => $"{kvp.Key:X4}:{kvp.Value:X2}"));
+        }
+
+        private static string BuildStaticMapDataReadKey(PathVariantInfo variant)
+        {
+            return BuildStaticMapDataReadKey(variant?.StaticMapDataReads);
+        }
+
         private SingleOccurrenceAnalysisResult CloneSingleOccurrenceAnalysisResult(SingleOccurrenceAnalysisResult source)
         {
             if (source == null)
@@ -3963,7 +4009,8 @@ namespace MMMapEditor
                     .ToList() ?? new List<PathVariantInfo>(),
                 VisitedAddresses = new HashSet<uint>(source.VisitedAddresses ?? Enumerable.Empty<uint>()),
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
-                UsesStaticMapData = source.UsesStaticMapData
+                UsesStaticMapData = source.UsesStaticMapData,
+                StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads)
             };
         }
 
@@ -3985,7 +4032,7 @@ namespace MMMapEditor
                     .OrderBy(BuildSingleOccurrenceVariantSignature)
                     .Select(BuildSingleOccurrenceVariantSignature));
 
-            return $"{canonicalKey}||{rawLeafKey}||coord:{result.UsesInitialCoordinates}||staticMap:{result.UsesStaticMapData}";
+            return $"{canonicalKey}||{rawLeafKey}||coord:{result.UsesInitialCoordinates}||staticMap:{result.UsesStaticMapData}||staticMapReads:{BuildStaticMapDataReadKey(result.StaticMapDataReads)}";
         }
 
         private string BuildSingleOccurrenceVariantSignature(PathVariantInfo variant)
@@ -4058,6 +4105,7 @@ namespace MMMapEditor
                 $"localConstraints:{locallyMaterializedConstraintKey}",
                 $"coord:{variant.UsesInitialCoordinates}",
                 $"staticMap:{variant.UsesStaticMapData}",
+                $"staticMapReads:{BuildStaticMapDataReadKey(variant)}",
                 $"repeat:{variant.HasRepeatedEventOccurrenceSensitivity}",
                 $"selfDisable:{variant.DisablesCurrentMapEvent}",
                 $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
@@ -4167,6 +4215,7 @@ namespace MMMapEditor
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 UsesStaticMapData = source.UsesStaticMapData,
+                StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads),
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
                     .Distinct()
@@ -4695,7 +4744,8 @@ namespace MMMapEditor
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
-                UsesStaticMapData = source.UsesStaticMapData
+                UsesStaticMapData = source.UsesStaticMapData,
+                StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads)
             };
         }
 

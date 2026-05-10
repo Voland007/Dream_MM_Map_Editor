@@ -423,6 +423,7 @@ namespace MMMapEditor
         public int ExitCallDepth { get; set; } = 0;
         public bool UsesInitialCoordinates { get; set; } = false;
         public bool UsesStaticMapData { get; set; } = false;
+        public Dictionary<ushort, byte> StaticMapDataReads { get; set; } = new Dictionary<ushort, byte>();
         public int InlineProbabilityNumerator { get; set; } = 1;
         public int InlineProbabilityDenominator { get; set; } = 1;
         public List<BranchChoice> InlineBranchChoices { get; set; } = new List<BranchChoice>();

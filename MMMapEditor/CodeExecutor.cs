@@ -4917,6 +4917,7 @@ namespace MMMapEditor
                 result.IsOnlyRandomEncounterJump = result.IsOnlyRandomEncounterJump || subroutineResult.IsOnlyRandomEncounterJump;
                 result.UsesInitialCoordinates = result.UsesInitialCoordinates || subroutineResult.UsesInitialCoordinates;
                 result.UsesStaticMapData = result.UsesStaticMapData || subroutineResult.UsesStaticMapData;
+                MergeStaticMapDataReads(result.StaticMapDataReads, subroutineResult.StaticMapDataReads);
                 result.ExitPendingReturnAddresses = subroutineResult.ExitPendingReturnAddresses == null
                     ? new List<uint>()
                     : new List<uint>(subroutineResult.ExitPendingReturnAddresses);
@@ -5152,6 +5153,7 @@ namespace MMMapEditor
                 target.FirstLocalTextAddress = source.FirstLocalTextAddress;
 
             target.UsesStaticMapData = target.UsesStaticMapData || source.UsesStaticMapData;
+            MergeStaticMapDataReads(target.StaticMapDataReads, source.StaticMapDataReads);
             target.MemoryReadAddresses.UnionWith(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             target.MemoryWrittenAddresses.UnionWith(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             target.AdjustedMemoryAddresses.UnionWith(source.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
@@ -5374,6 +5376,15 @@ namespace MMMapEditor
 
                 existing.MergeFrom(kvp.Value);
             }
+        }
+
+        private static void MergeStaticMapDataReads(Dictionary<ushort, byte> target, Dictionary<ushort, byte> source)
+        {
+            if (target == null || source == null || source.Count == 0)
+                return;
+
+            foreach (var kvp in source)
+                target[kvp.Key] = kvp.Value;
         }
 
         /// <summary>
@@ -13025,6 +13036,7 @@ namespace MMMapEditor
                 {
                     result.UsesInitialCoordinates = true;
                     result.UsesStaticMapData = true;
+                    result.StaticMapDataReads[memAddr] = value;
                 }
 
                 return true;
