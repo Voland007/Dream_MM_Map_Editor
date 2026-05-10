@@ -1076,6 +1076,48 @@ namespace MMMapEditor
                 "41 44 54 01 14 41 44 D0 41 40 40 40 00 40 40 40"
             },
             },
+            ["AREAC4.OVR"] = new OvrFileConfig
+            {
+                StartAddress = 0x378,
+                First16Lines = new[]
+                    {
+                "FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF",
+                "FF FF 7F FF FF FF FF BF FF FF FF FF 7F FF FF FF",
+                "FF DF 55 FD BF BF AF AA BE BF BF DF 55 FD FF FF",
+                "FF FF F7 EF 8A 88 08 08 08 88 A8 FE F7 FF FF FF",
+                "FF FF FF FF FB EB A2 E2 A2 FA FB FF 7F FF FF FF",
+                "FF FF 7F FF FF FF FB FF FB FF FF DF 55 FD FF FF",
+                "FF DF 55 FD FF FF FF FF FF FF FF FF F7 FF FF FF",
+                "FF FF F7 FF FF 7F FF FF FF 7F FF FF FF FF FF FF",
+                "FF FF FF FF DF 55 FD FF DF 55 FD FF FF FF 0F 5C",
+                "FF FF FF FF FF F7 FF FF FF F7 FF 0F 4C 4C 50 15",
+                "4D 3C FF FF FF FF FF FF FF FF FF 13 55 55 55 51",
+                "15 41 4C 3C FF FF FF FF FF 0F 4C 50 55 55 55 55",
+                "51 55 55 41 4C 3C FF FF FF 13 55 55 55 55 55 55",
+                "55 55 55 55 55 41 0C AC 2E 12 55 55 55 55 55 55",
+                "55 55 55 55 55 05 A0 2A 22 12 55 55 55 55 55 55",
+                "55 55 55 55 55 A1 AA A2 A2 42 54 55 55 55 55 55"
+            },
+                Second16Lines = new[]
+                   {
+                "8C 8C 8C 8C 8C 8C 8C 8C 8C 8C 8C 8C 8C 8C 8C 8C",
+                "88 88 00 88 88 88 88 40 88 88 88 88 00 88 88 88",
+                "88 00 8A 00 40 40 50 97 41 40 40 00 8A 00 88 88",
+                "88 88 00 10 47 46 06 02 06 46 56 01 00 88 88 88",
+                "88 88 88 88 04 14 53 93 53 05 04 88 00 88 88 88",
+                "88 88 00 88 88 88 04 88 04 88 88 00 8A 00 88 88",
+                "88 00 8A 00 88 88 88 88 88 88 88 88 00 88 88 88",
+                "88 88 00 88 88 00 88 88 88 00 88 88 88 88 88 88",
+                "88 88 88 88 00 8A 00 88 00 8A 00 88 88 88 80 00",
+                "88 88 88 88 88 00 88 88 88 00 88 80 00 00 00 0A",
+                "00 80 88 88 88 88 88 88 88 88 88 00 8A 8A 8A 0A",
+                "0A 00 00 80 88 88 88 88 88 80 00 00 8A 8A 8A 8A",
+                "0A 8A 8A 00 00 80 88 88 88 00 8A 8A 8A 8A 8A 8A",
+                "8A 8A 8A 8A 8A 00 00 50 91 01 8A 8A 8A 8A 8A 8A",
+                "8A 8A 8A 8A 8A 00 50 15 11 01 8A 8A 8A 8A 8A 8A",
+                "8A 8A 8A 8A 8A 50 54 50 51 01 00 8A 8A 8A 8A 8A"
+            },
+            },
 
             // Другие файлы
         };

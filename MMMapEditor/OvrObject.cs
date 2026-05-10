@@ -805,12 +805,13 @@ namespace MMMapEditor
         {
             if (string.IsNullOrEmpty(name)) return name;
 
-            // Оставляем только английские буквы, пробелы и базовые знаки препинания
+            // Оставляем только английские буквы, цифры, пробелы и базовые знаки препинания
             var clean = new StringBuilder();
             foreach (char c in name)
             {
                 if ((c >= 'A' && c <= 'Z') ||
                     (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') ||
                     c == ' ' || c == '-' || c == '\'' || c == '.')
                 {
                     clean.Append(c);

@@ -1582,6 +1582,7 @@ namespace MMMapEditor
             {
                 if ((c >= 'A' && c <= 'Z') ||
                     (c >= 'a' && c <= 'z') ||
+                    (c >= '0' && c <= '9') ||
                     c == ' ' || c == '-' || c == '\'' || c == '.')
                 {
                     clean.Append(c);
