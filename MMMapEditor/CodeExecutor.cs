@@ -11008,6 +11008,54 @@ namespace MMMapEditor
                 }
             }
 
+            if (instructionBytes.Length >= 2 && instructionBytes[0] == 0xD1)
+            {
+                byte modRm = instructionBytes[1];
+                byte mode = (byte)((modRm >> 6) & 0x03);
+                byte operation = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+                string[] regNames16 = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+
+                if (mode == 0x03 &&
+                    rm < regNames16.Length &&
+                    registerTracker.TryGetRegisterValue(regNames16[rm], out ushort oldValue))
+                {
+                    string regName = regNames16[rm];
+                    ushort newValue = oldValue;
+                    string operationName = null;
+
+                    switch (operation)
+                    {
+                        case 4: // SHL/SAL r/m16,1
+                            operationName = "SHL";
+                            newValue = (ushort)(oldValue << 1);
+                            registerTracker.CarryFlag = (oldValue & 0x8000) != 0;
+                            registerTracker.ZeroFlag = newValue == 0;
+                            registerTracker.SignFlag = (newValue & 0x8000) != 0;
+                            registerTracker.OverflowFlag = ((oldValue ^ newValue) & 0x8000) != 0;
+                            registerTracker.FlagsKnown = true;
+                            break;
+                        case 5: // SHR r/m16,1
+                            operationName = "SHR";
+                            newValue = (ushort)(oldValue >> 1);
+                            registerTracker.CarryFlag = (oldValue & 0x0001) != 0;
+                            registerTracker.ZeroFlag = newValue == 0;
+                            registerTracker.SignFlag = false;
+                            registerTracker.OverflowFlag = (oldValue & 0x8000) != 0;
+                            registerTracker.FlagsKnown = true;
+                            break;
+                    }
+
+                    if (!string.IsNullOrEmpty(operationName))
+                    {
+                        registerTracker.SetRegisterValue(regName, newValue, address, $"{operationName} {regName}, 1");
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        {operationName} {regName}, 1: 0x{oldValue:X4} -> 0x{newValue:X4}");
+                    }
+                }
+            }
+
             // Арифметические операции
             if (instructionBytes.Length >= 2 &&
                 (instructionBytes[0] == 0x04 || instructionBytes[0] == 0x14 || instructionBytes[0] == 0x2C || instructionBytes[0] == 0x1C))

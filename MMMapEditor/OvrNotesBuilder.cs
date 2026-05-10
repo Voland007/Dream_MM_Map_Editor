@@ -5975,6 +5975,15 @@ private static string BuildHierarchicalVariantNotes(
                 return BuildSpoilerAnswerLine(areaB2Answer);
             }
 
+            if (string.Equals(fileNameOnly, "AREAB4.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                string areaB4Answer = TryReadAreaB4TriviaAnswer(filename, config, obj);
+                if (string.IsNullOrWhiteSpace(areaB4Answer))
+                    return null;
+
+                return BuildSpoilerAnswerLine(areaB4Answer);
+            }
+
             return null;
         }
 
@@ -6094,6 +6103,69 @@ private static string BuildHierarchicalVariantNotes(
             // В AREAB2 клетка (4,4) сравнивает первые 4 символа ввода так:
             // (inputChar & 0x7F) + 0x40 == storedByte at 0xC9E7 + index.
             return TryReadShiftedOverlayText(filename, config, 0xC9E7, 4, unchecked((byte)-0x40));
+        }
+
+        private static string TryReadAreaB4TriviaAnswer(string filename, OvrFileConfig config, OvrObject obj)
+        {
+            if (!TryGetAreaB4TriviaIndex(obj, out int triviaIndex))
+                return null;
+
+            const ushort answerPointerTable = 0xCABD;
+            ushort pointerAddress = unchecked((ushort)(answerPointerTable + triviaIndex * 2));
+            ushort answerAddress = TryReadOverlayWord(filename, config, pointerAddress);
+            if (answerAddress == 0)
+                return null;
+
+            // В AREAB4 общий обработчик клеток декодирует байт ответа через SUB AL, 40h
+            // перед сравнением с введённым символом.
+            return TryReadShiftedOverlayText(filename, config, answerAddress, 14, unchecked((byte)-0x40));
+        }
+
+        private static bool TryGetAreaB4TriviaIndex(OvrObject obj, out int triviaIndex)
+        {
+            triviaIndex = -1;
+
+            if (obj == null)
+                return false;
+
+            if (obj.X == 8 &&
+                obj.Y == 1 &&
+                obj.PatchAddress == 0x021D)
+            {
+                triviaIndex = 0;
+                return true;
+            }
+
+            if (obj.Y == 0 &&
+                obj.X >= 6 &&
+                obj.X <= 9 &&
+                obj.PatchAddress == 0x0222)
+            {
+                triviaIndex = obj.X - 5;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static ushort TryReadOverlayWord(string filename, OvrFileConfig config, ushort address)
+        {
+            if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
+                return 0;
+
+            try
+            {
+                using var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                return OvrOverlayAddressReader.TryReadWord(br, config, address, out ushort value)
+                    ? value
+                    : (ushort)0;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         private static string TryReadShiftedOverlayText(
