@@ -979,6 +979,7 @@ namespace MMMapEditor
         public bool HasRepeatedEventOccurrenceSensitivity { get; set; } = false;
         public bool SuppressRepeatedEventOccurrenceDescription { get; set; } = false;
         public bool UsesInitialCoordinates { get; set; } = false;
+        public bool UsesStaticMapData { get; set; } = false;
         public List<int> OccurrenceIndices { get; set; } = new List<int>();
         public List<OccurrenceRangeInfo> OccurrenceRanges { get; set; } = new List<OccurrenceRangeInfo>();
         public string OccurrenceDescription { get; set; }

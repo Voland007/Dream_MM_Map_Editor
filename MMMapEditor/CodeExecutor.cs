@@ -30,6 +30,12 @@ namespace MMMapEditor
     /// </summary>
     public class CodeExecutor
     {
+        private const ushort StaticMapFirstLayerBaseAddress = 0x3CFA;
+        private const ushort StaticMapSecondLayerBaseAddress = 0x3DFA;
+        private const int StaticMapLayerWidth = 16;
+        private const int StaticMapLayerHeight = 16;
+        private const int StaticMapLayerByteCount = StaticMapLayerWidth * StaticMapLayerHeight;
+
         private readonly OvrFileConfig _config;
         private readonly InstructionAnalyzer _instructionAnalyzer;
         private readonly Dictionary<ushort, byte> _emulatedMemory8 = new Dictionary<ushort, byte>();
@@ -4910,6 +4916,7 @@ namespace MMMapEditor
                 result.HasSignificantCode = result.HasSignificantCode || subroutineResult.HasSignificantCode;
                 result.IsOnlyRandomEncounterJump = result.IsOnlyRandomEncounterJump || subroutineResult.IsOnlyRandomEncounterJump;
                 result.UsesInitialCoordinates = result.UsesInitialCoordinates || subroutineResult.UsesInitialCoordinates;
+                result.UsesStaticMapData = result.UsesStaticMapData || subroutineResult.UsesStaticMapData;
                 result.ExitPendingReturnAddresses = subroutineResult.ExitPendingReturnAddresses == null
                     ? new List<uint>()
                     : new List<uint>(subroutineResult.ExitPendingReturnAddresses);
@@ -5144,6 +5151,7 @@ namespace MMMapEditor
             if (source.FirstLocalTextAddress < target.FirstLocalTextAddress)
                 target.FirstLocalTextAddress = source.FirstLocalTextAddress;
 
+            target.UsesStaticMapData = target.UsesStaticMapData || source.UsesStaticMapData;
             target.MemoryReadAddresses.UnionWith(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             target.MemoryWrittenAddresses.UnionWith(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             target.AdjustedMemoryAddresses.UnionWith(source.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
@@ -7644,6 +7652,9 @@ namespace MMMapEditor
             if (sourceAddress.HasValue && _emulatedMemory8.ContainsKey(sourceAddress.Value))
                 return true;
 
+            if (sourceAddress.HasValue && IsStaticMapDataAddress(sourceAddress.Value))
+                return true;
+
             return false;
         }
 
@@ -7658,7 +7669,9 @@ namespace MMMapEditor
             }
 
             ushort memAddr = registerTracker.LastComparedMemoryAddress.Value;
-            return _emulatedMemory8.ContainsKey(memAddr) || memAddr == BATTLE_MONSTER_COUNT_ADDRESS;
+            return _emulatedMemory8.ContainsKey(memAddr) ||
+                   IsStaticMapDataAddress(memAddr) ||
+                   memAddr == BATTLE_MONSTER_COUNT_ADDRESS;
         }
 
         private bool TryGetExactBattleMonsterCount(PathAnalysisResult result, out byte battleMonsterCount)
@@ -12946,6 +12959,29 @@ namespace MMMapEditor
                 return true;
             }
 
+            if (memAddr == 0x3C3A)
+            {
+                byte x = (byte)((result?.TeleportTargetX ?? targetX) & 0x0F);
+                byte y = (byte)((result?.TeleportTargetY ?? targetY) & 0x0F);
+                value = (byte)((y << 4) | x);
+                RegisterMemoryRead(result, memAddr, false);
+                if (result != null)
+                    result.UsesInitialCoordinates = true;
+                return true;
+            }
+
+            if (TryReadStaticMapDataByte(memAddr, out value, out _))
+            {
+                RegisterMemoryRead(result, memAddr, false);
+                if (result != null)
+                {
+                    result.UsesInitialCoordinates = true;
+                    result.UsesStaticMapData = true;
+                }
+
+                return true;
+            }
+
             if (TryReadOverlayByte(br, memAddr, out value))
             {
                 RegisterMemoryRead(result, memAddr, true);
@@ -12959,6 +12995,17 @@ namespace MMMapEditor
         {
             value = 0;
 
+            if (memAddr == 0x3C3A)
+            {
+                byte x = (byte)((result?.TeleportTargetX ?? targetX) & 0x0F);
+                byte y = (byte)((result?.TeleportTargetY ?? targetY) & 0x0F);
+                value = (ushort)((y << 4) | x);
+                RegisterMemoryRead(result, memAddr, false);
+                if (result != null)
+                    result.UsesInitialCoordinates = true;
+                return true;
+            }
+
             if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte low) &&
                 TryResolveTrackedByteValue(br, unchecked((ushort)(memAddr + 1)), result, targetX, targetY, out byte high))
             {
@@ -12967,6 +13014,63 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private bool TryReadStaticMapDataByte(ushort memAddr, out byte value, out string layerName)
+        {
+            value = 0;
+            layerName = null;
+
+            int firstLayerOffset = memAddr - StaticMapFirstLayerBaseAddress;
+            if (firstLayerOffset >= 0 && firstLayerOffset < StaticMapLayerByteCount)
+            {
+                layerName = nameof(OvrFileConfig.First16Lines);
+                return TryReadStaticMapLayerCell(_config?.First16Lines, firstLayerOffset, out value);
+            }
+
+            int secondLayerOffset = memAddr - StaticMapSecondLayerBaseAddress;
+            if (secondLayerOffset >= 0 && secondLayerOffset < StaticMapLayerByteCount)
+            {
+                layerName = nameof(OvrFileConfig.Second16Lines);
+                return TryReadStaticMapLayerCell(_config?.Second16Lines, secondLayerOffset, out value);
+            }
+
+            return false;
+        }
+
+        private static bool IsStaticMapDataAddress(ushort memAddr)
+        {
+            return IsAddressInStaticMapLayer(memAddr, StaticMapFirstLayerBaseAddress) ||
+                   IsAddressInStaticMapLayer(memAddr, StaticMapSecondLayerBaseAddress);
+        }
+
+        private static bool IsAddressInStaticMapLayer(ushort memAddr, ushort layerBaseAddress)
+        {
+            int offset = memAddr - layerBaseAddress;
+            return offset >= 0 && offset < StaticMapLayerByteCount;
+        }
+
+        private static bool TryReadStaticMapLayerCell(string[] lines, int offset, out byte value)
+        {
+            value = 0;
+
+            if (lines == null || lines.Length < StaticMapLayerHeight ||
+                offset < 0 || offset >= StaticMapLayerByteCount)
+            {
+                return false;
+            }
+
+            int y = offset / StaticMapLayerWidth;
+            int x = offset % StaticMapLayerWidth;
+            string line = lines[y];
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            var tokens = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length <= x)
+                return false;
+
+            return byte.TryParse(tokens[x], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
         }
 
         private bool IsTrackedWordInEmulatedMemory(ushort memAddr)

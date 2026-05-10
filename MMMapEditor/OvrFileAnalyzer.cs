@@ -461,6 +461,7 @@ namespace MMMapEditor
             public List<PathVariantInfo> RawLeafVariants { get; set; } = new List<PathVariantInfo>();
             public HashSet<uint> VisitedAddresses { get; set; } = new HashSet<uint>();
             public bool UsesInitialCoordinates { get; set; }
+            public bool UsesStaticMapData { get; set; }
         }
 
         private sealed class SingleOccurrenceAnalysisCacheEntry
@@ -1198,7 +1199,10 @@ namespace MMMapEditor
                 VisitedAddresses = localVisitedAddresses,
                 UsesInitialCoordinates =
                     mainPathResult.UsesInitialCoordinates ||
-                    allResults.Any(variant => variant?.UsesInitialCoordinates ?? false)
+                    allResults.Any(variant => variant?.UsesInitialCoordinates ?? false),
+                UsesStaticMapData =
+                    mainPathResult.UsesStaticMapData ||
+                    allResults.Any(variant => variant?.UsesStaticMapData ?? false)
             };
 
             RegisterSingleOccurrenceAnalysis(
@@ -3653,7 +3657,9 @@ namespace MMMapEditor
                 return false;
             }
 
-            return finalVariants.Values.Any(IsCoordinateSensitiveBattleTableVariant);
+            return finalVariants.Values.Any(variant =>
+                variant?.UsesStaticMapData == true ||
+                IsCoordinateSensitiveBattleTableVariant(variant));
         }
 
         private static bool IsCoordinateSensitiveBattleTableVariant(PathVariantInfo variant)
@@ -3820,7 +3826,7 @@ namespace MMMapEditor
 
             // Широкое переиспользование на уровне macro X/Y-scope разрешаем
             // только для результатов, не зависящих от стартовых координат.
-            if (result.UsesInitialCoordinates)
+            if (result.UsesInitialCoordinates || result.UsesStaticMapData)
                 return;
 
             if (!TryBuildSingleOccurrenceCacheKey(
@@ -3956,7 +3962,8 @@ namespace MMMapEditor
                     .Select(CloneVariantInfo)
                     .ToList() ?? new List<PathVariantInfo>(),
                 VisitedAddresses = new HashSet<uint>(source.VisitedAddresses ?? Enumerable.Empty<uint>()),
-                UsesInitialCoordinates = source.UsesInitialCoordinates
+                UsesInitialCoordinates = source.UsesInitialCoordinates,
+                UsesStaticMapData = source.UsesStaticMapData
             };
         }
 
@@ -3978,7 +3985,7 @@ namespace MMMapEditor
                     .OrderBy(BuildSingleOccurrenceVariantSignature)
                     .Select(BuildSingleOccurrenceVariantSignature));
 
-            return $"{canonicalKey}||{rawLeafKey}||coord:{result.UsesInitialCoordinates}";
+            return $"{canonicalKey}||{rawLeafKey}||coord:{result.UsesInitialCoordinates}||staticMap:{result.UsesStaticMapData}";
         }
 
         private string BuildSingleOccurrenceVariantSignature(PathVariantInfo variant)
@@ -4050,6 +4057,7 @@ namespace MMMapEditor
                 $"constraints:{constraintKey}",
                 $"localConstraints:{locallyMaterializedConstraintKey}",
                 $"coord:{variant.UsesInitialCoordinates}",
+                $"staticMap:{variant.UsesStaticMapData}",
                 $"repeat:{variant.HasRepeatedEventOccurrenceSensitivity}",
                 $"selfDisable:{variant.DisablesCurrentMapEvent}",
                 $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
@@ -4158,6 +4166,7 @@ namespace MMMapEditor
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
+                UsesStaticMapData = source.UsesStaticMapData,
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
                     .Distinct()
@@ -4685,7 +4694,8 @@ namespace MMMapEditor
                 LocallyMaterializedStateValueConstraintAddresses =
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
-                UsesInitialCoordinates = source.UsesInitialCoordinates
+                UsesInitialCoordinates = source.UsesInitialCoordinates,
+                UsesStaticMapData = source.UsesStaticMapData
             };
         }
 

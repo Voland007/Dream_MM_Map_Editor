@@ -772,6 +772,7 @@ namespace MMMapEditor
             merged.TerminatedByPromptLoopBackEdge = merged.TerminatedByPromptLoopBackEdge || currentState.TerminatedByPromptLoopBackEdge;
             merged.TerminatedByTerminalRet = merged.TerminatedByTerminalRet || currentState.TerminatedByTerminalRet;
             merged.UsesInitialCoordinates = merged.UsesInitialCoordinates || inheritedState.UsesInitialCoordinates || currentState.UsesInitialCoordinates;
+            merged.UsesStaticMapData = merged.UsesStaticMapData || inheritedState.UsesStaticMapData || currentState.UsesStaticMapData;
             AppendBranchChoices(merged.InlineBranchChoices, currentState.InlineBranchChoices);
             merged.MemoryReadAddresses.UnionWith(currentState.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             merged.MemoryWrittenAddresses.UnionWith(currentState.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
@@ -1064,6 +1065,7 @@ namespace MMMapEditor
             clone.IsTerminated = source.IsTerminated;
             clone.HasSignificantCode = source.HasSignificantCode;
             clone.UsesInitialCoordinates = source.UsesInitialCoordinates;
+            clone.UsesStaticMapData = source.UsesStaticMapData;
             clone.InlineProbabilityNumerator = source.InlineProbabilityNumerator;
             clone.InlineProbabilityDenominator = source.InlineProbabilityDenominator;
             clone.InlineBranchChoices = CloneBranchChoices(source.InlineBranchChoices);
@@ -1261,6 +1263,7 @@ namespace MMMapEditor
                     new HashSet<ushort>(source.LocallyMaterializedStateValueConstraintAddresses ?? Enumerable.Empty<ushort>()),
                 DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
+                UsesStaticMapData = source.UsesStaticMapData,
                 ProbabilityNumerator = probabilityNumerator,
                 ProbabilityDenominator = probabilityDenominator,
                 TerminatedByRepeatedBackEdge = source.TerminatedByRepeatedBackEdge,
@@ -2773,6 +2776,7 @@ namespace MMMapEditor
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
+                UsesStaticMapData = source.UsesStaticMapData,
                 OccurrenceIndices = source.OccurrenceIndices?
                     .Where(index => index > 0)
                     .Distinct()
@@ -2811,6 +2815,7 @@ namespace MMMapEditor
             target.HasRepeatedEventOccurrenceSensitivity |= source.HasRepeatedEventOccurrenceSensitivity;
             target.SuppressRepeatedEventOccurrenceDescription |= source.SuppressRepeatedEventOccurrenceDescription;
             target.UsesInitialCoordinates |= source.UsesInitialCoordinates;
+            target.UsesStaticMapData |= source.UsesStaticMapData;
 
             foreach (var kvp in source.PendingPersistentCounterProgressions ?? Enumerable.Empty<KeyValuePair<ushort, PersistentCounterProgressionInfo>>())
             {
