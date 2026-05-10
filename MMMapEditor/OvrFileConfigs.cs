@@ -1036,7 +1036,7 @@ namespace MMMapEditor
             },
             ["AREAC3.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x397,
+                StartAddress = 0x2C5,
                 First16Lines = new[]
                     {
                 "0F 0C 8C 8C AC 8A 88 88 A8 0E CC 0C CC 0C CC FC",

@@ -2292,7 +2292,7 @@ private static string BuildHierarchicalVariantNotes(
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 RemoveRedundantInheritedLines(root);
-                group.TreeRoot = PruneDecorativeSingleChoiceLeaves(
+                group.TreeRoot = PruneDecorativeChoiceLeaves(
                     SimplifyGenericChoiceTree(
                         CompressVariantTree(root)));
             }
@@ -2831,26 +2831,32 @@ private static string BuildHierarchicalVariantNotes(
             return node;
         }
 
-        private static VariantTreeNode PruneDecorativeSingleChoiceLeaves(VariantTreeNode node)
+        private static VariantTreeNode PruneDecorativeChoiceLeaves(VariantTreeNode node)
         {
             if (node == null)
                 return null;
 
             for (int i = 0; i < node.Children.Count; i++)
-                node.Children[i] = PruneDecorativeSingleChoiceLeaves(node.Children[i]);
+                node.Children[i] = PruneDecorativeChoiceLeaves(node.Children[i]);
 
             node.Children = node.Children
                 .Where(IsRenderableStructuralNode)
                 .ToList();
 
-            while (node.Children.Count == 1 &&
-                   CountRenderableDirectVariants(node) == 0 &&
-                   IsDecorativeChoicePlaceholderLeaf(node.Children[0]))
+            if (node.Children.Count > 0 &&
+                !HasIntrinsicRenderableDirectVariant(node) &&
+                node.Children.All(IsDecorativeChoicePlaceholderLeaf))
             {
                 node.Children.Clear();
             }
 
             return node;
+        }
+
+        private static bool HasIntrinsicRenderableDirectVariant(VariantTreeNode node)
+        {
+            return node?.DirectVariants != null &&
+                   node.DirectVariants.Any(IsRenderableDirectVariant);
         }
 
         private static bool IsDecorativeChoicePlaceholderLeaf(VariantTreeNode node)
