@@ -29,6 +29,8 @@ namespace MMMapEditor
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
         private const ushort PartyCountAddress = 0x3BC0;
         private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
+        private const int FlatSemanticVariantKeyBase = int.MinValue / 2;
+        private const int FlatSemanticVariantKeyStride = 10000;
 
         public static OvrNotesBuildResult BuildNotes(
             string filename,
@@ -550,16 +552,17 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
-            var partyScanContents = BuildFlatPartyScanVariantContents(
+            var semanticTreeContents = BuildFlatSemanticTreeVariantContents(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
                 defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance,
-                inlineSpecialSpoilerLine);
-            if (partyScanContents != null)
-                return partyScanContents;
+                inlineSpecialSpoilerLine,
+                requirePartyScan: false);
+            if (semanticTreeContents != null)
+                return semanticTreeContents;
 
             var variantContents = new Dictionary<int, List<string>>();
 
@@ -591,14 +594,15 @@ namespace MMMapEditor
             return variantContents;
         }
 
-        private static Dictionary<int, List<string>> BuildFlatPartyScanVariantContents(
+        private static Dictionary<int, List<string>> BuildFlatSemanticTreeVariantContents(
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
             byte defaultRandomEncounterMonsterBatchCountCap,
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
-            string inlineSpecialSpoilerLine)
+            string inlineSpecialSpoilerLine,
+            bool requirePartyScan)
         {
             var items = BuildVariantRenderItems(
                 obj,
@@ -616,12 +620,20 @@ namespace MMMapEditor
             if (items.Count <= 1)
                 return null;
 
+            var sourceItems = items
+                .Select(CloneVariantRenderItemForSourceMatch)
+                .Where(item => item != null)
+                .ToList();
+
             var groups = BuildTopLevelVariantGroups(items);
             if (groups.Count == 0)
                 return null;
 
+            bool hasPromptBranching = groups.Any(group =>
+                TreeContainsPromptBranching(group?.TreeRoot));
+
             bool containsPartyScan = false;
-            var flatVariants = new List<List<string>>();
+            var flatVariants = new List<FlatVariantRenderItem>();
             foreach (var group in groups)
             {
                 var lines = BuildFlatVariantLinesFromTree(group.TreeRoot, out bool groupContainsPartyScan);
@@ -629,39 +641,262 @@ namespace MMMapEditor
                 flatVariants.AddRange(lines);
             }
 
-            if (!containsPartyScan || flatVariants.Count == 0)
+            if (requirePartyScan && !containsPartyScan)
                 return null;
 
-            var result = new Dictionary<int, List<string>>();
-            int key = int.MinValue;
-            foreach (var lines in flatVariants)
+            if (!requirePartyScan && !containsPartyScan && !hasPromptBranching)
+                return null;
+
+            if (flatVariants.Count == 0)
+                return null;
+
+            var mappedFlatVariants = new List<(FlatVariantRenderItem Variant, int OriginalIndex, int? SourceVariantKey)>();
+            var usedSourceVariantKeys = new HashSet<int>();
+            for (int i = 0; i < flatVariants.Count; i++)
             {
-                var normalizedLines = (lines ?? new List<string>())
+                int? sourceVariantKey = TryResolveFlatVariantSourceKey(
+                    obj,
+                    sourceItems,
+                    flatVariants[i],
+                    usedSourceVariantKeys,
+                    out int resolvedVariantKey)
+                    ? resolvedVariantKey
+                    : null;
+
+                if (sourceVariantKey.HasValue)
+                    usedSourceVariantKeys.Add(sourceVariantKey.Value);
+
+                mappedFlatVariants.Add((flatVariants[i], i, sourceVariantKey));
+            }
+
+            var orderedFlatVariants = mappedFlatVariants
+                .OrderBy(item => item.SourceVariantKey ?? int.MaxValue)
+                .ThenBy(item => item.OriginalIndex)
+                .ToList();
+
+            var result = new Dictionary<int, List<string>>();
+            int displayIndex = 0;
+            foreach (var flatVariant in orderedFlatVariants)
+            {
+                var normalizedLines = (flatVariant.Variant?.Lines ?? new List<string>())
                     .Where(line => !string.IsNullOrWhiteSpace(line))
                     .ToList();
                 if (normalizedLines.Count == 0)
                     normalizedLines.Add("Ничего не происходит");
 
-                result[key++] = normalizedLines;
+                int key = BuildFlatSemanticVariantKey(displayIndex++, flatVariant.SourceVariantKey);
+                result[key] = normalizedLines;
             }
 
             return result;
         }
 
-        private static List<List<string>> BuildFlatVariantLinesFromTree(
+        private static VariantRenderItem CloneVariantRenderItemForSourceMatch(VariantRenderItem item)
+        {
+            if (item == null)
+                return null;
+
+            return new VariantRenderItem
+            {
+                Variant = item.Variant,
+                Lines = item.Lines?.ToList() ?? new List<string>(),
+                NarrativeLines = item.NarrativeLines?.ToList() ?? new List<string>()
+            };
+        }
+
+        private static int BuildFlatSemanticVariantKey(int displayIndex, int? sourceVariantKey)
+        {
+            int sourceKeyComponent = 0;
+            if (sourceVariantKey.HasValue &&
+                sourceVariantKey.Value >= 0 &&
+                sourceVariantKey.Value < FlatSemanticVariantKeyStride - 1)
+            {
+                sourceKeyComponent = sourceVariantKey.Value + 1;
+            }
+
+            return FlatSemanticVariantKeyBase +
+                   Math.Max(0, displayIndex) * FlatSemanticVariantKeyStride +
+                   sourceKeyComponent;
+        }
+
+        private static bool TryDecodeFlatSemanticVariantKey(int displayKey, out int sourceVariantKey)
+        {
+            sourceVariantKey = 0;
+            if (displayKey < FlatSemanticVariantKeyBase || displayKey >= 0)
+                return false;
+
+            int encoded = displayKey - FlatSemanticVariantKeyBase;
+            int sourceKeyComponent = encoded % FlatSemanticVariantKeyStride;
+            if (sourceKeyComponent <= 0)
+                return false;
+
+            sourceVariantKey = sourceKeyComponent - 1;
+            return true;
+        }
+
+        private static bool TryFindPathVariantKey(
+            OvrObject obj,
+            PathVariantInfo variant,
+            out int variantKey)
+        {
+            variantKey = 0;
+            if (obj?.PathVariants == null || variant == null)
+                return false;
+
+            foreach (var kvp in obj.PathVariants.OrderBy(kvp => kvp.Key))
+            {
+                if (ReferenceEquals(kvp.Value, variant))
+                {
+                    variantKey = kvp.Key;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryResolveFlatVariantSourceKey(
+            OvrObject obj,
+            IEnumerable<VariantRenderItem> sourceItems,
+            FlatVariantRenderItem flatVariant,
+            HashSet<int> usedSourceVariantKeys,
+            out int variantKey)
+        {
+            variantKey = 0;
+
+            if (TryFindPathVariantKey(obj, flatVariant?.Variant, out variantKey))
+                return true;
+
+            if (sourceItems == null || flatVariant == null)
+                return false;
+
+            string targetKey = BuildFlatVariantLineMatchKey(flatVariant.Lines);
+            if (string.IsNullOrEmpty(targetKey))
+                return false;
+
+            foreach (var item in sourceItems
+                .Where(item => item?.Variant != null)
+                .OrderBy(item =>
+                    TryFindPathVariantKey(obj, item.Variant, out int key)
+                        ? key
+                        : int.MaxValue))
+            {
+                if (!TryFindPathVariantKey(obj, item.Variant, out int candidateKey))
+                    continue;
+
+                if (usedSourceVariantKeys != null && usedSourceVariantKeys.Contains(candidateKey))
+                    continue;
+
+                string candidateLinesKey = BuildFlatVariantLineMatchKey(item.Lines);
+                if (!string.Equals(candidateLinesKey, targetKey, StringComparison.Ordinal))
+                    continue;
+
+                variantKey = candidateKey;
+                return true;
+            }
+
+            string targetMultisetKey = BuildFlatVariantLineMultisetMatchKey(flatVariant.Lines);
+            if (string.IsNullOrEmpty(targetMultisetKey))
+                return false;
+
+            foreach (var item in sourceItems
+                .Where(item => item?.Variant != null)
+                .OrderBy(item =>
+                    TryFindPathVariantKey(obj, item.Variant, out int key)
+                        ? key
+                        : int.MaxValue))
+            {
+                if (!TryFindPathVariantKey(obj, item.Variant, out int candidateKey))
+                    continue;
+
+                if (usedSourceVariantKeys != null && usedSourceVariantKeys.Contains(candidateKey))
+                    continue;
+
+                string candidateLinesKey = BuildFlatVariantLineMultisetMatchKey(item.Lines);
+                if (!string.Equals(candidateLinesKey, targetMultisetKey, StringComparison.Ordinal))
+                    continue;
+
+                variantKey = candidateKey;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string BuildFlatVariantLineMatchKey(IEnumerable<string> lines)
+        {
+            return string.Join("\n", (lines ?? Enumerable.Empty<string>())
+                .Select(line => line?.TrimEnd() ?? string.Empty)
+                .Where(line => !string.IsNullOrWhiteSpace(line)));
+        }
+
+        private static string BuildFlatVariantLineMultisetMatchKey(IEnumerable<string> lines)
+        {
+            return string.Join("\n", (lines ?? Enumerable.Empty<string>())
+                .Select(line => line?.TrimEnd() ?? string.Empty)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .GroupBy(line => line, StringComparer.Ordinal)
+                .OrderBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => $"{group.Count()}:{group.Key}"));
+        }
+
+        private static bool TryResolvePathVariantForDisplayKey(
+            OvrObject obj,
+            int displayKey,
+            out PathVariantInfo variant)
+        {
+            variant = null;
+            if (obj?.PathVariants == null)
+                return false;
+
+            if (obj.PathVariants.TryGetValue(displayKey, out variant))
+                return true;
+
+            return TryDecodeFlatSemanticVariantKey(displayKey, out int sourceVariantKey) &&
+                   obj.PathVariants.TryGetValue(sourceVariantKey, out variant);
+        }
+
+        private static bool TreeContainsPromptBranching(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildren.Count);
+            int renderableDirectVariantCount = (node.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+                .Count(v => ShouldRenderDirectVariant(
+                    v,
+                    siblingDirectVariantCount,
+                    renderableChildren.Count,
+                    suppressEmptyPromptTerminalDirectVariants));
+
+            if (HasPromptOptionLabels(node.CommonLines) &&
+                renderableChildren.Count + renderableDirectVariantCount > 1)
+            {
+                return true;
+            }
+
+            return renderableChildren.Any(TreeContainsPromptBranching);
+        }
+
+        private static List<FlatVariantRenderItem> BuildFlatVariantLinesFromTree(
             VariantTreeNode node,
             out bool containsPartyScan)
         {
             return BuildFlatVariantLinesFromTree(node, new List<string>(), out containsPartyScan);
         }
 
-        private static List<List<string>> BuildFlatVariantLinesFromTree(
+        private static List<FlatVariantRenderItem> BuildFlatVariantLinesFromTree(
             VariantTreeNode node,
             List<string> inheritedLines,
             out bool containsPartyScan)
         {
             containsPartyScan = false;
-            var result = new List<List<string>>();
+            var result = new List<FlatVariantRenderItem>();
             if (!IsRenderableStructuralNode(node))
                 return result;
 
@@ -678,14 +913,20 @@ namespace MMMapEditor
                 .Where(IsRenderableStructuralNode)
                 .ToList();
             int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildren.Count);
             var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
-                .Where(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildren.Count))
+                .Where(v => ShouldRenderDirectVariant(
+                    v,
+                    siblingDirectVariantCount,
+                    renderableChildren.Count,
+                    suppressEmptyPromptTerminalDirectVariants))
                 .ToList();
 
             if (renderableChildren.Count == 0 && renderableDirectVariants.Count == 0)
             {
                 if (prefix.Any(line => !string.IsNullOrWhiteSpace(line)))
-                    result.Add(prefix);
+                    result.Add(new FlatVariantRenderItem { Lines = prefix });
                 return result;
             }
 
@@ -713,7 +954,13 @@ namespace MMMapEditor
                 var variantLines = new List<string>(prefix);
                 variantLines.AddRange(entry.DirectVariant.Lines ?? new List<string>());
                 if (variantLines.Any(line => !string.IsNullOrWhiteSpace(line)))
-                    result.Add(variantLines);
+                {
+                    result.Add(new FlatVariantRenderItem
+                    {
+                        Variant = entry.DirectVariant.Variant,
+                        Lines = variantLines
+                    });
+                }
             }
 
             return result;
@@ -722,9 +969,9 @@ namespace MMMapEditor
         private static bool TryBuildFlatPartyScanOutcomeLines(
             VariantTreeNode node,
             List<string> prefix,
-            out List<List<string>> result)
+            out List<FlatVariantRenderItem> result)
         {
-            result = new List<List<string>>();
+            result = new List<FlatVariantRenderItem>();
 
             var scanNode = FindImmediatePartyScanPromptNode(node);
             if (scanNode == null || !PartyScanSiblingsAreAggregateOnly(node, scanNode))
@@ -751,13 +998,17 @@ namespace MMMapEditor
                 if (!string.IsNullOrWhiteSpace(summary.Label))
                     lines.Add(summary.Label);
                 lines.AddRange(summary.Lines ?? new List<string>());
-                result.Add(lines);
+                result.Add(new FlatVariantRenderItem
+                {
+                    Variant = summary.Variant,
+                    Lines = lines
+                });
             }
 
             if (aggregateLines.Count > 0)
             {
-                foreach (var lines in result)
-                    lines.AddRange(aggregateLines);
+                foreach (var flatVariant in result)
+                    flatVariant.Lines.AddRange(aggregateLines);
             }
 
             return result.Count > 0;
@@ -946,7 +1197,7 @@ namespace MMMapEditor
         {
             string header = $"Вариант {displayVariantNumber}";
 
-            if (obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var pathVariant))
+            if (TryResolvePathVariantForDisplayKey(obj, variantKey, out var pathVariant))
             {
                 var annotations = BuildVariantHeaderAnnotations(pathVariant);
                 if (annotations.Count > 0)
@@ -1821,6 +2072,12 @@ namespace MMMapEditor
             public List<string> NarrativeLines { get; set; } = new List<string>();
         }
 
+        private sealed class FlatVariantRenderItem
+        {
+            public PathVariantInfo Variant { get; set; }
+            public List<string> Lines { get; set; } = new List<string>();
+        }
+
         private sealed class VariantTreeNode
         {
             public string SegmentKey { get; set; }
@@ -1862,6 +2119,13 @@ namespace MMMapEditor
             public List<string> Lines { get; set; } = new List<string>();
         }
 
+        private sealed class SharedPromptContentGroup
+        {
+            public List<string> Lines { get; set; } = new List<string>();
+            public List<VariantTreeNode> Children { get; set; } = new List<VariantTreeNode>();
+            public int FirstChildIndex { get; set; } = int.MaxValue;
+        }
+
         private sealed class PartyScanOutcomeBranch
         {
             public VariantRenderItem Variant { get; set; }
@@ -1873,6 +2137,7 @@ namespace MMMapEditor
 
         private sealed class PartyScanOutcomeSummary
         {
+            public PathVariantInfo Variant { get; set; }
             public string Label { get; set; }
             public List<string> Lines { get; set; } = new List<string>();
             public List<string> AggregateLines { get; set; } = new List<string>();
@@ -2024,6 +2289,8 @@ private static string BuildHierarchicalVariantNotes(
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
+                AttachChoiceChildrenToSiblingPromptParents(root);
+                IntroduceSharedPromptHierarchyFromChoiceChildContent(root);
                 IntroduceSharedPromptHierarchyAcrossChoiceChildren(root);
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
@@ -2093,7 +2360,8 @@ private static string BuildHierarchicalVariantNotes(
         private static bool ShouldRenderDirectVariant(
             VariantRenderItem item,
             int siblingDirectVariantCount,
-            int renderableChildCount)
+            int renderableChildCount,
+            bool suppressEmptyPromptTerminalDirectVariants = false)
         {
             if (item == null)
                 return false;
@@ -2104,7 +2372,35 @@ private static string BuildHierarchicalVariantNotes(
             if (!IsEmptyOrNoOpVariant(item))
                 return false;
 
+            if (suppressEmptyPromptTerminalDirectVariants)
+                return false;
+
             return renderableChildCount > 0 || siblingDirectVariantCount > 1;
+        }
+
+        private static bool ShouldSuppressEmptyPromptTerminalDirectVariants(
+            VariantTreeNode node,
+            int renderableChildCount)
+        {
+            if (node == null || renderableChildCount <= 0)
+                return false;
+
+            return HasMultiNumericPromptOptions(node.CommonLines);
+        }
+
+        private static bool HasMultiNumericPromptOptions(IEnumerable<string> lines)
+        {
+            var optionTokens = ExtractPromptOptionLabels(string.Join("\n", lines ?? Enumerable.Empty<string>()))
+                .Select(NormalizeChoiceLabel)
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Select(label => label.EndsWith(")", StringComparison.Ordinal)
+                    ? label.Substring(0, label.Length - 1).Trim()
+                    : label.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return optionTokens.Count >= 3 &&
+                   optionTokens.All(token => int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out _));
         }
 
         private static int CountRenderableDirectVariants(VariantTreeNode node)
@@ -2114,9 +2410,15 @@ private static string BuildHierarchicalVariantNotes(
 
             int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
             int renderableChildCount = node.Children?.Count(IsRenderableStructuralNode) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildCount);
 
             return (node.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
-                .Count(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildCount));
+                .Count(v => ShouldRenderDirectVariant(
+                    v,
+                    siblingDirectVariantCount,
+                    renderableChildCount,
+                    suppressEmptyPromptTerminalDirectVariants));
         }
 
         private static bool IsNoOpTopLevelGroup(TopLevelVariantGroup group)
@@ -2792,7 +3094,13 @@ private static string BuildHierarchicalVariantNotes(
             VariantTreeNode node,
             IEnumerable<string> promptOptionLabels)
         {
-            if (node == null || string.IsNullOrWhiteSpace(node.Label))
+            if (node == null)
+                return false;
+
+            if (HasMultiNumericPromptOptions(node.CommonLines))
+                return true;
+
+            if (string.IsNullOrWhiteSpace(node.Label))
                 return false;
 
             string normalizedNodeLabel = NormalizeChoiceLabel(node.Label);
@@ -2831,7 +3139,7 @@ private static string BuildHierarchicalVariantNotes(
                 if (string.IsNullOrWhiteSpace(token))
                     continue;
 
-                var rangeMatch = Regex.Match(token, @"^\s*(\d+)\s*[-–—]\s*(\d+)\s*$");
+                var rangeMatch = Regex.Match(token, @"^\s*(\d+)\s*[-–—]\s*(\d+)(?:\s+[^()]*)?\s*$");
                 if (rangeMatch.Success &&
                     int.TryParse(rangeMatch.Groups[1].Value, out int from) &&
                     int.TryParse(rangeMatch.Groups[2].Value, out int to) &&
@@ -3122,6 +3430,313 @@ private static string BuildHierarchicalVariantNotes(
                 .ToList();
 
             node.Children.AddRange(syntheticChildren);
+        }
+
+        private static void AttachChoiceChildrenToSiblingPromptParents(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                AttachChoiceChildrenToSiblingPromptParents(child);
+
+            if (node.Children == null || node.Children.Count < 2)
+                return;
+
+            var children = node.Children.ToList();
+            var promptChildren = children
+                .Where(IsPromptParentCandidate)
+                .OrderByDescending(child => child.CommonLines?.Count ?? 0)
+                .ToList();
+
+            if (promptChildren.Count == 0)
+                return;
+
+            var childToPromptParent = new Dictionary<VariantTreeNode, VariantTreeNode>();
+
+            foreach (var child in children)
+            {
+                if (child == null || promptChildren.Contains(child))
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(child.Label) || !IsChoiceLikeLabel(child.Label))
+                    continue;
+
+                var promptParent = promptChildren.FirstOrDefault(prompt =>
+                    !ReferenceEquals(prompt, child) &&
+                    NodeContentStartsWithLines(child, prompt.CommonLines));
+
+                if (promptParent == null ||
+                    !TryRemoveLeadingLinesFromNodeContent(child, promptParent.CommonLines))
+                {
+                    continue;
+                }
+
+                promptParent.Children.Add(child);
+                childToPromptParent[child] = promptParent;
+            }
+
+            if (childToPromptParent.Count == 0)
+                return;
+
+            node.Children = children
+                .Where(child => child == null || !childToPromptParent.ContainsKey(child))
+                .ToList();
+
+            foreach (var promptParent in childToPromptParent.Values.Distinct())
+                AttachChoiceChildrenToSiblingPromptParents(promptParent);
+        }
+
+        private static bool IsPromptParentCandidate(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(node.Label))
+                return false;
+
+            return HasPromptOptionLabels(node.CommonLines);
+        }
+
+        private static void IntroduceSharedPromptHierarchyFromChoiceChildContent(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                IntroduceSharedPromptHierarchyFromChoiceChildContent(child);
+
+            var groups = BuildSharedPromptContentGroups(node);
+            if (groups.Count == 0)
+                return;
+
+            var usedChildren = new HashSet<VariantTreeNode>();
+            var childToSyntheticParent = new Dictionary<VariantTreeNode, VariantTreeNode>();
+
+            foreach (var group in groups)
+            {
+                if (group.Children.Any(child => usedChildren.Contains(child)))
+                    continue;
+
+                if (group.Children.Any(child => !NodeContentStartsWithLines(child, group.Lines)))
+                    continue;
+
+                var syntheticParent = new VariantTreeNode
+                {
+                    CommonLines = new List<string>(group.Lines)
+                };
+
+                foreach (var child in group.Children)
+                {
+                    if (!TryRemoveLeadingLinesFromNodeContent(child, group.Lines))
+                        continue;
+
+                    syntheticParent.Children.Add(child);
+                    childToSyntheticParent[child] = syntheticParent;
+                    usedChildren.Add(child);
+                }
+            }
+
+            if (childToSyntheticParent.Count == 0)
+                return;
+
+            var emittedParents = new HashSet<VariantTreeNode>();
+            var rebuiltChildren = new List<VariantTreeNode>();
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (child != null && childToSyntheticParent.TryGetValue(child, out var syntheticParent))
+                {
+                    if (emittedParents.Add(syntheticParent))
+                        rebuiltChildren.Add(syntheticParent);
+
+                    continue;
+                }
+
+                rebuiltChildren.Add(child);
+            }
+
+            node.Children = rebuiltChildren;
+        }
+
+        private static List<SharedPromptContentGroup> BuildSharedPromptContentGroups(VariantTreeNode node)
+        {
+            var result = new Dictionary<string, SharedPromptContentGroup>(StringComparer.Ordinal);
+            var children = (node?.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+
+            if (children.Count < 2)
+                return new List<SharedPromptContentGroup>();
+
+            for (int childIndex = 0; childIndex < children.Count; childIndex++)
+            {
+                var child = children[childIndex];
+                if (string.IsNullOrWhiteSpace(child.Label) || !IsChoiceLikeLabel(child.Label))
+                    continue;
+
+                var lines = GetHoistablePromptContentLines(child);
+                if (lines.Count == 0)
+                    continue;
+
+                for (int length = 1; length <= lines.Count; length++)
+                {
+                    var prefix = lines.Take(length).ToList();
+                    if (!PromptPrefixContainsChoiceLabel(prefix, child.Label))
+                        continue;
+
+                    string key = BuildCommonLinesKey(prefix);
+                    if (!result.TryGetValue(key, out var group))
+                    {
+                        group = new SharedPromptContentGroup
+                        {
+                            Lines = prefix
+                        };
+                        result[key] = group;
+                    }
+
+                    if (!group.Children.Contains(child))
+                        group.Children.Add(child);
+
+                    group.FirstChildIndex = Math.Min(group.FirstChildIndex, childIndex);
+                }
+            }
+
+            return result.Values
+                .Where(ShouldCreateSharedPromptContentParent)
+                .OrderBy(group => group.FirstChildIndex)
+                .ThenBy(group => group.Lines.Count)
+                .ToList();
+        }
+
+        private static bool ShouldCreateSharedPromptContentParent(SharedPromptContentGroup group)
+        {
+            if (group == null || group.Children == null || group.Children.Count < 2)
+                return false;
+
+            var optionLabels = ExtractPromptOptionLabels(string.Join("\n", group.Lines ?? new List<string>()))
+                .Select(NormalizeChoiceLabel)
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (optionLabels.Count < 2)
+                return false;
+
+            var childLabels = group.Children
+                .Select(child => NormalizeChoiceLabel(child?.Label))
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (childLabels.Count < 2)
+                return false;
+
+            return childLabels.All(label => optionLabels.Contains(label, StringComparer.OrdinalIgnoreCase));
+        }
+
+        private static List<string> GetHoistablePromptContentLines(VariantTreeNode node)
+        {
+            if (node == null)
+                return new List<string>();
+
+            if (node.CommonLines != null && node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return node.CommonLines.ToList();
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (directVariants.Count == 0)
+                return new List<string>();
+
+            return GetCommonPrefix(directVariants.Select(variant => variant.Lines).ToList());
+        }
+
+        private static bool PromptPrefixContainsChoiceLabel(IEnumerable<string> promptLines, string choiceLabel)
+        {
+            string normalizedChoice = NormalizeChoiceLabel(choiceLabel);
+            if (string.IsNullOrWhiteSpace(normalizedChoice))
+                return false;
+
+            return ExtractPromptOptionLabels(string.Join("\n", promptLines ?? Enumerable.Empty<string>()))
+                .Select(NormalizeChoiceLabel)
+                .Any(label =>
+                    !string.IsNullOrWhiteSpace(label) &&
+                    string.Equals(label, normalizedChoice, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool PromptContainsChoiceLabel(IEnumerable<string> promptLines, string choiceLabel)
+        {
+            return PromptPrefixContainsChoiceLabel(promptLines, choiceLabel);
+        }
+
+        private static bool HasPromptOptionLabels(IEnumerable<string> lines)
+        {
+            return ExtractPromptOptionLabels(string.Join("\n", lines ?? Enumerable.Empty<string>()))
+                .Any(label => !string.IsNullOrWhiteSpace(label));
+        }
+
+        private static bool NodeContentStartsWithLines(VariantTreeNode node, IReadOnlyList<string> prefix)
+        {
+            if (node == null || prefix == null || prefix.Count == 0)
+                return false;
+
+            if (StartsWithLineSequence(node.CommonLines, prefix))
+                return true;
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant != null)
+                .ToList();
+
+            return variants.Count > 0 &&
+                   variants.All(variant => StartsWithLineSequence(variant.Lines, prefix));
+        }
+
+        private static bool TryRemoveLeadingLinesFromNodeContent(VariantTreeNode node, IReadOnlyList<string> prefix)
+        {
+            if (node == null || prefix == null || prefix.Count == 0)
+                return false;
+
+            if (StartsWithLineSequence(node.CommonLines, prefix))
+            {
+                node.CommonLines = node.CommonLines
+                    .Skip(prefix.Count)
+                    .ToList();
+                return true;
+            }
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (variants.Count == 0 ||
+                variants.Any(variant => !StartsWithLineSequence(variant.Lines, prefix)))
+            {
+                return false;
+            }
+
+            foreach (var variant in variants)
+            {
+                variant.Lines = variant.Lines
+                    .Skip(prefix.Count)
+                    .ToList();
+            }
+
+            return true;
+        }
+
+        private static bool StartsWithLineSequence(IReadOnlyList<string> lines, IReadOnlyList<string> prefix)
+        {
+            if (lines == null || prefix == null || prefix.Count == 0 || lines.Count < prefix.Count)
+                return false;
+
+            for (int i = 0; i < prefix.Count; i++)
+            {
+                if (!string.Equals(lines[i], prefix[i], StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
         }
 
         private static void IntroduceSharedPromptHierarchyAcrossChoiceChildren(VariantTreeNode node)
@@ -4199,10 +4814,14 @@ private static string BuildHierarchicalVariantNotes(
         {
             var result = new List<OrderedRenderEntry>();
             var promptChoiceOrder = BuildPromptChoiceOrder(parentNode?.CommonLines);
+            bool parentHasMultiNumericPrompt = HasMultiNumericPromptOptions(parentNode?.CommonLines);
             var childList = (children ?? Enumerable.Empty<VariantTreeNode>())
                 .Where(child => child != null)
                 .ToList();
-            bool canPromoteNoToChoice = childList.Count > 0 && !HasNodeWithLabel(parentNode, "N)");
+            bool canPromoteNoToChoice =
+                childList.Count > 0 &&
+                PromptContainsChoiceLabel(parentNode?.CommonLines, "N)") &&
+                !HasNodeWithLabel(parentNode, "N)");
 
             foreach (var child in childList)
             {
@@ -4210,10 +4829,13 @@ private static string BuildHierarchicalVariantNotes(
                 bool mixedPartyScanCancelChoice =
                     ContainsMixedPartyScanSubsetSummary(parentNode) &&
                     IsLikelyCancelNode(child);
+                int displayPriority = mixedPartyScanCancelChoice
+                    ? -1
+                    : (parentHasMultiNumericPrompt && HasPromptOptionLabels(child.CommonLines) ? 1 : 0);
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
-                    DisplayPriority = mixedPartyScanCancelChoice ? -1 : 0,
+                    DisplayPriority = displayPriority,
                     PathOrderKey = GetNodeRenderOrderKey(child),
                     ChoiceOrderKey = choiceOrderKey,
                     HasChoiceOrderKey = hasChoiceOrder,
@@ -4379,9 +5001,15 @@ private static string BuildHierarchicalVariantNotes(
                 .Where(IsRenderableStructuralNode)
                 .ToList();
             int siblingDirectVariantCount = group.TreeRoot?.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(group.TreeRoot, renderableChildren.Count);
 
             var directVariants = (group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
-                .Where(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildren.Count) &&
+                .Where(v => ShouldRenderDirectVariant(
+                        v,
+                        siblingDirectVariantCount,
+                        renderableChildren.Count,
+                        suppressEmptyPromptTerminalDirectVariants) &&
                     !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
                 .ToList();
 
@@ -4390,8 +5018,10 @@ private static string BuildHierarchicalVariantNotes(
             if (needGapAfterCommon)
                 sb.AppendLine();
 
-            bool canPromoteNoToChoice = renderableChildren.Count > 0 &&
-                                        !HasNodeWithLabel(group.TreeRoot, "N)");
+            bool canPromoteNoToChoice =
+                renderableChildren.Count > 0 &&
+                PromptContainsChoiceLabel(group.TreeRoot?.CommonLines, "N)") &&
+                !HasNodeWithLabel(group.TreeRoot, "N)");
             int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
             var syntheticChoiceLabels = BuildSyntheticChoiceLabels(group.TreeRoot, directVariants, renderableChildren);
             var syntheticChildLabels = BuildSyntheticChildLabels(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels);
@@ -4758,6 +5388,7 @@ private static string BuildHierarchicalVariantNotes(
                 {
                     summary = new PartyScanOutcomeSummary
                     {
+                        Variant = branch.Variant?.Variant,
                         Label = label,
                         Lines = perMemberLines,
                         OrderKey = branch.OrderKey,
@@ -4768,6 +5399,8 @@ private static string BuildHierarchicalVariantNotes(
                 }
                 else
                 {
+                    if (summary.Variant == null)
+                        summary.Variant = branch.Variant?.Variant;
                     if (string.IsNullOrWhiteSpace(summary.Label))
                         summary.Label = label;
                     summary.OrderKey = Math.Min(summary.OrderKey, branch.OrderKey);
@@ -4953,8 +5586,14 @@ private static string BuildHierarchicalVariantNotes(
                 .Where(IsRenderableStructuralNode)
                 .ToList();
             int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildren.Count);
             var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
-                .Where(v => ShouldRenderDirectVariant(v, siblingDirectVariantCount, renderableChildren.Count))
+                .Where(v => ShouldRenderDirectVariant(
+                    v,
+                    siblingDirectVariantCount,
+                    renderableChildren.Count,
+                    suppressEmptyPromptTerminalDirectVariants))
                 .ToList();
 
             string indent = new string(' ', depth * 3);
@@ -5035,7 +5674,10 @@ private static string BuildHierarchicalVariantNotes(
             if (needGapAfterCommon)
                 sb.AppendLine();
 
-            bool canPromoteNoToChoice = renderableChildren.Count > 0 && !HasNodeWithLabel(node, "N)");
+            bool canPromoteNoToChoice =
+                renderableChildren.Count > 0 &&
+                PromptContainsChoiceLabel(node.CommonLines, "N)") &&
+                !HasNodeWithLabel(node, "N)");
             int noChoiceCount = renderableDirectVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
             var syntheticChoiceLabels = BuildSyntheticChoiceLabels(node, renderableDirectVariants, renderableChildren);
             var syntheticChildLabels = BuildSyntheticChildLabels(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
@@ -5729,13 +6371,13 @@ private static string BuildHierarchicalVariantNotes(
         {
             string probabilityKey = string.Empty;
             string occurrenceKey = string.Empty;
-            if (obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var variant))
+            if (TryResolvePathVariantForDisplayKey(obj, variantKey, out var variant))
             {
                 probabilityKey = BuildProbabilityLine(variant) ?? string.Empty;
                 occurrenceKey = BuildOccurrenceLine(variant) ?? string.Empty;
             }
 
-            string guardKey = obj?.PathVariants != null && obj.PathVariants.TryGetValue(variantKey, out var guardedVariant)
+            string guardKey = TryResolvePathVariantForDisplayKey(obj, variantKey, out var guardedVariant)
                 ? BuildGuardConditionKey(guardedVariant) ?? string.Empty
                 : string.Empty;
             string linesKey = string.Join("\n", (lines ?? new List<string>()).Select(line => line ?? string.Empty));
