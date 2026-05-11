@@ -2422,6 +2422,7 @@ namespace MMMapEditor
 
                 FormatRandomEncounterRubiconWarnings(notesTextBox, noteText);
                 FormatRepeatedBattleWarnings(notesTextBox, noteText);
+                FormatBattleMonsterStrengthAdjustmentNotes(notesTextBox, noteText);
 
                 // Семантические пользовательские заметки могут прийти из старых/ручных карт без inline-spans.
                 FormatGeneratedSemanticNotes(notesTextBox, noteText);
@@ -2645,6 +2646,14 @@ namespace MMMapEditor
                         ApplyRepeatedBattleWarningStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.BattleMonsterStrengthIncrease:
+                        ApplyBattleMonsterStrengthIncreaseStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.BattleMonsterStrengthDecrease:
+                        ApplyBattleMonsterStrengthDecreaseStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.RawOverlayText:
                         break;
                 }
@@ -2742,6 +2751,20 @@ namespace MMMapEditor
             rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
         }
 
+        private void ApplyBattleMonsterStrengthIncreaseStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 238, 220);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 1.25f, 6.0f), FontStyle.Bold);
+        }
+
+        private void ApplyBattleMonsterStrengthDecreaseStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(202, 244, 205);
+            rt.SelectionBackColor = Color.FromArgb(28, 70, 42);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 1.25f, 6.0f), FontStyle.Bold);
+        }
+
         private void FormatRepeatedBattleWarnings(RichTextBox rt, string noteText)
         {
             if (rt == null || string.IsNullOrEmpty(noteText))
@@ -2760,6 +2783,38 @@ namespace MMMapEditor
                 rt.Select(matchIndex, InlineNoteStyleCodec.RepeatedBattleWarningText.Length);
                 ApplyRepeatedBattleWarningStyle(rt);
                 startIndex = matchIndex + InlineNoteStyleCodec.RepeatedBattleWarningText.Length;
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatBattleMonsterStrengthAdjustmentNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"Монстры битвы усиливаются на \+\d+",
+                RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyBattleMonsterStrengthIncreaseStyle(rt);
+            }
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"Монстры битвы слабеют на -\d+",
+                RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyBattleMonsterStrengthDecreaseStyle(rt);
             }
 
             rt.Select(0, 0);

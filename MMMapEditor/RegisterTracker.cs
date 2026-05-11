@@ -92,6 +92,8 @@ namespace MMMapEditor
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
         private Dictionary<string, DynamicValueFormulaInfo> dynamicValueFormulas = new Dictionary<string, DynamicValueFormulaInfo>();
         private Dictionary<string, PartyPointerByteReference> partyPointerBytes = new Dictionary<string, PartyPointerByteReference>();
+        private Dictionary<string, (ushort sourceAddr, int delta)> memoryByteDeltaSources =
+            new Dictionary<string, (ushort, int)>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> coordinateSeedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public bool HasObservedCoordinateSeedRead { get; private set; }
 
@@ -462,6 +464,7 @@ namespace MMMapEditor
 
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearMemoryByteDeltaSource(regUpper);
 
             if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
                 return;
@@ -476,6 +479,78 @@ namespace MMMapEditor
                 registerSources2.Remove(lowReg);
                 registerSources2.Remove(highReg);
             }
+        }
+
+        private void ClearMemoryByteDeltaSource(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            memoryByteDeltaSources.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            memoryByteDeltaSources.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                memoryByteDeltaSources.Remove(lowReg);
+                memoryByteDeltaSources.Remove(highReg);
+            }
+        }
+
+        public void ClearMemoryByteDeltaSourceForRegister(string reg)
+        {
+            ClearMemoryByteDeltaSource(reg?.ToUpperInvariant());
+        }
+
+        public void SetMemoryByteDeltaSource(string reg, ushort sourceAddr, int delta)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (delta == 0)
+            {
+                ClearMemoryByteDeltaSource(regUpper);
+                return;
+            }
+
+            memoryByteDeltaSources[regUpper] = (sourceAddr, delta);
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                regUpper != fullReg)
+            {
+                memoryByteDeltaSources[fullReg] = (sourceAddr, delta);
+            }
+        }
+
+        public bool TryGetMemoryByteDeltaSource(string reg, out ushort sourceAddr, out int delta)
+        {
+            sourceAddr = 0;
+            delta = 0;
+
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (memoryByteDeltaSources.TryGetValue(regUpper, out var source))
+            {
+                sourceAddr = source.sourceAddr;
+                delta = source.delta;
+                return true;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                memoryByteDeltaSources.TryGetValue(fullReg, out source))
+            {
+                sourceAddr = source.sourceAddr;
+                delta = source.delta;
+                return true;
+            }
+
+            return false;
         }
 
         public void MarkRegisterAsCoordinateSeed(string reg)
@@ -526,11 +601,13 @@ namespace MMMapEditor
             ClearPartyMemberBase(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearMemoryByteDeltaSource(regUpper);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
             {
                 registerSources.Remove(fullReg);
                 registerSources2.Remove(fullReg);
+                ClearMemoryByteDeltaSource(fullReg);
                 ClearPartyFieldValue(fullReg);
                 ClearPartyMemberBase(fullReg);
 
@@ -540,6 +617,8 @@ namespace MMMapEditor
                     registerSources.Remove(highReg);
                     registerSources2.Remove(lowReg);
                     registerSources2.Remove(highReg);
+                    ClearMemoryByteDeltaSource(lowReg);
+                    ClearMemoryByteDeltaSource(highReg);
                     ClearFullRegisterByteSemantics(fullReg);
                 }
                 else
@@ -1243,6 +1322,7 @@ namespace MMMapEditor
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearMemoryByteDeltaSource(regUpper);
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
@@ -1291,6 +1371,7 @@ namespace MMMapEditor
                 registers.Remove(fullReg);
                 registerSources.Remove(fullReg);
                 registerSources2.Remove(fullReg);
+                ClearMemoryByteDeltaSource(fullReg);
                 ClearExternalDerivation(fullReg);
                 ClearPendingExternalCallResult(fullReg);
                 ClearRegisterRange(fullReg);
@@ -1302,6 +1383,7 @@ namespace MMMapEditor
                 registers.Remove(fullReg);
                 registerSources.Remove(fullReg);
                 registerSources2.Remove(fullReg);
+                ClearMemoryByteDeltaSource(fullReg);
             }
         }
 
@@ -1318,6 +1400,7 @@ namespace MMMapEditor
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearMemoryByteDeltaSource(regUpper);
             ClearByteRegisterSemantics(regUpper);
 
             if (regUpper == "AX")
@@ -1328,6 +1411,7 @@ namespace MMMapEditor
                 registerSources.Remove("AH");
                 registerSources2.Remove("AL");
                 registerSources2.Remove("AH");
+                ClearMemoryByteDeltaSource("AX");
                 partyFieldValues.Remove("AL");
                 partyFieldValues.Remove("AH");
                 dynamicValueFormulas.Remove("AL");
@@ -1343,6 +1427,7 @@ namespace MMMapEditor
                 registerSources.Remove("BH");
                 registerSources2.Remove("BL");
                 registerSources2.Remove("BH");
+                ClearMemoryByteDeltaSource("BX");
                 partyFieldValues.Remove("BL");
                 partyFieldValues.Remove("BH");
                 dynamicValueFormulas.Remove("BL");
@@ -1358,6 +1443,7 @@ namespace MMMapEditor
                 registerSources.Remove("CH");
                 registerSources2.Remove("CL");
                 registerSources2.Remove("CH");
+                ClearMemoryByteDeltaSource("CX");
                 partyFieldValues.Remove("CL");
                 partyFieldValues.Remove("CH");
                 dynamicValueFormulas.Remove("CL");
@@ -1373,6 +1459,7 @@ namespace MMMapEditor
                 registerSources.Remove("DH");
                 registerSources2.Remove("DL");
                 registerSources2.Remove("DH");
+                ClearMemoryByteDeltaSource("DX");
                 partyFieldValues.Remove("DL");
                 partyFieldValues.Remove("DH");
                 dynamicValueFormulas.Remove("DL");
@@ -1396,6 +1483,7 @@ namespace MMMapEditor
             partyFieldValues.Clear();
             dynamicValueFormulas.Clear();
             partyPointerBytes.Clear();
+            memoryByteDeltaSources.Clear();
             ZeroFlag = false;
             CarryFlag = false;
             SignFlag = false;
@@ -1662,6 +1750,10 @@ namespace MMMapEditor
             foreach (var kvp in partyPointerBytes)
             {
                 clone.partyPointerBytes[kvp.Key] = kvp.Value?.Clone();
+            }
+            foreach (var kvp in memoryByteDeltaSources)
+            {
+                clone.memoryByteDeltaSources[kvp.Key] = kvp.Value;
             }
             foreach (var reg in coordinateSeedRegisters)
             {

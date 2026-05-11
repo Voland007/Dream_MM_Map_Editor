@@ -2135,6 +2135,7 @@ namespace MMMapEditor
                 $"pendingCounters={rawVariant.PendingPersistentCounterProgressions?.Count ?? 0}, " +
                 $"counterProgressions={rawVariant.PersistentCounterProgressions?.Count ?? 0}, " +
                 $"dynamicRandomBounds={rawVariant.DynamicRandomBoundDependencies?.Count ?? 0}, " +
+                $"battleStrengthAdjustment={rawVariant.BattleMonsterStrengthAdjustment}, " +
                 $"selfDisable={rawVariant.DisablesCurrentMapEvent}, " +
                 $"battleCount={BuildRawLeafBattleCountText(rawVariant)}, " +
                 $"teleport={BuildRawLeafTeleportText(rawVariant)}, " +
@@ -2175,7 +2176,7 @@ namespace MMMapEditor
                 BuildRawLeafPartyEffectKey(variant),
                 BuildRawLeafBattleKey(variant),
                 BuildRawLeafTeleportKey(variant),
-                $"random:{variant.RandomEncounterMonsterPowerCap}-{variant.RandomEncounterMonsterLevelCap}-{variant.RandomEncounterMonsterBatchCountCap}-{variant.DarkeningLevel}-{variant.RandomEncounterChance}-{variant.RandomEncounterRubicon}",
+                $"random:{variant.RandomEncounterMonsterPowerCap}-{variant.RandomEncounterMonsterLevelCap}-{variant.RandomEncounterMonsterBatchCountCap}-{variant.DarkeningLevel}-{variant.RandomEncounterChance}-{variant.RandomEncounterRubicon}-{variant.BattleMonsterStrengthAdjustment}",
                 $"calls:{variant.CallsRandomEncounter}/{variant.IsOnlyRandomEncounterJump}",
                 $"table:{variant.HasAnyTableLoad}",
                 $"loaded:{variant.LoadedValues?.Count ?? 0}",
@@ -4187,6 +4188,7 @@ namespace MMMapEditor
                    !variant.DarkeningLevel.HasValue &&
                    !variant.RandomEncounterChance.HasValue &&
                    !variant.RandomEncounterRubicon.HasValue &&
+                   variant.BattleMonsterStrengthAdjustment == 0 &&
                    !variant.CallsRandomEncounter &&
                    !variant.TeleportTargetX.HasValue &&
                    !variant.TeleportTargetY.HasValue &&
@@ -4251,7 +4253,7 @@ namespace MMMapEditor
                     .Select(info => info.GetIdentityKey())
                     .OrderBy(key => key))
                 : "<NO_DYNAMIC_RANDOM_BOUNDS>";
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{progressionKey}|{dynamicBoundKey}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{progressionKey}|{dynamicBoundKey}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -4935,6 +4937,7 @@ namespace MMMapEditor
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
+                BattleMonsterStrengthAdjustment = source.BattleMonsterStrengthAdjustment,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
@@ -5144,6 +5147,7 @@ namespace MMMapEditor
                 variant.DarkeningLevel.HasValue ||
                 variant.RandomEncounterChance.HasValue ||
                 variant.RandomEncounterRubicon.HasValue ||
+                variant.BattleMonsterStrengthAdjustment != 0 ||
                 variant.CallsRandomEncounter ||
                 variant.BattleMonsterCount.HasValue ||
                 variant.BattleMonsterCountRange != null ||
@@ -5460,6 +5464,7 @@ namespace MMMapEditor
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
+                BattleMonsterStrengthAdjustment = source.BattleMonsterStrengthAdjustment,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
@@ -5679,6 +5684,7 @@ namespace MMMapEditor
             target.DarkeningLevel = null;
             target.RandomEncounterChance = null;
             target.RandomEncounterRubicon = null;
+            target.BattleMonsterStrengthAdjustment = 0;
             target.CallsRandomEncounter = false;
             target.RandomEncounterInstructionAddress = 0;
             target.RandomEncounterExecutionOrder = 0;
@@ -5702,6 +5708,7 @@ namespace MMMapEditor
             target.DarkeningLevel = variant.DarkeningLevel;
             target.RandomEncounterChance = variant.RandomEncounterChance;
             target.RandomEncounterRubicon = variant.RandomEncounterRubicon;
+            target.BattleMonsterStrengthAdjustment = variant.BattleMonsterStrengthAdjustment;
             target.CallsRandomEncounter = variant.CallsRandomEncounter;
             target.RandomEncounterInstructionAddress = variant.RandomEncounterInstructionAddress;
             target.RandomEncounterExecutionOrder = variant.RandomEncounterExecutionOrder;
@@ -6003,6 +6010,7 @@ namespace MMMapEditor
                 DarkeningLevel = result.DarkeningLevel,
                 RandomEncounterChance = result.RandomEncounterChance,
                 RandomEncounterRubicon = result.RandomEncounterRubicon,
+                BattleMonsterStrengthAdjustment = result.BattleMonsterStrengthAdjustment,
                 CallsRandomEncounter = result.CallsRandomEncounter,
                 RandomEncounterInstructionAddress = result.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = result.RandomEncounterExecutionOrder,

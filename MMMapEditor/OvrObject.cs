@@ -53,6 +53,7 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? RandomEncounterRubicon { get; set; }
+        public int BattleMonsterStrengthAdjustment { get; set; } = 0;
         public bool CallsRandomEncounter { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
@@ -75,7 +76,7 @@ namespace MMMapEditor
         public List<DynamicRandomBoundDependencyInfo> DynamicRandomBoundDependencies { get; set; }
             = new List<DynamicRandomBoundDependencyInfo>();
         public bool HasBattleInfo => BattleMonsters.Count > 0;
-        public bool HasMonsterStatChanges => RandomEncounterMonsterPowerCap.HasValue || RandomEncounterMonsterLevelCap.HasValue || RandomEncounterMonsterBatchCountCap.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || RandomEncounterRubicon.HasValue || CallsRandomEncounter;
+        public bool HasMonsterStatChanges => RandomEncounterMonsterPowerCap.HasValue || RandomEncounterMonsterLevelCap.HasValue || RandomEncounterMonsterBatchCountCap.HasValue || DarkeningLevel.HasValue || RandomEncounterChance.HasValue || RandomEncounterRubicon.HasValue || BattleMonsterStrengthAdjustment != 0 || CallsRandomEncounter;
 
         #endregion
 
@@ -395,6 +396,17 @@ namespace MMMapEditor
             if (newPercent < defaultPercent)
                 return $"Шанс случайной встречи уменьшается с {defaultPercentText} (0x{defaultChance:X2}) до {newPercentText} (0x{newChance:X2})";
             return $"Шанс случайной встречи остаётся прежним: {newPercentText} (0x{newChance:X2})";
+        }
+
+        public string GetBattleMonsterStrengthAdjustmentDescription()
+        {
+            if (BattleMonsterStrengthAdjustment > 0)
+                return $"Монстры битвы усиливаются на +{BattleMonsterStrengthAdjustment}";
+
+            if (BattleMonsterStrengthAdjustment < 0)
+                return $"Монстры битвы слабеют на -{Math.Abs(BattleMonsterStrengthAdjustment)}";
+
+            return null;
         }
 
 
@@ -878,6 +890,11 @@ namespace MMMapEditor
             else
                 parts.Add("EncounterRubicon=none");
 
+            if (BattleMonsterStrengthAdjustment != 0)
+                parts.Add($"BattleMonsterStrengthAdjustment={BattleMonsterStrengthAdjustment}");
+            else
+                parts.Add("BattleMonsterStrengthAdjustment=none");
+
             parts.Add($"BattleMonsters={BattleMonsters.Count}");
             parts.Add($"PartiallyDefined={PartiallyDefinedBattles.Count}");
             parts.Add($"TableLoad={HasAnyTableLoad}");
@@ -943,6 +960,7 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? RandomEncounterRubicon { get; set; }
+        public int BattleMonsterStrengthAdjustment { get; set; } = 0;
         public bool CallsRandomEncounter { get; set; } = false;
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
@@ -1002,6 +1020,7 @@ namespace MMMapEditor
             !DarkeningLevel.HasValue &&
             !RandomEncounterChance.HasValue &&
             !RandomEncounterRubicon.HasValue &&
+            BattleMonsterStrengthAdjustment == 0 &&
             !HasTeleportTarget &&
             !BattleMonsterCount.HasValue &&
             BattleMonsterCountRange == null &&
@@ -1035,6 +1054,7 @@ namespace MMMapEditor
                 DarkeningLevel = DarkeningLevel,
                 RandomEncounterChance = RandomEncounterChance,
                 RandomEncounterRubicon = RandomEncounterRubicon,
+                BattleMonsterStrengthAdjustment = BattleMonsterStrengthAdjustment,
                 CallsRandomEncounter = CallsRandomEncounter,
                 RandomEncounterInstructionAddress = RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = RandomEncounterExecutionOrder,
@@ -1119,6 +1139,7 @@ namespace MMMapEditor
             DarkeningLevel.HasValue ||
             RandomEncounterChance.HasValue ||
             RandomEncounterRubicon.HasValue ||
+            BattleMonsterStrengthAdjustment != 0 ||
             CallsRandomEncounter;
 
         public bool HasBattleInfo => BattleMonsters.Count > 0;

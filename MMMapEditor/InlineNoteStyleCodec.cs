@@ -37,6 +37,8 @@ namespace MMMapEditor
         private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
+        private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
+        private const string BattleMonsterStrengthDecreaseTokenPrefix = "[[BATTLEPOWERDOWN:";
         public const string RepeatedBattleWarningText =
             "!! ВНИМАНИЕ! Битва запускается два раза; результат каждого (победа или побег) не влияет на запуск следующего !!";
         private const string RandomEncounterRubiconWarningPrefix =
@@ -95,6 +97,16 @@ namespace MMMapEditor
         public static string EncodeRepeatedBattleWarningText(string visibleText)
         {
             return EncodeTextStyleToken(RepeatedBattleWarningTokenPrefix, visibleText);
+        }
+
+        public static string EncodeBattleMonsterStrengthIncreaseText(string visibleText)
+        {
+            return EncodeTextStyleToken(BattleMonsterStrengthIncreaseTokenPrefix, visibleText);
+        }
+
+        public static string EncodeBattleMonsterStrengthDecreaseText(string visibleText)
+        {
+            return EncodeTextStyleToken(BattleMonsterStrengthDecreaseTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -222,6 +234,44 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.RepeatedBattleWarning
                     });
                     i += repeatedBattleWarningConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    BattleMonsterStrengthIncreaseTokenPrefix,
+                    out string strengthIncreaseText,
+                    out int strengthIncreaseConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(strengthIncreaseText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = strengthIncreaseText.Length,
+                        Kind = NoteInlineStyleKind.BattleMonsterStrengthIncrease
+                    });
+                    i += strengthIncreaseConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    BattleMonsterStrengthDecreaseTokenPrefix,
+                    out string strengthDecreaseText,
+                    out int strengthDecreaseConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(strengthDecreaseText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = strengthDecreaseText.Length,
+                        Kind = NoteInlineStyleKind.BattleMonsterStrengthDecrease
+                    });
+                    i += strengthDecreaseConsumedLength;
                     continue;
                 }
 

@@ -1425,6 +1425,7 @@ namespace MMMapEditor
                    !variant.RandomEncounterMonsterBatchCountCap.HasValue &&
                    !variant.DarkeningLevel.HasValue &&
                    !variant.RandomEncounterChance.HasValue &&
+                   variant.BattleMonsterStrengthAdjustment == 0 &&
                    (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
                    (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
                    (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
@@ -1537,6 +1538,7 @@ namespace MMMapEditor
                 (variant.PartyEffects == null || variant.PartyEffects.Count == 0) &&
                 !variant.HasTeleportTarget &&
                 !variant.HasAnyTableLoad &&
+                variant.BattleMonsterStrengthAdjustment == 0 &&
                 !variant.CallsRandomEncounter;
 
             if (!hasNoBattlePayload)
@@ -1565,6 +1567,7 @@ namespace MMMapEditor
                    !variant.RandomEncounterMonsterBatchCountCap.HasValue &&
                    !variant.DarkeningLevel.HasValue &&
                    !variant.RandomEncounterChance.HasValue &&
+                   variant.BattleMonsterStrengthAdjustment == 0 &&
                    (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
                    (variant.PartyEffects == null || variant.PartyEffects.Count == 0) &&
                    !variant.HasTeleportTarget &&
@@ -4783,6 +4786,7 @@ private static string BuildHierarchicalVariantNotes(
                 variant.DarkeningLevel.HasValue ||
                 variant.RandomEncounterChance.HasValue ||
                 variant.RandomEncounterRubicon.HasValue ||
+                variant.BattleMonsterStrengthAdjustment != 0 ||
                 variant.HasTeleportTarget ||
                 variant.BattleMonsterCount.HasValue ||
                 variant.BattleMonsterCountRange != null ||
@@ -6311,6 +6315,14 @@ private static string BuildHierarchicalVariantNotes(
 
             var randomEncounterDesc = obj.GetRandomEncounterChanceDescription(defaultRandomEncounterChance);
             if (randomEncounterDesc != null) lines.Add(randomEncounterDesc);
+
+            var strengthAdjustmentDesc = obj.GetBattleMonsterStrengthAdjustmentDescription();
+            if (strengthAdjustmentDesc != null)
+            {
+                lines.Add(obj.BattleMonsterStrengthAdjustment > 0
+                    ? InlineNoteStyleCodec.EncodeBattleMonsterStrengthIncreaseText(strengthAdjustmentDesc)
+                    : InlineNoteStyleCodec.EncodeBattleMonsterStrengthDecreaseText(strengthAdjustmentDesc));
+            }
 
             return lines;
         }

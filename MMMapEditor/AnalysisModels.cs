@@ -301,7 +301,9 @@ namespace MMMapEditor
         MutedParentheticalNote = 11,
         WheelRewardExplanation = 12,
         RepeatedBattleWarning = 13,
-        RawOverlayText = 14
+        RawOverlayText = 14,
+        BattleMonsterStrengthIncrease = 15,
+        BattleMonsterStrengthDecrease = 16
     }
 
     public sealed class NoteInlineStyleSpan
@@ -374,6 +376,7 @@ namespace MMMapEditor
         public byte? DarkeningLevel { get; set; }
         public byte? RandomEncounterChance { get; set; }
         public byte? RandomEncounterRubicon { get; set; }
+        public int BattleMonsterStrengthAdjustment { get; set; } = 0;
         public byte? MonsterIndex1 { get; set; }
         public byte? MonsterIndex2 { get; set; }
         public byte? BattleMonsterCount { get; set; }

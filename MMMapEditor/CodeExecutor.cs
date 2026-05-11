@@ -100,6 +100,7 @@ namespace MMMapEditor
         private const ushort BATTLE_MONSTER_COUNT_ADDRESS = 0x3C1D;
         private const ushort BATTLE_MONSTER_FIRST_TABLE_ADDRESS = 0x3C58;
         private const ushort BATTLE_MONSTER_SECOND_TABLE_ADDRESS = 0x3C29;
+        private const ushort BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS = 0x3CA6;
         private const int BATTLE_MONSTER_TABLE_SLOT_COUNT = 0x0F;
         private const int PARTY_MEMBER_COUNT = 6;
         private const int PARTY_sex_OFFSET = 0x10;
@@ -5028,6 +5029,7 @@ namespace MMMapEditor
             if (source.RandomEncounterRubicon.HasValue && !target.RandomEncounterRubicon.HasValue)
                 target.RandomEncounterRubicon = source.RandomEncounterRubicon;
 
+            target.BattleMonsterStrengthAdjustment += source.BattleMonsterStrengthAdjustment;
             target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
             target.DisablesCurrentMapEvent = target.DisablesCurrentMapEvent || source.DisablesCurrentMapEvent;
             MultiplyInlineProbability(target, source.InlineProbabilityNumerator, source.InlineProbabilityDenominator);
@@ -7742,6 +7744,79 @@ namespace MMMapEditor
             return false;
         }
 
+        private static void TrackBattleMonsterStrengthAdjustment(
+            PathAnalysisResult result,
+            ushort memAddr,
+            int delta,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result == null ||
+                memAddr != BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS ||
+                delta == 0)
+            {
+                return;
+            }
+
+            result.BattleMonsterStrengthAdjustment += delta;
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+            {
+                string sign = delta > 0 ? "+" : string.Empty;
+                AnalysisDebug.WriteLine(
+                    $"        Семантика [0x{BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS:X4}]: модификатор силы монстров битвы {sign}{delta} (инструкция 0x{instructionAddress:X4})");
+            }
+        }
+
+        private bool TryTrackBattleMonsterStrengthSetFromKnownValue(
+            BinaryReader br,
+            ushort memAddr,
+            byte newValue,
+            PathAnalysisResult result,
+            byte targetX,
+            byte targetY,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (memAddr != BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS ||
+                !TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte previousValue))
+            {
+                return false;
+            }
+
+            TrackBattleMonsterStrengthAdjustment(
+                result,
+                memAddr,
+                newValue - previousValue,
+                instructionAddress,
+                debugMode);
+            return true;
+        }
+
+        private static bool TryTrackBattleMonsterStrengthDeltaFromRegisterWrite(
+            RegisterTracker registerTracker,
+            string registerName,
+            ushort memAddr,
+            PathAnalysisResult result,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (registerTracker == null ||
+                memAddr != BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS ||
+                !registerTracker.TryGetMemoryByteDeltaSource(registerName, out ushort sourceAddr, out int delta) ||
+                sourceAddr != memAddr ||
+                delta == 0)
+            {
+                return false;
+            }
+
+            result?.AdjustedMemoryAddresses.Add(memAddr);
+            TrackBattleMonsterStrengthAdjustment(result, memAddr, delta, instructionAddress, debugMode);
+            registerTracker.ClearMemoryByteDeltaSourceForRegister(registerName);
+            return true;
+        }
+
         private static Dictionary<ushort, PersistentCounterProgressionInfo> ClonePendingPersistentCounterProgressions(
             Dictionary<ushort, PersistentCounterProgressionInfo> source)
         {
@@ -9921,9 +9996,41 @@ namespace MMMapEditor
                             address, "MOV [moffs8], AL");
                     }
                 }
+                else if (TryTrackBattleMonsterStrengthDeltaFromRegisterWrite(
+                             registerTracker,
+                             "AL",
+                             memAddr,
+                             result,
+                             address,
+                             debugMode))
+                {
+                    _emulatedMemory8.Remove(memAddr);
+                    _emulatedMemory8Ranges.Remove(memAddr);
+                    _emulatedMemory8RangeDistributions.Remove(memAddr);
+                }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    ApplyTrackedByteWrite(memAddr, alValue, result, targetX, targetY, insn, debugMode, "MOV [moffs8], AL");
+                    bool trackedBattleStrengthSet = TryTrackBattleMonsterStrengthDeltaFromRegisterWrite(
+                        registerTracker,
+                        "AL",
+                        memAddr,
+                        result,
+                        address,
+                        debugMode);
+                    if (!trackedBattleStrengthSet)
+                    {
+                        trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSetFromKnownValue(
+                            br,
+                            memAddr,
+                            alValue,
+                            result,
+                            targetX,
+                            targetY,
+                            address,
+                            debugMode);
+                    }
+                    ApplyTrackedByteWrite(memAddr, alValue, result, targetX, targetY, insn, debugMode, "MOV [moffs8], AL",
+                        trackBattleMonsterStrengthDelta: !trackedBattleStrengthSet);
                     TryFinalizePersistentBattleCountProgression(result, registerTracker, "AL", memAddr, alValue, address, debugMode);
                     if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteExact))
                         ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteExact);
@@ -9976,6 +10083,15 @@ namespace MMMapEditor
                         }
                         else if (hasExactMemAddr)
                         {
+                            bool trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSetFromKnownValue(
+                                br,
+                                memAddr,
+                                immValue,
+                                result,
+                                targetX,
+                                targetY,
+                                address,
+                                debugMode);
                             ApplyTrackedByteWrite(
                                 memAddr,
                                 immValue,
@@ -9985,7 +10101,8 @@ namespace MMMapEditor
                                 insn,
                                 debugMode,
                                 $"MOV byte ptr {eaText}, 0x{immValue:X2}",
-                                trackBattleMonsterTableWrite: true);
+                                trackBattleMonsterTableWrite: true,
+                                trackBattleMonsterStrengthDelta: !trackedBattleStrengthSet);
                         }
                         else if (TryApplyTrackedByteWriteToRangedBattleTable(
                                      instructionBytes,
@@ -10035,6 +10152,12 @@ namespace MMMapEditor
                             if (registerTracker.TryGetPartyPointerByteValue(regNames8[reg], out var copiedPointerByte))
                                 registerTracker.SetPartyPointerByteValue(dstReg, copiedPointerByte);
 
+                            if (registerTracker.TryGetMemoryByteDeltaSource(regNames8[reg], out ushort memoryDeltaSourceAddr, out int memoryDelta) &&
+                                memoryDelta != 0)
+                            {
+                                registerTracker.SetMemoryByteDeltaSource(dstReg, memoryDeltaSourceAddr, memoryDelta);
+                            }
+
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames8[reg]} = 0x{srcValue:X2}");
                         }
@@ -10042,10 +10165,16 @@ namespace MMMapEditor
                     else if (reg < regNames8.Length && rm < regNames8.Length)
                     {
                         string dstReg = regNames8[rm];
-                        registerTracker.TryGetPartyFieldValue(regNames8[reg], out var semanticField88);
-                        registerTracker.TryGetPartyPointerByteValue(regNames8[reg], out var semanticPointerByte88);
+                        string srcReg = regNames8[reg];
+                        registerTracker.TryGetPartyFieldValue(srcReg, out var semanticField88);
+                        registerTracker.TryGetPartyPointerByteValue(srcReg, out var semanticPointerByte88);
+                        bool hasMemoryDeltaSource88 = registerTracker.TryGetMemoryByteDeltaSource(
+                            srcReg,
+                            out ushort memoryDeltaSourceAddr88,
+                            out int memoryDelta88) &&
+                            memoryDelta88 != 0;
 
-                        if (semanticField88 != null || semanticPointerByte88 != null)
+                        if (semanticField88 != null || semanticPointerByte88 != null || hasMemoryDeltaSource88)
                         {
                             registerTracker.ClearConcreteByteRegisterValueKeepSemantic(dstReg);
 
@@ -10060,6 +10189,9 @@ namespace MMMapEditor
 
                             if (semanticPointerByte88 != null)
                                 registerTracker.SetPartyPointerByteValue(dstReg, semanticPointerByte88);
+
+                            if (hasMemoryDeltaSource88)
+                                registerTracker.SetMemoryByteDeltaSource(dstReg, memoryDeltaSourceAddr88, memoryDelta88);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование семантики {dstReg} <- {regNames8[reg]} без точного значения байта");
@@ -10110,7 +10242,27 @@ namespace MMMapEditor
                         }
                         else if (hasExactMemAddr)
                         {
-                            ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, {regName}");
+                            bool trackedBattleStrengthSet = TryTrackBattleMonsterStrengthDeltaFromRegisterWrite(
+                                registerTracker,
+                                regName,
+                                memAddr,
+                                result,
+                                address,
+                                debugMode);
+                            if (!trackedBattleStrengthSet)
+                            {
+                                trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSetFromKnownValue(
+                                    br,
+                                    memAddr,
+                                    regValue,
+                                    result,
+                                    targetX,
+                                    targetY,
+                                    address,
+                                    debugMode);
+                            }
+                            ApplyTrackedByteWrite(memAddr, regValue, result, targetX, targetY, insn, debugMode, $"MOV byte ptr {eaText}, {regName}",
+                                trackBattleMonsterStrengthDelta: !trackedBattleStrengthSet);
                             TryFinalizePersistentBattleCountProgression(result, registerTracker, regName, memAddr, regValue, address, debugMode);
 
                             if (registerTracker.TryGetPartyPointerByteValue(regName, out var pointerByte))
@@ -10152,6 +10304,20 @@ namespace MMMapEditor
                         RememberPartyByteWrite(registerTracker, rawPartyFieldRef, PartyEffectOperation.Write, address, regNames8[reg]);
                     }
                     else if (hasExactMemAddr &&
+                             reg < regNames8.Length &&
+                             TryTrackBattleMonsterStrengthDeltaFromRegisterWrite(
+                                 registerTracker,
+                                 regNames8[reg],
+                                 memAddr,
+                                 result,
+                                 address,
+                                 debugMode))
+                    {
+                        _emulatedMemory8.Remove(memAddr);
+                        _emulatedMemory8Ranges.Remove(memAddr);
+                        _emulatedMemory8RangeDistributions.Remove(memAddr);
+                    }
+                    else if (hasExactMemAddr &&
                              TryGetReg8ValueFromModRmRegField(modRm, registerTracker, out _, out string regNameWithoutValue) &&
                              registerTracker.TryGetPartyPointerByteValue(regNameWithoutValue, out var pointerByteWithoutValue))
                     {
@@ -10171,11 +10337,13 @@ namespace MMMapEditor
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
                 int delta = instructionBytes[1] == 0x06 ? 1 : -1;
                 result?.AdjustedMemoryAddresses.Add(memAddr);
+                TrackBattleMonsterStrengthAdjustment(result, memAddr, delta, address, debugMode);
                 if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentValue))
                 {
                     byte newValue = unchecked((byte)(currentValue + delta));
                     string operation = delta > 0 ? "INC" : "DEC";
-                    ApplyTrackedByteWrite(memAddr, newValue, result, targetX, targetY, insn, debugMode, $"{operation} byte ptr [disp16]");
+                    ApplyTrackedByteWrite(memAddr, newValue, result, targetX, targetY, insn, debugMode, $"{operation} byte ptr [disp16]",
+                        trackBattleMonsterStrengthDelta: false);
                     TrackPersistentCounterAdjustment(result, memAddr, currentValue, newValue, delta, address, debugMode);
                 }
                 else if (TryShiftTrackedSemanticByteRange(memAddr, delta, result, debugMode))
@@ -11135,6 +11303,69 @@ namespace MMMapEditor
                 }
             }
 
+            // ADD/ADC r8, r/m8. В AREAC4 усиление боя записано как
+            // MOV AL,delta; CLC; ADC AL,[0x3CA6]; MOV [0x3CA6],AL.
+            if (instructionBytes.Length >= 2 &&
+                (instructionBytes[0] == 0x02 || instructionBytes[0] == 0x12))
+            {
+                byte opcode = instructionBytes[0];
+                byte modRm = instructionBytes[1];
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                string[] regNames8 = { "AL", "CL", "DL", "BL", "AH", "CH", "DH", "BH" };
+
+                bool usesCarry = opcode == 0x12;
+                bool carryKnown = !usesCarry || registerTracker.FlagsKnown;
+                int carryIn = usesCarry && registerTracker.FlagsKnown && registerTracker.CarryFlag ? 1 : 0;
+
+                if (mod != 0x03 &&
+                    carryKnown &&
+                    reg < regNames8.Length &&
+                    TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    string destReg = regNames8[reg];
+                    string fullReg = GetFullRegisterNameForByteRegister(destReg);
+                    string opText = usesCarry ? "ADC" : "ADD";
+
+                    if (!string.IsNullOrEmpty(fullReg) &&
+                        registerTracker.TryGetByteRegisterValue(destReg, out byte destValue))
+                    {
+                        int delta = destValue + carryIn;
+                        bool hasExactMemoryValue = TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue);
+
+                        if (hasExactMemoryValue)
+                        {
+                            byte newValue = unchecked((byte)(memValue + delta));
+                            registerTracker.TrackPartialRegisterOperation(
+                                fullReg,
+                                destReg,
+                                newValue,
+                                address,
+                                $"{opText} {destReg}, byte ptr {eaText}");
+                            SetArithmeticFlagsForAdd8(registerTracker, memValue, (byte)delta, newValue);
+
+                            if (memAddr == BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS && delta != 0)
+                                registerTracker.SetMemoryByteDeltaSource(destReg, memAddr, delta);
+                        }
+                        else if (memAddr == BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS && delta != 0)
+                        {
+                            registerTracker.ClearConcreteByteRegisterValueKeepSemantic(destReg);
+                            registerTracker.SetMemoryByteDeltaSource(destReg, memAddr, delta);
+                            registerTracker.FlagsKnown = false;
+                            registerTracker.SetFlagsMetadata(destReg, RegisterTracker.FlagsOriginKind.Arithmetic, address);
+                        }
+
+                        if (debugMode &&
+                            memAddr == BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS &&
+                            delta != 0)
+                        {
+                            AnalysisDebug.WriteLine(
+                                $"        {opText} {destReg}, byte ptr {eaText}: запомнили [0x{memAddr:X4}] {(delta > 0 ? "+" : string.Empty)}{delta}");
+                        }
+                    }
+                }
+            }
+
             if (instructionBytes.Length >= 2 && instructionBytes[0] == 0x8B && instructionBytes[1] == 0xE8)
             {
                 if (registerTracker.TryGetRegisterValue("AX", out ushort axValue))
@@ -11680,6 +11911,29 @@ namespace MMMapEditor
                             }
                         }
                     }
+
+                    if ((operation == 0x00 || operation == 0x05) &&
+                        TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort arithmeticMemAddr, out _, out string arithmeticEaText))
+                    {
+                        if (arithmeticMemAddr == BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS &&
+                            TryResolveTrackedByteValue(br, arithmeticMemAddr, result, targetX, targetY, out byte currentValue))
+                        {
+                            int delta = operation == 0x00 ? immediateValue : -immediateValue;
+                            result?.AdjustedMemoryAddresses.Add(arithmeticMemAddr);
+                            TrackBattleMonsterStrengthAdjustment(result, arithmeticMemAddr, delta, address, debugMode);
+                            byte newValue = unchecked((byte)(currentValue + delta));
+                            string opText = operation == 0x00 ? "ADD" : "SUB";
+                            ApplyTrackedByteWrite(arithmeticMemAddr, newValue, result, targetX, targetY, insn, debugMode,
+                                $"{opText} byte ptr {arithmeticEaText}, 0x{immediateValue:X2}",
+                                trackBattleMonsterStrengthDelta: false);
+                        }
+                        else if (arithmeticMemAddr == BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS)
+                        {
+                            int delta = operation == 0x00 ? immediateValue : -immediateValue;
+                            result?.AdjustedMemoryAddresses.Add(arithmeticMemAddr);
+                            TrackBattleMonsterStrengthAdjustment(result, arithmeticMemAddr, delta, address, debugMode);
+                        }
+                    }
                 }
             }
 
@@ -11848,6 +12102,31 @@ namespace MMMapEditor
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {opText} {regName}: диапазон {regRange.Min}-{regRange.Max} -> {newMin}-{newMax}");
+                    }
+                }
+                else if (mod != 0x03 &&
+                         (operation == 0x00 || operation == 0x01) &&
+                         !(mod == 0x00 && rm == 0x06) &&
+                         TryDecode16BitEffectiveAddress(instructionBytes, registerTracker, out ushort memAddr, out _, out string eaText))
+                {
+                    int delta = operation == 0x00 ? 1 : -1;
+                    string opText = operation == 0x00 ? "INC" : "DEC";
+                    result?.AdjustedMemoryAddresses.Add(memAddr);
+                    TrackBattleMonsterStrengthAdjustment(result, memAddr, delta, address, debugMode);
+
+                    if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentValue))
+                    {
+                        byte newValue = unchecked((byte)(currentValue + delta));
+                        ApplyTrackedByteWrite(memAddr, newValue, result, targetX, targetY, insn, debugMode, $"{opText} byte ptr {eaText}",
+                            trackBattleMonsterStrengthDelta: false);
+                        TrackPersistentCounterAdjustment(result, memAddr, currentValue, newValue, delta, address, debugMode);
+                    }
+                    else if (TryShiftTrackedSemanticByteRange(memAddr, delta, result, debugMode))
+                    {
+                    }
+                    else if (debugMode)
+                    {
+                        AnalysisDebug.WriteLine($"        Не удалось определить текущее значение для {opText} {eaText} -> [0x{memAddr:X4}]");
                     }
                 }
             }
@@ -13355,8 +13634,16 @@ namespace MMMapEditor
 
         private void ApplyTrackedByteWrite(ushort memAddr, byte value, PathAnalysisResult result,
             byte targetX, byte targetY, X86Instruction insn, bool debugMode, string sourceDescription,
-            bool trackBattleMonsterTableWrite = false)
+            bool trackBattleMonsterTableWrite = false,
+            bool trackBattleMonsterStrengthDelta = true)
         {
+            byte? previousExactValue = null;
+            if (_emulatedMemory8.TryGetValue(memAddr, out byte previousValue))
+                previousExactValue = previousValue;
+            else if (_emulatedMemory8Ranges.TryGetValue(memAddr, out var previousRange) &&
+                     previousRange?.IsExact == true)
+                previousExactValue = previousRange.Min;
+
             _emulatedMemory8[memAddr] = value;
             _emulatedMemory8Ranges.Remove(memAddr);
             _emulatedMemory8RangeDistributions.Remove(memAddr);
@@ -13371,6 +13658,18 @@ namespace MMMapEditor
 
             if (result == null)
                 return;
+
+            if (trackBattleMonsterStrengthDelta &&
+                previousExactValue.HasValue &&
+                previousExactValue.Value != value)
+            {
+                TrackBattleMonsterStrengthAdjustment(
+                    result,
+                    memAddr,
+                    value - previousExactValue.Value,
+                    (uint)insn.Address,
+                    debugMode);
+            }
 
             if (trackBattleMonsterTableWrite)
                 ApplyTrackedBattleMonsterTableWrite(memAddr, value, result, debugMode);
@@ -13543,6 +13842,7 @@ namespace MMMapEditor
                                          result.RandomEncounterMonsterPowerCap.HasValue ||
                                          result.RandomEncounterMonsterLevelCap.HasValue ||
                                          result.RandomEncounterRubicon.HasValue ||
+                                         result.BattleMonsterStrengthAdjustment != 0 ||
                                          result.BattleMonsterEntries.Values.Any(entry => entry.val1 != 0 && entry.val2 != 0) ||
                                          result.PartialBattles.Count > 0 ||
                                          (result.DynamicRandomBoundDependencies != null && result.DynamicRandomBoundDependencies.Count > 0) ||

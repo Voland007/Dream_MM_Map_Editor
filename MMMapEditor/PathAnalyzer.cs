@@ -602,6 +602,7 @@ namespace MMMapEditor
                 merged.RandomEncounterChance = currentState.RandomEncounterChance;
             if (currentState.RandomEncounterRubicon.HasValue)
                 merged.RandomEncounterRubicon = currentState.RandomEncounterRubicon;
+            merged.BattleMonsterStrengthAdjustment += currentState.BattleMonsterStrengthAdjustment;
             merged.CallsRandomEncounter = merged.CallsRandomEncounter || currentState.CallsRandomEncounter;
             merged.DisablesCurrentMapEvent = merged.DisablesCurrentMapEvent || currentState.DisablesCurrentMapEvent;
             if (currentState.RandomEncounterInstructionAddress != 0 &&
@@ -1061,6 +1062,7 @@ namespace MMMapEditor
             clone.DarkeningLevel = source.DarkeningLevel;
             clone.RandomEncounterChance = source.RandomEncounterChance;
             clone.RandomEncounterRubicon = source.RandomEncounterRubicon;
+            clone.BattleMonsterStrengthAdjustment = source.BattleMonsterStrengthAdjustment;
             clone.CallsRandomEncounter = source.CallsRandomEncounter;
             clone.IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump;
             clone.RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress;
@@ -1249,6 +1251,7 @@ namespace MMMapEditor
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
+                BattleMonsterStrengthAdjustment = source.BattleMonsterStrengthAdjustment,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
@@ -1987,6 +1990,7 @@ namespace MMMapEditor
                    !variant.DarkeningLevel.HasValue &&
                    !variant.RandomEncounterChance.HasValue &&
                    !variant.RandomEncounterRubicon.HasValue &&
+                   variant.BattleMonsterStrengthAdjustment == 0 &&
                    !variant.CallsRandomEncounter &&
                    !variant.TeleportTargetX.HasValue &&
                    !variant.TeleportTargetY.HasValue &&
@@ -2090,7 +2094,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleSkeleton = "<NO_BATTLE>";
             if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
@@ -2182,7 +2186,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -2292,7 +2296,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -2331,7 +2335,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -2739,6 +2743,7 @@ namespace MMMapEditor
                 DarkeningLevel = source.DarkeningLevel,
                 RandomEncounterChance = source.RandomEncounterChance,
                 RandomEncounterRubicon = source.RandomEncounterRubicon,
+                BattleMonsterStrengthAdjustment = source.BattleMonsterStrengthAdjustment,
                 CallsRandomEncounter = source.CallsRandomEncounter,
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
@@ -3007,7 +3012,7 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
