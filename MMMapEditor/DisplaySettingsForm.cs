@@ -26,10 +26,12 @@ namespace MMMapEditor
     {
         private readonly CheckBox showSecretPassagesCheckBox;
         private readonly CheckBox showDangerousWaterCellsCheckBox;
+        private readonly CheckBox showDangerousDesertCellsCheckBox;
         private readonly Button saveAndCloseButton;
 
         public bool ShowSecretPassages => showSecretPassagesCheckBox.Checked;
         public bool ShowDangerousWaterCells => showDangerousWaterCellsCheckBox.Checked;
+        public bool ShowDangerousDesertCells => showDangerousDesertCellsCheckBox.Checked;
 
         public DisplaySettingsForm()
         {
@@ -40,13 +42,13 @@ namespace MMMapEditor
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = false;
-            ClientSize = new Size(360, 174);
+            ClientSize = new Size(360, 200);
 
             var displayGroupBox = new GroupBox
             {
                 Text = "Параметры отображения",
                 Location = new Point(12, 12),
-                Size = new Size(336, 96)
+                Size = new Size(336, 122)
             };
 
             showSecretPassagesCheckBox = new CheckBox
@@ -63,14 +65,22 @@ namespace MMMapEditor
                 Location = new Point(16, 56)
             };
 
+            showDangerousDesertCellsCheckBox = new CheckBox
+            {
+                Text = "\u041e\u0442\u043e\u0431\u0440\u0430\u0436\u0430\u0442\u044c \u043f\u0443\u0441\u0442\u044b\u043d\u043d\u044b\u0435 \u043a\u043b\u0435\u0442\u043a\u0438 \u043e\u043f\u0430\u0441\u043d\u044b\u043c\u0438",
+                AutoSize = true,
+                Location = new Point(16, 82)
+            };
+
             displayGroupBox.Controls.Add(showSecretPassagesCheckBox);
             displayGroupBox.Controls.Add(showDangerousWaterCellsCheckBox);
+            displayGroupBox.Controls.Add(showDangerousDesertCellsCheckBox);
 
             saveAndCloseButton = new Button
             {
                 Text = "Сохранить и закрыть",
                 Size = new Size(160, 30),
-                Location = new Point(188, 124)
+                Location = new Point(188, 150)
             };
             saveAndCloseButton.Click += SaveAndCloseButton_Click;
 
@@ -87,6 +97,8 @@ namespace MMMapEditor
                 MainForm.GetBooleanSetting("DisplaySettings", "ShowSecretPassages", true);
             showDangerousWaterCellsCheckBox.Checked =
                 MainForm.GetBooleanSetting("DisplaySettings", "ShowDangerousWaterCells", true);
+            showDangerousDesertCellsCheckBox.Checked =
+                MainForm.GetBooleanSetting("DisplaySettings", "ShowDangerousDesertCells", true);
         }
 
         private void SaveAndCloseButton_Click(object sender, EventArgs e)
@@ -106,6 +118,8 @@ namespace MMMapEditor
                     showSecretPassagesCheckBox.Checked.ToString();
                 iniData["DisplaySettings"]["ShowDangerousWaterCells"] =
                     showDangerousWaterCellsCheckBox.Checked.ToString();
+                iniData["DisplaySettings"]["ShowDangerousDesertCells"] =
+                    showDangerousDesertCellsCheckBox.Checked.ToString();
                 parser.WriteFile(settingsPath, iniData);
 
                 DialogResult = DialogResult.OK;

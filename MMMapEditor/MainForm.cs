@@ -41,6 +41,7 @@ namespace MMMapEditor
         private const int PassageTypeSecret = 3;
         private const int PassageTypeRough = 8;
         private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
+        private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
         private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
             new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
@@ -137,6 +138,7 @@ namespace MMMapEditor
         private Point? mostPeacefulCell; // флаг для пометки безопасной клетки
         private bool showSecretPassages = true;
         private bool showDangerousWaterCells = true;
+        private bool showDangerousDesertCells = true;
 
 
         public MainForm()
@@ -155,6 +157,7 @@ namespace MMMapEditor
             CreateContxtMenu();
             showSecretPassages = GetBooleanSetting("DisplaySettings", "ShowSecretPassages", true);
             showDangerousWaterCells = GetBooleanSetting("DisplaySettings", "ShowDangerousWaterCells", true);
+            showDangerousDesertCells = GetBooleanSetting("DisplaySettings", "ShowDangerousDesertCells", true);
 
             // Читаем файл по умолчанию из INI
             string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
@@ -3802,7 +3805,7 @@ namespace MMMapEditor
             if (definition.SuppressPassageWhenSecondLowBitSet && bits.SecondLowBit)
                 passageType = 0;
 
-            passageType = ApplyWaterPassageRules(definition, passageType);
+            passageType = ApplyWaterOrDesertPassageRules(definition, passageType);
 
             return new DirectionState
             {
@@ -3812,15 +3815,21 @@ namespace MMMapEditor
             };
         }
 
-        private static int ApplyWaterPassageRules(OvrSideElementDefinition definition, int passageType)
+        private static int ApplyWaterOrDesertPassageRules(OvrSideElementDefinition definition, int passageType)
         {
-            if (!string.Equals(definition.BorderType, BorderTypeWater, StringComparison.Ordinal))
+            if (!IsWaterOrDesertBorder(definition.BorderType))
                 return passageType;
 
             if (passageType == PassageTypeSecret)
                 return 0;
 
             return passageType == 0 ? PassageTypeRough : passageType;
+        }
+
+        private static bool IsWaterOrDesertBorder(string borderType)
+        {
+            return string.Equals(borderType, BorderTypeWater, StringComparison.Ordinal) ||
+                   string.Equals(borderType, BorderTypeDesert, StringComparison.Ordinal);
         }
 
         private static bool IsImplicitSecretPassage(DirectionBits bits, OvrSideElementDefinition definition)
@@ -3970,6 +3979,7 @@ namespace MMMapEditor
                 {
                     showSecretPassages = form.ShowSecretPassages;
                     showDangerousWaterCells = form.ShowDangerousWaterCells;
+                    showDangerousDesertCells = form.ShowDangerousDesertCells;
                     InvalidateGridButtons();
                     UpdatePreview();
                 }
@@ -6700,16 +6710,32 @@ namespace MMMapEditor
             if (!isDangerStates.TryGetValue(pos, out var isDangerous) || !isDangerous)
                 return false;
 
-            return showDangerousWaterCells || !AreAllBordersWater(pos);
+            if (AreAllBordersWater(pos))
+                return showDangerousWaterCells;
+
+            if (AreAllBordersDesert(pos))
+                return showDangerousDesertCells;
+
+            return true;
         }
 
         private bool AreAllBordersWater(Point pos)
         {
+            return AreAllBordersOfType(pos, BorderTypeWater);
+        }
+
+        private bool AreAllBordersDesert(Point pos)
+        {
+            return AreAllBordersOfType(pos, BorderTypeDesert);
+        }
+
+        private bool AreAllBordersOfType(Point pos, string borderType)
+        {
             return borders.TryGetValue(pos, out var edgeTypes)
-                && string.Equals(edgeTypes.Top, BorderTypeWater, StringComparison.Ordinal)
-                && string.Equals(edgeTypes.Bottom, BorderTypeWater, StringComparison.Ordinal)
-                && string.Equals(edgeTypes.Left, BorderTypeWater, StringComparison.Ordinal)
-                && string.Equals(edgeTypes.Right, BorderTypeWater, StringComparison.Ordinal);
+                && string.Equals(edgeTypes.Top, borderType, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Bottom, borderType, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Left, borderType, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Right, borderType, StringComparison.Ordinal);
         }
 
         // Вспомогательный метод для преобразования изображения в массив пикселей
