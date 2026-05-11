@@ -552,6 +552,18 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
+            var variantContents = BuildRawVariantContentsFromPathVariants(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+
+            if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, variantContents))
+                return variantContents;
+
             var semanticTreeContents = BuildFlatSemanticTreeVariantContents(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
@@ -564,6 +576,18 @@ namespace MMMapEditor
             if (semanticTreeContents != null)
                 return semanticTreeContents;
 
+            return variantContents;
+        }
+
+        private static Dictionary<int, List<string>> BuildRawVariantContentsFromPathVariants(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
+        {
             var variantContents = new Dictionary<int, List<string>>();
 
             foreach (var kvp in obj.PathVariants.OrderBy(p => p.Key))
@@ -1367,6 +1391,16 @@ namespace MMMapEditor
             return true;
         }
 
+        private static bool CanBuildCollapsedCappedRandomPartialBattleNote(
+            OvrObject obj,
+            Dictionary<int, List<string>> variantContents)
+        {
+            return TryBuildCollapsedCappedRandomPartialBattleNote(
+                obj,
+                variantContents,
+                out _);
+        }
+
         private static bool CanRenderBesideCollapsedPartialBattle(PathVariantInfo variant, List<string> lines)
         {
             if (variant == null || IsPlainPartialBattleVariant(variant))
@@ -1377,21 +1411,26 @@ namespace MMMapEditor
             if (!hasDisplayableLines)
                 return false;
 
-            bool isSimpleNarrativeOutcome =
+            bool hasSelfContainedOutcome =
                 (variant.Texts != null && variant.Texts.Count > 0) ||
-                variant.HasTeleportTarget;
+                variant.HasTeleportTarget ||
+                (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0) ||
+                (variant.PartyEffects != null && variant.PartyEffects.Count > 0);
 
-            if (!isSimpleNarrativeOutcome)
+            if (!hasSelfContainedOutcome)
                 return false;
 
-            return !variant.HasMonsterStatChanges &&
-                   !variant.HasBattleLikeInfo &&
+            return !variant.RandomEncounterMonsterPowerCap.HasValue &&
+                   !variant.RandomEncounterMonsterLevelCap.HasValue &&
+                   !variant.RandomEncounterMonsterBatchCountCap.HasValue &&
+                   !variant.DarkeningLevel.HasValue &&
+                   !variant.RandomEncounterChance.HasValue &&
+                   (variant.PartiallyDefinedBattles == null || variant.PartiallyDefinedBattles.Count == 0) &&
                    (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
                    (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
                    !variant.HasAnyTableLoad &&
                    (variant.LoadedValues == null || variant.LoadedValues.Count == 0) &&
-                   !variant.HasStateGuardInfo &&
-                   (variant.PartyEffects == null || variant.PartyEffects.Count == 0);
+                   !variant.HasStateGuardInfo;
         }
 
         private static bool TryBuildCollapsedPartialBattleProbability(
@@ -2155,6 +2194,17 @@ private static string BuildHierarchicalVariantNotes(
     string inlineSpecialSpoilerLine)
         {
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
+                return null;
+
+            var rawVariantContents = BuildRawVariantContentsFromPathVariants(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+            if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
             var items = BuildVariantRenderItems(
