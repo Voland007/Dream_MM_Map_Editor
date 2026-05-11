@@ -664,6 +664,7 @@ namespace MMMapEditor
                 .Select(CloneVariantRenderItemForSourceMatch)
                 .Where(item => item != null)
                 .ToList();
+            var sourceItemsByKey = BuildSourceVariantItemMap(obj, sourceItems);
 
             var groups = BuildTopLevelVariantGroups(items);
             if (groups.Count == 0)
@@ -730,13 +731,38 @@ namespace MMMapEditor
             foreach (var flatVariant in orderedFlatVariants)
             {
                 var normalizedLines = (flatVariant.Variant?.Lines ?? new List<string>())
-                    .Where(line => !string.IsNullOrWhiteSpace(line))
+                    .Where(line => line != null)
                     .ToList();
-                if (normalizedLines.Count == 0)
+                if (flatVariant.SourceVariantKey.HasValue &&
+                    sourceItemsByKey.TryGetValue(flatVariant.SourceVariantKey.Value, out var sourceItem))
+                {
+                    normalizedLines = RestoreSourceWhitespaceOnlyLines(normalizedLines, sourceItem.Lines);
+                }
+
+                if (!normalizedLines.Any(line => !string.IsNullOrWhiteSpace(line)))
                     normalizedLines.Add("Ничего не происходит");
 
                 int key = BuildFlatSemanticVariantKey(displayIndex++, flatVariant.SourceVariantKey);
                 result[key] = normalizedLines;
+            }
+
+            return result;
+        }
+
+        private static Dictionary<int, VariantRenderItem> BuildSourceVariantItemMap(
+            OvrObject obj,
+            IEnumerable<VariantRenderItem> sourceItems)
+        {
+            var result = new Dictionary<int, VariantRenderItem>();
+            foreach (var item in sourceItems ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                if (!TryFindPathVariantKey(obj, item?.Variant, out int key) ||
+                    result.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                result[key] = item;
             }
 
             return result;
@@ -753,6 +779,161 @@ namespace MMMapEditor
                 Lines = item.Lines?.ToList() ?? new List<string>(),
                 NarrativeLines = item.NarrativeLines?.ToList() ?? new List<string>()
             };
+        }
+
+        private static List<string> RestoreSourceWhitespaceOnlyLines(
+            List<string> displayLines,
+            List<string> sourceLines)
+        {
+            var result = displayLines?.ToList() ?? new List<string>();
+            if (sourceLines == null || sourceLines.Count == 0 ||
+                !sourceLines.Any(line => line != null && string.IsNullOrWhiteSpace(line)))
+            {
+                return result;
+            }
+
+            for (int i = 0; i < sourceLines.Count;)
+            {
+                if (sourceLines[i] == null || !string.IsNullOrWhiteSpace(sourceLines[i]))
+                {
+                    i++;
+                    continue;
+                }
+
+                int groupStart = i;
+                var whitespaceLines = new List<string>();
+                while (i < sourceLines.Count &&
+                       sourceLines[i] != null &&
+                       string.IsNullOrWhiteSpace(sourceLines[i]))
+                {
+                    whitespaceLines.Add(sourceLines[i]);
+                    i++;
+                }
+
+                var sourceToDisplay = BuildSourceToDisplayLineMap(sourceLines, result);
+                int? previousDisplayIndex = FindMappedMeaningfulSourceLineIndex(
+                    sourceLines,
+                    sourceToDisplay,
+                    groupStart - 1,
+                    -1);
+                int? nextDisplayIndex = FindMappedMeaningfulSourceLineIndex(
+                    sourceLines,
+                    sourceToDisplay,
+                    i,
+                    1);
+
+                int insertIndex;
+                int existingWhitespaceCount;
+                if (previousDisplayIndex.HasValue &&
+                    nextDisplayIndex.HasValue &&
+                    previousDisplayIndex.Value < nextDisplayIndex.Value)
+                {
+                    insertIndex = nextDisplayIndex.Value;
+                    existingWhitespaceCount = CountWhitespaceOnlyLines(
+                        result,
+                        previousDisplayIndex.Value + 1,
+                        nextDisplayIndex.Value);
+                }
+                else if (previousDisplayIndex.HasValue)
+                {
+                    insertIndex = previousDisplayIndex.Value + 1;
+                    existingWhitespaceCount = CountWhitespaceOnlyLines(result, insertIndex, insertIndex + whitespaceLines.Count);
+                }
+                else if (nextDisplayIndex.HasValue)
+                {
+                    insertIndex = nextDisplayIndex.Value;
+                    existingWhitespaceCount = CountWhitespaceOnlyLines(result, Math.Max(0, insertIndex - whitespaceLines.Count), insertIndex);
+                }
+                else
+                {
+                    continue;
+                }
+
+                int missingCount = whitespaceLines.Count - existingWhitespaceCount;
+                if (missingCount <= 0)
+                    continue;
+
+                result.InsertRange(insertIndex, whitespaceLines.Take(missingCount));
+            }
+
+            return result;
+        }
+
+        private static Dictionary<int, int> BuildSourceToDisplayLineMap(
+            List<string> sourceLines,
+            List<string> displayLines)
+        {
+            var result = new Dictionary<int, int>();
+            int displaySearchStart = 0;
+            for (int sourceIndex = 0; sourceIndex < (sourceLines?.Count ?? 0); sourceIndex++)
+            {
+                string sourceLine = sourceLines[sourceIndex];
+                if (string.IsNullOrWhiteSpace(sourceLine))
+                    continue;
+
+                int displayIndex = FindDisplayLineIndex(displayLines, sourceLine, displaySearchStart);
+                if (displayIndex < 0)
+                    continue;
+
+                result[sourceIndex] = displayIndex;
+                displaySearchStart = displayIndex + 1;
+            }
+
+            return result;
+        }
+
+        private static int? FindMappedMeaningfulSourceLineIndex(
+            List<string> sourceLines,
+            Dictionary<int, int> sourceToDisplay,
+            int startIndex,
+            int step)
+        {
+            for (int index = startIndex; index >= 0 && index < (sourceLines?.Count ?? 0); index += step)
+            {
+                if (string.IsNullOrWhiteSpace(sourceLines[index]))
+                    continue;
+
+                if (sourceToDisplay != null && sourceToDisplay.TryGetValue(index, out int displayIndex))
+                    return displayIndex;
+            }
+
+            return null;
+        }
+
+        private static int FindDisplayLineIndex(List<string> displayLines, string sourceLine, int startIndex)
+        {
+            string normalizedSource = NormalizeLineForWhitespaceRestore(sourceLine);
+            for (int i = Math.Max(0, startIndex); i < (displayLines?.Count ?? 0); i++)
+            {
+                if (string.Equals(
+                    NormalizeLineForWhitespaceRestore(displayLines[i]),
+                    normalizedSource,
+                    StringComparison.Ordinal))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static int CountWhitespaceOnlyLines(List<string> lines, int startIndex, int endIndex)
+        {
+            int count = 0;
+            int start = Math.Max(0, startIndex);
+            int end = Math.Min(lines?.Count ?? 0, Math.Max(start, endIndex));
+            for (int i = start; i < end; i++)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i]))
+                    count++;
+            }
+
+            return count;
+        }
+
+        private static string NormalizeLineForWhitespaceRestore(string line)
+        {
+            return line?.TrimEnd() ?? string.Empty;
         }
 
         private static int BuildFlatSemanticVariantKey(int displayIndex, int? sourceVariantKey)
@@ -1250,9 +1431,9 @@ namespace MMMapEditor
 
             if (TryResolvePathVariantForDisplayKey(obj, variantKey, out var pathVariant))
             {
-                var annotations = BuildVariantHeaderAnnotations(pathVariant);
+                var annotations = BuildFlatVariantHeaderAnnotations(obj, pathVariant);
                 if (annotations.Count > 0)
-                    header += $" ({string.Join("; ", annotations)})";
+                    header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
             }
 
             return header;
@@ -2041,6 +2222,130 @@ namespace MMMapEditor
             return annotations;
         }
 
+        private static List<string> BuildFlatVariantHeaderAnnotations(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            var annotations = new List<string>();
+            AddDistinctHeaderAnnotations(
+                annotations,
+                BuildInventoryPresenceHeaderAnnotationsForFlat(obj, variant));
+            AddDistinctHeaderAnnotations(
+                annotations,
+                BuildVariantHeaderAnnotations(variant));
+            return annotations;
+        }
+
+        private static void AddDistinctHeaderAnnotations(
+            List<string> target,
+            IEnumerable<string> annotations)
+        {
+            if (target == null || annotations == null)
+                return;
+
+            foreach (string annotation in annotations)
+            {
+                string normalized = NormalizeHeaderAnnotation(annotation);
+                if (string.IsNullOrWhiteSpace(normalized))
+                    continue;
+
+                if (!target.Contains(normalized, StringComparer.Ordinal))
+                    target.Add(normalized);
+            }
+        }
+
+        private static string BuildVariantHeaderAnnotationText(IEnumerable<string> annotations)
+        {
+            var displayAnnotations = (annotations ?? Enumerable.Empty<string>())
+                .Select(NormalizeHeaderAnnotation)
+                .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
+                .Select(EncodeVariantHeaderAnnotationForDisplay)
+                .ToList();
+
+            return displayAnnotations.Count == 0
+                ? null
+                : string.Join("; ", displayAnnotations);
+        }
+
+        private static string EncodeVariantHeaderAnnotationForDisplay(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return normalized;
+
+            if (TrySplitInventoryPresenceHeaderAnnotation(
+                    normalized,
+                    out string itemName,
+                    out string presenceLabel))
+            {
+                return $"{InlineNoteStyleCodec.EncodeItemNameText(itemName)} {presenceLabel}";
+            }
+
+            return normalized;
+        }
+
+        private static List<string> BuildInventoryPresenceHeaderAnnotationsForFlat(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            var explicitAnnotations = BuildInventoryPresenceHeaderAnnotationsForVariant(variant);
+            if (explicitAnnotations.Count > 0)
+                return explicitAnnotations;
+
+            return InferComplementaryInventoryPresenceHeaderAnnotations(obj, variant);
+        }
+
+        private static List<string> BuildInventoryPresenceHeaderAnnotationsForVariant(
+            PathVariantInfo variant)
+        {
+            return GetInventoryPresenceChoiceInfos(variant)
+                .Select(info => info.HeaderAnnotation)
+                .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(annotation => annotation, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static List<string> InferComplementaryInventoryPresenceHeaderAnnotations(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            if (obj?.PathVariants == null || variant == null)
+                return new List<string>();
+
+            if (GetInventoryPresenceChoiceInfos(variant).Count > 0)
+                return new List<string>();
+
+            var candidates = obj.PathVariants.Values
+                .Where(pathVariant => pathVariant != null && !ReferenceEquals(pathVariant, variant))
+                .SelectMany(GetInventoryPresenceChoiceInfos)
+                .GroupBy(info => info.ItemName, StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var presenceLabels = group
+                        .Select(info => info.PresenceLabel)
+                        .Where(label => !string.IsNullOrWhiteSpace(label))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+
+                    return new
+                    {
+                        ItemName = group.Key,
+                        PresenceLabels = presenceLabels
+                    };
+                })
+                .Where(candidate => candidate.PresenceLabels.Count == 1)
+                .ToList();
+
+            if (candidates.Count != 1 ||
+                !TryGetOppositeInventoryPresenceLabel(candidates[0].PresenceLabels[0], out string oppositePresence))
+            {
+                return new List<string>();
+            }
+
+            return new List<string> { $"{candidates[0].ItemName} {oppositePresence}" };
+        }
+
         private static bool ShouldSuppressSelfDisableOccurrenceHeaderAnnotation(
             PathVariantInfo variant,
             string occurrence)
@@ -2196,6 +2501,13 @@ namespace MMMapEditor
         {
             public BranchChoice Raw { get; set; }
             public BranchChoice Normalized { get; set; }
+        }
+
+        private sealed class InventoryPresenceChoiceInfo
+        {
+            public string ItemName { get; set; }
+            public string PresenceLabel { get; set; }
+            public string HeaderAnnotation { get; set; }
         }
 
         private sealed class SharedPartyHoistBranch
@@ -2438,6 +2750,7 @@ private static string BuildHierarchicalVariantNotes(
             foreach (var group in groups)
             {
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.ConsumedTopChoiceKey : null);
+                IntroduceComplementaryInventoryPresenceBranches(root);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
                 AttachChoiceChildrenToSiblingPromptParents(root);
@@ -2528,7 +2841,7 @@ private static string BuildHierarchicalVariantNotes(
                 var group = groups[groupIndex];
                 string groupHeader = $"   Вариант 1.{groupIndex + 1}";
                 if (!string.IsNullOrWhiteSpace(group.HeaderAnnotation))
-                    groupHeader += $" ({group.HeaderAnnotation})";
+                    groupHeader += $" ({EncodeVariantHeaderAnnotationForDisplay(group.HeaderAnnotation)})";
                 if (!string.IsNullOrWhiteSpace(group.Label))
                     sb.AppendLine($"{groupHeader}: {group.Label}");
                 else
@@ -2745,7 +3058,7 @@ private static string BuildHierarchicalVariantNotes(
                             annotations.Add(probabilityAnnotation);
 
                         if (annotations.Count > 0)
-                            header += $" ({string.Join("; ", annotations)})";
+                            header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
                         if (!string.IsNullOrWhiteSpace(group.Label))
                             header += $": {group.Label}";
                         else
@@ -3379,6 +3692,122 @@ private static string BuildHierarchicalVariantNotes(
             return root;
         }
 
+        private static void IntroduceComplementaryInventoryPresenceBranches(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children?.ToList() ?? new List<VariantTreeNode>())
+                IntroduceComplementaryInventoryPresenceBranches(child);
+
+            if ((node.DirectVariants?.Count ?? 0) == 0 ||
+                (node.Children?.Count ?? 0) == 0)
+            {
+                return;
+            }
+
+            if (!TryFindSingleInventoryPresenceChildSide(
+                    node,
+                    out string itemName,
+                    out string observedPresenceLabel))
+            {
+                return;
+            }
+
+            if (!TryGetOppositeInventoryPresenceLabel(observedPresenceLabel, out string oppositePresenceLabel))
+                return;
+
+            var directVariantsToMove = node.DirectVariants
+                .Where(item => item != null && !VariantHasInventoryPresenceChoiceForItem(item.Variant, itemName))
+                .ToList();
+
+            if (directVariantsToMove.Count == 0)
+                return;
+
+            string inferredHeaderAnnotation = NormalizeHeaderAnnotation($"{itemName} {oppositePresenceLabel}");
+            var complementNode = node.Children.FirstOrDefault(child =>
+                child != null &&
+                string.IsNullOrWhiteSpace(child.Label) &&
+                string.Equals(
+                    NormalizeHeaderAnnotation(child.HeaderAnnotation),
+                    inferredHeaderAnnotation,
+                    StringComparison.Ordinal));
+
+            if (complementNode == null)
+            {
+                complementNode = new VariantTreeNode
+                {
+                    SegmentKey = $"INVENTORY_COMPLEMENT|{itemName}|{oppositePresenceLabel}",
+                    HeaderAnnotation = inferredHeaderAnnotation
+                };
+                node.Children.Add(complementNode);
+            }
+
+            foreach (var item in directVariantsToMove)
+                complementNode.DirectVariants.Add(item);
+
+            var moved = new HashSet<VariantRenderItem>(directVariantsToMove);
+            node.DirectVariants = node.DirectVariants
+                .Where(item => item != null && !moved.Contains(item))
+                .ToList();
+        }
+
+        private static bool TryFindSingleInventoryPresenceChildSide(
+            VariantTreeNode node,
+            out string itemName,
+            out string presenceLabel)
+        {
+            itemName = null;
+            presenceLabel = null;
+
+            var candidates = (node?.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .Select(child =>
+                    TrySplitInventoryPresenceHeaderAnnotation(
+                        child?.HeaderAnnotation,
+                        out string childItemName,
+                        out string childPresenceLabel)
+                        ? new { ItemName = childItemName, PresenceLabel = childPresenceLabel }
+                        : null)
+                .Where(candidate => candidate != null)
+                .GroupBy(candidate => candidate.ItemName, StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var presenceLabels = group
+                        .Select(candidate => candidate.PresenceLabel)
+                        .Where(label => !string.IsNullOrWhiteSpace(label))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+
+                    return new
+                    {
+                        ItemName = group.Key,
+                        PresenceLabels = presenceLabels
+                    };
+                })
+                .Where(candidate => candidate.PresenceLabels.Count == 1)
+                .ToList();
+
+            if (candidates.Count != 1)
+                return false;
+
+            itemName = candidates[0].ItemName;
+            presenceLabel = candidates[0].PresenceLabels[0];
+            return !string.IsNullOrWhiteSpace(itemName) &&
+                   !string.IsNullOrWhiteSpace(presenceLabel);
+        }
+
+        private static bool VariantHasInventoryPresenceChoiceForItem(
+            PathVariantInfo variant,
+            string itemName)
+        {
+            if (variant == null || string.IsNullOrWhiteSpace(itemName))
+                return false;
+
+            return GetInventoryPresenceChoiceInfos(variant)
+                .Any(info => string.Equals(info.ItemName, itemName, StringComparison.Ordinal));
+        }
+
         private static IEnumerable<BranchChoice> GetRelevantBranchChoices(PathVariantInfo variant)
         {
             if (variant?.BranchChoices == null)
@@ -3398,11 +3827,108 @@ private static string BuildHierarchicalVariantNotes(
                 }
             }
 
+            var seenInventoryPresenceItems = new HashSet<string>(StringComparer.Ordinal);
             foreach (var candidate in CollapseFlagPropagatedInputChoiceDuplicates(candidates))
             {
-                if (candidate?.Normalized != null)
-                    yield return candidate.Normalized;
+                if (candidate?.Normalized == null)
+                    continue;
+
+                if (TryBuildInventoryPresenceChoiceInfo(candidate.Normalized, out var itemPresenceInfo) &&
+                    !seenInventoryPresenceItems.Add(itemPresenceInfo.ItemName))
+                {
+                    continue;
+                }
+
+                yield return candidate.Normalized;
             }
+        }
+
+        private static List<InventoryPresenceChoiceInfo> GetInventoryPresenceChoiceInfos(PathVariantInfo variant)
+        {
+            return GetRelevantBranchChoices(variant)
+                .Select(choice => TryBuildInventoryPresenceChoiceInfo(choice, out var info) ? info : null)
+                .Where(info => info != null)
+                .GroupBy(info => info.HeaderAnnotation, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .OrderBy(info => info.ItemName, StringComparer.Ordinal)
+                .ThenBy(info => info.PresenceLabel, StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static bool TryBuildInventoryPresenceChoiceInfo(
+            BranchChoice choice,
+            out InventoryPresenceChoiceInfo info)
+        {
+            info = null;
+            if (!PartyInventorySemantics.TryBuildItemPresenceChoiceParts(
+                    choice,
+                    out string itemName,
+                    out string presenceLabel))
+            {
+                return false;
+            }
+
+            itemName = itemName?.Trim();
+            presenceLabel = presenceLabel?.Trim();
+            if (string.IsNullOrWhiteSpace(itemName) ||
+                string.IsNullOrWhiteSpace(presenceLabel))
+            {
+                return false;
+            }
+
+            info = new InventoryPresenceChoiceInfo
+            {
+                ItemName = itemName,
+                PresenceLabel = presenceLabel,
+                HeaderAnnotation = NormalizeHeaderAnnotation($"{itemName} {presenceLabel}")
+            };
+            return true;
+        }
+
+        private static bool TrySplitInventoryPresenceHeaderAnnotation(
+            string annotation,
+            out string itemName,
+            out string presenceLabel)
+        {
+            itemName = null;
+            presenceLabel = null;
+
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            foreach (string label in new[] { "есть", "отсутствует" })
+            {
+                string suffix = " " + label;
+                if (!normalized.EndsWith(suffix, StringComparison.Ordinal))
+                    continue;
+
+                itemName = normalized.Substring(0, normalized.Length - suffix.Length).Trim();
+                presenceLabel = label;
+                return !string.IsNullOrWhiteSpace(itemName);
+            }
+
+            return false;
+        }
+
+        private static bool TryGetOppositeInventoryPresenceLabel(
+            string presenceLabel,
+            out string oppositePresenceLabel)
+        {
+            oppositePresenceLabel = null;
+            if (string.Equals(presenceLabel, "есть", StringComparison.Ordinal))
+            {
+                oppositePresenceLabel = "отсутствует";
+                return true;
+            }
+
+            if (string.Equals(presenceLabel, "отсутствует", StringComparison.Ordinal))
+            {
+                oppositePresenceLabel = "есть";
+                return true;
+            }
+
+            return false;
         }
 
         private static List<BranchChoiceDisplayCandidate> CollapseFlagPropagatedInputChoiceDuplicates(
@@ -5925,7 +6451,7 @@ private static string BuildHierarchicalVariantNotes(
             if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
                 sharedAnnotations.Add(sharedProbabilityAnnotation);
             if (sharedAnnotations.Count > 0)
-                header += $" ({string.Join("; ", sharedAnnotations)})";
+                header += $" ({BuildVariantHeaderAnnotationText(sharedAnnotations)})";
 
             if (!string.IsNullOrWhiteSpace(group?.Label))
                 header += $": {group.Label}";
@@ -6571,7 +7097,7 @@ private static string BuildHierarchicalVariantNotes(
                 if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
                     annotations.Insert(0, node.HeaderAnnotation);
                 if (annotations.Count > 0)
-                    header += $" ({string.Join("; ", annotations)})";
+                    header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
             }
             else
             {
@@ -6583,7 +7109,7 @@ private static string BuildHierarchicalVariantNotes(
                 if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
                     sharedAnnotations.Add(sharedProbabilityAnnotation);
                 if (sharedAnnotations.Count > 0)
-                    header += $" ({string.Join("; ", sharedAnnotations)})";
+                    header += $" ({BuildVariantHeaderAnnotationText(sharedAnnotations)})";
             }
 
             if (!string.IsNullOrWhiteSpace(node.Label))
@@ -6767,7 +7293,7 @@ private static string BuildHierarchicalVariantNotes(
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
             var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine, inheritedGuardKey);
             if (annotations.Count > 0)
-                header += $" ({string.Join("; ", annotations)})";
+                header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
             header += $": {label}";
             sb.AppendLine(header);
         }
@@ -6793,7 +7319,7 @@ private static string BuildHierarchicalVariantNotes(
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
             var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine, inheritedGuardKey);
             if (annotations.Count > 0)
-                header += $" ({string.Join("; ", annotations)})";
+                header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
             header += ":";
             sb.AppendLine(header);
             bool headerContainsProbability = VariantHeaderContainsProbability(header);
@@ -7412,8 +7938,11 @@ private static string BuildHierarchicalVariantNotes(
             string guardKey = TryResolvePathVariantForDisplayKey(obj, variantKey, out var guardedVariant)
                 ? BuildGuardConditionKey(guardedVariant) ?? string.Empty
                 : string.Empty;
+            string inventoryPresenceKey = TryResolvePathVariantForDisplayKey(obj, variantKey, out var inventoryVariant)
+                ? string.Join("|", BuildInventoryPresenceHeaderAnnotationsForFlat(obj, inventoryVariant))
+                : string.Empty;
             string linesKey = string.Join("\n", (lines ?? new List<string>()).Select(line => line ?? string.Empty));
-            return string.Join("\n---\n", occurrenceKey, probabilityKey, guardKey, linesKey);
+            return string.Join("\n---\n", occurrenceKey, probabilityKey, guardKey, inventoryPresenceKey, linesKey);
         }
 
         private static string BuildDisplayedVariantItemKey(VariantRenderItem item)
@@ -7423,7 +7952,7 @@ private static string BuildHierarchicalVariantNotes(
             string guardConditionKey = BuildGuardConditionKey(item?.Variant) ?? string.Empty;
             string branchKey = string.Join("|",
                 GetRelevantBranchChoices(item?.Variant)
-                    .Select(choice => NormalizeChoiceLabel(choice?.Label) ?? string.Empty));
+                    .Select(choice => BuildChoiceDisplayKey(choice) ?? string.Empty));
             string linesKey = string.Join("\n",
                 (item?.Lines ?? new List<string>())
                     .Select(line => line?.TrimEnd() ?? string.Empty));

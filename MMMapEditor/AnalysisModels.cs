@@ -304,7 +304,8 @@ namespace MMMapEditor
         RepeatedBattleWarning = 13,
         RawOverlayText = 14,
         BattleMonsterStrengthIncrease = 15,
-        BattleMonsterStrengthDecrease = 16
+        BattleMonsterStrengthDecrease = 16,
+        ItemName = 17
     }
 
     public sealed class NoteInlineStyleSpan

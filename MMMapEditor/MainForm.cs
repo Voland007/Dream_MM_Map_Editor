@@ -2654,6 +2654,10 @@ namespace MMMapEditor
                         ApplyBattleMonsterStrengthDecreaseStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.ItemName:
+                        ApplyItemNameStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.RawOverlayText:
                         break;
                 }
@@ -2763,6 +2767,11 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(202, 244, 205);
             rt.SelectionBackColor = Color.FromArgb(28, 70, 42);
             rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 1.25f, 6.0f), FontStyle.Bold);
+        }
+
+        private void ApplyItemNameStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 236, 139);
         }
 
         private void FormatRepeatedBattleWarnings(RichTextBox rt, string noteText)

@@ -39,6 +39,7 @@ namespace MMMapEditor
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
         private const string BattleMonsterStrengthDecreaseTokenPrefix = "[[BATTLEPOWERDOWN:";
+        private const string ItemNameTokenPrefix = "[[ITEMNAME:";
         public const string RepeatedBattleWarningText =
             "!! ВНИМАНИЕ! Битва запускается два раза; результат каждого (победа или побег) не влияет на запуск следующего !!";
         private const string RandomEncounterRubiconWarningPrefix =
@@ -117,6 +118,11 @@ namespace MMMapEditor
         public static string EncodeBattleMonsterStrengthDecreaseText(string visibleText)
         {
             return EncodeTextStyleToken(BattleMonsterStrengthDecreaseTokenPrefix, visibleText);
+        }
+
+        public static string EncodeItemNameText(string visibleText)
+        {
+            return EncodeTextStyleToken(ItemNameTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -301,6 +307,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.MutedParentheticalNote
                     });
                     i += mutedConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    ItemNameTokenPrefix,
+                    out string itemNameText,
+                    out int itemNameConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(itemNameText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = itemNameText.Length,
+                        Kind = NoteInlineStyleKind.ItemName
+                    });
+                    i += itemNameConsumedLength;
                     continue;
                 }
 

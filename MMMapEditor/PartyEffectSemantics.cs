@@ -22,8 +22,7 @@ namespace MMMapEditor
 {
     public static class PartyEffectSemantics
     {
-        private const string StandardActivePartyMemberGuardKey =
-            "Status|LessThan|ExactImmediate|128|-|Dynamic:Loop:-:-:-";
+        private const ushort StandardActivePartyMemberStatusThreshold = 0x80;
 
         private static string FormatMemberDisplay(int memberIndex)
         {
@@ -285,7 +284,7 @@ namespace MMMapEditor
                             return $"CONDITION женщин в партии изменяется на {conditionStatusesText}";
 
                         if (IsStandardActivePartyStatusGuardedLoop(effect))
-                            return $"CONDITION персонажа(ей) в партии изменяется на {conditionStatusesText}";
+                            return BuildWholePartyConditionChangeDescription(conditionStatusesText);
 
                         if (HasEffectiveGuardPredicates(effect))
                             return $"CONDITION подходящих персонажей партии изменяется на {conditionStatusesText}";
@@ -308,7 +307,7 @@ namespace MMMapEditor
                          operation == PartyEffectOperation.BitToggle ||
                          operation == PartyEffectOperation.Write))
                     {
-                        return $"CONDITION персонажа(ей) в партии изменяется на {conditionStatusesText}";
+                        return BuildWholePartyConditionChangeDescription(conditionStatusesText);
                     }
 
                     string statusTarget = BuildStatusTarget(effect, scope, condition);
@@ -500,14 +499,48 @@ namespace MMMapEditor
 
         public static bool IsStandardActivePartyStatusGuardedLoop(PartyEffect effect)
         {
-            return effect != null &&
-                   GetEffectiveField(effect) == PartyFieldKind.Status &&
-                   GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
-                   GetEffectiveCondition(effect) == PartyConditionKind.None &&
-                   string.Equals(
-                       BuildGuardPredicatesKey(effect),
-                       StandardActivePartyMemberGuardKey,
-                       StringComparison.Ordinal);
+            if (effect == null ||
+                GetEffectiveField(effect) != PartyFieldKind.Status ||
+                GetEffectiveScope(effect) != PartyEffectScope.PartySubset ||
+                GetEffectiveCondition(effect) != PartyConditionKind.None)
+            {
+                return false;
+            }
+
+            var predicates = GetEffectiveGuardPredicates(effect);
+            return predicates.Count == 1 && IsStandardActivePartyMemberStatusGuard(predicates[0]);
+        }
+
+        private static bool IsStandardActivePartyMemberStatusGuard(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return false;
+
+            bool isStatusField =
+                predicate.Field == PartyFieldKind.Status &&
+                (!predicate.FieldOffset.HasValue ||
+                 predicate.FieldOffset.Value == PartyStatusSemantics.FieldOffset);
+
+            bool isActiveStatusThreshold =
+                predicate.Comparison == PartyPredicateComparison.LessThan &&
+                HasExactPredicateValue(predicate, StandardActivePartyMemberStatusThreshold);
+
+            bool isCurrentLoopMember =
+                predicate.TargetMember?.IsPartyLoopMember == true;
+
+            return isStatusField && isActiveStatusThreshold && isCurrentLoopMember;
+        }
+
+        private static bool HasExactPredicateValue(PartyPredicate predicate, ushort value)
+        {
+            if (predicate == null)
+                return false;
+
+            if (predicate.ImmediateValue == value)
+                return true;
+
+            return predicate.ImmediateRange?.IsExact == true &&
+                   predicate.ImmediateRange.Min == value;
         }
 
         public static bool HaveEquivalentGuardPredicates(PartyEffect left, PartyEffect right)
@@ -1025,6 +1058,14 @@ namespace MMMapEditor
                 PartyEffectOperation.BitToggle => $"переключение {statusesText}",
                 _ => statusesText
             };
+        }
+
+        private static string BuildWholePartyConditionChangeDescription(string conditionStatusesText)
+        {
+            if (string.Equals(conditionStatusesText, "DEAD", StringComparison.OrdinalIgnoreCase))
+                return $"CONDITION персонажа(ей) в партии изменяется на {conditionStatusesText}";
+
+            return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
         }
 
         private static string BuildTrackedTechnicalFieldDescription(
