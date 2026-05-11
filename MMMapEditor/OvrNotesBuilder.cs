@@ -2817,6 +2817,7 @@ private static string BuildHierarchicalVariantNotes(
         {
             public List<string> RootLines { get; set; } = new List<string>();
             public List<InventoryResourceGroup> Groups { get; set; } = new List<InventoryResourceGroup>();
+            public List<ResourceRandomOutcomeKind> OutcomeKinds { get; set; } = new List<ResourceRandomOutcomeKind>();
         }
 
         private static bool TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(
@@ -2880,9 +2881,13 @@ private static string BuildHierarchicalVariantNotes(
                     printedBeforeOutcome.AddRange(suppressedResourceLines);
 
                     int outcomeIndex = 1;
-                    foreach (var outcomeKind in GetResourceRandomOutcomeRenderOrder())
+                    var outcomeKinds = GetModelOutcomeKinds(model, resourceGroup);
+                    int outcomeCount = outcomeKinds.Count;
+                    foreach (var outcomeKind in outcomeKinds)
                     {
-                        var outcomeGroup = resourceGroup.Outcomes[outcomeKind];
+                        if (!resourceGroup.Outcomes.TryGetValue(outcomeKind, out var outcomeGroup))
+                            continue;
+
                         string outcomeHeader = $"         Вариант 1.{groupIndex + 1}.{resourceIndex}.{outcomeIndex}";
                         string probabilityAnnotation = BuildRelativeOutcomeProbabilityHeaderAnnotation(resourceGroup, outcomeGroup);
                         if (!string.IsNullOrWhiteSpace(probabilityAnnotation))
@@ -2894,7 +2899,7 @@ private static string BuildHierarchicalVariantNotes(
                         var outcomeLines = BuildInventoryResourceOutcomeDisplayLines(outcomeGroup, printedBeforeOutcome);
                         AppendIndentedDisplayLines(sb, "            ", outcomeLines, headerContainsProbability);
                         outcomeIndex++;
-                        if (outcomeIndex <= 4)
+                        if (outcomeIndex <= outcomeCount)
                             sb.AppendLine();
                     }
 
@@ -2985,7 +2990,7 @@ private static string BuildHierarchicalVariantNotes(
                 .ToList();
 
             if (groups.Count != 2 ||
-                groups.Any(group => !HasCompleteResourceAttritionOutcomeMatrix(group)))
+                !TryGetSharedResourceAttritionOutcomeKinds(groups, out var outcomeKinds))
             {
                 return false;
             }
@@ -2999,7 +3004,8 @@ private static string BuildHierarchicalVariantNotes(
             model = new InventoryResourceAttritionNoteModel
             {
                 RootLines = rootLines,
-                Groups = groups
+                Groups = groups,
+                OutcomeKinds = outcomeKinds
             };
             return true;
         }
@@ -3039,7 +3045,7 @@ private static string BuildHierarchicalVariantNotes(
                     printedBeforeOutcome.AddRange(groupOnlyNarrativeLines);
                     printedBeforeOutcome.AddRange(suppressedResourceLines);
 
-                    foreach (var outcomeKind in GetResourceRandomOutcomeRenderOrder())
+                    foreach (var outcomeKind in GetModelOutcomeKinds(model, resourceGroup))
                     {
                         if (!resourceGroup.Outcomes.TryGetValue(outcomeKind, out var outcomeGroup))
                             continue;
@@ -3097,6 +3103,23 @@ private static string BuildHierarchicalVariantNotes(
 
             return itemChoice != null &&
                    PartyInventorySemantics.TryBuildItemPresenceChoiceParts(itemChoice, out itemName, out presenceLabel);
+        }
+
+        private static List<ResourceRandomOutcomeKind> GetModelOutcomeKinds(
+            InventoryResourceAttritionNoteModel model,
+            ResourceAttritionGroup resourceGroup)
+        {
+            if (model?.OutcomeKinds != null && model.OutcomeKinds.Count > 0)
+                return model.OutcomeKinds;
+
+            var presentKinds = new HashSet<ResourceRandomOutcomeKind>(
+                (resourceGroup?.Outcomes ?? new Dictionary<ResourceRandomOutcomeKind, ResourceRandomOutcomeGroup>())
+                .Where(kvp => kvp.Value != null && kvp.Value.Probability > 0 && kvp.Value.Items.Count > 0)
+                .Select(kvp => kvp.Key));
+
+            return GetResourceRandomOutcomeRenderOrder()
+                .Where(presentKinds.Contains)
+                .ToList();
         }
 
         private static bool TryClassifyResourceAttrition(
@@ -3167,28 +3190,78 @@ private static string BuildHierarchicalVariantNotes(
             return ResourceRandomOutcomeKind.Nothing;
         }
 
-        private static bool HasCompleteResourceAttritionOutcomeMatrix(InventoryResourceGroup group)
+        private static bool TryGetSharedResourceAttritionOutcomeKinds(
+            List<InventoryResourceGroup> groups,
+            out List<ResourceRandomOutcomeKind> outcomeKinds)
         {
+            outcomeKinds = null;
+            if (groups == null || groups.Count == 0)
+                return false;
+
+            HashSet<ResourceRandomOutcomeKind> sharedKinds = null;
+            foreach (var group in groups)
+            {
+                if (!TryGetGroupResourceAttritionOutcomeKinds(group, out var groupKinds))
+                    return false;
+
+                if (sharedKinds == null)
+                {
+                    sharedKinds = groupKinds;
+                    continue;
+                }
+
+                if (!sharedKinds.SetEquals(groupKinds))
+                    return false;
+            }
+
+            if (sharedKinds == null || sharedKinds.Count == 0)
+                return false;
+
+            outcomeKinds = GetResourceRandomOutcomeRenderOrder()
+                .Where(sharedKinds.Contains)
+                .ToList();
+
+            return outcomeKinds.Count > 0;
+        }
+
+        private static bool TryGetGroupResourceAttritionOutcomeKinds(
+            InventoryResourceGroup group,
+            out HashSet<ResourceRandomOutcomeKind> outcomeKinds)
+        {
+            outcomeKinds = null;
             if (group == null)
                 return false;
 
             foreach (var resourceKind in GetResourceAttritionRenderOrder())
             {
-                if (!group.Resources.TryGetValue(resourceKind, out var resourceGroup))
+                if (!group.Resources.TryGetValue(resourceKind, out var resourceGroup) ||
+                    resourceGroup == null)
+                {
+                    return false;
+                }
+
+                var resourceOutcomeKinds = new HashSet<ResourceRandomOutcomeKind>(
+                    resourceGroup.Outcomes
+                        .Where(kvp =>
+                            kvp.Value != null &&
+                            kvp.Value.Probability > 0 &&
+                            kvp.Value.Items.Count > 0)
+                        .Select(kvp => kvp.Key));
+
+                if (resourceOutcomeKinds.Count == 0)
                     return false;
 
-                foreach (var outcomeKind in GetResourceRandomOutcomeRenderOrder())
+                if (outcomeKinds == null)
                 {
-                    if (!resourceGroup.Outcomes.TryGetValue(outcomeKind, out var outcomeGroup) ||
-                        outcomeGroup.Probability <= 0 ||
-                        outcomeGroup.Items.Count == 0)
-                    {
-                        return false;
-                    }
+                    outcomeKinds = resourceOutcomeKinds;
+                    continue;
                 }
+
+                if (!outcomeKinds.SetEquals(resourceOutcomeKinds))
+                    return false;
             }
 
-            return true;
+            return outcomeKinds != null && outcomeKinds.Count > 0;
         }
 
         private static IEnumerable<ResourceAttritionKind> GetResourceAttritionRenderOrder()
