@@ -177,7 +177,8 @@ namespace MMMapEditor
                     [new OvrSideKey(0x0B, 0x17)] = CreateGrate("Каменная стена"),
                     [new OvrSideKey(0x01, 0x0B)] = CreateDoor("Кирпичная стена"),
                     [new OvrSideKey(0x05, 0x0D)] = CreateBorder("Еловый лес"),
-                    [new OvrSideKey(0x05, 0x1A)] = CreateBorder("\u0412\u043E\u0434\u0430")
+                    [new OvrSideKey(0x05, 0x1A)] = CreateBorder("\u0412\u043E\u0434\u0430"),
+                    [new OvrSideKey(0x05, 0x07)] = CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E")
                 }
             };
 
@@ -269,7 +270,16 @@ namespace MMMapEditor
                         "AreaD1",
                         CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
                         CreateBorder("\u0413\u043E\u0440\u044B"),
-                        CreateBorder("\u041F\u0443\u0441\u0442\u044B\u043D\u044F"))
+                        CreateBorder("\u041F\u0443\u0441\u0442\u044B\u043D\u044F")),
+                [new OvrSideLayoutFamilyKey(
+                    new OvrSideKey(0x02, 0x0D),
+                    new OvrSideKey(0x01, 0x0A),
+                    new OvrSideKey(0x05, 0x07),
+                    0x09)] = CreateLayoutTemplate(
+                        "AreaD3",
+                        CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
+                        CreateBorder("\u0413\u043E\u0440\u044B"),
+                        CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E"))
             };
 
         public static OvrSideLayout ReadLayout(byte[] fileData, OvrFileConfig config, string fileNameOnly)
