@@ -403,6 +403,7 @@ namespace MMMapEditor
                 CompareValue = path.CompareValue,
                 CompareRegister = path.CompareRegister,
                 CompareMemoryAddress = path.CompareMemoryAddress,
+                ComparedPartyField = path.ComparedPartyField?.Clone(),
                 IsLinear = isLinear,
                 GuardPredicate = path.BranchPartyPredicate?.Clone()
             };
@@ -1180,6 +1181,7 @@ namespace MMMapEditor
                     CompareValue = alt.CompareValue,
                     CompareRegister = alt.CompareRegister,
                     CompareMemoryAddress = alt.CompareMemoryAddress,
+                    ComparedPartyField = alt.ComparedPartyField?.Clone(),
                     IsInputChoiceBranch = alt.IsInputChoiceBranch,
                     RegisterState = alt.RegisterState?.Clone(),
                     ProbabilityNumerator = alt.ProbabilityNumerator,

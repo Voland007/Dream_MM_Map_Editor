@@ -577,7 +577,7 @@ namespace MMMapEditor
             }
 
             databaseIndex = itemIndex - 1;
-            if (ItemDatabase.TryGetItemName(databaseIndex, out string itemName) && !string.IsNullOrWhiteSpace(itemName))
+            if (ItemDatabase.TryGetItemNameByGameItemCode(itemIndex, out string itemName) && !string.IsNullOrWhiteSpace(itemName))
             {
                 debugStatus = "resolved";
                 return itemName.Trim();

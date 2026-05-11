@@ -47,7 +47,17 @@ namespace MMMapEditor
             " или больше, то к битве будут ещё добавлены случайные монстры";
         private const string AggregateTemporaryStatGroupText =
             "(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL)";
-        private const string TemporaryMightGroupText = "(MIGHT)";
+        private static readonly string[] ConcreteTemporaryStatGroupTexts =
+        {
+            "(INTELLECT)",
+            "(MIGHT)",
+            "(PERSONALITY)",
+            "(ENDURANCE)",
+            "(SPEED)",
+            "(ACCURANCY)",
+            "(LUCK)",
+            "(LEVEL)"
+        };
 
         public static bool TryDecodePrintableOverlayChar(byte rawValue, out char visibleChar, out bool isInverse)
         {
@@ -435,13 +445,16 @@ namespace MMMapEditor
                 });
             }
 
-            int tempMightGroupIndex = aggregateText.IndexOf(TemporaryMightGroupText, StringComparison.Ordinal);
-            if (tempMightGroupIndex >= 0)
+            foreach (string concreteGroupText in ConcreteTemporaryStatGroupTexts)
             {
+                int concreteGroupIndex = aggregateText.IndexOf(concreteGroupText, StringComparison.Ordinal);
+                if (concreteGroupIndex < 0)
+                    continue;
+
                 styles.Add(new NoteInlineStyleSpan
                 {
-                    Start = lineStart + tempMightGroupIndex,
-                    Length = TemporaryMightGroupText.Length,
+                    Start = lineStart + concreteGroupIndex,
+                    Length = concreteGroupText.Length,
                     Kind = NoteInlineStyleKind.AggregateTemporaryStatGroup
                 });
             }

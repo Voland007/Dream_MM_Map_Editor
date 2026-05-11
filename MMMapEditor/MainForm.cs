@@ -2932,7 +2932,7 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(noteText))
                 return;
 
-            const string statGroupPattern = @"\(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL\)|\(MIGHT\)";
+            const string statGroupPattern = @"\(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL\)|\(INTELLECT\)|\(MIGHT\)|\(PERSONALITY\)|\(ENDURANCE\)|\(SPEED\)|\(ACCURANCY\)|\(LUCK\)|\(LEVEL\)";
             var lineMatches = Regex.Matches(
                 noteText,
                 $@"^[^\r\n]*{statGroupPattern}[^\r\n]*$",
@@ -3107,12 +3107,21 @@ namespace MMMapEditor
 
             var serviceWarningMatches = Regex.Matches(
                 noteText,
-                @"⚠Вызывается random encounter ⚠|!{1,2} (?:HP|SP) (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается [^\r\n!]+ !{1,2}|! У каждого персонажа партии отнимается \d+ (?:HP|SP) !|! (?:HP|SP) (?:каждого мужчины в партии|каждого персонажа партии) обнуляется !",
+                @"⚠Вызывается random encounter ⚠|У партии персонажей уменьшается FOOD на 1|!{1,2} (?:HP|SP) (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается [^\r\n!]+ !{1,2}|! У каждого персонажа партии отнимается \d+ (?:HP|SP) !|! (?:HP|SP) (?:каждого мужчины в партии|каждого персонажа партии) обнуляется !",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in serviceWarningMatches)
             {
                 rt.Select(match.Index, match.Length);
+                if (string.Equals(
+                        match.Value,
+                        "У партии персонажей уменьшается FOOD на 1",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    rt.SelectionColor = Color.FromArgb(255, 220, 90);
+                    continue;
+                }
+
                 bool isWholePartySpZeroing = string.Equals(
                     match.Value,
                     "! SP каждого персонажа партии обнуляется !",

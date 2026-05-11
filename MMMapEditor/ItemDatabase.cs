@@ -78,6 +78,17 @@ namespace MMMapEditor
             return false;
         }
 
+        public static bool TryGetItemNameByGameItemCode(byte itemCode, out string itemName)
+        {
+            if (itemCode == 0)
+            {
+                itemName = null;
+                return false;
+            }
+
+            return TryGetItemName(itemCode - 1, out itemName);
+        }
+
         private static void ParseItemData()
         {
             _items = new List<ItemInfo>();

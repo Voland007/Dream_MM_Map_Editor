@@ -157,6 +157,7 @@ namespace MMMapEditor
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
         public ushort? CompareMemoryAddress { get; set; }
+        public PartyFieldReference ComparedPartyField { get; set; }
         public bool IsInputChoiceBranch { get; set; }
         public RegisterTracker RegisterState { get; set; }
         public int ProbabilityNumerator { get; set; } = 1;
@@ -858,6 +859,7 @@ namespace MMMapEditor
         public PartyValueKnowledge ValueKnowledge { get; set; } = PartyValueKnowledge.Unknown;
         public ushort? ImmediateValue { get; set; }
         public ValueRange8 ImmediateRange { get; set; }
+        public byte? FieldOffset { get; set; }
         public uint InstructionAddress { get; set; }
         public PartyMemberReference TargetMember { get; set; }
         public string Description { get; set; }
@@ -871,6 +873,7 @@ namespace MMMapEditor
                 ValueKnowledge = ValueKnowledge,
                 ImmediateValue = ImmediateValue,
                 ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
+                FieldOffset = FieldOffset,
                 InstructionAddress = InstructionAddress,
                 TargetMember = TargetMember?.Clone(),
                 Description = Description

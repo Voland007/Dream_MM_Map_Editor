@@ -746,7 +746,7 @@ namespace MMMapEditor
         private static string BuildStatusChangeDescription(PartyMemberReference member, string statusesText)
         {
             if (IsLoopTarget(member, LoopSemanticKind.None))
-                return $"CONDITION всех персонажей в партии изменяется на {statusesText}";
+                return $"CONDITION персонажа(ей) в партии изменяется на {statusesText}";
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
                 return $"CONDITION случайного персонажа в партии изменяется на {statusesText}";

@@ -134,8 +134,6 @@ namespace MMMapEditor
         private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
         private const ushort TEXT_CURSOR_COLUMN_ADDRESS = 0x3BC4;
         private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
-        private const byte PARTY_INVENTORY_FIRST_SLOT_OFFSET = 0x46;
-        private const byte PARTY_INVENTORY_LAST_SLOT_OFFSET = 0x4B;
 
         public CodeExecutor(OvrFileConfig config, InstructionAnalyzer instructionAnalyzer)
         {
@@ -1943,6 +1941,7 @@ namespace MMMapEditor
                 Comparison = comparison,
                 ValueKnowledge = PartyValueKnowledge.ExactImmediate,
                 ImmediateValue = compareValue,
+                FieldOffset = comparedField.FieldOffset,
                 InstructionAddress = instructionAddress,
                 TargetMember = comparedField.Member?.Clone(),
                 Description = BuildPartyPredicateDescription(comparedField.Field, comparison, compareValue)
@@ -2078,6 +2077,7 @@ namespace MMMapEditor
 
             return string.Join("|",
                 predicate.Field,
+                predicate.FieldOffset?.ToString("X2") ?? "-",
                 predicate.Comparison,
                 predicate.ValueKnowledge,
                 predicate.ImmediateValue?.ToString() ?? "-",
@@ -4895,6 +4895,7 @@ namespace MMMapEditor
                             CompareValue = altPath.CompareValue,
                             CompareRegister = altPath.CompareRegister,
                             CompareMemoryAddress = altPath.CompareMemoryAddress,
+                            ComparedPartyField = altPath.ComparedPartyField?.Clone(),
                             IsInputChoiceBranch = altPath.IsInputChoiceBranch,
                             RegisterState = altPath.RegisterState?.Clone(),
                             ProbabilityNumerator = altPath.ProbabilityNumerator,
@@ -5706,6 +5707,7 @@ namespace MMMapEditor
                         CompareRegister = registerTracker.LastFlagsRegister,
                         CompareValue = registerTracker.LastCompareImmediate,
                         CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
+                        ComparedPartyField = registerTracker.LastComparedPartyField?.Clone(),
                         IsInputChoiceBranch = isInputChoiceBranch,
                         ProbabilityNumerator = takenProbability.numerator,
                         ProbabilityDenominator = takenProbability.denominator,
@@ -5752,6 +5754,7 @@ namespace MMMapEditor
                         CompareRegister = registerTracker.LastFlagsRegister,
                         CompareValue = registerTracker.LastCompareImmediate,
                         CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
+                        ComparedPartyField = registerTracker.LastComparedPartyField?.Clone(),
                         IsInputChoiceBranch = isInputChoiceBranch,
                         ProbabilityNumerator = notTakenProbability.numerator,
                         ProbabilityDenominator = notTakenProbability.denominator,
@@ -6131,8 +6134,7 @@ namespace MMMapEditor
             var comparedField = registerTracker.LastComparedPartyField;
             if (!IsRawTechnicalPartyField(comparedField) ||
                 !comparedField.FieldOffset.HasValue ||
-                comparedField.FieldOffset.Value < PARTY_INVENTORY_FIRST_SLOT_OFFSET ||
-                comparedField.FieldOffset.Value > PARTY_INVENTORY_LAST_SLOT_OFFSET)
+                !PartyInventorySemantics.IsInventorySlotOffset(comparedField.FieldOffset))
             {
                 return false;
             }
@@ -9925,6 +9927,7 @@ namespace MMMapEditor
                             CompareRegister = registerTracker.LastFlagsRegister,
                             CompareValue = registerTracker.LastCompareImmediate,
                             CompareMemoryAddress = registerTracker.LastComparedMemoryAddress,
+                            ComparedPartyField = registerTracker.LastComparedPartyField?.Clone(),
                             IsInputChoiceBranch = false,
                             ProbabilityNumerator = 1,
                             ProbabilityDenominator = 1,

@@ -285,7 +285,7 @@ namespace MMMapEditor
                             return $"CONDITION женщин в партии изменяется на {conditionStatusesText}";
 
                         if (IsStandardActivePartyStatusGuardedLoop(effect))
-                            return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
+                            return $"CONDITION персонажа(ей) в партии изменяется на {conditionStatusesText}";
 
                         if (HasEffectiveGuardPredicates(effect))
                             return $"CONDITION подходящих персонажей партии изменяется на {conditionStatusesText}";
@@ -308,7 +308,7 @@ namespace MMMapEditor
                          operation == PartyEffectOperation.BitToggle ||
                          operation == PartyEffectOperation.Write))
                     {
-                        return $"CONDITION всех персонажей в партии изменяется на {conditionStatusesText}";
+                        return $"CONDITION персонажа(ей) в партии изменяется на {conditionStatusesText}";
                     }
 
                     string statusTarget = BuildStatusTarget(effect, scope, condition);
@@ -573,6 +573,7 @@ namespace MMMapEditor
 
             return string.Join("|",
                 predicate.Field,
+                predicate.FieldOffset?.ToString("X2", CultureInfo.InvariantCulture) ?? "-",
                 predicate.Comparison,
                 predicate.ValueKnowledge,
                 predicate.ImmediateValue?.ToString() ?? "-",
@@ -586,7 +587,7 @@ namespace MMMapEditor
                 return null;
 
             string targetText = BuildPredicateTargetDisplayText(predicate.TargetMember);
-            string fieldText = FormatFieldName(predicate.Field);
+            string fieldText = FormatPredicateFieldName(predicate);
             string comparisonText = FormatPredicateComparison(predicate.Comparison);
             string valueText = FormatPredicateValue(predicate);
 
@@ -678,6 +679,20 @@ namespace MMMapEditor
             return PartyAlignmentSemantics.IsAlignmentField(field)
                 ? PartyAlignmentSemantics.FormatAlignmentValue(value)
                 : value.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static string FormatPredicateFieldName(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return null;
+
+            if (PartyInventorySemantics.IsInventorySlotOffset(predicate.FieldOffset))
+                return "слот инвентаря";
+
+            if (predicate.Field == PartyFieldKind.Unknown && predicate.FieldOffset.HasValue)
+                return $"техническое поле +0x{predicate.FieldOffset.Value:X2}";
+
+            return FormatFieldName(predicate.Field);
         }
 
         internal static PartyValueKnowledge GetEffectiveValueKnowledgeForDiagnostics(PartyEffect effect)

@@ -906,10 +906,12 @@ namespace MMMapEditor
     public class BranchChoice
     {
         public string Label { get; set; }
+        public string DisplayHeaderAnnotation { get; set; }
         public string Condition { get; set; }
         public byte? CompareValue { get; set; }
         public string CompareRegister { get; set; }
         public ushort? CompareMemoryAddress { get; set; }
+        public PartyFieldReference ComparedPartyField { get; set; }
         public bool IsLinear { get; set; }
         public PartyPredicate GuardPredicate { get; set; }
 
@@ -920,10 +922,12 @@ namespace MMMapEditor
             return new BranchChoice
             {
                 Label = Label,
+                DisplayHeaderAnnotation = DisplayHeaderAnnotation,
                 Condition = Condition,
                 CompareValue = CompareValue,
                 CompareRegister = CompareRegister,
                 CompareMemoryAddress = CompareMemoryAddress,
+                ComparedPartyField = ComparedPartyField?.Clone(),
                 IsLinear = IsLinear,
                 GuardPredicate = GuardPredicate?.Clone()
             };
@@ -937,9 +941,12 @@ namespace MMMapEditor
 
             return string.Join("|",
                 Label ?? string.Empty,
+                DisplayHeaderAnnotation ?? string.Empty,
                 Condition ?? string.Empty,
                 CompareRegister ?? string.Empty,
                 CompareValue?.ToString() ?? string.Empty,
+                ComparedPartyField?.Field.ToString() ?? string.Empty,
+                ComparedPartyField?.FieldOffset?.ToString("X2") ?? string.Empty,
                 IsLinear.ToString(),
                 guardKey);
         }

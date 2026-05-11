@@ -25,7 +25,8 @@ namespace MMMapEditor
             new Lazy<HashSet<string>>(BuildKnownLootItemNames);
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
-        private const string WholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
+        private const string WholePartyConditionChangePrefix = "CONDITION персонажа(ей) в партии изменяется на ";
+        private const string LegacyWholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
         private const ushort PartyCountAddress = 0x3BC0;
         private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
@@ -168,11 +169,26 @@ namespace MMMapEditor
                         specialSpoilerLine,
                         inlineSpecialSpoilerLine)
                     : string.Empty;
+                string flatSemanticNotes = !useHierarchical
+                    ? BuildFlatSemanticVariantNotes(
+                        obj,
+                        defaultRandomEncounterMonsterPowerCap,
+                        defaultRandomEncounterMonsterLevelCap,
+                        defaultRandomEncounterMonsterBatchCountCap,
+                        defaultDarkeningLevel,
+                        defaultRandomEncounterChance,
+                        specialSpoilerLine,
+                        inlineSpecialSpoilerLine)
+                    : string.Empty;
 
                 StringBuilder newNotes = new StringBuilder();
                 var inlineStyles = new List<NoteInlineStyleSpan>();
 
-                if (useHierarchical && !string.IsNullOrWhiteSpace(hierarchicalNotes))
+                if (!useHierarchical && !string.IsNullOrWhiteSpace(flatSemanticNotes))
+                {
+                    AppendRenderedText(newNotes, inlineStyles, flatSemanticNotes);
+                }
+                else if (useHierarchical && !string.IsNullOrWhiteSpace(hierarchicalNotes))
                 {
                     AppendRenderedText(newNotes, inlineStyles, hierarchicalNotes);
                 }
@@ -655,6 +671,11 @@ namespace MMMapEditor
 
             bool hasPromptBranching = groups.Any(group =>
                 TreeContainsPromptBranching(group?.TreeRoot));
+            bool hasMeaningfulChoiceHierarchy = items.Any(item =>
+                GetRelevantBranchChoices(item?.Variant).Any());
+            bool hasCommonPrefixHierarchy = groups.Any(group =>
+                (group?.Items?.Count ?? 0) > 1 &&
+                (group.TreeRoot?.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false));
 
             bool containsPartyScan = false;
             var flatVariants = new List<FlatVariantRenderItem>();
@@ -668,8 +689,14 @@ namespace MMMapEditor
             if (requirePartyScan && !containsPartyScan)
                 return null;
 
-            if (!requirePartyScan && !containsPartyScan && !hasPromptBranching)
+            if (!requirePartyScan &&
+                !containsPartyScan &&
+                !hasPromptBranching &&
+                !hasMeaningfulChoiceHierarchy &&
+                !hasCommonPrefixHierarchy)
+            {
                 return null;
+            }
 
             if (flatVariants.Count == 0)
                 return null;
@@ -1902,7 +1929,23 @@ namespace MMMapEditor
             if (!ShouldDisplayGuardCondition(variant))
                 return new List<PartyPredicate>();
 
-            return variant?.GetGuardPredicates()?.ToList() ?? new List<PartyPredicate>();
+            var structurallyRenderedPredicateKeys = BuildStructurallyRenderedPredicateKeySet(variant);
+
+            return variant?.GetGuardPredicates()?
+                .Where(predicate => predicate != null)
+                .Where(predicate =>
+                    !structurallyRenderedPredicateKeys.Contains(PartyEffectSemantics.BuildPredicateKey(predicate)))
+                .ToList() ?? new List<PartyPredicate>();
+        }
+
+        private static HashSet<string> BuildStructurallyRenderedPredicateKeySet(PathVariantInfo variant)
+        {
+            return GetRelevantBranchChoices(variant)
+                .Where(choice => choice?.GuardPredicate != null)
+                .Where(choice => PartyInventorySemantics.TryBuildItemPresenceChoiceLabel(choice, out _))
+                .Select(choice => PartyEffectSemantics.BuildPredicateKey(choice.GuardPredicate))
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
         }
 
         private static bool ShouldDisplayGuardCondition(PathVariantInfo variant)
@@ -2122,6 +2165,7 @@ namespace MMMapEditor
         {
             public string SegmentKey { get; set; }
             public string Label { get; set; }
+            public string HeaderAnnotation { get; set; }
             public List<string> CommonLines { get; set; } = new List<string>();
             public List<VariantRenderItem> DirectVariants { get; set; } = new List<VariantRenderItem>();
             public List<VariantTreeNode> Children { get; set; } = new List<VariantTreeNode>();
@@ -2132,6 +2176,8 @@ namespace MMMapEditor
             public List<VariantRenderItem> Items { get; set; } = new List<VariantRenderItem>();
             public VariantTreeNode TreeRoot { get; set; }
             public string Label { get; set; }
+            public string HeaderAnnotation { get; set; }
+            public string ConsumedTopChoiceKey { get; set; }
             public bool GroupedByChoice { get; set; }
         }
 
@@ -2229,6 +2275,9 @@ private static string BuildHierarchicalVariantNotes(
 
             AppendLineToFirstMeaningfulVariantItem(items, specialSpoilerLine);
 
+            if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(items, out string resourceAttritionHierarchy))
+                return resourceAttritionHierarchy;
+
             var groups = BuildTopLevelVariantGroups(items);
             if (groups.Count == 0)
                 return null;
@@ -2266,6 +2315,54 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string BuildFlatSemanticVariantNotes(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string specialSpoilerLine,
+            string inlineSpecialSpoilerLine)
+        {
+            if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
+                return null;
+
+            var rawVariantContents = BuildRawVariantContentsFromPathVariants(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+            if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
+                return null;
+
+            var items = BuildVariantRenderItems(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+
+            if (items.Count <= 1)
+                return null;
+
+            items = DeduplicateDisplayedVariantItems(items);
+
+            if (items.Count <= 1)
+                return null;
+
+            AppendLineToFirstMeaningfulVariantItem(items, specialSpoilerLine);
+
+            return TryBuildInventoryResourceAttritionRandomOutcomeModel(items, out var resourceAttritionModel)
+                ? BuildInventoryResourceAttritionFlatNotes(resourceAttritionModel)
+                : null;
         }
 
         private static List<VariantRenderItem> BuildVariantRenderItems(
@@ -2322,14 +2419,17 @@ private static string BuildHierarchicalVariantNotes(
                     var ordered = g.OrderBy(GetVariantRenderOrderKey).ToList();
                     var first = ordered.FirstOrDefault();
                     var firstChoice = GetRelevantBranchChoices(first?.Variant).FirstOrDefault();
+                    string firstChoiceKey = BuildChoiceDisplayKey(firstChoice);
                     string firstNarrativeLine = GetNarrativeRootLine(first);
                     bool groupedByChoice = string.IsNullOrWhiteSpace(firstNarrativeLine) &&
-                        !string.IsNullOrWhiteSpace(firstChoice?.Label);
+                        !string.IsNullOrWhiteSpace(firstChoiceKey);
 
                     return new TopLevelVariantGroup
                     {
                         Items = ordered,
                         Label = groupedByChoice ? NormalizeChoiceLabel(firstChoice?.Label) : null,
+                        HeaderAnnotation = groupedByChoice ? NormalizeHeaderAnnotation(firstChoice?.DisplayHeaderAnnotation) : null,
+                        ConsumedTopChoiceKey = groupedByChoice ? firstChoiceKey : null,
                         GroupedByChoice = groupedByChoice
                     };
                 })
@@ -2337,7 +2437,7 @@ private static string BuildHierarchicalVariantNotes(
 
             foreach (var group in groups)
             {
-                var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.Label : null);
+                var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.ConsumedTopChoiceKey : null);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
                 AttachChoiceChildrenToSiblingPromptParents(root);
@@ -2360,6 +2460,705 @@ private static string BuildHierarchicalVariantNotes(
             return groups;
         }
 
+        private enum ResourceAttritionKind
+        {
+            Food = 0,
+            Endurance = 1,
+            Dead = 2
+        }
+
+        private enum ResourceRandomOutcomeKind
+        {
+            Nothing = 0,
+            RandomEncounter = 1,
+            Whirlwind = 2,
+            Sandstorm = 3
+        }
+
+        private sealed class InventoryResourceGroup
+        {
+            public string Label { get; set; }
+            public string HeaderAnnotation { get; set; }
+            public PartyPredicateComparison Comparison { get; set; }
+            public List<string> NarrativePrefixLines { get; set; } = new List<string>();
+            public Dictionary<ResourceAttritionKind, ResourceAttritionGroup> Resources { get; set; }
+                = new Dictionary<ResourceAttritionKind, ResourceAttritionGroup>();
+        }
+
+        private sealed class ResourceAttritionGroup
+        {
+            public ResourceAttritionKind Kind { get; set; }
+            public List<VariantRenderItem> Items { get; set; } = new List<VariantRenderItem>();
+            public Dictionary<ResourceRandomOutcomeKind, ResourceRandomOutcomeGroup> Outcomes { get; set; }
+                = new Dictionary<ResourceRandomOutcomeKind, ResourceRandomOutcomeGroup>();
+        }
+
+        private sealed class ResourceRandomOutcomeGroup
+        {
+            public ResourceRandomOutcomeKind Kind { get; set; }
+            public List<VariantRenderItem> Items { get; set; } = new List<VariantRenderItem>();
+            public decimal Probability { get; set; }
+        }
+
+        private sealed class InventoryResourceAttritionNoteModel
+        {
+            public List<string> RootLines { get; set; } = new List<string>();
+            public List<InventoryResourceGroup> Groups { get; set; } = new List<InventoryResourceGroup>();
+        }
+
+        private static bool TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(
+            List<VariantRenderItem> items,
+            out string hierarchy)
+        {
+            hierarchy = null;
+            if (!TryBuildInventoryResourceAttritionRandomOutcomeModel(items, out var model))
+                return false;
+
+            var rootLines = model.RootLines;
+            var groups = model.Groups;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1:");
+            AppendIndentedDisplayLines(sb, "   ", rootLines, headerContainsProbability: false);
+            sb.AppendLine();
+
+            for (int groupIndex = 0; groupIndex < groups.Count; groupIndex++)
+            {
+                var group = groups[groupIndex];
+                string groupHeader = $"   Вариант 1.{groupIndex + 1}";
+                if (!string.IsNullOrWhiteSpace(group.HeaderAnnotation))
+                    groupHeader += $" ({group.HeaderAnnotation})";
+                if (!string.IsNullOrWhiteSpace(group.Label))
+                    sb.AppendLine($"{groupHeader}: {group.Label}");
+                else
+                    sb.AppendLine($"{groupHeader}:");
+
+                var groupOnlyNarrativeLines = group.NarrativePrefixLines
+                    .Skip(rootLines.Count)
+                    .Where(line => !string.IsNullOrWhiteSpace(line))
+                    .ToList();
+                if (groupOnlyNarrativeLines.Count > 0)
+                {
+                    AppendIndentedDisplayLines(sb, "      ", groupOnlyNarrativeLines, headerContainsProbability: false);
+                    sb.AppendLine();
+                }
+
+                int resourceIndex = 1;
+                foreach (var resourceKind in GetResourceAttritionRenderOrder())
+                {
+                    var resourceGroup = group.Resources[resourceKind];
+                    string resourceHeader = $"      Вариант 1.{groupIndex + 1}.{resourceIndex}";
+                    string resourceGuardAnnotation = BuildResourceAttritionGuardHeaderAnnotation(resourceGroup);
+                    if (!string.IsNullOrWhiteSpace(resourceGuardAnnotation))
+                        resourceHeader += $" ({resourceGuardAnnotation})";
+                    sb.AppendLine($"{resourceHeader}:");
+
+                    var resourceLines = BuildResourceAttritionDisplayLines(resourceGroup);
+                    var suppressedResourceLines = BuildAllResourceAttritionDisplayLines(resourceGroup);
+                    AppendIndentedDisplayLines(sb, "         ", resourceLines, headerContainsProbability: false);
+
+                    if (resourceLines.Count > 0)
+                        sb.AppendLine();
+
+                    var printedBeforeOutcome = new List<string>();
+                    printedBeforeOutcome.AddRange(rootLines);
+                    printedBeforeOutcome.AddRange(groupOnlyNarrativeLines);
+                    printedBeforeOutcome.AddRange(suppressedResourceLines);
+
+                    int outcomeIndex = 1;
+                    foreach (var outcomeKind in GetResourceRandomOutcomeRenderOrder())
+                    {
+                        var outcomeGroup = resourceGroup.Outcomes[outcomeKind];
+                        string outcomeHeader = $"         Вариант 1.{groupIndex + 1}.{resourceIndex}.{outcomeIndex}";
+                        string probabilityAnnotation = BuildRelativeOutcomeProbabilityHeaderAnnotation(resourceGroup, outcomeGroup);
+                        if (!string.IsNullOrWhiteSpace(probabilityAnnotation))
+                            outcomeHeader += $" ({probabilityAnnotation})";
+                        outcomeHeader += ":";
+
+                        sb.AppendLine(outcomeHeader);
+                        bool headerContainsProbability = VariantHeaderContainsProbability(outcomeHeader);
+                        var outcomeLines = BuildInventoryResourceOutcomeDisplayLines(outcomeGroup, printedBeforeOutcome);
+                        AppendIndentedDisplayLines(sb, "            ", outcomeLines, headerContainsProbability);
+                        outcomeIndex++;
+                        if (outcomeIndex <= 4)
+                            sb.AppendLine();
+                    }
+
+                    resourceIndex++;
+                    if (resourceIndex <= 3)
+                        sb.AppendLine();
+                }
+
+                if (groupIndex < groups.Count - 1)
+                    sb.AppendLine();
+            }
+
+            hierarchy = sb.ToString().TrimEnd('\r', '\n');
+            return true;
+        }
+
+        private static bool TryBuildInventoryResourceAttritionRandomOutcomeModel(
+            List<VariantRenderItem> items,
+            out InventoryResourceAttritionNoteModel model)
+        {
+            model = null;
+            if (items == null || items.Count == 0)
+                return false;
+
+            var grouped = new Dictionary<string, InventoryResourceGroup>(StringComparer.Ordinal);
+            foreach (var item in items)
+            {
+                if (!TryGetInventoryPresenceChoice(
+                        item?.Variant,
+                        out var itemChoice,
+                        out string itemName,
+                        out string presenceLabel))
+                {
+                    continue;
+                }
+
+                if (!TryClassifyResourceAttrition(item, out var resourceKind))
+                    continue;
+
+                string groupKey = $"{itemName}\n{presenceLabel}";
+                var outcomeKind = ClassifyResourceRandomOutcome(item);
+                if (!grouped.TryGetValue(groupKey, out var group))
+                {
+                    group = new InventoryResourceGroup
+                    {
+                        Label = null,
+                        HeaderAnnotation = $"{itemName} {presenceLabel}",
+                        Comparison = itemChoice.GuardPredicate?.Comparison ?? PartyPredicateComparison.Unknown,
+                        NarrativePrefixLines = item?.NarrativeLines?.ToList() ?? new List<string>()
+                    };
+                    grouped[groupKey] = group;
+                }
+                else
+                {
+                    group.NarrativePrefixLines = CommonPrefix(
+                        group.NarrativePrefixLines,
+                        item?.NarrativeLines ?? new List<string>());
+                }
+
+                if (!group.Resources.TryGetValue(resourceKind, out var resourceGroup))
+                {
+                    resourceGroup = new ResourceAttritionGroup
+                    {
+                        Kind = resourceKind
+                    };
+                    group.Resources[resourceKind] = resourceGroup;
+                }
+
+                resourceGroup.Items.Add(item);
+
+                if (!resourceGroup.Outcomes.TryGetValue(outcomeKind, out var outcomeGroup))
+                {
+                    outcomeGroup = new ResourceRandomOutcomeGroup
+                    {
+                        Kind = outcomeKind
+                    };
+                    resourceGroup.Outcomes[outcomeKind] = outcomeGroup;
+                }
+
+                decimal probability = GetVariantProbability(item?.Variant);
+                outcomeGroup.Probability += probability;
+                outcomeGroup.Items.Add(item);
+            }
+
+            var groups = grouped.Values
+                .OrderBy(group => group.Comparison == PartyPredicateComparison.Equal ? 0 : 1)
+                .ThenBy(group => group.HeaderAnnotation ?? group.Label, StringComparer.Ordinal)
+                .ToList();
+
+            if (groups.Count != 2 ||
+                groups.Any(group => !HasCompleteResourceAttritionOutcomeMatrix(group)))
+            {
+                return false;
+            }
+
+            var rootLines = CommonPrefix(items
+                .Select(item => item?.NarrativeLines ?? new List<string>())
+                .ToList());
+            if (rootLines.Count == 0)
+                return false;
+
+            model = new InventoryResourceAttritionNoteModel
+            {
+                RootLines = rootLines,
+                Groups = groups
+            };
+            return true;
+        }
+
+        private static string BuildInventoryResourceAttritionFlatNotes(InventoryResourceAttritionNoteModel model)
+        {
+            if (model == null || model.Groups == null || model.Groups.Count == 0)
+                return null;
+
+            var rootLines = model.RootLines ?? new List<string>();
+            if (rootLines.Count == 0)
+                return null;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+
+            int displayVariantNumber = 1;
+            foreach (var group in model.Groups)
+            {
+                if (group == null)
+                    continue;
+
+                var groupOnlyNarrativeLines = (group.NarrativePrefixLines ?? new List<string>())
+                    .Skip(rootLines.Count)
+                    .Where(line => !string.IsNullOrWhiteSpace(line))
+                    .ToList();
+
+                foreach (var resourceKind in GetResourceAttritionRenderOrder())
+                {
+                    if (!group.Resources.TryGetValue(resourceKind, out var resourceGroup))
+                        continue;
+
+                    var resourceLines = BuildResourceAttritionDisplayLines(resourceGroup);
+                    var suppressedResourceLines = BuildAllResourceAttritionDisplayLines(resourceGroup);
+                    var printedBeforeOutcome = new List<string>();
+                    printedBeforeOutcome.AddRange(rootLines);
+                    printedBeforeOutcome.AddRange(groupOnlyNarrativeLines);
+                    printedBeforeOutcome.AddRange(suppressedResourceLines);
+
+                    foreach (var outcomeKind in GetResourceRandomOutcomeRenderOrder())
+                    {
+                        if (!resourceGroup.Outcomes.TryGetValue(outcomeKind, out var outcomeGroup))
+                            continue;
+
+                        string header = $"Вариант {displayVariantNumber++}";
+                        var annotations = new List<string>();
+                        if (!string.IsNullOrWhiteSpace(group.HeaderAnnotation))
+                            annotations.Add(group.HeaderAnnotation);
+
+                        string resourceGuardAnnotation = BuildResourceAttritionGuardHeaderAnnotation(resourceGroup);
+                        if (!string.IsNullOrWhiteSpace(resourceGuardAnnotation))
+                            annotations.Add(resourceGuardAnnotation);
+
+                        string probabilityAnnotation = BuildRelativeOutcomeProbabilityHeaderAnnotation(resourceGroup, outcomeGroup);
+                        if (!string.IsNullOrWhiteSpace(probabilityAnnotation))
+                            annotations.Add(probabilityAnnotation);
+
+                        if (annotations.Count > 0)
+                            header += $" ({string.Join("; ", annotations)})";
+                        if (!string.IsNullOrWhiteSpace(group.Label))
+                            header += $": {group.Label}";
+                        else
+                            header += ":";
+
+                        sb.AppendLine(header);
+                        bool headerContainsProbability = VariantHeaderContainsProbability(header);
+
+                        var lines = new List<string>();
+                        lines.AddRange(rootLines);
+                        lines.AddRange(groupOnlyNarrativeLines);
+                        lines.AddRange(resourceLines);
+                        lines.AddRange(BuildInventoryResourceOutcomeDisplayLines(outcomeGroup, printedBeforeOutcome));
+
+                        AppendIndentedDisplayLines(sb, string.Empty, lines, headerContainsProbability);
+
+                        sb.AppendLine();
+                    }
+                }
+            }
+
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static bool TryGetInventoryPresenceChoice(
+            PathVariantInfo variant,
+            out BranchChoice itemChoice,
+            out string itemName,
+            out string presenceLabel)
+        {
+            itemChoice = null;
+            itemName = null;
+            presenceLabel = null;
+            itemChoice = GetRelevantBranchChoices(variant)
+                .FirstOrDefault(choice => PartyInventorySemantics.TryBuildItemPresenceChoiceParts(choice, out _, out _));
+
+            return itemChoice != null &&
+                   PartyInventorySemantics.TryBuildItemPresenceChoiceParts(itemChoice, out itemName, out presenceLabel);
+        }
+
+        private static bool TryClassifyResourceAttrition(
+            VariantRenderItem item,
+            out ResourceAttritionKind resourceKind)
+        {
+            resourceKind = ResourceAttritionKind.Food;
+            var effects = item?.Variant?.PartyEffects ?? new List<PartyEffect>();
+
+            if (effects.Any(IsDeadStatusOutcomeEffect))
+            {
+                resourceKind = ResourceAttritionKind.Dead;
+                return true;
+            }
+
+            if (effects.Any(effect => PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.TempEndurance))
+            {
+                resourceKind = ResourceAttritionKind.Endurance;
+                return true;
+            }
+
+            if (effects.Any(effect => PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Food))
+            {
+                resourceKind = ResourceAttritionKind.Food;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsDeadStatusOutcomeEffect(PartyEffect effect)
+        {
+            if (effect == null ||
+                PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Status)
+            {
+                return false;
+            }
+
+            return (effect.Description?.IndexOf("DEAD", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0 ||
+                   (PartyEffectSemantics.BuildHumanDescription(effect)?.IndexOf("DEAD", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+        }
+
+        private static ResourceRandomOutcomeKind ClassifyResourceRandomOutcome(VariantRenderItem item)
+        {
+            var lines = (item?.Lines ?? new List<string>())
+                .Concat(item?.NarrativeLines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            if (lines.Any(line => line.IndexOf("SANDSTORM", StringComparison.OrdinalIgnoreCase) >= 0) ||
+                item?.Variant?.PartyEffects?.Any(effect => PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Hp) == true)
+            {
+                return ResourceRandomOutcomeKind.Sandstorm;
+            }
+
+            if (lines.Any(line => line.IndexOf("WHIRLWIND", StringComparison.OrdinalIgnoreCase) >= 0) ||
+                item?.Variant?.HasTeleportTarget == true)
+            {
+                return ResourceRandomOutcomeKind.Whirlwind;
+            }
+
+            if (item?.Variant?.CallsRandomEncounter == true ||
+                lines.Any(line => line.IndexOf("random encounter", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                return ResourceRandomOutcomeKind.RandomEncounter;
+            }
+
+            return ResourceRandomOutcomeKind.Nothing;
+        }
+
+        private static bool HasCompleteResourceAttritionOutcomeMatrix(InventoryResourceGroup group)
+        {
+            if (group == null)
+                return false;
+
+            foreach (var resourceKind in GetResourceAttritionRenderOrder())
+            {
+                if (!group.Resources.TryGetValue(resourceKind, out var resourceGroup))
+                    return false;
+
+                foreach (var outcomeKind in GetResourceRandomOutcomeRenderOrder())
+                {
+                    if (!resourceGroup.Outcomes.TryGetValue(outcomeKind, out var outcomeGroup) ||
+                        outcomeGroup.Probability <= 0 ||
+                        outcomeGroup.Items.Count == 0)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static IEnumerable<ResourceAttritionKind> GetResourceAttritionRenderOrder()
+        {
+            yield return ResourceAttritionKind.Food;
+            yield return ResourceAttritionKind.Endurance;
+            yield return ResourceAttritionKind.Dead;
+        }
+
+        private static IEnumerable<ResourceRandomOutcomeKind> GetResourceRandomOutcomeRenderOrder()
+        {
+            yield return ResourceRandomOutcomeKind.Nothing;
+            yield return ResourceRandomOutcomeKind.RandomEncounter;
+            yield return ResourceRandomOutcomeKind.Whirlwind;
+            yield return ResourceRandomOutcomeKind.Sandstorm;
+        }
+
+        private static string BuildRelativeOutcomeProbabilityHeaderAnnotation(
+            ResourceAttritionGroup resourceGroup,
+            ResourceRandomOutcomeGroup outcomeGroup)
+        {
+            if (resourceGroup == null || outcomeGroup == null)
+                return null;
+
+            decimal total = resourceGroup.Outcomes.Values.Sum(outcome => outcome?.Probability ?? 0m);
+            if (total <= 0)
+                return null;
+
+            decimal percent = 100m * outcomeGroup.Probability / total;
+            string percentText = FormatSemanticRandomOutcomeProbability(percent);
+            return PrefixProbabilityWordInParentheses(percentText + "%");
+        }
+
+        private static string BuildResourceAttritionGuardHeaderAnnotation(ResourceAttritionGroup resourceGroup)
+        {
+            if (resourceGroup == null)
+                return null;
+
+            var predicates = resourceGroup.Items
+                .SelectMany(item => GetResourceAttritionEffects(item, resourceGroup.Kind))
+                .SelectMany(effect => PartyEffectSemantics.GetEffectiveGuardPredicates(effect))
+                .Where(predicate => predicate != null)
+                .Where(predicate => !PartyInventorySemantics.IsInventoryItemPresencePredicate(predicate))
+                .Where(predicate => IsResourceAttritionGuardPredicate(predicate, resourceGroup.Kind))
+                .ToList();
+
+            if (predicates.Count == 0)
+                return null;
+
+            return BuildGuardHeaderAnnotation(
+                PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(predicates));
+        }
+
+        private static bool IsResourceAttritionGuardPredicate(
+            PartyPredicate predicate,
+            ResourceAttritionKind resourceKind)
+        {
+            if (predicate == null)
+                return false;
+
+            return resourceKind switch
+            {
+                ResourceAttritionKind.Food =>
+                    predicate.Field == PartyFieldKind.Food,
+                ResourceAttritionKind.Endurance =>
+                    predicate.Field == PartyFieldKind.Food ||
+                    predicate.Field == PartyFieldKind.TempEndurance,
+                ResourceAttritionKind.Dead =>
+                    predicate.Field == PartyFieldKind.Food ||
+                    predicate.Field == PartyFieldKind.TempEndurance,
+                _ => false
+            };
+        }
+
+        private static List<string> BuildResourceAttritionDisplayLines(ResourceAttritionGroup resourceGroup)
+        {
+            if (resourceGroup == null)
+                return new List<string>();
+
+            string semanticLine = BuildResourceAttritionSemanticDisplayLine(resourceGroup.Kind);
+            if (!string.IsNullOrWhiteSpace(semanticLine))
+                return new List<string> { semanticLine };
+
+            var lines = BuildAllResourceAttritionDisplayLines(resourceGroup);
+            return ChooseResourceAttritionSummaryLines(lines);
+        }
+
+        private static string BuildResourceAttritionSemanticDisplayLine(ResourceAttritionKind resourceKind)
+        {
+            return resourceKind switch
+            {
+                ResourceAttritionKind.Food =>
+                    "У партии персонажей уменьшается FOOD на 1",
+                ResourceAttritionKind.Endurance =>
+                    InlineNoteStyleCodec.EncodeAggregateTemporaryStatText(
+                        "У партии персонажей уменьшается временная выносливость (ENDURANCE) на 1"),
+                ResourceAttritionKind.Dead =>
+                    "CONDITION персонажа(ей) в партии изменяется на DEAD",
+                _ => null
+            };
+        }
+
+        private static List<string> BuildAllResourceAttritionDisplayLines(ResourceAttritionGroup resourceGroup)
+        {
+            if (resourceGroup == null)
+                return new List<string>();
+
+            return resourceGroup.Items
+                .SelectMany(item => GetResourceAttritionEffectLines(item, resourceGroup.Kind))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .GroupBy(line => line, StringComparer.Ordinal)
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key, StringComparer.Ordinal)
+                .Select(group => group.Key)
+                .ToList();
+        }
+
+        private static List<string> ChooseResourceAttritionSummaryLines(List<string> lines)
+        {
+            if (lines == null || lines.Count <= 1)
+                return lines ?? new List<string>();
+
+            string aggregateLine = lines.FirstOrDefault(line =>
+                line.IndexOf("всех персонажей", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (!string.IsNullOrWhiteSpace(aggregateLine))
+                return new List<string> { aggregateLine };
+
+            string nonSingleMemberLine = lines.FirstOrDefault(line =>
+                line.IndexOf("персонаж #", StringComparison.OrdinalIgnoreCase) < 0 &&
+                line.IndexOf("персонажа #", StringComparison.OrdinalIgnoreCase) < 0);
+            if (!string.IsNullOrWhiteSpace(nonSingleMemberLine))
+                return new List<string> { nonSingleMemberLine };
+
+            return new List<string> { lines[0] };
+        }
+
+        private static List<string> GetResourceAttritionEffectLines(
+            VariantRenderItem item,
+            ResourceAttritionKind resourceKind)
+        {
+            var effects = (item?.Variant?.PartyEffects ?? new List<PartyEffect>())
+                .Where(effect => IsResourceAttritionEffect(effect, resourceKind))
+                .ToList();
+
+            return GetOrderedDisplayablePartyEffects(effects)
+                .Select(effect => BuildPartyEffectDisplayDescription(effect, item?.Variant))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+        }
+
+        private static IEnumerable<PartyEffect> GetResourceAttritionEffects(
+            VariantRenderItem item,
+            ResourceAttritionKind resourceKind)
+        {
+            return (item?.Variant?.PartyEffects ?? new List<PartyEffect>())
+                .Where(effect => IsResourceAttritionEffect(effect, resourceKind));
+        }
+
+        private static bool IsResourceAttritionEffect(PartyEffect effect, ResourceAttritionKind resourceKind)
+        {
+            if (effect == null || !PartyEffectSemantics.IsStateChanging(effect))
+                return false;
+
+            return resourceKind switch
+            {
+                ResourceAttritionKind.Food =>
+                    PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Food,
+                ResourceAttritionKind.Endurance =>
+                    PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.TempEndurance,
+                ResourceAttritionKind.Dead =>
+                    IsDeadStatusOutcomeEffect(effect),
+                _ => false
+            };
+        }
+
+        private static List<string> BuildInventoryResourceOutcomeDisplayLines(
+            ResourceRandomOutcomeGroup outcomeGroup,
+            List<string> printedBeforeOutcome)
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in OrderDirectVariants(outcomeGroup?.Items ?? new List<VariantRenderItem>()))
+            {
+                foreach (var line in RemoveAlreadyDisplayedLines(item?.Lines, printedBeforeOutcome))
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
+                    if (seen.Add(line))
+                        result.Add(line);
+                }
+            }
+
+            if (result.Count == 0)
+                result.Add("Ничего не происходит");
+
+            return result;
+        }
+
+        private static List<string> RemoveAlreadyDisplayedLines(
+            IEnumerable<string> lines,
+            IEnumerable<string> displayedLines)
+        {
+            var pendingCounts = BuildLineCounts(
+                (displayedLines ?? Enumerable.Empty<string>())
+                    .Where(line => !string.IsNullOrWhiteSpace(line)));
+            var result = new List<string>();
+
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(line) &&
+                    pendingCounts.TryGetValue(line, out int remaining) &&
+                    remaining > 0)
+                {
+                    if (remaining == 1)
+                        pendingCounts.Remove(line);
+                    else
+                        pendingCounts[line] = remaining - 1;
+                    continue;
+                }
+
+                result.Add(line);
+            }
+
+            return result;
+        }
+
+        private static string FormatSemanticRandomOutcomeProbability(decimal percent)
+        {
+            if (percent <= 0)
+                return "0";
+
+            decimal rounded = Math.Round(percent, 1, MidpointRounding.AwayFromZero);
+            if (rounded <= 0)
+                return ProbabilityFormatter.FormatPercent((double)percent);
+
+            return ProbabilityFormatter.FormatPercent((double)rounded);
+        }
+
+        private static decimal GetVariantProbability(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return 0m;
+
+            int numerator = Math.Max(0, variant.ProbabilityNumerator);
+            int denominator = Math.Max(1, variant.ProbabilityDenominator);
+            return numerator / (decimal)denominator;
+        }
+
+        private static List<string> CommonPrefix(List<string> left, List<string> right)
+        {
+            var result = new List<string>();
+            if (left == null || right == null)
+                return result;
+
+            int count = Math.Min(left.Count, right.Count);
+            for (int i = 0; i < count; i++)
+            {
+                string leftLine = left[i] ?? string.Empty;
+                string rightLine = right[i] ?? string.Empty;
+                if (!string.Equals(leftLine, rightLine, StringComparison.Ordinal))
+                    break;
+
+                result.Add(leftLine);
+            }
+
+            return result;
+        }
+
+        private static List<string> CommonPrefix(List<List<string>> lineSets)
+        {
+            if (lineSets == null || lineSets.Count == 0)
+                return new List<string>();
+
+            var result = lineSets[0]?.ToList() ?? new List<string>();
+            foreach (var lines in lineSets.Skip(1))
+                result = CommonPrefix(result, lines ?? new List<string>());
+
+            return result;
+        }
+
 
         private static bool HasRenderableTopLevelContent(TopLevelVariantGroup group)
         {
@@ -2372,6 +3171,9 @@ private static string BuildHierarchicalVariantNotes(
                 return false;
 
             if (!string.IsNullOrWhiteSpace(node.Label))
+                return true;
+
+            if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
                 return true;
 
             if ((node.CommonLines?.Count ?? 0) > 0)
@@ -2510,8 +3312,9 @@ private static string BuildHierarchicalVariantNotes(
                 return "LINE|" + narrativeRootLine;
 
             var firstChoice = GetRelevantBranchChoices(item?.Variant).FirstOrDefault();
-            if (!string.IsNullOrWhiteSpace(firstChoice?.Label))
-                return "CHOICE|" + NormalizeChoiceLabel(firstChoice.Label);
+            string firstChoiceKey = BuildChoiceDisplayKey(firstChoice);
+            if (!string.IsNullOrWhiteSpace(firstChoiceKey))
+                return "CHOICE|" + firstChoiceKey;
 
             if (item?.Lines == null || item.Lines.Count == 0)
                 return "<NO_LINES>";
@@ -2529,7 +3332,7 @@ private static string BuildHierarchicalVariantNotes(
                 ?.Trim();
         }
 
-        private static VariantTreeNode BuildVariantTree(List<VariantRenderItem> items, string consumedTopChoiceLabel = null)
+        private static VariantTreeNode BuildVariantTree(List<VariantRenderItem> items, string consumedTopChoiceKey = null)
         {
             var root = new VariantTreeNode();
 
@@ -2537,9 +3340,9 @@ private static string BuildHierarchicalVariantNotes(
             {
                 var current = root;
                 var choices = GetRelevantBranchChoices(item?.Variant).ToList();
-                if (!string.IsNullOrWhiteSpace(consumedTopChoiceLabel) &&
+                if (!string.IsNullOrWhiteSpace(consumedTopChoiceKey) &&
                     choices.Count > 0 &&
-                    string.Equals(NormalizeChoiceLabel(choices[0].Label), consumedTopChoiceLabel, StringComparison.Ordinal))
+                    string.Equals(BuildChoiceDisplayKey(choices[0]), consumedTopChoiceKey, StringComparison.Ordinal))
                 {
                     choices = choices.Skip(1).ToList();
                 }
@@ -2554,7 +3357,8 @@ private static string BuildHierarchicalVariantNotes(
                         child = new VariantTreeNode
                         {
                             SegmentKey = key,
-                            Label = NormalizeChoiceLabel(choice?.Label)
+                            Label = NormalizeChoiceLabel(choice?.Label),
+                            HeaderAnnotation = NormalizeHeaderAnnotation(choice?.DisplayHeaderAnnotation)
                         };
                         current.Children.Add(child);
                     }
@@ -2562,6 +3366,9 @@ private static string BuildHierarchicalVariantNotes(
                     {
                         child.Label = NormalizeChoiceLabel(choice?.Label);
                     }
+
+                    if (string.IsNullOrWhiteSpace(child.HeaderAnnotation))
+                        child.HeaderAnnotation = NormalizeHeaderAnnotation(choice?.DisplayHeaderAnnotation);
 
                     current = child;
                 }
@@ -2688,21 +3495,41 @@ private static string BuildHierarchicalVariantNotes(
 
             bool rawLabelIsTechnical = IsGenericTechnicalChoiceLabel(rawLabel);
 
-            string inferredLabel = InferChoiceLabel(choice);
+            string displayHeaderAnnotation = null;
+            string inferredLabel;
+            if (PartyInventorySemantics.TryBuildItemPresenceChoiceParts(
+                    choice,
+                    out string itemPresenceName,
+                    out string itemPresenceLabel))
+            {
+                inferredLabel = null;
+                displayHeaderAnnotation = $"{itemPresenceName} {itemPresenceLabel}";
+            }
+            else
+            {
+                inferredLabel = InferChoiceLabel(choice);
+            }
+
             string label = rawLabelIsTechnical
                 ? inferredLabel
                 : (string.IsNullOrWhiteSpace(rawLabel) ? inferredLabel : rawLabel);
 
-            if (string.IsNullOrWhiteSpace(label))
+            if (string.IsNullOrWhiteSpace(label) &&
+                string.IsNullOrWhiteSpace(displayHeaderAnnotation))
+            {
                 return null;
+            }
 
             return new BranchChoice
             {
                 Label = label,
+                DisplayHeaderAnnotation = NormalizeHeaderAnnotation(displayHeaderAnnotation),
                 Condition = choice.Condition,
                 CompareValue = choice.CompareValue,
                 CompareRegister = choice.CompareRegister,
+                CompareMemoryAddress = choice.CompareMemoryAddress,
                 IsLinear = choice.IsLinear,
+                ComparedPartyField = choice.ComparedPartyField?.Clone(),
                 GuardPredicate = choice.GuardPredicate?.Clone()
             };
         }
@@ -2837,9 +3664,23 @@ private static string BuildHierarchicalVariantNotes(
 
             return string.Join("|",
                 index,
+                choice.DisplayHeaderAnnotation ?? string.Empty,
                 choice.Label ?? string.Empty,
                 choice.CompareRegister ?? string.Empty,
                 choice.CompareValue?.ToString() ?? string.Empty);
+        }
+
+        private static string BuildChoiceDisplayKey(BranchChoice choice)
+        {
+            if (choice == null)
+                return null;
+
+            string annotation = NormalizeHeaderAnnotation(choice.DisplayHeaderAnnotation);
+            string label = NormalizeChoiceLabel(choice.Label);
+            if (string.IsNullOrWhiteSpace(annotation) && string.IsNullOrWhiteSpace(label))
+                return null;
+
+            return string.Join("|", annotation ?? string.Empty, label ?? string.Empty);
         }
 
 
@@ -2877,7 +3718,11 @@ private static string BuildHierarchicalVariantNotes(
                    node.DirectVariants.Count == 0 &&
                    node.CommonLines.Count == 0 &&
                    !string.IsNullOrWhiteSpace(node.Label) &&
-                   string.Equals(node.Children[0]?.Label, node.Label, StringComparison.OrdinalIgnoreCase))
+                   string.Equals(node.Children[0]?.Label, node.Label, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(
+                       NormalizeHeaderAnnotation(node.Children[0]?.HeaderAnnotation) ?? string.Empty,
+                       NormalizeHeaderAnnotation(node.HeaderAnnotation) ?? string.Empty,
+                       StringComparison.OrdinalIgnoreCase))
             {
                 node = node.Children[0];
             }
@@ -2916,6 +3761,9 @@ private static string BuildHierarchicalVariantNotes(
         private static bool IsDecorativeChoicePlaceholderLeaf(VariantTreeNode node)
         {
             if (node == null || string.IsNullOrWhiteSpace(node.Label))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
                 return false;
 
             if ((node.CommonLines?.Count ?? 0) > 0)
@@ -2968,6 +3816,14 @@ private static string BuildHierarchicalVariantNotes(
 
             if (!string.Equals(parent.Label, child.Label, StringComparison.OrdinalIgnoreCase))
                 return false;
+
+            if (!string.Equals(
+                    NormalizeHeaderAnnotation(parent.HeaderAnnotation) ?? string.Empty,
+                    NormalizeHeaderAnnotation(child.HeaderAnnotation) ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
 
             // Повтор того же выбора без собственного текста у дочернего узла обычно
             // появляется из-за цикла валидации ввода (например, повторных cmp/jcc для Y/N).
@@ -3268,7 +4124,29 @@ private static string BuildHierarchicalVariantNotes(
                 return null;
 
             label = label.Trim();
-            return label.EndsWith(")", StringComparison.Ordinal) ? label : label + ")";
+            if (label.EndsWith(")", StringComparison.Ordinal))
+                return label;
+
+            return IsCompactInputChoiceLabel(label)
+                ? label + ")"
+                : label;
+        }
+
+        private static string NormalizeHeaderAnnotation(string annotation)
+        {
+            return string.IsNullOrWhiteSpace(annotation)
+                ? null
+                : annotation.Trim();
+        }
+
+        private static bool IsCompactInputChoiceLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string trimmed = label.Trim();
+            return string.Equals(trimmed, "ESC", StringComparison.OrdinalIgnoreCase) ||
+                   Regex.IsMatch(trimmed, @"^[A-Za-z0-9]$");
         }
 
         private static List<VariantRenderItem> GetAllVariants(VariantTreeNode node)
@@ -4129,12 +5007,17 @@ private static string BuildHierarchicalVariantNotes(
         private static string ReplaceWholePartyConditionTargetWithCurrentMember(string description)
         {
             if (string.IsNullOrWhiteSpace(description) ||
-                !description.StartsWith(WholePartyConditionChangePrefix, StringComparison.Ordinal))
+                (!description.StartsWith(WholePartyConditionChangePrefix, StringComparison.Ordinal) &&
+                 !description.StartsWith(LegacyWholePartyConditionChangePrefix, StringComparison.Ordinal)))
             {
                 return description;
             }
 
-            return CurrentPartyMemberConditionChangePrefix + description.Substring(WholePartyConditionChangePrefix.Length);
+            string prefix = description.StartsWith(WholePartyConditionChangePrefix, StringComparison.Ordinal)
+                ? WholePartyConditionChangePrefix
+                : LegacyWholePartyConditionChangePrefix;
+
+            return CurrentPartyMemberConditionChangePrefix + description.Substring(prefix.Length);
         }
 
         private static bool ShouldRenderStandardStatusLoopAsCurrentMember(
@@ -4695,7 +5578,11 @@ private static string BuildHierarchicalVariantNotes(
                    node.DirectVariants.Count == 0 &&
                    node.CommonLines.Count == 0 &&
                    !string.IsNullOrWhiteSpace(node.Label) &&
-                   string.Equals(node.Children[0]?.Label, node.Label, StringComparison.OrdinalIgnoreCase))
+                   string.Equals(node.Children[0]?.Label, node.Label, StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(
+                       NormalizeHeaderAnnotation(node.Children[0]?.HeaderAnnotation) ?? string.Empty,
+                       NormalizeHeaderAnnotation(node.HeaderAnnotation) ?? string.Empty,
+                       StringComparison.OrdinalIgnoreCase))
             {
                 node = node.Children[0];
             }
@@ -5031,6 +5918,8 @@ private static string BuildHierarchicalVariantNotes(
                 !string.IsNullOrWhiteSpace(sharedGuardAnnotation));
 
             var sharedAnnotations = new List<string>();
+            if (!string.IsNullOrWhiteSpace(group?.HeaderAnnotation))
+                sharedAnnotations.Add(group.HeaderAnnotation);
             if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
                 sharedAnnotations.Add(sharedGuardAnnotation);
             if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
@@ -5679,12 +6568,16 @@ private static string BuildHierarchicalVariantNotes(
             if (singleLeaf != null)
             {
                 var annotations = BuildVariantHeaderAnnotations(singleLeaf, inheritedProbabilityLine, inheritedGuardKey);
+                if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
+                    annotations.Insert(0, node.HeaderAnnotation);
                 if (annotations.Count > 0)
                     header += $" ({string.Join("; ", annotations)})";
             }
             else
             {
                 var sharedAnnotations = new List<string>();
+                if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
+                    sharedAnnotations.Add(node.HeaderAnnotation);
                 if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
                     sharedAnnotations.Add(sharedGuardAnnotation);
                 if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
