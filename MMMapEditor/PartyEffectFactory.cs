@@ -23,7 +23,8 @@ namespace MMMapEditor
     {
         private static bool IsTrackedByteField(PartyFieldKind field)
         {
-            return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+            return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
 

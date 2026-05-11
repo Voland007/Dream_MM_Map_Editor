@@ -32,7 +32,8 @@ namespace MMMapEditor
 
         private static bool IsTrackedByteField(PartyFieldKind field)
         {
-            return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+            return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
 
@@ -49,6 +50,9 @@ namespace MMMapEditor
         {
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
                 return PartyTemporaryStatSemantics.GetFieldLabel(field);
+
+            if (PartyFoodSemantics.IsFoodField(field))
+                return PartyFoodSemantics.GetFieldLabel(field);
 
             if (PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return PartyTechnicalFieldSemantics.GetFieldLabel(field);
@@ -1023,7 +1027,80 @@ namespace MMMapEditor
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
                 return BuildTemporaryStatFieldDescription(effect, field, scope, condition);
 
+            if (PartyFoodSemantics.IsFoodField(field))
+                return BuildFoodFieldDescription(effect, scope, condition);
+
             return BuildRanalouQuestLineDescription(effect, field, scope, condition);
+        }
+
+        private static string BuildFoodFieldDescription(
+            PartyEffect effect,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null)
+                return null;
+
+            const string fieldLabel = PartyFoodSemantics.FieldLabel;
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            string body = operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel} (= {PartyFoodSemantics.FormatValue(effect.ImmediateValue.Value)})",
+                        $"читается {fieldLabel} (= {PartyFoodSemantics.FormatValue(effect.ImmediateValue.Value)})")
+                    : ComposeQuestLordSentence(targetPrefix, $"Читается {fieldLabel}", $"читается {fieldLabel}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? BuildRawTechnicalBitCompareDescription(
+                            targetPrefix,
+                            fieldLabel,
+                            (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется {fieldLabel} на {PartyFoodSemantics.FormatValue(effect.ImmediateValue.Value)}",
+                            $"проверяется {fieldLabel} на {PartyFoodSemantics.FormatValue(effect.ImmediateValue.Value)}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Проверяется {fieldLabel}", $"проверяется {fieldLabel}"),
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "устанавливается",
+                        "устанавливаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "сбрасывается",
+                        "сбрасываются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "переключается",
+                        "переключаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} становится равным {PartyFoodSemantics.FormatValue(effect.ImmediateValue.Value)}",
+                        $"{fieldLabel} становится равным {PartyFoodSemantics.FormatValue(effect.ImmediateValue.Value)}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+
+            return body;
         }
 
         private static string BuildRawTechnicalFieldDescription(
@@ -1766,6 +1843,7 @@ namespace MMMapEditor
                 PartyFieldKind.Sp => "SP",
                 PartyFieldKind.SpHigh => "старший байт SP",
                 PartyFieldKind.SpLow => "младший байт SP",
+                PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
                 PartyFieldKind.sex => "пол",
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,

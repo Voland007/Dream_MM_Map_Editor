@@ -4342,7 +4342,8 @@ private static string BuildHierarchicalVariantNotes(
             if (PartyEffectSemantics.IsGuardLike(effect))
                 return true;
 
-            return (PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) ||
+            return (PartyFoodSemantics.IsFoodField(PartyEffectSemantics.GetEffectiveField(effect)) ||
+                    PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) ||
                     PartyTemporaryStatSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect))) &&
                    PartyEffectSemantics.IsStateChanging(effect);
         }

@@ -120,6 +120,7 @@ namespace MMMapEditor
         private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
         private const int PARTY_HP_HIGH_OFFSET = 0x34;
+        private const int PARTY_FOOD_OFFSET = PartyFoodSemantics.FieldOffset;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
         private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
         private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
@@ -970,6 +971,7 @@ namespace MMMapEditor
                 PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
                 PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
+                PARTY_FOOD_OFFSET => PartyFieldKind.Food,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
                 PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
@@ -2031,6 +2033,7 @@ namespace MMMapEditor
                 PartyFieldKind.Sp => "SP",
                 PartyFieldKind.SpLow => "SP low",
                 PartyFieldKind.SpHigh => "SP high",
+                PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
                 PartyFieldKind.Status => "Status",
                 _ when IsTrackedPartyField(field)
                     => GetPartyFieldLabel(field),
@@ -2147,7 +2150,7 @@ namespace MMMapEditor
                     fieldRef.Member,
                     registerTracker,
                     currentCondition,
-                    debugPrefix: GetPartyFieldLabel(fieldRef.Field));
+                    debugPrefix: GetPartyFieldDebugLabel(fieldRef.Field));
             }
             else if (IsRawTechnicalPartyField(fieldRef))
             {
@@ -2371,7 +2374,7 @@ namespace MMMapEditor
                     PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                     PartyFieldKind.Status => "Статус персонажа",
                     _ when IsTrackedPartyField(fieldRef.Field)
-                        => GetPartyFieldLabel(fieldRef.Field),
+                        => GetPartyFieldDebugLabel(fieldRef.Field),
                     _ when IsRawTechnicalPartyField(fieldRef)
                         => GetRawTechnicalPartyFieldLabel(fieldRef),
                     _ => null
@@ -2512,7 +2515,7 @@ namespace MMMapEditor
                 fieldRef.Member,
                 registerTracker,
                 GetCurrentPartyCondition(registerTracker, instructionAddress, fieldRef.Member, result.LoopSemantic),
-                debugPrefix: GetPartyFieldLabel(fieldRef.Field),
+                debugPrefix: GetPartyFieldDebugLabel(fieldRef.Field),
                 debugMode: debugMode);
         }
 
@@ -2624,7 +2627,7 @@ namespace MMMapEditor
                 fieldRef.Member,
                 registerTracker,
                 compareCondition,
-                debugPrefix: GetPartyFieldLabel(fieldRef.Field),
+                debugPrefix: GetPartyFieldDebugLabel(fieldRef.Field),
                 debugMode: debugMode);
         }
 
@@ -2826,7 +2829,8 @@ namespace MMMapEditor
 
         private static bool IsTrackedPartyField(PartyFieldKind field)
         {
-            return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+            return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
 
@@ -2863,6 +2867,9 @@ namespace MMMapEditor
         private static byte GetTrackedPartyFieldRelevantMask(PartyFieldKind field,
             PartyEffectOperation operation, byte immediateValue)
         {
+            if (PartyFoodSemantics.IsFoodField(field))
+                return PartyFoodSemantics.GetRelevantMask(operation, immediateValue);
+
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
                 return PartyTemporaryStatSemantics.GetRelevantMask(operation, immediateValue);
 
@@ -2880,12 +2887,20 @@ namespace MMMapEditor
         {
             return field switch
             {
+                PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 _ when PartyTemporaryStatSemantics.IsTrackedField(field) => PartyTemporaryStatSemantics.GetFieldLabel(field),
                 _ when PartyTechnicalFieldSemantics.IsTrackedField(field) => PartyTechnicalFieldSemantics.GetFieldLabel(field),
                 _ => null
             };
+        }
+
+        private static string GetPartyFieldDebugLabel(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Food
+                ? PartyFoodSemantics.DebugFieldLabel
+                : GetPartyFieldLabel(field);
         }
 
         private List<PartyEffect> BuildStatusEffectsFromBitTransform(PartyMemberReference member,
@@ -11906,7 +11921,7 @@ namespace MMMapEditor
                                     ? "статуса персонажа"
                                     : IsRawTechnicalPartyField(partyFieldRef)
                                         ? GetRawTechnicalPartyFieldLabel(partyFieldRef)
-                                        : GetPartyFieldLabel(partyFieldRef.Field);
+                                        : GetPartyFieldDebugLabel(partyFieldRef.Field);
                                 AnalysisDebug.WriteLine($"        Распознано изменение {fieldText} через byte ptr {eaText}, 0x{immediateValue:X2}{valueText}");
                             }
                         }

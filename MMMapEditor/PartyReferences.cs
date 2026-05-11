@@ -44,7 +44,8 @@ namespace MMMapEditor
         TempAccuracy = 20,
         TempLuck = 21,
         TempLevel = 22,
-        TempAnyStat = 23
+        TempAnyStat = 23,
+        Food = 24
     }
 
     public enum PartyMemberSelectionKind

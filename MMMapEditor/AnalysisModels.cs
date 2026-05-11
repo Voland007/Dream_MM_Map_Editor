@@ -637,6 +637,7 @@ namespace MMMapEditor
                 PartyFieldKind.TempSpeed => "временный SPEED",
                 PartyFieldKind.TempAccuracy => "временный ACCURANCY",
                 PartyFieldKind.TempLuck => "временный LUCK",
+                PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
                 _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
                     PartyTemporaryStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTechnicalFieldSemantics.IsTrackedField(field.Value) =>
@@ -650,6 +651,7 @@ namespace MMMapEditor
             return field switch
             {
                 PartyFieldKind.TempLevel => "временного уровня",
+                PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
                 _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
                     PartyTemporaryStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTechnicalFieldSemantics.IsTrackedField(field.Value) =>

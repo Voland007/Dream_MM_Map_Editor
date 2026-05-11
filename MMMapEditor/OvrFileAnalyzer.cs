@@ -4213,7 +4213,8 @@ namespace MMMapEditor
                 effect.Kind == PartyEffectKind.TechnicalFieldCompared)
             {
                 var field = PartyEffectSemantics.GetEffectiveField(effect);
-                return PartyTechnicalFieldSemantics.IsTrackedField(field) ||
+                return PartyFoodSemantics.IsFoodField(field) ||
+                       PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                        PartyTemporaryStatSemantics.IsTrackedField(field);
             }
 
