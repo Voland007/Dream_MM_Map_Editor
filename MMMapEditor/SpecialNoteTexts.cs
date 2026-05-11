@@ -42,5 +42,9 @@ namespace MMMapEditor
         public const ushort WaterMonsterResurrectionAddress = 0xC993;
         public const string WaterMonsterResurrection =
             "***Вода стихает. Но в её глубине всё ещё что-то ждёт (Водяное чудище (7,9) воскресает при выполнении ряда условий)***";
+
+        public const ushort GiantScorpionResurrectionAddress = 0xC983;
+        public const string GiantScorpionResurrection =
+            "***Пустыня затихла, но её молчание обманчиво: где-то в её недрах ждёт древний хищник (Гигантский скорпион (10,5) воскресает при выполнении ряда условий)***";
     }
 }

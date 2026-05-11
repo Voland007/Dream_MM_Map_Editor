@@ -8379,7 +8379,7 @@ private static string BuildHierarchicalVariantNotes(
             string candidate;
             bool isRawOverlayText = IsRawOverlayTextEntry(rawText);
 
-            if (colonIndex >= 0)
+            if (isRawOverlayText && colonIndex >= 0)
             {
                 string afterColonWithSeparator = rawText.Substring(colonIndex + 1);
                 string payload = afterColonWithSeparator.StartsWith(" ", StringComparison.Ordinal)

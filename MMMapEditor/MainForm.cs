@@ -1626,7 +1626,8 @@ namespace MMMapEditor
             {
                 SpecialNoteTexts.SecretPassageToDoomCastle,
                 SpecialNoteTexts.RedDragonResurrection,
-                SpecialNoteTexts.WaterMonsterResurrection
+                SpecialNoteTexts.WaterMonsterResurrection,
+                SpecialNoteTexts.GiantScorpionResurrection
             };
 
             foreach (string targetText in targetTexts)

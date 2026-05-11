@@ -53,6 +53,7 @@ namespace MMMapEditor
             ProcessSecretPassageToDoomCastleNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessRedDragonResurrectionNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessWaterMonsterResurrectionNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
+            ProcessGiantScorpionResurrectionNote(address, instructionBytes, registerTracker, output, tryReadMemory8);
 
             // MOV word ptr [0x3BD4], imm16
             if (instructionBytes.Length >= 6 &&
@@ -211,6 +212,25 @@ namespace MMMapEditor
             AnalysisDebug.WriteLine(
                 $"    WATER MONSTER RESURRECTION: [0x{SpecialNoteTexts.WaterMonsterResurrectionAddress:X4}] = 0x{writtenValue:X2} по адресу 0x{instructionAddress:X4}");
             AddOutputText(output, instructionAddress, SpecialNoteTexts.WaterMonsterResurrection);
+        }
+
+        private void ProcessGiantScorpionResurrectionNote(uint instructionAddress, byte[] instructionBytes,
+            RegisterTracker registerTracker, List<TextEntry> output, Func<ushort, byte?> tryReadMemory8)
+        {
+            if (!TryGetByteWrittenToAddress(
+                    instructionBytes,
+                    registerTracker,
+                    SpecialNoteTexts.GiantScorpionResurrectionAddress,
+                    tryReadMemory8,
+                    out byte writtenValue) ||
+                writtenValue != 0)
+            {
+                return;
+            }
+
+            AnalysisDebug.WriteLine(
+                $"    GIANT SCORPION RESURRECTION: [0x{SpecialNoteTexts.GiantScorpionResurrectionAddress:X4}] = 0x{writtenValue:X2} по адресу 0x{instructionAddress:X4}");
+            AddOutputText(output, instructionAddress, SpecialNoteTexts.GiantScorpionResurrection);
         }
 
         private bool TryGetByteWrittenToAddress(byte[] instructionBytes, RegisterTracker registerTracker,
