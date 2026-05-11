@@ -6024,7 +6024,9 @@ namespace MMMapEditor
 
             Color roughWordColor = wallType == "Кирпичная стена"
                 ? Color.FromArgb(0, 0, 255)
-                : Color.FromArgb(255, 105, 180);
+                : string.Equals(wallType, BorderTypeDesert, StringComparison.Ordinal)
+                    ? Color.FromArgb(0, 50, 180)
+                    : Color.FromArgb(255, 105, 180);
 
             DrawRoughWord(g, bounds, direction, roughWordColor);
         }
