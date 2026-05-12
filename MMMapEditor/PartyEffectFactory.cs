@@ -100,6 +100,35 @@ namespace MMMapEditor
             return CreateStatSetEffect(pending, loopSemantic, condition, value, PartyFieldKind.Hp);
         }
 
+        public static PartyEffect CreateHpRestoredToMaximumEffect(PendingPartyStatOperation pending,
+            LoopSemanticKind loopSemantic, PartyConditionKind condition)
+        {
+            if (pending == null)
+                return null;
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.HpWritten,
+                Field = PartyFieldKind.Hp,
+                ComparedField = PartyFieldKind.MaxHp,
+                Operation = PartyEffectOperation.Write,
+                Scope = ResolveScope(pending.Member, loopSemantic, condition),
+                Condition = condition,
+                GuardPredicates = pending.GuardPredicates?
+                    .Select(predicate => predicate?.Clone())
+                    .Where(predicate => predicate != null)
+                    .ToList() ?? new List<PartyPredicate>(),
+                MemberIndex = IsLoopTarget(pending.Member, loopSemantic) ? null : pending.Member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(pending.Member, loopSemantic),
+                ValueKnowledge = PartyValueKnowledge.Structural,
+                InstructionAddress = pending.StartAddress,
+                ExecutionOrder = pending.ExecutionOrder
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
         public static PartyEffect CreateSpSetEffect(PendingPartyStatOperation pending,
             LoopSemanticKind loopSemantic, PartyConditionKind condition, ushort value)
         {
@@ -210,20 +239,34 @@ namespace MMMapEditor
         }
 
         public static PartyEffect CreateAlignmentWriteEffect(PartyMemberReference member,
-            PartyFieldKind field, uint instructionAddress, byte? exactValue = null)
+            PartyFieldKind field, uint instructionAddress, byte? exactValue = null,
+            PartyFieldReference sourceFieldValue = null)
         {
             if (!PartyAlignmentSemantics.IsAlignmentField(field))
                 return null;
+
+            PartyFieldKind comparedField = sourceFieldValue != null &&
+                                           PartyAlignmentSemantics.IsAlignmentField(sourceFieldValue.Field)
+                ? sourceFieldValue.Field
+                : PartyFieldKind.Unknown;
 
             var effect = new PartyEffect
             {
                 Kind = PartyEffectKind.AlignmentWritten,
                 Field = field,
+                ComparedField = comparedField,
                 Operation = PartyEffectOperation.Write,
                 Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
                 MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                ComparedMemberIndex = IsLoopTarget(sourceFieldValue?.Member, LoopSemanticKind.None)
+                    ? null
+                    : sourceFieldValue?.Member?.MemberIndex,
                 IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
-                ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
+                ValueKnowledge = exactValue.HasValue
+                    ? PartyValueKnowledge.ExactImmediate
+                    : comparedField != PartyFieldKind.Unknown
+                        ? PartyValueKnowledge.Structural
+                        : PartyValueKnowledge.Unknown,
                 ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
                 InstructionAddress = instructionAddress
             };

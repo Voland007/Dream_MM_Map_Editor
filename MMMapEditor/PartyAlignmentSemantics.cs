@@ -24,8 +24,10 @@ namespace MMMapEditor
         public const byte NeutralValue = 0x02;
         public const byte GoodValue = 0x03;
 
-        public const string InnateFieldLabel = "innate alignment";
-        public const string CurrentFieldLabel = "current alignment";
+        public const string InnateFieldLabel = "врождённый ALIGNMENT";
+        public const string CurrentFieldLabel = "текущий ALIGNMENT";
+        public const string InnateFieldGenitiveLabel = "врождённого ALIGNMENT";
+        public const string CurrentFieldGenitiveLabel = "текущего ALIGNMENT";
 
         public static bool IsAlignmentField(PartyFieldKind field)
         {
@@ -40,6 +42,16 @@ namespace MMMapEditor
                 PartyFieldKind.InnateAlignment => InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => CurrentFieldLabel,
                 _ => field.ToString()
+            };
+        }
+
+        public static string GetFieldGenitiveLabel(PartyFieldKind field)
+        {
+            return field switch
+            {
+                PartyFieldKind.InnateAlignment => InnateFieldGenitiveLabel,
+                PartyFieldKind.CurrentAlignment => CurrentFieldGenitiveLabel,
+                _ => GetFieldLabel(field)
             };
         }
 

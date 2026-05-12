@@ -2655,6 +2655,14 @@ namespace MMMapEditor
                         ApplyBattleMonsterStrengthDecreaseStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.HpRestoredToMaximum:
+                        ApplyHpRestoredToMaximumStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.AlignmentRestoreKeyword:
+                        ApplyAlignmentRestoreKeywordStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.ItemName:
                         ApplyItemNameStyle(rt);
                         break;
@@ -2770,6 +2778,44 @@ namespace MMMapEditor
             rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 1.25f, 6.0f), FontStyle.Bold);
         }
 
+        private void ApplyHpRestoredToMaximumStyle(RichTextBox rt)
+        {
+            Color warningTextColor = Color.FromArgb(255, 80, 80);
+            Color warningBackColor = Color.FromArgb(70, 0, 0);
+            rt.SelectionColor = InvertColor(warningTextColor);
+            rt.SelectionBackColor = GetHpRestoredToMaximumBackColor(rt);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyAlignmentRestoreKeywordStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 245, 160);
+            rt.SelectionBackColor = GetHpRestoredToMaximumBackColor(rt);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private static Color GetHpRestoredToMaximumBackColor(RichTextBox rt)
+        {
+            Color warningBackColor = Color.FromArgb(70, 0, 0);
+            return BlendColor(rt.BackColor, InvertColor(warningBackColor), 0.12);
+        }
+
+        private static Color InvertColor(Color color)
+        {
+            return Color.FromArgb(255 - color.R, 255 - color.G, 255 - color.B);
+        }
+
+        private static Color BlendColor(Color background, Color foreground, double foregroundRatio)
+        {
+            foregroundRatio = Math.Max(0.0, Math.Min(1.0, foregroundRatio));
+            double backgroundRatio = 1.0 - foregroundRatio;
+
+            return Color.FromArgb(
+                (int)Math.Round(background.R * backgroundRatio + foreground.R * foregroundRatio),
+                (int)Math.Round(background.G * backgroundRatio + foreground.G * foregroundRatio),
+                (int)Math.Round(background.B * backgroundRatio + foreground.B * foregroundRatio));
+        }
+
         private void ApplyItemNameStyle(RichTextBox rt)
         {
             rt.SelectionColor = Color.FromArgb(255, 236, 139);
@@ -2838,7 +2884,59 @@ namespace MMMapEditor
             FormatPersistentCounterProgressionNotes(rt, noteText);
             FormatDynamicRandomBoundDependencyNotes(rt, noteText);
             FormatMutedParentheticalNotes(rt, noteText);
+            FormatHpRestoredToMaximumNotes(rt, noteText);
+            FormatAlignmentRestoredNotes(rt, noteText);
             rt.Select(0, 0);
+        }
+
+        private void FormatHpRestoredToMaximumNotes(RichTextBox rt, string noteText)
+        {
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"^[^\r\n]*HP[^\r\n]*восстанавливается до максимального значения[^\r\n]*$",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyHpRestoredToMaximumStyle(rt);
+            }
+        }
+
+        private void FormatAlignmentRestoredNotes(RichTextBox rt, string noteText)
+        {
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"^[^\r\n]*ALIGNMENT[^\r\n]*восстанавливается до[^\r\n]*ALIGNMENT[^\r\n]*$",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyHpRestoredToMaximumStyle(rt);
+                FormatAlignmentRestoreKeywords(rt, noteText, match.Index, match.Length);
+            }
+        }
+
+        private void FormatAlignmentRestoreKeywords(RichTextBox rt, string noteText, int startIndex, int length)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText) || length <= 0)
+                return;
+
+            string segment = noteText.Substring(startIndex, Math.Min(length, noteText.Length - startIndex));
+            foreach (Match keywordMatch in Regex.Matches(
+                segment,
+                @"\b(?:[Тт]екущ(?:ий|его)|врожд[её]нн(?:ый|ого))\b",
+                RegexOptions.CultureInvariant))
+            {
+                if (!keywordMatch.Success || keywordMatch.Length <= 0)
+                    continue;
+
+                rt.Select(startIndex + keywordMatch.Index, keywordMatch.Length);
+                ApplyAlignmentRestoreKeywordStyle(rt);
+            }
         }
 
         private void FormatWheelRewardExplanationBlocks(RichTextBox rt, string noteText)

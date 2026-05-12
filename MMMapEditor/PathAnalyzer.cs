@@ -916,6 +916,12 @@ namespace MMMapEditor
             merged.FinalWriteLowByteValue = currentPending.SawWriteLow
                 ? currentPending.FinalWriteLowByteValue
                 : inheritedPending.FinalWriteLowByteValue;
+            merged.FinalWriteHighSourceField = currentPending.SawWriteHigh
+                ? currentPending.FinalWriteHighSourceField
+                : inheritedPending.FinalWriteHighSourceField;
+            merged.FinalWriteLowSourceField = currentPending.SawWriteLow
+                ? currentPending.FinalWriteLowSourceField
+                : inheritedPending.FinalWriteLowSourceField;
             merged.SawClc = inheritedPending.SawClc || currentPending.SawClc;
             merged.SawShrHigh = inheritedPending.SawShrHigh || currentPending.SawShrHigh;
             merged.SawRcrLow = inheritedPending.SawRcrLow || currentPending.SawRcrLow;

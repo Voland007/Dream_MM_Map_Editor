@@ -256,6 +256,9 @@ namespace MMMapEditor
 
             if (IsScalarPartyStatField(field) && operation == PartyEffectOperation.Write)
             {
+                if (IsMaximumStatRestoreEffect(effect, field))
+                    return BuildMaximumStatRestoreDescription(effect, field, scope, condition);
+
                 if (effect.ImmediateValue.HasValue)
                     return BuildExactStatWriteDescription(effect, field, scope, condition, effect.ImmediateValue.Value);
 
@@ -1752,6 +1755,13 @@ namespace MMMapEditor
                 return $"ПРОВЕРКА УСЛОВИЯ: Проверяется, совпадают ли {fieldLabel} и {comparedFieldLabel} {subject}";
             }
 
+            if (operation == PartyEffectOperation.Write &&
+                PartyAlignmentSemantics.IsAlignmentField(effect.ComparedField) &&
+                GetEffectiveValueKnowledge(effect) == PartyValueKnowledge.Structural)
+            {
+                return BuildAlignmentRestoreDescription(effect, field, scope, condition);
+            }
+
             return operation switch
             {
                 PartyEffectOperation.Read when !string.IsNullOrWhiteSpace(valueText)
@@ -1769,6 +1779,53 @@ namespace MMMapEditor
                 _ => !string.IsNullOrWhiteSpace(effect.Description)
                     ? effect.Description
                     : $"{fieldLabel}: {subject}"
+            };
+        }
+
+        private static string BuildAlignmentRestoreDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            string fieldLabel = CapitalizeSentenceStart(FormatFieldName(field));
+            string comparedFieldLabel = PartyAlignmentSemantics.GetFieldGenitiveLabel(effect.ComparedField);
+            string owner = BuildAlignmentOwner(effect, scope, condition);
+
+            string description = $"{fieldLabel} {owner} восстанавливается до {comparedFieldLabel}";
+            return InlineNoteStyleCodec.EncodeHpRestoredToMaximumText(description);
+        }
+
+        private static string CapitalizeSentenceStart(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            return char.ToUpper(text[0], CultureInfo.CurrentCulture) + text.Substring(1);
+        }
+
+        private static string BuildAlignmentOwner(
+            PartyEffect effect,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (condition == PartyConditionKind.MaleOnly)
+                return "у каждого мужчины в партии";
+
+            if (condition == PartyConditionKind.FemaleOnly)
+                return "у каждой женщины в партии";
+
+            return scope switch
+            {
+                PartyEffectScope.SingleMember => effect.MemberIndex.HasValue
+                    ? $"у персонажа {FormatMemberDisplay(effect.MemberIndex.Value)}"
+                    : "у персонажа партии",
+                PartyEffectScope.RandomMember => "у случайного персонажа партии",
+                PartyEffectScope.SelectedMember => "у выбранного персонажа партии",
+                PartyEffectScope.CurrentLoopMember => "у текущего персонажа партии",
+                PartyEffectScope.PartySubset => "у части партии",
+                PartyEffectScope.WholeParty => "у каждого персонажа партии",
+                _ => "у персонажа"
             };
         }
 
@@ -1864,6 +1921,55 @@ namespace MMMapEditor
                 : $"{statLabel} персонажа становится равным {value}";
         }
 
+        private static bool IsMaximumStatRestoreEffect(PartyEffect effect, PartyFieldKind field)
+        {
+            return effect != null &&
+                   field == PartyFieldKind.Hp &&
+                   effect.ComparedField == PartyFieldKind.MaxHp &&
+                   GetEffectiveValueKnowledge(effect) == PartyValueKnowledge.Structural;
+        }
+
+        private static string BuildMaximumStatRestoreDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            string statLabel = GetScalarPartyStatLabel(field);
+            const string outcome = "восстанавливается до максимального значения";
+
+            if (condition == PartyConditionKind.MaleOnly)
+                return FormatMaximumStatRestoreDescription($"{statLabel} каждого мужчины в партии {outcome}");
+
+            if (condition == PartyConditionKind.FemaleOnly)
+                return FormatMaximumStatRestoreDescription($"{statLabel} каждой женщины в партии {outcome}");
+
+            if (scope == PartyEffectScope.WholeParty)
+                return FormatMaximumStatRestoreDescription($"{statLabel} каждого персонажа партии {outcome}");
+
+            if (scope == PartyEffectScope.PartySubset)
+                return FormatMaximumStatRestoreDescription($"{statLabel} части партии {outcome}");
+
+            if (scope == PartyEffectScope.CurrentLoopMember)
+                return FormatMaximumStatRestoreDescription($"{statLabel} текущего персонажа партии {outcome}");
+
+            if (scope == PartyEffectScope.RandomMember)
+                return FormatMaximumStatRestoreDescription($"{statLabel} случайного персонажа партии {outcome}");
+
+            if (scope == PartyEffectScope.SelectedMember)
+                return FormatMaximumStatRestoreDescription($"{statLabel} выбранного персонажа партии {outcome}");
+
+            if (scope == PartyEffectScope.SingleMember && effect.MemberIndex.HasValue)
+                return FormatMaximumStatRestoreDescription($"{statLabel} персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} {outcome}");
+
+            return FormatMaximumStatRestoreDescription($"{statLabel} персонажа {outcome}");
+        }
+
+        private static string FormatMaximumStatRestoreDescription(string description)
+        {
+            return InlineNoteStyleCodec.EncodeHpRestoredToMaximumText(description);
+        }
+
         private static string BuildSubject(PartyEffect effect, PartyFieldKind field, PartyEffectScope scope, PartyConditionKind condition)
         {
             return scope switch
@@ -1896,6 +2002,9 @@ namespace MMMapEditor
                 PartyFieldKind.Hp => "HP",
                 PartyFieldKind.HpHigh => "старший байт HP",
                 PartyFieldKind.HpLow => "младший байт HP",
+                PartyFieldKind.MaxHp => "максимальный HP",
+                PartyFieldKind.MaxHpHigh => "старший байт максимального HP",
+                PartyFieldKind.MaxHpLow => "младший байт максимального HP",
                 PartyFieldKind.Sp => "SP",
                 PartyFieldKind.SpHigh => "старший байт SP",
                 PartyFieldKind.SpLow => "младший байт SP",

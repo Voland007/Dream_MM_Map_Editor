@@ -120,6 +120,8 @@ namespace MMMapEditor
         private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
         private const int PARTY_HP_HIGH_OFFSET = 0x34;
+        private const int PARTY_MAX_HP_LOW_OFFSET = 0x35;
+        private const int PARTY_MAX_HP_HIGH_OFFSET = 0x36;
         private const int PARTY_FOOD_OFFSET = PartyFoodSemantics.FieldOffset;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
         private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
@@ -969,6 +971,8 @@ namespace MMMapEditor
                 PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
                 PARTY_HP_HIGH_OFFSET => PartyFieldKind.HpHigh,
+                PARTY_MAX_HP_LOW_OFFSET => PartyFieldKind.MaxHpLow,
+                PARTY_MAX_HP_HIGH_OFFSET => PartyFieldKind.MaxHpHigh,
                 PARTY_FOOD_OFFSET => PartyFieldKind.Food,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
                 PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
@@ -2029,6 +2033,9 @@ namespace MMMapEditor
                 PartyFieldKind.Hp => "HP",
                 PartyFieldKind.HpLow => "HP low",
                 PartyFieldKind.HpHigh => "HP high",
+                PartyFieldKind.MaxHp => "Max HP",
+                PartyFieldKind.MaxHpLow => "Max HP low",
+                PartyFieldKind.MaxHpHigh => "Max HP high",
                 PartyFieldKind.Sp => "SP",
                 PartyFieldKind.SpLow => "SP low",
                 PartyFieldKind.SpHigh => "SP high",
@@ -2218,7 +2225,8 @@ namespace MMMapEditor
                     fieldRef.Member,
                     fieldRef.Field,
                     instructionAddress,
-                    exactValue));
+                    exactValue,
+                    sourceFieldValue));
             }
             else if (IsPartyStatField(fieldRef.Field))
             {
@@ -2257,11 +2265,13 @@ namespace MMMapEditor
                     {
                         pending.SawWriteHigh = true;
                         pending.FinalWriteHighByteValue = exactValue;
+                        pending.FinalWriteHighSourceField = sourceFieldValue?.Field ?? PartyFieldKind.Unknown;
                     }
                     else
                     {
                         pending.SawWriteLow = true;
                         pending.FinalWriteLowByteValue = exactValue;
+                        pending.FinalWriteLowSourceField = sourceFieldValue?.Field ?? PartyFieldKind.Unknown;
                     }
                 }
 
@@ -2888,6 +2898,9 @@ namespace MMMapEditor
             return field switch
             {
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                PartyFieldKind.MaxHp => "максимальный HP",
+                PartyFieldKind.MaxHpLow => "младший байт максимального HP",
+                PartyFieldKind.MaxHpHigh => "старший байт максимального HP",
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
                 _ when PartyTemporaryStatSemantics.IsTrackedField(field) => PartyTemporaryStatSemantics.GetFieldLabel(field),
@@ -5248,6 +5261,12 @@ namespace MMMapEditor
             merged.FinalWriteLowByteValue = currentPending.SawWriteLow
                 ? currentPending.FinalWriteLowByteValue
                 : inheritedPending.FinalWriteLowByteValue;
+            merged.FinalWriteHighSourceField = currentPending.SawWriteHigh
+                ? currentPending.FinalWriteHighSourceField
+                : inheritedPending.FinalWriteHighSourceField;
+            merged.FinalWriteLowSourceField = currentPending.SawWriteLow
+                ? currentPending.FinalWriteLowSourceField
+                : inheritedPending.FinalWriteLowSourceField;
             merged.SawClc = inheritedPending.SawClc || currentPending.SawClc;
             merged.SawShrHigh = inheritedPending.SawShrHigh || currentPending.SawShrHigh;
             merged.SawRcrLow = inheritedPending.SawRcrLow || currentPending.SawRcrLow;

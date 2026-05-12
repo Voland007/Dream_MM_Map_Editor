@@ -107,6 +107,9 @@ namespace MMMapEditor
                     : PartyEffectFactory.CreateHpAdjustedEffect(pending, loopSemantic, condition, operation, amount);
             }
 
+            if (IsHpRestoredToMaximumPattern(pending, field))
+                return PartyEffectFactory.CreateHpRestoredToMaximumEffect(pending, loopSemantic, condition);
+
             if (TryGetExactStatWrite(pending, out ushort value))
             {
                 return field == PartyFieldKind.Sp
@@ -197,6 +200,16 @@ namespace MMMapEditor
             operation = low.Operation;
             amount = total;
             return true;
+        }
+
+        private static bool IsHpRestoredToMaximumPattern(PendingPartyStatOperation pending, PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Hp &&
+                   pending != null &&
+                   pending.SawWriteHigh &&
+                   pending.SawWriteLow &&
+                   pending.FinalWriteLowSourceField == PartyFieldKind.MaxHpLow &&
+                   pending.FinalWriteHighSourceField == PartyFieldKind.MaxHpHigh;
         }
 
         public static bool TryGetExactStatWrite(PendingPartyStatOperation pending, out ushort value)

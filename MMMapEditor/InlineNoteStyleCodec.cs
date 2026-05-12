@@ -39,6 +39,7 @@ namespace MMMapEditor
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
         private const string BattleMonsterStrengthDecreaseTokenPrefix = "[[BATTLEPOWERDOWN:";
+        private const string HpRestoredToMaximumTokenPrefix = "[[HPRESTORE:";
         private const string ItemNameTokenPrefix = "[[ITEMNAME:";
         public const string RepeatedBattleWarningText =
             "!! ВНИМАНИЕ! Битва запускается два раза; результат каждого (победа или побег) не влияет на запуск следующего !!";
@@ -118,6 +119,11 @@ namespace MMMapEditor
         public static string EncodeBattleMonsterStrengthDecreaseText(string visibleText)
         {
             return EncodeTextStyleToken(BattleMonsterStrengthDecreaseTokenPrefix, visibleText);
+        }
+
+        public static string EncodeHpRestoredToMaximumText(string visibleText)
+        {
+            return EncodeTextStyleToken(HpRestoredToMaximumTokenPrefix, visibleText);
         }
 
         public static string EncodeItemNameText(string visibleText)
@@ -288,6 +294,26 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.BattleMonsterStrengthDecrease
                     });
                     i += strengthDecreaseConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    HpRestoredToMaximumTokenPrefix,
+                    out string hpRestoredText,
+                    out int hpRestoredConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(hpRestoredText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = hpRestoredText.Length,
+                        Kind = NoteInlineStyleKind.HpRestoredToMaximum
+                    });
+                    AppendAlignmentRestoreKeywordStyles(rendered.Styles, start, hpRestoredText);
+                    i += hpRestoredConsumedLength;
                     continue;
                 }
 
@@ -511,6 +537,31 @@ namespace MMMapEditor
                     Start = lineStart + valueMatch.Index,
                     Length = valueMatch.Length,
                     Kind = NoteInlineStyleKind.AggregateTemporaryStatValue
+                });
+            }
+        }
+
+        private static void AppendAlignmentRestoreKeywordStyles(
+            List<NoteInlineStyleSpan> styles,
+            int lineStart,
+            string text)
+        {
+            if (styles == null || string.IsNullOrEmpty(text))
+                return;
+
+            foreach (Match match in Regex.Matches(
+                text,
+                @"\b(?:[Тт]екущ(?:ий|его)|врожд[её]нн(?:ый|ого))\b",
+                RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                styles.Add(new NoteInlineStyleSpan
+                {
+                    Start = lineStart + match.Index,
+                    Length = match.Length,
+                    Kind = NoteInlineStyleKind.AlignmentRestoreKeyword
                 });
             }
         }

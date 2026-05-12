@@ -305,7 +305,9 @@ namespace MMMapEditor
         RawOverlayText = 14,
         BattleMonsterStrengthIncrease = 15,
         BattleMonsterStrengthDecrease = 16,
-        ItemName = 17
+        ItemName = 17,
+        HpRestoredToMaximum = 18,
+        AlignmentRestoreKeyword = 19
     }
 
     public sealed class NoteInlineStyleSpan
