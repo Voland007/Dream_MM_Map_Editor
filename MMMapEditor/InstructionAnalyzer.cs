@@ -46,7 +46,7 @@ namespace MMMapEditor
 
             ProcessContainerTexts(address, instructionBytes, registerTracker, output);
             ProcessImplicitContainerTextForLoot(address, instructionBytes, output, tryReadMemory8);
-            ProcessItemTexts(address, instructionBytes, registerTracker, output);
+            ProcessItemTexts(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessGemsTexts(address, instructionBytes, registerTracker, output);
             ProcessGoldTexts(address, instructionBytes, registerTracker, output, tryReadMemory8);
             ProcessLootDestructionPatterns(address, instructionBytes, registerTracker, output);
@@ -472,7 +472,7 @@ namespace MMMapEditor
         }
 
         private void ProcessItemTexts(uint instructionAddress, byte[] instructionBytes, RegisterTracker registerTracker,
-            List<TextEntry> output)
+            List<TextEntry> output, Func<ushort, byte?> tryReadMemory8)
         {
             // MOV byte ptr [disp16], imm8
             if (instructionBytes.Length >= 5 &&
@@ -482,6 +482,7 @@ namespace MMMapEditor
                 if (IsItemAddress(memAddr))
                 {
                     AnalysisDebug.WriteLine($"    ПРЕДМЕТ: прямая запись [0x{memAddr:X4}] = 0x{instructionBytes[4]:X2} по адресу 0x{instructionAddress:X4}");
+                    AddImplicitContainerTextForItemLoot(instructionAddress, instructionBytes, output, tryReadMemory8, memAddr, instructionBytes[4]);
                     AddSingleItemText(instructionAddress, output, instructionBytes[4], memAddr);
                     return;
                 }
@@ -503,11 +504,13 @@ namespace MMMapEditor
                         if (registerTracker.TryGetByteRegisterValue(regName, out byte value))
                         {
                             AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из {regName} = 0x{value:X2} по адресу 0x{instructionAddress:X4}");
+                            AddImplicitContainerTextForItemLoot(instructionAddress, instructionBytes, output, tryReadMemory8, memAddr, value);
                             AddSingleItemText(instructionAddress, output, value, memAddr);
                         }
                         else if (registerTracker.TryGetRegisterRange(regName, out ValueRange8 range))
                         {
                             AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из {regName} в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
+                            AddImplicitContainerTextForItemLoot(instructionAddress, instructionBytes, output, tryReadMemory8, memAddr, range);
                             AddItemRangeText(instructionAddress, output, range, memAddr);
                         }
                     }
@@ -525,15 +528,72 @@ namespace MMMapEditor
                     if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                     {
                         AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из AL = 0x{alValue:X2} по адресу 0x{instructionAddress:X4}");
+                        AddImplicitContainerTextForItemLoot(instructionAddress, instructionBytes, output, tryReadMemory8, memAddr, alValue);
                         AddSingleItemText(instructionAddress, output, alValue, memAddr);
                     }
                     else if (registerTracker.TryGetRegisterRange("AL", out ValueRange8 range))
                     {
                         AnalysisDebug.WriteLine($"    ПРЕДМЕТ: запись [0x{memAddr:X4}] из AL в диапазоне 0x{range.Min:X2}-0x{range.Max:X2} по адресу 0x{instructionAddress:X4}");
+                        AddImplicitContainerTextForItemLoot(instructionAddress, instructionBytes, output, tryReadMemory8, memAddr, range);
                         AddItemRangeText(instructionAddress, output, range, memAddr);
                     }
                 }
             }
+        }
+
+        private void AddImplicitContainerTextForItemLoot(
+            uint instructionAddress,
+            byte[] instructionBytes,
+            List<TextEntry> output,
+            Func<ushort, byte?> tryReadMemory8,
+            ushort itemAddress,
+            byte itemValue)
+        {
+            if (itemValue == 0)
+                return;
+
+            AddImplicitContainerTextForItemLoot(
+                instructionAddress,
+                instructionBytes,
+                output,
+                tryReadMemory8,
+                itemAddress);
+        }
+
+        private void AddImplicitContainerTextForItemLoot(
+            uint instructionAddress,
+            byte[] instructionBytes,
+            List<TextEntry> output,
+            Func<ushort, byte?> tryReadMemory8,
+            ushort itemAddress,
+            ValueRange8 itemRange)
+        {
+            if (itemRange == null || itemRange.Max == 0)
+                return;
+
+            AddImplicitContainerTextForItemLoot(
+                instructionAddress,
+                instructionBytes,
+                output,
+                tryReadMemory8,
+                itemAddress);
+        }
+
+        private void AddImplicitContainerTextForItemLoot(
+            uint instructionAddress,
+            byte[] instructionBytes,
+            List<TextEntry> output,
+            Func<ushort, byte?> tryReadMemory8,
+            ushort itemAddress)
+        {
+            if (tryReadMemory8 == null || itemAddress != 0x3C7C)
+                return;
+
+            if (IsExplicitContainerWrite(instructionBytes) || tryReadMemory8(0x3C79).HasValue)
+                return;
+
+            AnalysisDebug.WriteLine($"    КОНТЕЙНЕР: неявный контейнер по предмету без явной записи [3C79], используем индекс 0x00 как обычный контейнер (инструкция 0x{instructionAddress:X4})");
+            AddImplicitContainerText(instructionAddress, output);
         }
 
         private void AddSingleItemText(uint instructionAddress, List<TextEntry> output, byte itemIndex, ushort itemAddress)
