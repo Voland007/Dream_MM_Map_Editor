@@ -42,6 +42,7 @@ namespace MMMapEditor
         private const int PassageTypeRough = 8;
         private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
         private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
+        private const string BorderTypeSwamp = "\u0411\u043E\u043B\u043E\u0442\u043E";
         private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
             new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
@@ -139,6 +140,7 @@ namespace MMMapEditor
         private bool showSecretPassages = true;
         private bool showDangerousWaterCells = true;
         private bool showDangerousDesertCells = true;
+        private bool showDangerousSwampCells = true;
 
 
         public MainForm()
@@ -158,6 +160,7 @@ namespace MMMapEditor
             showSecretPassages = GetBooleanSetting("DisplaySettings", "ShowSecretPassages", true);
             showDangerousWaterCells = GetBooleanSetting("DisplaySettings", "ShowDangerousWaterCells", true);
             showDangerousDesertCells = GetBooleanSetting("DisplaySettings", "ShowDangerousDesertCells", true);
+            showDangerousSwampCells = GetBooleanSetting("DisplaySettings", "ShowDangerousSwampCells", true);
 
             // Читаем файл по умолчанию из INI
             string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
@@ -3977,7 +3980,7 @@ namespace MMMapEditor
             if (definition.SuppressPassageWhenSecondLowBitSet && bits.SecondLowBit)
                 passageType = 0;
 
-            passageType = ApplyWaterOrDesertPassageRules(definition, passageType);
+            passageType = ApplyRoughTerrainPassageRules(definition, passageType);
 
             return new DirectionState
             {
@@ -3987,9 +3990,9 @@ namespace MMMapEditor
             };
         }
 
-        private static int ApplyWaterOrDesertPassageRules(OvrSideElementDefinition definition, int passageType)
+        private static int ApplyRoughTerrainPassageRules(OvrSideElementDefinition definition, int passageType)
         {
-            if (!IsWaterOrDesertBorder(definition.BorderType))
+            if (!IsRoughTerrainBorder(definition.BorderType))
                 return passageType;
 
             if (passageType == PassageTypeSecret)
@@ -3998,10 +4001,11 @@ namespace MMMapEditor
             return passageType == 0 ? PassageTypeRough : passageType;
         }
 
-        private static bool IsWaterOrDesertBorder(string borderType)
+        private static bool IsRoughTerrainBorder(string borderType)
         {
             return string.Equals(borderType, BorderTypeWater, StringComparison.Ordinal) ||
-                   string.Equals(borderType, BorderTypeDesert, StringComparison.Ordinal);
+                   string.Equals(borderType, BorderTypeDesert, StringComparison.Ordinal) ||
+                   string.Equals(borderType, BorderTypeSwamp, StringComparison.Ordinal);
         }
 
         private static bool IsImplicitSecretPassage(DirectionBits bits, OvrSideElementDefinition definition)
@@ -4152,6 +4156,7 @@ namespace MMMapEditor
                     showSecretPassages = form.ShowSecretPassages;
                     showDangerousWaterCells = form.ShowDangerousWaterCells;
                     showDangerousDesertCells = form.ShowDangerousDesertCells;
+                    showDangerousSwampCells = form.ShowDangerousSwampCells;
                     InvalidateGridButtons();
                     UpdatePreview();
                 }
@@ -6890,6 +6895,9 @@ namespace MMMapEditor
             if (AreAllBordersDesert(pos))
                 return showDangerousDesertCells;
 
+            if (AreAllBordersSwamp(pos))
+                return showDangerousSwampCells;
+
             return true;
         }
 
@@ -6901,6 +6909,11 @@ namespace MMMapEditor
         private bool AreAllBordersDesert(Point pos)
         {
             return AreAllBordersOfType(pos, BorderTypeDesert);
+        }
+
+        private bool AreAllBordersSwamp(Point pos)
+        {
+            return AreAllBordersOfType(pos, BorderTypeSwamp);
         }
 
         private bool AreAllBordersOfType(Point pos, string borderType)
