@@ -4369,6 +4369,14 @@ namespace MMMapEditor
                 return;
             }
 
+            // A broad object-variant cache is unsafe once the analyzed code reads
+            // the starting coordinates: early matching samples may all sit on the
+            // same side of a coordinate threshold (for example AREAD3 default-path
+            // branches at X < 7). The exact single-occurrence cache still covers
+            // repeated analysis for the same cell/state.
+            if (usesInitialCoordinates)
+                return;
+
             if (ShouldSkipReusableObjectVariantCache(analysisCacheScopeKey, finalVariants))
                 return;
 
