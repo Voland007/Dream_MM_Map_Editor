@@ -29,9 +29,16 @@ namespace MMMapEditor
         private const string LegacyWholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
         private const ushort PartyCountAddress = 0x3BC0;
+        private const ushort AssumedUserVisibleFoodUpperBoundExclusive = 40;
+        private const ushort AssumedUserVisibleStatusUpperBoundExclusive = 0x80;
         private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
         private const int FlatSemanticVariantKeyBase = int.MinValue / 2;
         private const int FlatSemanticVariantKeyStride = 10000;
+        private static readonly Dictionary<ushort, string[]> KnownBinaryStateConditionLabels =
+            new Dictionary<ushort, string[]>
+            {
+                { 0xC980, new[] { "квест не взят", "квест взят" } }
+            };
 
         public static OvrNotesBuildResult BuildNotes(
             string filename,
@@ -2181,10 +2188,20 @@ namespace MMMapEditor
 
         private static string BuildProbabilityLine(PathVariantInfo variant)
         {
-            if (variant == null)
+            if (variant == null || !variant.HasProbabilityInfo || variant.ProbabilityDenominator <= 0)
                 return null;
 
-            return variant.GetProbabilityDescription();
+            int numerator = Math.Max(0, variant.ProbabilityNumerator);
+            int denominator = Math.Max(1, variant.ProbabilityDenominator);
+            if (numerator == 0)
+                return null;
+
+            string percentText = ProbabilityFormatter.FormatPercent(numerator, denominator);
+            string label = GetDisplayGuardPredicates(variant).Count > 0
+                ? "Вероятность при выполнении условий"
+                : "Вероятность";
+
+            return $"{label}: {percentText}% ({numerator}/{denominator})";
         }
 
         private static string BuildOccurrenceLine(PathVariantInfo variant)
@@ -2300,9 +2317,138 @@ namespace MMMapEditor
 
             return variant?.GetGuardPredicates()?
                 .Where(predicate => predicate != null)
+                .Where(predicate => !IsSatisfiedByUserVisibleAssumptions(predicate, variant))
                 .Where(predicate =>
                     !structurallyRenderedPredicateKeys.Contains(PartyEffectSemantics.BuildPredicateKey(predicate)))
                 .ToList() ?? new List<PartyPredicate>();
+        }
+
+        private static bool ShouldSuppressByUserVisibleAssumptions(PathVariantInfo variant)
+        {
+            return variant?.GetGuardPredicates()?
+                .Any(predicate => IsContradictedByUserVisibleAssumptions(predicate, variant)) == true;
+        }
+
+        private static bool IsSatisfiedByUserVisibleAssumptions(PartyPredicate predicate, PathVariantInfo variant)
+        {
+            return IsSatisfiedByAssumedFoodBelowCap(predicate) ||
+                   (ShouldApplyAssumedAliveStatusModel(variant) &&
+                    IsSatisfiedByAssumedStatusBelowDeathThreshold(predicate));
+        }
+
+        private static bool IsContradictedByUserVisibleAssumptions(PartyPredicate predicate, PathVariantInfo variant)
+        {
+            return IsContradictedByAssumedFoodBelowCap(predicate) ||
+                   (ShouldApplyAssumedAliveStatusModel(variant) &&
+                    IsContradictedByAssumedStatusBelowDeathThreshold(predicate));
+        }
+
+        private static bool IsSatisfiedByAssumedFoodBelowCap(PartyPredicate predicate)
+        {
+            if (!TryGetImmediateFoodPredicate(predicate, out ushort value))
+                return false;
+
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.NotEqual:
+                    return value >= AssumedUserVisibleFoodUpperBoundExclusive;
+                case PartyPredicateComparison.LessThan:
+                    return value >= AssumedUserVisibleFoodUpperBoundExclusive;
+                case PartyPredicateComparison.LessOrEqual:
+                    return value + 1 >= AssumedUserVisibleFoodUpperBoundExclusive;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsContradictedByAssumedFoodBelowCap(PartyPredicate predicate)
+        {
+            if (!TryGetImmediateFoodPredicate(predicate, out ushort value))
+                return false;
+
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.Equal:
+                    return value >= AssumedUserVisibleFoodUpperBoundExclusive;
+                case PartyPredicateComparison.GreaterThan:
+                    return value + 1 >= AssumedUserVisibleFoodUpperBoundExclusive;
+                case PartyPredicateComparison.GreaterOrEqual:
+                    return value >= AssumedUserVisibleFoodUpperBoundExclusive;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool TryGetImmediateFoodPredicate(PartyPredicate predicate, out ushort value)
+        {
+            value = 0;
+            if (predicate == null ||
+                predicate.Field != PartyFieldKind.Food ||
+                !predicate.ImmediateValue.HasValue)
+            {
+                return false;
+            }
+
+            value = predicate.ImmediateValue.Value;
+            return true;
+        }
+
+        private static bool IsSatisfiedByAssumedStatusBelowDeathThreshold(PartyPredicate predicate)
+        {
+            if (!TryGetImmediateStatusPredicate(predicate, out ushort value))
+                return false;
+
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.NotEqual:
+                    return value >= AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.LessThan:
+                    return value >= AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.LessOrEqual:
+                    return value + 1 >= AssumedUserVisibleStatusUpperBoundExclusive;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsContradictedByAssumedStatusBelowDeathThreshold(PartyPredicate predicate)
+        {
+            if (!TryGetImmediateStatusPredicate(predicate, out ushort value))
+                return false;
+
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.Equal:
+                    return value >= AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.GreaterThan:
+                    return value + 1 >= AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.GreaterOrEqual:
+                    return value >= AssumedUserVisibleStatusUpperBoundExclusive;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool TryGetImmediateStatusPredicate(PartyPredicate predicate, out ushort value)
+        {
+            value = 0;
+            if (predicate == null || !predicate.ImmediateValue.HasValue)
+                return false;
+
+            bool isStatusField =
+                predicate.Field == PartyFieldKind.Status &&
+                (!predicate.FieldOffset.HasValue ||
+                 predicate.FieldOffset.Value == PartyStatusSemantics.FieldOffset);
+            if (!isStatusField)
+                return false;
+
+            value = predicate.ImmediateValue.Value;
+            return true;
+        }
+
+        private static bool ShouldApplyAssumedAliveStatusModel(PathVariantInfo variant)
+        {
+            return VariantTextsContain(variant, "CLIMB TREE (Y/N)?");
         }
 
         private static HashSet<string> BuildStructurallyRenderedPredicateKeySet(PathVariantInfo variant)
@@ -2697,6 +2843,19 @@ namespace MMMapEditor
             public string HeaderAnnotation { get; set; }
         }
 
+        private enum StateConditionPolarity
+        {
+            Zero,
+            NonZero
+        }
+
+        private sealed class StateConditionBranchInfo
+        {
+            public VariantTreeNode Node { get; set; }
+            public ushort Address { get; set; }
+            public StateConditionPolarity Polarity { get; set; }
+        }
+
         private sealed class SharedPartyHoistBranch
         {
             public VariantTreeNode ChildNode { get; set; }
@@ -2891,6 +3050,9 @@ private static string BuildHierarchicalVariantNotes(
                 .Where(v => v != null)
                 .OrderBy(GetPathOrderKey))
             {
+                if (ShouldSuppressByUserVisibleAssumptions(variant))
+                    continue;
+
                 var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
                 var narrativeLines = DecodeNoteTexts(variant.Texts);
                 var lines = BuildVariantLinesForHierarchy(
@@ -2903,6 +3065,7 @@ private static string BuildHierarchicalVariantNotes(
                     defaultRandomEncounterChance,
                     inlineSpecialSpoilerLine);
 
+                lines = SuppressRedundantFoodEffectLines(lines);
                 lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
 
                 if (ShouldSkipHierarchicalVariant(lines, narrativeLines))
@@ -2916,7 +3079,88 @@ private static string BuildHierarchicalVariantNotes(
                 });
             }
 
-            return items;
+            return SuppressStatusComplementVariantsByUserVisibleAssumptions(items);
+        }
+
+        private static List<VariantRenderItem> SuppressStatusComplementVariantsByUserVisibleAssumptions(
+            List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (source.Count <= 1)
+                return source;
+
+            var assumedStatusChangeKeys = source
+                .Where(item => ShouldApplyAssumedAliveStatusModel(item?.Variant))
+                .Where(item => VariantHasAssumedAliveStatusGuard(item?.Variant))
+                .Where(item => (item.Lines ?? new List<string>()).Any(IsConditionalPartyStatusLine))
+                .Select(BuildStatusComplementVariantKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
+
+            if (assumedStatusChangeKeys.Count == 0)
+                return source;
+
+            return source
+                .Where(item =>
+                    (item.Lines ?? new List<string>()).Any(IsConditionalPartyStatusLine) ||
+                    (ShouldApplyAssumedAliveStatusModel(item?.Variant) &&
+                     VariantHasAssumedAliveStatusGuard(item?.Variant)) ||
+                    !assumedStatusChangeKeys.Contains(BuildStatusComplementVariantKey(item)))
+                .ToList();
+        }
+
+        private static bool VariantHasAssumedAliveStatusGuard(PathVariantInfo variant)
+        {
+            return ShouldApplyAssumedAliveStatusModel(variant) &&
+                   variant?.GetGuardPredicates()?
+                .Any(IsSatisfiedByAssumedStatusBelowDeathThreshold) == true;
+        }
+
+        private static string BuildStatusComplementVariantKey(VariantRenderItem item)
+        {
+            if (item == null)
+                return null;
+
+            var randomChoiceLabels = GetRelevantBranchChoices(item.Variant)
+                .Select(choice => NormalizeChoiceLabel(choice?.Label))
+                .Where(IsTechnicalChoiceLabel)
+                .ToList();
+
+            var visibleLinesWithoutStatus = (item.Lines ?? new List<string>())
+                .Where(line => !IsConditionalPartyStatusLine(line))
+                .Select(line => line?.TrimEnd() ?? string.Empty)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            return string.Join("\n", randomChoiceLabels) + "\u001F" +
+                   string.Join("\n", visibleLinesWithoutStatus);
+        }
+
+        private static List<string> SuppressRedundantFoodEffectLines(List<string> lines)
+        {
+            if (lines == null || !HasFoodRewardNarrativeLine(lines))
+                return lines ?? new List<string>();
+
+            return lines
+                .Where(line => !IsGenericFoodChangeEffectLine(line))
+                .ToList();
+        }
+
+        private static bool HasFoodRewardNarrativeLine(IEnumerable<string> lines)
+        {
+            return (lines ?? Enumerable.Empty<string>())
+                .Any(line => Regex.IsMatch(
+                    line?.Trim() ?? string.Empty,
+                    @"^\+\d+\s+FOOD!$",
+                    RegexOptions.IgnoreCase));
+        }
+
+        private static bool IsGenericFoodChangeEffectLine(string line)
+        {
+            return !string.IsNullOrWhiteSpace(line) &&
+                   line.IndexOf("изменяется FOOD", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static List<VariantRenderItem> ApplySingleMemberPartyScanDisplayModel(
@@ -3058,6 +3302,7 @@ private static string BuildHierarchicalVariantNotes(
             foreach (var group in groups)
             {
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.ConsumedTopChoiceKey : null);
+                PromoteBinaryStateConditionBranches(root);
                 IntroduceComplementaryInventoryPresenceBranches(root);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
@@ -4115,6 +4360,159 @@ private static string BuildHierarchicalVariantNotes(
             return root;
         }
 
+        private static void PromoteBinaryStateConditionBranches(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+
+            if (children.Count >= 2)
+            {
+                var conditionBranches = children
+                    .Select(child => TryBuildStateConditionBranchInfo(child, out var info) ? info : null)
+                    .Where(info => info != null)
+                    .ToList();
+
+                var binaryGroups = conditionBranches
+                    .GroupBy(info => info.Address)
+                    .Where(group =>
+                        group.Any(info => info.Polarity == StateConditionPolarity.Zero) &&
+                        group.Any(info => info.Polarity == StateConditionPolarity.NonZero));
+
+                foreach (var group in binaryGroups)
+                {
+                    foreach (var info in group)
+                    {
+                        if (TryBuildUserVisibleStateConditionAnnotation(
+                                info.Address,
+                                info.Polarity,
+                                out string annotation))
+                        {
+                            info.Node.HeaderAnnotation = annotation;
+                        }
+                    }
+                }
+            }
+
+            foreach (var child in children)
+                PromoteBinaryStateConditionBranches(child);
+        }
+
+        private static bool TryBuildStateConditionBranchInfo(
+            VariantTreeNode node,
+            out StateConditionBranchInfo info)
+        {
+            info = null;
+            if (node == null || HasUserVisibleNodeLabelOrAnnotation(node))
+                return false;
+
+            if (!TryParseBinaryStateConditionAnnotation(
+                    node.HeaderAnnotation,
+                    out ushort address,
+                    out StateConditionPolarity polarity))
+            {
+                return false;
+            }
+
+            info = new StateConditionBranchInfo
+            {
+                Node = node,
+                Address = address,
+                Polarity = polarity
+            };
+            return true;
+        }
+
+        private static bool TryBuildUserVisibleStateConditionAnnotation(
+            ushort address,
+            StateConditionPolarity polarity,
+            out string annotation)
+        {
+            annotation = null;
+            if (!KnownBinaryStateConditionLabels.TryGetValue(address, out var labels) ||
+                labels == null ||
+                labels.Length < 2)
+            {
+                return false;
+            }
+
+            annotation = polarity == StateConditionPolarity.Zero
+                ? labels[0]
+                : labels[1];
+            return !string.IsNullOrWhiteSpace(annotation);
+        }
+
+        private static bool TryParseBinaryStateConditionAnnotation(
+            string annotation,
+            out ushort address,
+            out StateConditionPolarity polarity)
+        {
+            address = 0;
+            polarity = StateConditionPolarity.Zero;
+
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            var match = Regex.Match(
+                normalized,
+                @"^при условии:\s*\[0x([0-9A-Fa-f]{1,4})\]\s*(=|!=|>|<|>=|<=)\s*(0x[0-9A-Fa-f]{1,2}|\d+)\s*$",
+                RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return false;
+
+            if (!ushort.TryParse(match.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out address))
+                return false;
+
+            if (!TryParseStateConditionValue(match.Groups[3].Value, out byte value))
+                return false;
+
+            string op = match.Groups[2].Value;
+            if ((op == "=" && value == 0) ||
+                (op == "<" && value == 1) ||
+                (op == "<=" && value == 0))
+            {
+                polarity = StateConditionPolarity.Zero;
+                return true;
+            }
+
+            if ((op == "!=" && value == 0) ||
+                (op == ">" && value == 0) ||
+                (op == ">=" && value == 1))
+            {
+                polarity = StateConditionPolarity.NonZero;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseStateConditionValue(string text, out byte value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(text))
+                return false;
+
+            string trimmed = text.Trim();
+            if (trimmed.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                return byte.TryParse(
+                    trimmed.Substring(2),
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture,
+                    out value);
+            }
+
+            return byte.TryParse(
+                trimmed,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out value);
+        }
+
         private static void IntroduceComplementaryInventoryPresenceBranches(VariantTreeNode node)
         {
             if (node == null)
@@ -4671,7 +5069,7 @@ private static string BuildHierarchicalVariantNotes(
             while (node.Children.Count == 1 &&
                    node.DirectVariants.Count == 0 &&
                    node.CommonLines.Count == 0 &&
-                   string.IsNullOrWhiteSpace(node.Label))
+                   !HasUserVisibleNodeLabelOrAnnotation(node))
             {
                 node = node.Children[0];
             }
@@ -4960,7 +5358,7 @@ private static string BuildHierarchicalVariantNotes(
 
             string promptText = string.Join("\n", node.CommonLines ?? new List<string>());
             if (string.IsNullOrWhiteSpace(promptText))
-                return result;
+                return BuildSyntheticBattleOutcomeLabels(directVariants);
 
             var optionLabels = ExtractPromptOptionLabels(promptText);
             var normalizedOptionLabels = optionLabels
@@ -4968,6 +5366,9 @@ private static string BuildHierarchicalVariantNotes(
                 .Where(label => !string.IsNullOrWhiteSpace(label))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            if (normalizedOptionLabels.Count == 0)
+                return BuildSyntheticBattleOutcomeLabels(directVariants);
 
             if (ShouldSuppressSyntheticPromptChoiceLabels(node, normalizedOptionLabels))
                 return result;
@@ -5009,6 +5410,41 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return new Dictionary<VariantRenderItem, string>();
+        }
+
+        private static Dictionary<VariantRenderItem, string> BuildSyntheticBattleOutcomeLabels(
+            List<VariantRenderItem> directVariants)
+        {
+            var result = new Dictionary<VariantRenderItem, string>();
+            var variants = (directVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (variants.Count <= 1 || !variants.Any(VariantItemHasBattleLaunchOutcome))
+                return result;
+
+            foreach (var variant in variants)
+            {
+                if (VariantItemHasBattleLaunchOutcome(variant))
+                    continue;
+
+                if (IsEmptyOrNoOpVariant(variant))
+                    result[variant] = "без боя";
+            }
+
+            return result;
+        }
+
+        private static bool VariantItemHasBattleLaunchOutcome(VariantRenderItem item)
+        {
+            if (item == null)
+                return false;
+
+            if (HasBattleLaunchOutcome(item.Variant))
+                return true;
+
+            return (item.Lines ?? new List<string>())
+                .Any(line => line?.IndexOf("random encounter", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static bool ShouldSuppressSyntheticPromptChoiceLabels(
@@ -5514,6 +5950,55 @@ private static string BuildHierarchicalVariantNotes(
             CollapseTransparentDirectVariantWrappers(
                 node,
                 new Dictionary<VariantTreeNode, bool>());
+        }
+
+        private static string BuildUserVisibleNoOpRenderKey(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            return BuildUserVisibleNoOpLineKey(node.CommonLines);
+        }
+
+        private static string BuildUserVisibleNoOpRenderKey(VariantRenderItem item)
+        {
+            if (item?.Lines == null)
+                return null;
+
+            return BuildUserVisibleNoOpLineKey(item.Lines);
+        }
+
+        private static string BuildUserVisibleNoOpLineKey(IEnumerable<string> lines)
+        {
+            var meaningfulLines = (lines ?? Enumerable.Empty<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+            if (meaningfulLines.Count != 1)
+                return null;
+
+            return NormalizeUserVisibleNoOpLine(meaningfulLines[0]);
+        }
+
+        private static string NormalizeUserVisibleNoOpLine(string line)
+        {
+            string normalized = (line ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+                return null;
+
+            if (string.Equals(normalized, "NOTHING HERE", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalized, "NOTHING HERE.", StringComparison.OrdinalIgnoreCase))
+            {
+                return "NOTHING HERE";
+            }
+
+            if (string.Equals(normalized, "Ничего не происходит", StringComparison.Ordinal) ||
+                string.Equals(normalized, "Ничего не происходит (не выполнены условия для наступления ни одного варианта)", StringComparison.Ordinal))
+            {
+                return "Ничего не происходит";
+            }
+
+            return null;
         }
 
         private static void CollapseTransparentDirectVariantWrappers(
@@ -6862,7 +7347,7 @@ private static string BuildHierarchicalVariantNotes(
             while (node.Children.Count == 1 &&
                    node.DirectVariants.Count == 0 &&
                    node.CommonLines.Count == 0 &&
-                   string.IsNullOrWhiteSpace(node.Label))
+                   !HasUserVisibleNodeLabelOrAnnotation(node))
             {
                 node = node.Children[0];
             }
@@ -7093,10 +7578,13 @@ private static string BuildHierarchicalVariantNotes(
                 syntheticDirectLabels?.TryGetValue(variant, out syntheticLabel);
                 bool hasChoiceOrder = TryGetChoiceOrderKey(syntheticLabel, promptChoiceOrder, out int choiceOrderKey);
                 bool promotedNoChoice = canPromoteNoToChoice && ShouldRenderAsNoChoiceVariant(variant);
+                bool promotedNoBattleChoice = IsSyntheticNoBattleLabel(syntheticLabel);
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetVariantOccurrenceOrderKey(variant),
-                    DisplayPriority = promotedNoChoice ? -1 : (IsEmptyOrNoOpVariant(variant) ? 1 : 0),
+                    DisplayPriority = promotedNoChoice || promotedNoBattleChoice
+                        ? -1
+                        : (IsEmptyOrNoOpVariant(variant) ? 1 : 0),
                     PathOrderKey = GetVariantRenderOrderKey(variant),
                     ChoiceOrderKey = choiceOrderKey,
                     HasChoiceOrderKey = hasChoiceOrder,
@@ -7123,6 +7611,14 @@ private static string BuildHierarchicalVariantNotes(
                 .ThenBy(entry => entry.PathOrderKey)
                 .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
                 .ToList();
+        }
+
+        private static bool IsSyntheticNoBattleLabel(string label)
+        {
+            return string.Equals(
+                NormalizeChoiceLabel(label),
+                "без боя",
+                StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsEmptyOrNoOpNode(VariantTreeNode node)
@@ -7362,7 +7858,11 @@ private static string BuildHierarchicalVariantNotes(
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        sharedGuardKey);
+                        sharedGuardKey,
+                        BuildSiblingNoOpLeafKeysForRenderEntry(
+                            entry,
+                            renderableChildren,
+                            directVariants));
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -7891,7 +8391,8 @@ private static string BuildHierarchicalVariantNotes(
             List<int> numbering,
             int depth,
             string inheritedProbabilityLine = null,
-            string inheritedGuardKey = null)
+            string inheritedGuardKey = null,
+            IReadOnlySet<string> siblingNoOpLeafKeys = null)
         {
             if (!IsRenderableStructuralNode(node))
                 return;
@@ -7899,6 +8400,10 @@ private static string BuildHierarchicalVariantNotes(
             var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
                 .Where(IsRenderableStructuralNode)
                 .ToList();
+            renderableChildren = SuppressNoOpChildrenInTransparentRenderNode(
+                node,
+                renderableChildren,
+                siblingNoOpLeafKeys);
             int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
             bool suppressEmptyPromptTerminalDirectVariants =
                 ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildren.Count);
@@ -7909,6 +8414,26 @@ private static string BuildHierarchicalVariantNotes(
                     renderableChildren.Count,
                     suppressEmptyPromptTerminalDirectVariants))
                 .ToList();
+            renderableDirectVariants = SuppressInheritedDuplicateNoOpDirectVariants(
+                node,
+                renderableChildren,
+                renderableDirectVariants,
+                siblingNoOpLeafKeys);
+
+            if (renderableChildren.Count == 1 &&
+                renderableDirectVariants.Count == 0 &&
+                IsTransparentRenderNode(node))
+            {
+                RenderVariantTreeNode(
+                    renderableChildren[0],
+                    sb,
+                    numbering,
+                    depth,
+                    inheritedProbabilityLine,
+                    inheritedGuardKey,
+                    siblingNoOpLeafKeys);
+                return;
+            }
 
             string indent = new string(' ', depth * 3);
             string variantNumber = string.Join(".", numbering);
@@ -8026,9 +8551,17 @@ private static string BuildHierarchicalVariantNotes(
             bool wroteAny = false;
             string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
             string descendantSuppressedGuardKey = sharedGuardKey ?? inheritedGuardKey;
+            var orderedEntries = BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
+            bool parentHeaderIsOnlyVariantNumber = Regex.IsMatch(
+                header.Trim(),
+                @"^Вариант\s+\d+(?:\.\d+)*:$",
+                RegexOptions.CultureInvariant);
 
-            foreach (var entry in BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels))
+            foreach (var entry in orderedEntries)
             {
+                if (ShouldSkipNoOpRenderEntryInTransparentParent(parentHeaderIsOnlyVariantNumber, entry, orderedEntries))
+                    continue;
+
                 if (wroteAny)
                     sb.AppendLine();
 
@@ -8040,7 +8573,11 @@ private static string BuildHierarchicalVariantNotes(
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
                         descendantSuppressedProbabilityLine,
-                        descendantSuppressedGuardKey);
+                        descendantSuppressedGuardKey,
+                        BuildSiblingNoOpLeafKeysForRenderEntry(
+                            entry,
+                            renderableChildren,
+                            renderableDirectVariants));
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -8076,6 +8613,201 @@ private static string BuildHierarchicalVariantNotes(
                 }
 
                 wroteAny = true;
+            }
+        }
+
+        private static bool ShouldSkipNoOpRenderEntryInTransparentParent(
+            bool parentHeaderIsOnlyVariantNumber,
+            OrderedRenderEntry entry,
+            List<OrderedRenderEntry> siblingEntries)
+        {
+            if (!parentHeaderIsOnlyVariantNumber ||
+                entry == null ||
+                siblingEntries == null ||
+                siblingEntries.Count <= 1)
+                return false;
+
+            if (entry.DirectVariant != null)
+                return !string.IsNullOrWhiteSpace(BuildUserVisibleNoOpRenderKey(entry.DirectVariant));
+
+            if (entry.ChildNode == null)
+                return false;
+
+            if (TryBuildNoOpOnlyRenderNodeKey(entry.ChildNode, out _))
+                return true;
+
+            return !string.IsNullOrWhiteSpace(
+                BuildUserVisibleNoOpRenderKey(GetSingleLeafVariantItem(entry.ChildNode)));
+        }
+
+        private static List<VariantRenderItem> SuppressInheritedDuplicateNoOpDirectVariants(
+            VariantTreeNode node,
+            List<VariantTreeNode> renderableChildren,
+            List<VariantRenderItem> renderableDirectVariants,
+            IReadOnlySet<string> siblingNoOpLeafKeys)
+        {
+            if (node == null ||
+                renderableChildren == null ||
+                renderableChildren.Count == 0 ||
+                !IsTransparentRenderNode(node))
+            {
+                return renderableDirectVariants ?? new List<VariantRenderItem>();
+            }
+
+            return (renderableDirectVariants ?? new List<VariantRenderItem>())
+                .Where(item =>
+                {
+                    string key = BuildUserVisibleNoOpRenderKey(item);
+                    if (string.IsNullOrWhiteSpace(key))
+                        return true;
+
+                    return siblingNoOpLeafKeys != null &&
+                           siblingNoOpLeafKeys.Count > 0 &&
+                           !siblingNoOpLeafKeys.Contains(key);
+                })
+                .ToList();
+        }
+
+        private static List<VariantTreeNode> SuppressNoOpChildrenInTransparentRenderNode(
+            VariantTreeNode node,
+            List<VariantTreeNode> renderableChildren,
+            IReadOnlySet<string> siblingNoOpLeafKeys)
+        {
+            if (node == null ||
+                renderableChildren == null ||
+                renderableChildren.Count <= 1 ||
+                !IsTransparentRenderNode(node))
+            {
+                return renderableChildren ?? new List<VariantTreeNode>();
+            }
+
+            var result = new List<VariantTreeNode>();
+            foreach (var child in renderableChildren)
+            {
+                if (TryBuildNoOpOnlyRenderNodeKey(child, out string noOpKey))
+                {
+                    bool hasSiblingMatch = siblingNoOpLeafKeys != null &&
+                                           siblingNoOpLeafKeys.Count > 0 &&
+                                           siblingNoOpLeafKeys.Contains(noOpKey);
+                    if (hasSiblingMatch || siblingNoOpLeafKeys == null || siblingNoOpLeafKeys.Count == 0)
+                        continue;
+                }
+
+                result.Add(child);
+            }
+
+            return result.Count == 0 ? renderableChildren : result;
+        }
+
+        private static bool TryBuildNoOpOnlyRenderNodeKey(VariantTreeNode node, out string key)
+        {
+            key = null;
+            if (node == null || HasUserVisibleNodeLabelOrAnnotation(node))
+                return false;
+
+            var keys = new HashSet<string>(StringComparer.Ordinal);
+            if (node.CommonLines != null && node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+            {
+                string commonKey = BuildUserVisibleNoOpLineKey(node.CommonLines);
+                if (string.IsNullOrWhiteSpace(commonKey))
+                    return false;
+
+                keys.Add(commonKey);
+            }
+
+            foreach (var item in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                if (item == null)
+                    continue;
+
+                string itemKey = BuildUserVisibleNoOpRenderKey(item);
+                if (string.IsNullOrWhiteSpace(itemKey) && IsRenderableDirectVariant(item))
+                    return false;
+
+                if (!string.IsNullOrWhiteSpace(itemKey))
+                    keys.Add(itemKey);
+            }
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (child == null)
+                    continue;
+
+                if (!TryBuildNoOpOnlyRenderNodeKey(child, out string childKey))
+                    return false;
+
+                if (!string.IsNullOrWhiteSpace(childKey))
+                    keys.Add(childKey);
+            }
+
+            if (keys.Count != 1)
+                return false;
+
+            key = keys.First();
+            return true;
+        }
+
+        private static bool IsTransparentRenderNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (HasUserVisibleNodeLabelOrAnnotation(node))
+                return false;
+
+            return node.CommonLines == null ||
+                   !node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        private static HashSet<string> BuildSiblingNoOpLeafKeysForRenderEntry(
+            OrderedRenderEntry currentEntry,
+            IEnumerable<VariantTreeNode> siblingChildren,
+            IEnumerable<VariantRenderItem> siblingDirectVariants)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in siblingDirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                if (currentEntry?.DirectVariant != null && ReferenceEquals(item, currentEntry.DirectVariant))
+                    continue;
+
+                string key = BuildUserVisibleNoOpRenderKey(item);
+                if (!string.IsNullOrWhiteSpace(key))
+                    result.Add(key);
+            }
+
+            foreach (var child in siblingChildren ?? Enumerable.Empty<VariantTreeNode>())
+            {
+                if (currentEntry?.ChildNode != null && ReferenceEquals(child, currentEntry.ChildNode))
+                    continue;
+
+                foreach (var key in CollectNoOpLeafKeys(child))
+                    result.Add(key);
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<string> CollectNoOpLeafKeys(VariantTreeNode node)
+        {
+            if (node == null)
+                yield break;
+
+            string nodeNoOpKey = BuildUserVisibleNoOpRenderKey(node);
+            if (!string.IsNullOrWhiteSpace(nodeNoOpKey))
+                yield return nodeNoOpKey;
+
+            foreach (var item in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                string key = BuildUserVisibleNoOpRenderKey(item);
+                if (!string.IsNullOrWhiteSpace(key))
+                    yield return key;
+            }
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                foreach (var key in CollectNoOpLeafKeys(child))
+                    yield return key;
             }
         }
 

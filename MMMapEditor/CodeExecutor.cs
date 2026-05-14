@@ -8024,7 +8024,7 @@ namespace MMMapEditor
             }
         }
 
-        private bool TryTrackBattleMonsterStrengthSetFromKnownValue(
+        private bool TryTrackBattleMonsterStrengthSet(
             BinaryReader br,
             ushort memAddr,
             byte newValue,
@@ -8034,12 +8034,13 @@ namespace MMMapEditor
             uint instructionAddress,
             bool debugMode)
         {
-            if (memAddr != BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS ||
-                !TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte previousValue))
+            if (memAddr != BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS)
             {
                 return false;
             }
 
+            byte previousValue = 0;
+            TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out previousValue);
             TrackBattleMonsterStrengthAdjustment(
                 result,
                 memAddr,
@@ -8070,6 +8071,128 @@ namespace MMMapEditor
             TrackBattleMonsterStrengthAdjustment(result, memAddr, delta, instructionAddress, debugMode);
             registerTracker.ClearMemoryByteDeltaSourceForRegister(registerName);
             return true;
+        }
+
+        private bool TrySplitSemanticRangeByteRegisterWrite(
+            ushort memAddr,
+            string registerName,
+            RegisterTracker registerTracker,
+            PathAnalysisResult result,
+            uint instructionAddress,
+            int callDepth,
+            List<uint> pendingReturnAddresses,
+            bool debugMode)
+        {
+            if (result == null ||
+                !ShouldSplitSemanticRangeByteWrite(memAddr) ||
+                registerTracker == null ||
+                string.IsNullOrWhiteSpace(registerName) ||
+                !registerTracker.TryGetRegisterRange(registerName, out var range) ||
+                range == null ||
+                range.IsExact ||
+                !registerTracker.TryGetRegisterDistribution(registerName, out var distribution) ||
+                !IsRandomLikeDistribution(distribution))
+            {
+                return false;
+            }
+
+            var candidates = BuildSemanticRangeSplitCandidates(registerTracker, registerName, range, distribution);
+            if (candidates.Count <= 1 || candidates.Count > 16)
+                return false;
+
+            string fullRegisterName = GetFullRegisterNameForByteRegister(registerName);
+            if (string.IsNullOrWhiteSpace(fullRegisterName))
+                return false;
+
+            int denominator = candidates.Count;
+            foreach (byte candidate in candidates)
+            {
+                var splitTracker = registerTracker.Clone();
+                splitTracker.TrackPartialRegisterOperation(
+                    fullRegisterName,
+                    registerName,
+                    candidate,
+                    instructionAddress,
+                    $"SPLIT {registerName}, 0x{candidate:X2}");
+
+                result.AlternativePaths.Add(new AlternativePath
+                {
+                    Address = instructionAddress,
+                    TargetAddress = instructionAddress,
+                    Condition = $"SPLIT [0x{memAddr:X4}] = 0x{candidate:X2}",
+                    Analyzed = false,
+                    PathNumber = result.AlternativePaths.Count + 1,
+                    RegisterState = splitTracker,
+                    IsInputChoiceBranch = false,
+                    ProbabilityNumerator = 1,
+                    ProbabilityDenominator = denominator,
+                    CallDepth = callDepth,
+                    PendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
+                    EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
+                    EmulatedMemory8Ranges = CloneRangeDictionary(_emulatedMemory8Ranges),
+                    EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                    EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
+                    PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
+                    BranchStateValueConstraints = new Dictionary<ushort, StateValueConstraintInfo>
+                    {
+                        [memAddr] = new StateValueConstraintInfo
+                        {
+                            ExactValues = new HashSet<byte> { candidate }
+                        }
+                    },
+                    BranchLocallyMaterializedStateValueConstraintAddresses = new HashSet<ushort> { memAddr }
+                });
+            }
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Развилка по диапазону {registerName} для семантической записи в [0x{memAddr:X4}]: " +
+                    string.Join("/", candidates.Select(value => $"0x{value:X2}")));
+            }
+
+            result.IsTerminated = true;
+            result.HasSignificantCode = true;
+            return true;
+        }
+
+        private static bool ShouldSplitSemanticRangeByteWrite(ushort memAddr)
+        {
+            return memAddr == BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS;
+        }
+
+        private static List<byte> BuildSemanticRangeSplitCandidates(
+            RegisterTracker registerTracker,
+            string registerName,
+            ValueRange8 range,
+            RegisterValueDistribution distribution)
+        {
+            if (registerTracker != null &&
+                registerTracker.TryGetRegisterDiscreteValues(registerName, out var discreteValues) &&
+                discreteValues != null &&
+                discreteValues.Count > 0)
+            {
+                return discreteValues
+                    .Where(value => value >= range.Min && value <= range.Max)
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToList();
+            }
+
+            var values = new List<byte>();
+            for (int value = range.Min; value <= range.Max; value++)
+            {
+                if (distribution == RegisterValueDistribution.EvenDiscreteRange &&
+                    (value & 1) != 0)
+                {
+                    continue;
+                }
+
+                values.Add((byte)value);
+            }
+
+            return values;
         }
 
         private static Dictionary<ushort, PersistentCounterProgressionInfo> ClonePendingPersistentCounterProgressions(
@@ -10206,6 +10329,18 @@ namespace MMMapEditor
                     result.HasSignificantCode = true;
                     return true;
                 }
+                else if (TrySplitSemanticRangeByteRegisterWrite(
+                             memAddr,
+                             "AL",
+                             registerTracker,
+                             result,
+                             address,
+                             callDepth,
+                             pendingReturnAddresses,
+                             debugMode))
+                {
+                    return true;
+                }
                 else if (registerTracker.TryGetPartyPointerByteValue("AL", out var alPointerByteSemanticOnly))
                 {
                     _emulatedMemory8.Remove(memAddr);
@@ -10286,7 +10421,7 @@ namespace MMMapEditor
                         debugMode);
                     if (!trackedBattleStrengthSet)
                     {
-                        trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSetFromKnownValue(
+                        trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSet(
                             br,
                             memAddr,
                             alValue,
@@ -10350,7 +10485,7 @@ namespace MMMapEditor
                         }
                         else if (hasExactMemAddr)
                         {
-                            bool trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSetFromKnownValue(
+                            bool trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSet(
                                 br,
                                 memAddr,
                                 immValue,
@@ -10518,7 +10653,7 @@ namespace MMMapEditor
                                 debugMode);
                             if (!trackedBattleStrengthSet)
                             {
-                                trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSetFromKnownValue(
+                                trackedBattleStrengthSet = TryTrackBattleMonsterStrengthSet(
                                     br,
                                     memAddr,
                                     regValue,
