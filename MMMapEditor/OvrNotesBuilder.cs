@@ -2660,7 +2660,6 @@ namespace MMMapEditor
             public List<string> CommonLines { get; set; } = new List<string>();
             public List<VariantRenderItem> DirectVariants { get; set; } = new List<VariantRenderItem>();
             public List<VariantTreeNode> Children { get; set; } = new List<VariantTreeNode>();
-            public bool PreserveAsStructuralGroup { get; set; }
         }
 
         private sealed class TopLevelVariantGroup
@@ -3068,10 +3067,8 @@ private static string BuildHierarchicalVariantNotes(
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 RemoveRedundantInheritedLines(root);
-                MarkTransparentMixedSiblingGroups(root);
                 CollapseTransparentDirectVariantWrappers(root);
                 IntroduceSharedLineHierarchyAcrossHiddenTechnicalChildren(root);
-                MarkTransparentMixedSiblingGroups(root);
                 CollapseTransparentDirectVariantWrappers(root);
                 RemoveRedundantInheritedLines(root);
                 group.TreeRoot = PruneDecorativeChoiceLeaves(
@@ -5503,7 +5500,7 @@ private static string BuildHierarchicalVariantNotes(
 
             return node.CommonLines != null &&
                    node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)) &&
-                   GetAllVariants(node).Any(item => item != null);
+                   HasAnyVariantItem(node);
         }
 
         private static string GetFirstMeaningfulLine(IEnumerable<string> lines)
@@ -5514,18 +5511,44 @@ private static string BuildHierarchicalVariantNotes(
 
         private static void CollapseTransparentDirectVariantWrappers(VariantTreeNode node)
         {
+            CollapseTransparentDirectVariantWrappers(
+                node,
+                new Dictionary<VariantTreeNode, bool>());
+        }
+
+        private static void CollapseTransparentDirectVariantWrappers(
+            VariantTreeNode node,
+            Dictionary<VariantTreeNode, bool> renderabilityCache)
+        {
             if (node == null)
                 return;
 
             foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
-                CollapseTransparentDirectVariantWrappers(child);
+                CollapseTransparentDirectVariantWrappers(child, renderabilityCache);
+
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+            if (children.Count == 0)
+                return;
+
+            bool hasRenderableDirectSibling = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Any(IsRenderableDirectVariant);
+            var renderableChildFlags = children
+                .Select(child => IsRenderableStructuralNode(child, renderabilityCache))
+                .ToList();
+            int renderableChildCount = renderableChildFlags.Count(isRenderable => isRenderable);
 
             var promotedDirectVariants = new List<VariantRenderItem>();
             var rebuiltChildren = new List<VariantTreeNode>();
             bool changed = false;
-            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            for (int i = 0; i < children.Count; i++)
             {
-                if (IsTransparentDirectVariantWrapper(child))
+                var child = children[i];
+                bool hasRenderableSibling = hasRenderableDirectSibling ||
+                                            renderableChildCount - (renderableChildFlags[i] ? 1 : 0) > 0;
+
+                if (IsTransparentDirectVariantWrapper(child, hasRenderableSibling, renderabilityCache))
                 {
                     promotedDirectVariants.AddRange(
                         (child.DirectVariants ?? new List<VariantRenderItem>())
@@ -5551,66 +5574,37 @@ private static string BuildHierarchicalVariantNotes(
             }
         }
 
-        private static void MarkTransparentMixedSiblingGroups(VariantTreeNode node)
-        {
-            if (node == null)
-                return;
-
-            foreach (var child in node.Children ?? new List<VariantTreeNode>())
-                MarkTransparentMixedSiblingGroups(child);
-
-            foreach (var child in node.Children ?? new List<VariantTreeNode>())
-            {
-                if (ShouldPreserveTransparentMixedSiblingGroup(node, child))
-                    child.PreserveAsStructuralGroup = true;
-            }
-        }
-
         private static bool ShouldPreserveTransparentMixedSiblingGroup(
-            VariantTreeNode parent,
-            VariantTreeNode child)
+            VariantTreeNode node,
+            bool hasRenderableSibling,
+            Dictionary<VariantTreeNode, bool> renderabilityCache)
         {
-            if (parent == null || child == null)
+            if (node == null || !hasRenderableSibling)
                 return false;
 
-            if (HasUserVisibleNodeLabelOrAnnotation(child))
+            if (HasUserVisibleNodeLabelOrAnnotation(node))
                 return false;
 
-            if (child.CommonLines != null && child.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+            if (node.CommonLines != null && node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
                 return false;
 
-            bool hasDirectOutcome = child.DirectVariants != null &&
-                                    child.DirectVariants.Any(IsRenderableDirectVariant);
-            bool hasNestedOutcome = child.Children != null &&
-                                    child.Children.Any(IsRenderableStructuralNode);
-            if (!hasDirectOutcome || !hasNestedOutcome)
-                return false;
+            bool hasDirectOutcome = node.DirectVariants != null &&
+                                    node.DirectVariants.Any(IsRenderableDirectVariant);
+            bool hasNestedOutcome = node.Children != null &&
+                                    node.Children.Any(child => IsRenderableStructuralNode(child, renderabilityCache));
 
-            return HasRenderableSiblingEntry(parent, child);
+            return hasDirectOutcome && hasNestedOutcome;
         }
 
-        private static bool HasRenderableSiblingEntry(VariantTreeNode parent, VariantTreeNode child)
-        {
-            if (parent == null)
-                return false;
-
-            if ((parent.DirectVariants ?? new List<VariantRenderItem>())
-                .Any(IsRenderableDirectVariant))
-            {
-                return true;
-            }
-
-            return (parent.Children ?? new List<VariantTreeNode>())
-                .Any(sibling => !ReferenceEquals(sibling, child) &&
-                                IsRenderableStructuralNode(sibling));
-        }
-
-        private static bool IsTransparentDirectVariantWrapper(VariantTreeNode node)
+        private static bool IsTransparentDirectVariantWrapper(
+            VariantTreeNode node,
+            bool hasRenderableSibling,
+            Dictionary<VariantTreeNode, bool> renderabilityCache)
         {
             if (node == null)
                 return false;
 
-            if (node.PreserveAsStructuralGroup)
+            if (ShouldPreserveTransparentMixedSiblingGroup(node, hasRenderableSibling, renderabilityCache))
                 return false;
 
             if (HasUserVisibleNodeLabelOrAnnotation(node))
@@ -5622,9 +5616,42 @@ private static string BuildHierarchicalVariantNotes(
             bool hasDirectVariant = node.DirectVariants != null &&
                                     node.DirectVariants.Any(item => item != null);
             bool hasRenderableChild = node.Children != null &&
-                                      node.Children.Any(IsRenderableStructuralNode);
+                                      node.Children.Any(child => IsRenderableStructuralNode(child, renderabilityCache));
 
             return hasDirectVariant || hasRenderableChild;
+        }
+
+        private static bool IsRenderableStructuralNode(
+            VariantTreeNode node,
+            Dictionary<VariantTreeNode, bool> renderabilityCache)
+        {
+            if (node == null)
+                return false;
+
+            if (renderabilityCache != null && renderabilityCache.TryGetValue(node, out bool cached))
+                return cached;
+
+            bool result =
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)) ||
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node.HeaderAnnotation)) ||
+                ((node.CommonLines?.Count ?? 0) > 0) ||
+                (node.Children != null && node.Children.Any(child => IsRenderableStructuralNode(child, renderabilityCache))) ||
+                (node.DirectVariants != null && node.DirectVariants.Any(IsRenderableDirectVariant));
+
+            if (renderabilityCache != null)
+                renderabilityCache[node] = result;
+            return result;
+        }
+
+        private static bool HasAnyVariantItem(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (node.DirectVariants != null && node.DirectVariants.Any(item => item != null))
+                return true;
+
+            return node.Children != null && node.Children.Any(HasAnyVariantItem);
         }
 
         private static bool HasUserVisibleNodeLabelOrAnnotation(VariantTreeNode node)

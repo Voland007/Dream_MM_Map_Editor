@@ -44,6 +44,8 @@ namespace MMMapEditor
         private readonly Dictionary<ushort, PartyMemberReference> _emulatedPartyPointers = new Dictionary<ushort, PartyMemberReference>();
         private readonly Dictionary<ushort, PartyPointerByteReference> _emulatedPartyPointerBytes = new Dictionary<ushort, PartyPointerByteReference>();
         private readonly HashSet<ushort> _persistentEventStateAddresses = new HashSet<ushort>();
+        private readonly Dictionary<uint, X86Instruction> _instructionCache = new Dictionary<uint, X86Instruction>();
+        private readonly HashSet<uint> _invalidInstructionCache = new HashSet<uint>();
 
         private enum ShiftLoopTargetKind
         {
@@ -9917,6 +9919,15 @@ namespace MMMapEditor
             long fileLength = br.BaseStream.Length;
             if (address >= fileLength) return false;
 
+            if (_instructionCache.TryGetValue(address, out var cachedInstruction))
+            {
+                instruction = cachedInstruction;
+                return true;
+            }
+
+            if (_invalidInstructionCache.Contains(address))
+                return false;
+
             int bytesToRead = (int)Math.Min(16, fileLength - address);
             byte[] chunk = ReadBytesAt(br, address, bytesToRead);
 
@@ -9924,9 +9935,11 @@ namespace MMMapEditor
             if (instructions != null && instructions.Length > 0)
             {
                 instruction = instructions[0];
+                _instructionCache[address] = instruction;
                 return true;
             }
 
+            _invalidInstructionCache.Add(address);
             return false;
         }
 

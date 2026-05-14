@@ -37,8 +37,8 @@ namespace MMMapEditor
         private readonly InstructionAnalyzer _instructionAnalyzer;
         private readonly CodeExecutor _codeExecutor;
         private readonly PathAnalyzer _pathAnalyzer;
-        private readonly Dictionary<string, ObjectVariantAnalysisCacheEntry> _objectVariantAnalysisCache
-            = new Dictionary<string, ObjectVariantAnalysisCacheEntry>(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<ObjectVariantAnalysisCacheEntry>> _objectVariantAnalysisCache
+            = new Dictionary<string, List<ObjectVariantAnalysisCacheEntry>>(StringComparer.Ordinal);
         private readonly Dictionary<string, SingleOccurrenceAnalysisCacheEntry> _singleOccurrenceAnalysisCache
             = new Dictionary<string, SingleOccurrenceAnalysisCacheEntry>(StringComparer.Ordinal);
 
@@ -1270,6 +1270,7 @@ namespace MMMapEditor
             public string SampleVisitedKey { get; set; } = string.Empty;
             public bool SampleUsesInitialCoordinates { get; set; }
             public bool CoordinateSensitiveMismatchObserved { get; set; }
+            public List<StaticMapReadPatternEntry> StaticMapReadPattern { get; set; } = new List<StaticMapReadPatternEntry>();
             public HashSet<string> MatchingCoordinatePairs { get; set; } = new HashSet<string>(StringComparer.Ordinal);
             public HashSet<byte> MatchingXValues { get; set; } = new HashSet<byte>();
             public HashSet<byte> MatchingYValues { get; set; } = new HashSet<byte>();
@@ -1278,6 +1279,14 @@ namespace MMMapEditor
             public bool IsCoordinateIndependentVerified { get; set; }
             public Dictionary<int, PathVariantInfo> ReusableVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
             public HashSet<uint> ReusableVisitedAddresses { get; set; } = new HashSet<uint>();
+        }
+
+        private sealed class StaticMapReadPatternEntry
+        {
+            public ushort LayerBaseAddress { get; set; }
+            public int DeltaX { get; set; }
+            public int DeltaY { get; set; }
+            public byte Value { get; set; }
         }
 
         private sealed class RepeatedEventStateInfo
@@ -4331,22 +4340,34 @@ namespace MMMapEditor
                 return false;
 
             string cacheKey = $"{analysisCacheScopeKey}|{startAddress:X4}";
-            if (!_objectVariantAnalysisCache.TryGetValue(cacheKey, out var entry) ||
-                entry == null ||
-                !entry.IsCoordinateIndependentVerified ||
-                entry.ReusableVariants == null ||
-                entry.ReusableVariants.Count == 0)
+            if (!_objectVariantAnalysisCache.TryGetValue(cacheKey, out var entries) ||
+                entries == null ||
+                entries.Count == 0)
             {
                 return false;
             }
 
-            if (reachableAddresses != null)
-                reachableAddresses.UnionWith(entry.ReusableVisitedAddresses ?? Enumerable.Empty<uint>());
+            foreach (var entry in entries)
+            {
+                if (entry == null ||
+                    !entry.IsCoordinateIndependentVerified ||
+                    entry.ReusableVariants == null ||
+                    entry.ReusableVariants.Count == 0 ||
+                    !StaticMapReadPatternMatches(entry.StaticMapReadPattern, targetX, targetY))
+                {
+                    continue;
+                }
 
-            AnalysisDebug.WriteLine(
-                $"    CACHE HIT object-variants для клетки ({targetX},{targetY}): {cacheKey}");
-            cachedVariants = CloneFinalVariants(entry.ReusableVariants);
-            return true;
+                if (reachableAddresses != null)
+                    reachableAddresses.UnionWith(entry.ReusableVisitedAddresses ?? Enumerable.Empty<uint>());
+
+                AnalysisDebug.WriteLine(
+                    $"    CACHE HIT object-variants для клетки ({targetX},{targetY}): {cacheKey}");
+                cachedVariants = CloneFinalVariants(entry.ReusableVariants);
+                return true;
+            }
+
+            return false;
         }
 
         private void RegisterCachedObjectVariants(
@@ -4369,39 +4390,45 @@ namespace MMMapEditor
                 return;
             }
 
-            // A broad object-variant cache is unsafe once the analyzed code reads
-            // the starting coordinates: early matching samples may all sit on the
-            // same side of a coordinate threshold (for example AREAD3 default-path
-            // branches at X < 7). The exact single-occurrence cache still covers
-            // repeated analysis for the same cell/state.
-            if (usesInitialCoordinates)
-                return;
-
-            if (ShouldSkipReusableObjectVariantCache(analysisCacheScopeKey, finalVariants))
+            var staticMapReadPattern = BuildStaticMapReadPattern(finalVariants, targetX, targetY);
+            if (ShouldSkipReusableObjectVariantCache(analysisCacheScopeKey, finalVariants, staticMapReadPattern))
                 return;
 
             string cacheKey = $"{analysisCacheScopeKey}|{startAddress:X4}";
             string signature = BuildFinalVariantsCacheSignature(finalVariants);
             string visitedKey = BuildVisitedAddressesKey(visitedAddresses);
 
-            if (!_objectVariantAnalysisCache.TryGetValue(cacheKey, out var entry) || entry == null)
+            if (!_objectVariantAnalysisCache.TryGetValue(cacheKey, out var entries) || entries == null)
             {
-                _objectVariantAnalysisCache[cacheKey] = new ObjectVariantAnalysisCacheEntry
+                _objectVariantAnalysisCache[cacheKey] = new List<ObjectVariantAnalysisCacheEntry>
                 {
-                    SampleX = targetX,
-                    SampleY = targetY,
-                    SampleSignature = signature,
-                    SampleVisitedKey = requireVisitedAddressEquivalence ? visitedKey : string.Empty,
-                    SampleUsesInitialCoordinates = usesInitialCoordinates,
-                    MatchingCoordinatePairs = new HashSet<string>(StringComparer.Ordinal)
-                    {
-                        BuildCoordinatePairKey(targetX, targetY)
-                    },
-                    MatchingXValues = new HashSet<byte> { targetX },
-                    MatchingYValues = new HashSet<byte> { targetY },
-                    SampleVariants = CloneFinalVariants(finalVariants),
-                    SampleVisitedAddresses = new HashSet<uint>(visitedAddresses ?? Enumerable.Empty<uint>())
+                    CreateObjectVariantAnalysisCacheEntry(
+                        targetX,
+                        targetY,
+                        signature,
+                        requireVisitedAddressEquivalence ? visitedKey : string.Empty,
+                        usesInitialCoordinates,
+                        staticMapReadPattern,
+                        finalVariants,
+                        visitedAddresses)
                 };
+                return;
+            }
+
+            var entry = entries.FirstOrDefault(candidate =>
+                candidate != null &&
+                StaticMapReadPatternsEquivalent(candidate.StaticMapReadPattern, staticMapReadPattern));
+            if (entry == null)
+            {
+                entries.Add(CreateObjectVariantAnalysisCacheEntry(
+                    targetX,
+                    targetY,
+                    signature,
+                    requireVisitedAddressEquivalence ? visitedKey : string.Empty,
+                    usesInitialCoordinates,
+                    staticMapReadPattern,
+                    finalVariants,
+                    visitedAddresses));
                 return;
             }
 
@@ -4451,9 +4478,39 @@ namespace MMMapEditor
                     .Concat(visitedAddresses ?? Enumerable.Empty<uint>()));
         }
 
+        private ObjectVariantAnalysisCacheEntry CreateObjectVariantAnalysisCacheEntry(
+            byte targetX,
+            byte targetY,
+            string signature,
+            string visitedKey,
+            bool usesInitialCoordinates,
+            List<StaticMapReadPatternEntry> staticMapReadPattern,
+            Dictionary<int, PathVariantInfo> finalVariants,
+            HashSet<uint> visitedAddresses)
+        {
+            return new ObjectVariantAnalysisCacheEntry
+            {
+                SampleX = targetX,
+                SampleY = targetY,
+                SampleSignature = signature,
+                SampleVisitedKey = visitedKey,
+                SampleUsesInitialCoordinates = usesInitialCoordinates,
+                StaticMapReadPattern = CloneStaticMapReadPattern(staticMapReadPattern),
+                MatchingCoordinatePairs = new HashSet<string>(StringComparer.Ordinal)
+                {
+                    BuildCoordinatePairKey(targetX, targetY)
+                },
+                MatchingXValues = new HashSet<byte> { targetX },
+                MatchingYValues = new HashSet<byte> { targetY },
+                SampleVariants = CloneFinalVariants(finalVariants),
+                SampleVisitedAddresses = new HashSet<uint>(visitedAddresses ?? Enumerable.Empty<uint>())
+            };
+        }
+
         private static bool ShouldSkipReusableObjectVariantCache(
             string analysisCacheScopeKey,
-            Dictionary<int, PathVariantInfo> finalVariants)
+            Dictionary<int, PathVariantInfo> finalVariants,
+            List<StaticMapReadPatternEntry> staticMapReadPattern)
         {
             if (string.IsNullOrWhiteSpace(analysisCacheScopeKey) ||
                 finalVariants == null ||
@@ -4463,8 +4520,8 @@ namespace MMMapEditor
             }
 
             return finalVariants.Values.Any(variant =>
-                variant?.UsesStaticMapData == true ||
-                IsCoordinateSensitiveBattleTableVariant(variant));
+                IsCoordinateSensitiveBattleTableVariant(variant) &&
+                (staticMapReadPattern == null || staticMapReadPattern.Count == 0));
         }
 
         private static bool IsCoordinateSensitiveBattleTableVariant(PathVariantInfo variant)
@@ -4478,6 +4535,157 @@ namespace MMMapEditor
                    ((variant.LoadedValues?.Count ?? 0) > 0);
         }
 
+        private List<StaticMapReadPatternEntry> BuildStaticMapReadPattern(
+            Dictionary<int, PathVariantInfo> finalVariants,
+            byte sampleX,
+            byte sampleY)
+        {
+            var result = new Dictionary<string, StaticMapReadPatternEntry>(StringComparer.Ordinal);
+            if (finalVariants == null || finalVariants.Count == 0)
+                return new List<StaticMapReadPatternEntry>();
+
+            foreach (var variant in finalVariants.Values.Where(variant => variant?.StaticMapDataReads != null))
+            {
+                foreach (var read in variant.StaticMapDataReads)
+                {
+                    if (!TryBuildStaticMapReadPatternEntry(read.Key, read.Value, sampleX, sampleY, out var entry))
+                        continue;
+
+                    string key = BuildStaticMapReadPatternEntryKey(entry);
+                    result[key] = entry;
+                }
+            }
+
+            return result.Values
+                .OrderBy(entry => entry.LayerBaseAddress)
+                .ThenBy(entry => entry.DeltaY)
+                .ThenBy(entry => entry.DeltaX)
+                .ThenBy(entry => entry.Value)
+                .ToList();
+        }
+
+        private static bool TryBuildStaticMapReadPatternEntry(
+            ushort memAddr,
+            byte value,
+            byte sampleX,
+            byte sampleY,
+            out StaticMapReadPatternEntry entry)
+        {
+            entry = null;
+
+            ushort layerBaseAddress;
+            int offset = memAddr - StaticMapFirstLayerBaseAddress;
+            if (offset >= 0 && offset < StaticMapLayerByteCount)
+            {
+                layerBaseAddress = StaticMapFirstLayerBaseAddress;
+            }
+            else
+            {
+                offset = memAddr - StaticMapSecondLayerBaseAddress;
+                if (offset < 0 || offset >= StaticMapLayerByteCount)
+                    return false;
+
+                layerBaseAddress = StaticMapSecondLayerBaseAddress;
+            }
+
+            int readX = offset % StaticMapLayerWidth;
+            int readY = offset / StaticMapLayerWidth;
+            entry = new StaticMapReadPatternEntry
+            {
+                LayerBaseAddress = layerBaseAddress,
+                DeltaX = readX - sampleX,
+                DeltaY = readY - sampleY,
+                Value = value
+            };
+            return true;
+        }
+
+        private bool StaticMapReadPatternMatches(
+            List<StaticMapReadPatternEntry> pattern,
+            byte targetX,
+            byte targetY)
+        {
+            if (pattern == null || pattern.Count == 0)
+                return true;
+
+            foreach (var entry in pattern)
+            {
+                if (entry == null)
+                    continue;
+
+                int readX = targetX + entry.DeltaX;
+                int readY = targetY + entry.DeltaY;
+                if (readX < 0 || readX >= StaticMapLayerWidth ||
+                    readY < 0 || readY >= StaticMapLayerHeight)
+                {
+                    return false;
+                }
+
+                int offset = (readY * StaticMapLayerWidth) + readX;
+                byte actualValue;
+                if (entry.LayerBaseAddress == StaticMapFirstLayerBaseAddress)
+                {
+                    if (!TryReadStaticMapLayerCell(_config?.First16Lines, offset, out actualValue))
+                        return false;
+                }
+                else if (entry.LayerBaseAddress == StaticMapSecondLayerBaseAddress)
+                {
+                    if (!TryReadStaticMapLayerCell(_config?.Second16Lines, offset, out actualValue))
+                        return false;
+                }
+                else
+                {
+                    return false;
+                }
+
+                if (actualValue != entry.Value)
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool StaticMapReadPatternsEquivalent(
+            List<StaticMapReadPatternEntry> left,
+            List<StaticMapReadPatternEntry> right)
+        {
+            var leftKeys = (left ?? new List<StaticMapReadPatternEntry>())
+                .Where(entry => entry != null)
+                .Select(BuildStaticMapReadPatternEntryKey)
+                .OrderBy(key => key, StringComparer.Ordinal)
+                .ToList();
+            var rightKeys = (right ?? new List<StaticMapReadPatternEntry>())
+                .Where(entry => entry != null)
+                .Select(BuildStaticMapReadPatternEntryKey)
+                .OrderBy(key => key, StringComparer.Ordinal)
+                .ToList();
+
+            return leftKeys.SequenceEqual(rightKeys, StringComparer.Ordinal);
+        }
+
+        private static List<StaticMapReadPatternEntry> CloneStaticMapReadPattern(
+            List<StaticMapReadPatternEntry> source)
+        {
+            return (source ?? new List<StaticMapReadPatternEntry>())
+                .Where(entry => entry != null)
+                .Select(entry => new StaticMapReadPatternEntry
+                {
+                    LayerBaseAddress = entry.LayerBaseAddress,
+                    DeltaX = entry.DeltaX,
+                    DeltaY = entry.DeltaY,
+                    Value = entry.Value
+                })
+                .ToList();
+        }
+
+        private static string BuildStaticMapReadPatternEntryKey(StaticMapReadPatternEntry entry)
+        {
+            if (entry == null)
+                return "<NULL>";
+
+            return $"{entry.LayerBaseAddress:X4}:{entry.DeltaX}:{entry.DeltaY}:{entry.Value:X2}";
+        }
+
         private string BuildCoordinatePairKey(byte x, byte y)
         {
             return $"{x},{y}";
@@ -4488,20 +4696,20 @@ namespace MMMapEditor
             if (entry == null)
                 return false;
 
-            if (entry.MatchingCoordinatePairs.Count < 4)
-                return false;
-
             if (!string.IsNullOrWhiteSpace(cacheKey))
             {
                 if (cacheKey.Contains("|XCoord|", StringComparison.Ordinal))
-                    return entry.MatchingXValues.Count >= 2;
+                    return entry.MatchingCoordinatePairs.Count >= 4 &&
+                           entry.MatchingXValues.Count >= 2;
 
                 if (cacheKey.Contains("|YCoord|", StringComparison.Ordinal))
-                    return entry.MatchingYValues.Count >= 2;
+                    return entry.MatchingCoordinatePairs.Count >= 4 &&
+                           entry.MatchingYValues.Count >= 2;
             }
 
-            return entry.MatchingXValues.Count >= 2 &&
-                   entry.MatchingYValues.Count >= 2;
+            return entry.MatchingCoordinatePairs.Count >= 8 &&
+                   entry.MatchingXValues.Count >= 4 &&
+                   entry.MatchingYValues.Count >= 4;
         }
 
         private string BuildFinalVariantsCacheSignature(Dictionary<int, PathVariantInfo> finalVariants)
@@ -5200,6 +5408,10 @@ namespace MMMapEditor
             AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress:X4}");
 
             int objectsCreated = 0;
+            var existingObjectCoords = new HashSet<string>(
+                (existingObjects ?? new List<OvrObject>())
+                .Select(o => $"{o.X},{o.Y}"));
+            var defaultPathCells = new List<Point>();
 
             for (byte x = 0; x < 16; x++)
             {
@@ -5229,7 +5441,7 @@ namespace MMMapEditor
                         continue;
                     }
 
-                    bool alreadyExists = existingObjects.Any(o => o.X == x && o.Y == y);
+                    bool alreadyExists = existingObjectCoords.Contains(coordKey);
                     if (alreadyExists)
                     {
                         using (AnalysisDebug.BeginCellScope(x, y))
@@ -5238,6 +5450,15 @@ namespace MMMapEditor
                         }
                         continue;
                     }
+
+                    defaultPathCells.Add(cellPos);
+                }
+            }
+
+            foreach (var cellPos in OrderCellsForCacheEvidence(defaultPathCells))
+            {
+                byte x = (byte)cellPos.X;
+                byte y = (byte)cellPos.Y;
 
                     using (AnalysisDebug.BeginCellScope(x, y))
                     {
@@ -5295,7 +5516,6 @@ namespace MMMapEditor
                         objects.Add(obj);
                         objectsCreated++;
                     }
-                }
             }
 
             AnalysisDebug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
