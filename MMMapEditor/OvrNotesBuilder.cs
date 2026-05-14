@@ -656,7 +656,12 @@ namespace MMMapEditor
             if (items.Count <= 1)
                 return null;
 
+            items = ApplySingleMemberPartyScanDisplayModel(items);
+            if (items.Count <= 1)
+                return null;
+
             items = DeduplicateDisplayedVariantItems(items);
+            items = ApplySingleMemberPartyScanDisplayModel(items);
             if (items.Count <= 1)
                 return null;
 
@@ -666,7 +671,7 @@ namespace MMMapEditor
                 .ToList();
             var sourceItemsByKey = BuildSourceVariantItemMap(obj, sourceItems);
 
-            var groups = BuildTopLevelVariantGroups(items);
+            var groups = BuildTopLevelVariantGroups(obj, items);
             if (groups.Count == 0)
                 return null;
 
@@ -721,6 +726,29 @@ namespace MMMapEditor
                 mappedFlatVariants.Add((flatVariants[i], i, sourceVariantKey));
             }
 
+            if (containsPartyScan)
+            {
+                foreach (var sourceItem in sourceItems)
+                {
+                    if (!TryFindPathVariantKey(obj, sourceItem?.Variant, out int sourceKey) ||
+                        usedSourceVariantKeys.Contains(sourceKey) ||
+                        !IsSingleMemberPartyScanPromptOnlySourceItem(sourceItem))
+                    {
+                        continue;
+                    }
+
+                    mappedFlatVariants.Add((
+                        new FlatVariantRenderItem
+                        {
+                            Variant = sourceItem.Variant,
+                            Lines = sourceItem.Lines?.ToList() ?? new List<string>()
+                        },
+                        -1,
+                        sourceKey));
+                    usedSourceVariantKeys.Add(sourceKey);
+                }
+            }
+
             var orderedFlatVariants = mappedFlatVariants
                 .OrderBy(item => item.SourceVariantKey ?? int.MaxValue)
                 .ThenBy(item => item.OriginalIndex)
@@ -747,6 +775,56 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static bool IsSingleMemberPartyScanPromptOnlySourceItem(VariantRenderItem item)
+        {
+            var variant = item?.Variant;
+            if (variant == null ||
+                HasPartyScanAnswerText(item) ||
+                !HasInputChoiceBranch(variant) ||
+                HasNonTextOutcome(variant))
+            {
+                return false;
+            }
+
+            return (item.Lines ?? new List<string>())
+                .Any(IsPromptLine);
+        }
+
+        private static bool HasInputChoiceBranch(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?.Any(choice =>
+                choice != null &&
+                (HasExplicitInputChoiceHint(choice.Label) ||
+                 string.Equals(choice.CompareRegister, "AL", StringComparison.OrdinalIgnoreCase) &&
+                 choice.CompareValue.HasValue)) == true;
+        }
+
+        private static bool HasNonTextOutcome(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            return variant.RandomEncounterMonsterPowerCap.HasValue ||
+                   variant.RandomEncounterMonsterLevelCap.HasValue ||
+                   variant.RandomEncounterMonsterBatchCountCap.HasValue ||
+                   variant.DarkeningLevel.HasValue ||
+                   variant.RandomEncounterChance.HasValue ||
+                   variant.RandomEncounterRubicon.HasValue ||
+                   variant.BattleMonsterStrengthAdjustment != 0 ||
+                   variant.CallsRandomEncounter ||
+                   variant.HasTeleportTarget ||
+                   variant.BattleMonsterCount.HasValue ||
+                   variant.BattleMonsterCountRange != null ||
+                   variant.IsBattleMonsterCountIndeterminate ||
+                   (variant.PersistentCounterProgressions != null && variant.PersistentCounterProgressions.Count > 0) ||
+                   (variant.DynamicRandomBoundDependencies != null && variant.DynamicRandomBoundDependencies.Count > 0) ||
+                   (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0) ||
+                   (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0) ||
+                   variant.HasAnyTableLoad ||
+                   (variant.LoadedValues != null && variant.LoadedValues.Count > 0) ||
+                   (variant.PartyEffects != null && variant.PartyEffects.Count > 0);
         }
 
         private static Dictionary<int, VariantRenderItem> BuildSourceVariantItemMap(
@@ -1221,6 +1299,8 @@ namespace MMMapEditor
             if (TryAttachPartyScanAggregateLinesToOutcome(summaries, aggregateLines))
                 aggregateLines = new List<string>();
 
+            result.AddRange(BuildPartyScanNoChoiceSiblingFlatVariants(node, scanNode, prefix));
+
             foreach (var summary in summaries
                 .OrderBy(summary => summary.OrderKey)
                 .ThenBy(summary => summary.Label ?? string.Empty, StringComparer.Ordinal))
@@ -1244,6 +1324,111 @@ namespace MMMapEditor
             }
 
             return result.Count > 0;
+        }
+
+        private static List<FlatVariantRenderItem> BuildPartyScanNoChoiceSiblingFlatVariants(
+            VariantTreeNode node,
+            VariantTreeNode scanNode,
+            List<string> prefix)
+        {
+            var result = new List<FlatVariantRenderItem>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in OrderDirectVariants(node?.DirectVariants)
+                .Where(ShouldRenderAsNoChoiceVariant))
+            {
+                AddPartyScanNoChoiceFlatVariant(result, seen, prefix, item, null);
+            }
+
+            foreach (var child in node?.Children ?? new List<VariantTreeNode>())
+            {
+                if (ReferenceEquals(child, scanNode) ||
+                    !IsPartyScanAggregateOnlyNode(child))
+                {
+                    continue;
+                }
+
+                var item = FindFirstNoChoiceVariant(child);
+                if (item == null)
+                    continue;
+
+                var childLines = new List<string>();
+                CollectPartyScanNoChoiceSiblingLines(child, childLines);
+                AddPartyScanNoChoiceFlatVariant(result, seen, prefix, item, childLines);
+            }
+
+            return result;
+        }
+
+        private static void AddPartyScanNoChoiceFlatVariant(
+            List<FlatVariantRenderItem> result,
+            HashSet<string> seen,
+            List<string> prefix,
+            VariantRenderItem item,
+            List<string> extraLines)
+        {
+            if (result == null || item == null)
+                return;
+
+            var lines = new List<string>(prefix ?? new List<string>());
+            if (extraLines != null && extraLines.Count > 0)
+            {
+                lines.AddRange(extraLines);
+            }
+            else if (!IsNoOpOnly(item.Lines))
+            {
+                lines.AddRange(item.Lines ?? new List<string>());
+            }
+
+            if (!lines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return;
+
+            string key = string.Join("\n", lines);
+            if (seen != null && !seen.Add(key))
+                return;
+
+            result.Add(new FlatVariantRenderItem
+            {
+                Variant = item.Variant,
+                Lines = lines
+            });
+        }
+
+        private static VariantRenderItem FindFirstNoChoiceVariant(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            var direct = OrderDirectVariants(node.DirectVariants)
+                .FirstOrDefault(ShouldRenderAsNoChoiceVariant);
+            if (direct != null)
+                return direct;
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                var nested = FindFirstNoChoiceVariant(child);
+                if (nested != null)
+                    return nested;
+            }
+
+            return null;
+        }
+
+        private static void CollectPartyScanNoChoiceSiblingLines(
+            VariantTreeNode node,
+            List<string> lines)
+        {
+            if (node == null || lines == null)
+                return;
+
+            foreach (var line in node.CommonLines ?? new List<string>())
+            {
+                if (!IsIgnorablePartyScanAggregateLine(line))
+                    lines.Add(line);
+            }
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                CollectPartyScanNoChoiceSiblingLines(child, lines);
         }
 
         private static Dictionary<int, List<string>> BuildVariantContentsFromObjectTexts(
@@ -1432,8 +1617,9 @@ namespace MMMapEditor
             if (TryResolvePathVariantForDisplayKey(obj, variantKey, out var pathVariant))
             {
                 var annotations = BuildFlatVariantHeaderAnnotations(obj, pathVariant);
-                if (annotations.Count > 0)
-                    header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
+                string annotationText = BuildVariantHeaderAnnotationText(annotations);
+                if (!string.IsNullOrWhiteSpace(annotationText))
+                    header += $" ({annotationText})";
             }
 
             return header;
@@ -2257,7 +2443,7 @@ namespace MMMapEditor
         private static string BuildVariantHeaderAnnotationText(IEnumerable<string> annotations)
         {
             var displayAnnotations = (annotations ?? Enumerable.Empty<string>())
-                .Select(NormalizeHeaderAnnotation)
+                .Select(NormalizeUserVisibleHeaderAnnotation)
                 .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
                 .Select(EncodeVariantHeaderAnnotationForDisplay)
                 .ToList();
@@ -2474,6 +2660,7 @@ namespace MMMapEditor
             public List<string> CommonLines { get; set; } = new List<string>();
             public List<VariantRenderItem> DirectVariants { get; set; } = new List<VariantRenderItem>();
             public List<VariantTreeNode> Children { get; set; } = new List<VariantTreeNode>();
+            public bool PreserveAsStructuralGroup { get; set; }
         }
 
         private sealed class TopLevelVariantGroup
@@ -2484,6 +2671,7 @@ namespace MMMapEditor
             public string HeaderAnnotation { get; set; }
             public string ConsumedTopChoiceKey { get; set; }
             public bool GroupedByChoice { get; set; }
+            public int SourceOrderKey { get; set; } = int.MaxValue;
         }
 
         private sealed class OrderedRenderEntry
@@ -2580,7 +2768,12 @@ private static string BuildHierarchicalVariantNotes(
             if (items.Count <= 1)
                 return null;
 
+            items = ApplySingleMemberPartyScanDisplayModel(items);
+            if (items.Count <= 1)
+                return null;
+
             items = DeduplicateDisplayedVariantItems(items);
+            items = ApplySingleMemberPartyScanDisplayModel(items);
 
             if (items.Count <= 1)
                 return null;
@@ -2590,7 +2783,7 @@ private static string BuildHierarchicalVariantNotes(
             if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(items, out string resourceAttritionHierarchy))
                 return resourceAttritionHierarchy;
 
-            var groups = BuildTopLevelVariantGroups(items);
+            var groups = BuildTopLevelVariantGroups(obj, items);
             if (groups.Count == 0)
                 return null;
 
@@ -2665,7 +2858,12 @@ private static string BuildHierarchicalVariantNotes(
             if (items.Count <= 1)
                 return null;
 
+            items = ApplySingleMemberPartyScanDisplayModel(items);
+            if (items.Count <= 1)
+                return null;
+
             items = DeduplicateDisplayedVariantItems(items);
+            items = ApplySingleMemberPartyScanDisplayModel(items);
 
             if (items.Count <= 1)
                 return null;
@@ -2722,7 +2920,117 @@ private static string BuildHierarchicalVariantNotes(
             return items;
         }
 
-        private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(List<VariantRenderItem> items)
+        private static List<VariantRenderItem> ApplySingleMemberPartyScanDisplayModel(
+            List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+
+            if (source.Count <= 1 || !HasPartyScanQuestionOutcomeContext(source))
+                return source;
+
+            var filtered = source
+                .Where(item => !ShouldSuppressMultiMemberPartyScanAggregateVariant(item))
+                .ToList();
+
+            return filtered.Count == 0 ? source : filtered;
+        }
+
+        private static bool HasPartyScanQuestionOutcomeContext(IEnumerable<VariantRenderItem> items)
+        {
+            var list = (items ?? Enumerable.Empty<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+
+            return list.Any(HasPartyScanAnswerText) &&
+                   list.Any(item => item?.Variant?.PartyEffects?.Any(effect =>
+                       effect != null && PartyEffectSemantics.IsLoopDerived(effect)) == true);
+        }
+
+        private static bool ShouldSuppressMultiMemberPartyScanAggregateVariant(VariantRenderItem item)
+        {
+            if (item?.Variant == null ||
+                !HasPositivePostPartyScanStateGuard(item.Variant))
+            {
+                return false;
+            }
+
+            return !HasCorrectPartyScanOutcome(item);
+        }
+
+        private static bool HasPositivePostPartyScanStateGuard(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?.Any(IsPositivePostPartyScanStateGuardChoice) == true;
+        }
+
+        private static bool IsPositivePostPartyScanStateGuardChoice(BranchChoice choice)
+        {
+            if (choice == null)
+                return false;
+
+            string annotation = NormalizeHeaderAnnotation(choice.DisplayHeaderAnnotation);
+            if (string.IsNullOrWhiteSpace(annotation))
+                return false;
+
+            return Regex.IsMatch(
+                annotation,
+                @"\]\s*(?:>|>=)\s*(?:0|0x00)\b|\]\s*!=\s*(?:0|0x00)\b",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static bool HasPartyScanAnswerText(VariantRenderItem item)
+        {
+            return GetPartyScanOutcomeLines(item)
+                .Any(IsPartyScanAnswerLine);
+        }
+
+        private static bool HasCorrectPartyScanOutcome(VariantRenderItem item)
+        {
+            return HasCorrectPartyScanOutcome(null, GetPartyScanOutcomeLines(item));
+        }
+
+        private static IEnumerable<string> GetPartyScanOutcomeLines(VariantRenderItem item)
+        {
+            if (item == null)
+                return Enumerable.Empty<string>();
+
+            return (item.Lines ?? new List<string>())
+                .Concat(item.NarrativeLines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        private static bool IsPartyScanAnswerLine(string line)
+        {
+            return IsCorrectPartyScanAnswerLine(line) ||
+                   IsWrongPartyScanAnswerLine(line);
+        }
+
+        private static bool IsCorrectPartyScanAnswerLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return Regex.IsMatch(
+                line.TrimStart(),
+                @"^CORRECT\b",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static bool IsWrongPartyScanAnswerLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return Regex.IsMatch(
+                line.TrimStart(),
+                @"^WRONG\b",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(
+            OvrObject obj,
+            List<VariantRenderItem> items)
         {
             var groups = items
                 .GroupBy(item => BuildTopLevelGroupKey(item))
@@ -2742,7 +3050,8 @@ private static string BuildHierarchicalVariantNotes(
                         Label = groupedByChoice ? NormalizeChoiceLabel(firstChoice?.Label) : null,
                         HeaderAnnotation = groupedByChoice ? NormalizeHeaderAnnotation(firstChoice?.DisplayHeaderAnnotation) : null,
                         ConsumedTopChoiceKey = groupedByChoice ? firstChoiceKey : null,
-                        GroupedByChoice = groupedByChoice
+                        GroupedByChoice = groupedByChoice,
+                        SourceOrderKey = GetTopLevelGroupSourceOrderKey(obj, ordered)
                     };
                 })
                 .ToList();
@@ -2759,18 +3068,47 @@ private static string BuildHierarchicalVariantNotes(
                 HoistSharedCommonPartyNotes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 RemoveRedundantInheritedLines(root);
+                MarkTransparentMixedSiblingGroups(root);
+                CollapseTransparentDirectVariantWrappers(root);
+                IntroduceSharedLineHierarchyAcrossHiddenTechnicalChildren(root);
+                MarkTransparentMixedSiblingGroups(root);
+                CollapseTransparentDirectVariantWrappers(root);
+                RemoveRedundantInheritedLines(root);
                 group.TreeRoot = PruneDecorativeChoiceLeaves(
-                    SimplifyGenericChoiceTree(
-                        CompressVariantTree(root)));
+                    FlattenTransparentStructuralWrappers(
+                        SimplifyGenericChoiceTree(
+                            CompressVariantTree(root))));
             }
 
             groups = groups
                 .Where(HasRenderableTopLevelContent)
-                .OrderByDescending(g => g.GroupedByChoice)
+                .OrderByDescending(HasVisibleGroupedChoiceLabel)
+                .ThenBy(g => g.SourceOrderKey)
                 .ThenBy(g => g.Items.Min(GetVariantRenderOrderKey))
                 .ToList();
 
             return groups;
+        }
+
+        private static bool HasVisibleGroupedChoiceLabel(TopLevelVariantGroup group)
+        {
+            return group?.GroupedByChoice == true &&
+                   !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(group.Label));
+        }
+
+        private static int GetTopLevelGroupSourceOrderKey(
+            OvrObject obj,
+            IEnumerable<VariantRenderItem> items)
+        {
+            int minKey = int.MaxValue;
+
+            foreach (var item in items ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                if (TryFindPathVariantKey(obj, item?.Variant, out int key))
+                    minKey = Math.Min(minKey, key);
+            }
+
+            return minKey;
         }
 
         private enum ResourceAttritionKind
@@ -2841,10 +3179,12 @@ private static string BuildHierarchicalVariantNotes(
             {
                 var group = groups[groupIndex];
                 string groupHeader = $"   Вариант 1.{groupIndex + 1}";
-                if (!string.IsNullOrWhiteSpace(group.HeaderAnnotation))
-                    groupHeader += $" ({EncodeVariantHeaderAnnotationForDisplay(group.HeaderAnnotation)})";
-                if (!string.IsNullOrWhiteSpace(group.Label))
-                    sb.AppendLine($"{groupHeader}: {group.Label}");
+                string groupAnnotationText = BuildVariantHeaderAnnotationText(new[] { group.HeaderAnnotation });
+                if (!string.IsNullOrWhiteSpace(groupAnnotationText))
+                    groupHeader += $" ({groupAnnotationText})";
+                string groupLabel = NormalizeUserVisibleChoiceLabel(group.Label);
+                if (!string.IsNullOrWhiteSpace(groupLabel))
+                    sb.AppendLine($"{groupHeader}: {groupLabel}");
                 else
                     sb.AppendLine($"{groupHeader}:");
 
@@ -3063,10 +3403,12 @@ private static string BuildHierarchicalVariantNotes(
                         if (!string.IsNullOrWhiteSpace(probabilityAnnotation))
                             annotations.Add(probabilityAnnotation);
 
-                        if (annotations.Count > 0)
-                            header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
-                        if (!string.IsNullOrWhiteSpace(group.Label))
-                            header += $": {group.Label}";
+                        string annotationText = BuildVariantHeaderAnnotationText(annotations);
+                        if (!string.IsNullOrWhiteSpace(annotationText))
+                            header += $" ({annotationText})";
+                        string groupLabel = NormalizeUserVisibleChoiceLabel(group.Label);
+                        if (!string.IsNullOrWhiteSpace(groupLabel))
+                            header += $": {groupLabel}";
                         else
                             header += ":";
 
@@ -3551,15 +3893,26 @@ private static string BuildHierarchicalVariantNotes(
             return IsRenderableStructuralNode(group?.TreeRoot);
         }
 
+        private static VariantRenderItem GetSingleLeafVariantItem(VariantTreeNode node)
+        {
+            var variants = GetAllVariants(node)
+                .Where(item => item != null)
+                .ToList();
+
+            return variants.Count == 1
+                ? variants[0]
+                : null;
+        }
+
         private static bool IsRenderableStructuralNode(VariantTreeNode node)
         {
             if (node == null)
                 return false;
 
-            if (!string.IsNullOrWhiteSpace(node.Label))
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)))
                 return true;
 
-            if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node.HeaderAnnotation)))
                 return true;
 
             if ((node.CommonLines?.Count ?? 0) > 0)
@@ -4094,7 +4447,7 @@ private static string BuildHierarchicalVariantNotes(
 
             bool rawLabelIsTechnical = IsGenericTechnicalChoiceLabel(rawLabel);
 
-            string displayHeaderAnnotation = null;
+            string displayHeaderAnnotation = NormalizeHeaderAnnotation(choice.DisplayHeaderAnnotation);
             string inferredLabel;
             if (PartyInventorySemantics.TryBuildItemPresenceChoiceParts(
                     choice,
@@ -4282,6 +4635,19 @@ private static string BuildHierarchicalVariantNotes(
             return string.Join("|", annotation ?? string.Empty, label ?? string.Empty);
         }
 
+        private static string BuildUserVisibleChoiceDisplayKey(BranchChoice choice)
+        {
+            if (choice == null)
+                return null;
+
+            string annotation = NormalizeUserVisibleHeaderAnnotation(choice.DisplayHeaderAnnotation);
+            string label = NormalizeUserVisibleChoiceLabel(choice.Label);
+            if (string.IsNullOrWhiteSpace(annotation) && string.IsNullOrWhiteSpace(label))
+                return null;
+
+            return string.Join("|", annotation ?? string.Empty, label ?? string.Empty);
+        }
+
 
         private static VariantTreeNode SimplifyGenericChoiceTree(VariantTreeNode node)
         {
@@ -4349,6 +4715,52 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return node;
+        }
+
+        private static VariantTreeNode FlattenTransparentStructuralWrappers(VariantTreeNode node)
+        {
+            if (node == null)
+                return null;
+
+            for (int i = 0; i < node.Children.Count; i++)
+                node.Children[i] = FlattenTransparentStructuralWrappers(node.Children[i]);
+
+            var flattenedChildren = new List<VariantTreeNode>();
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (IsTransparentStructuralWrapper(child))
+                {
+                    flattenedChildren.AddRange(
+                        (child.Children ?? new List<VariantTreeNode>())
+                        .Where(c => c != null));
+                    continue;
+                }
+
+                flattenedChildren.Add(child);
+            }
+
+            node.Children = flattenedChildren;
+            return node;
+        }
+
+        private static bool IsTransparentStructuralWrapper(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node.HeaderAnnotation)))
+                return false;
+
+            if ((node.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false))
+                return false;
+
+            if ((node.DirectVariants?.Any(variant => variant != null) ?? false))
+                return false;
+
+            return node.Children != null && node.Children.Any(IsRenderableStructuralNode);
         }
 
         private static bool HasIntrinsicRenderableDirectVariant(VariantTreeNode node)
@@ -4738,6 +5150,50 @@ private static string BuildHierarchicalVariantNotes(
                 : annotation.Trim();
         }
 
+        private static string NormalizeUserVisibleChoiceLabel(string label)
+        {
+            string normalized = NormalizeChoiceLabel(label);
+            return IsTechnicalChoiceLabel(normalized)
+                ? null
+                : normalized;
+        }
+
+        private static string NormalizeUserVisibleHeaderAnnotation(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            return IsTechnicalHeaderAnnotation(normalized)
+                ? null
+                : normalized;
+        }
+
+        private static bool IsTechnicalChoiceLabel(string label)
+        {
+            string normalized = NormalizeChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            string token = normalized.EndsWith(")", StringComparison.Ordinal)
+                ? normalized.Substring(0, normalized.Length - 1).Trim()
+                : normalized.Trim();
+
+            return Regex.IsMatch(
+                token,
+                @"^RND(?:\(\d+\))?\s*=",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static bool IsTechnicalHeaderAnnotation(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            return Regex.IsMatch(
+                normalized,
+                @"^при условии:\s*\[0x[0-9A-Fa-f]+\]\s*(?:=|!=|>|<|>=|<=)",
+                RegexOptions.IgnoreCase);
+        }
+
         private static bool IsCompactInputChoiceLabel(string label)
         {
             if (string.IsNullOrWhiteSpace(label))
@@ -4964,6 +5420,217 @@ private static string BuildHierarchicalVariantNotes(
                 .ToList();
 
             node.Children.AddRange(syntheticChildren);
+        }
+
+        private static void IntroduceSharedLineHierarchyAcrossHiddenTechnicalChildren(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                IntroduceSharedLineHierarchyAcrossHiddenTechnicalChildren(child);
+
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+            if (children.Count < 2)
+                return;
+
+            var candidateGroups = children
+                .Select((child, index) => new { Child = child, Index = index })
+                .Where(entry => IsHiddenTechnicalChildWithCommonLines(entry.Child))
+                .GroupBy(entry => GetFirstMeaningfulLine(entry.Child.CommonLines) ?? string.Empty, StringComparer.Ordinal)
+                .Where(group => !string.IsNullOrWhiteSpace(group.Key) && group.Count() > 1)
+                .Select(group => group.OrderBy(entry => entry.Index).ToList())
+                .OrderBy(group => group[0].Index)
+                .ToList();
+
+            if (candidateGroups.Count == 0)
+                return;
+
+            var childToSyntheticParent = new Dictionary<VariantTreeNode, VariantTreeNode>();
+            foreach (var group in candidateGroups)
+            {
+                if (group.Any(entry => childToSyntheticParent.ContainsKey(entry.Child)))
+                    continue;
+
+                var sharedLines = GetCommonPrefix(group.Select(entry => entry.Child.CommonLines).ToList());
+                if (!sharedLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                    continue;
+
+                var syntheticParent = new VariantTreeNode
+                {
+                    CommonLines = sharedLines.ToList()
+                };
+
+                foreach (var entry in group)
+                {
+                    entry.Child.CommonLines = entry.Child.CommonLines
+                        .Skip(sharedLines.Count)
+                        .ToList();
+                    syntheticParent.Children.Add(entry.Child);
+                    childToSyntheticParent[entry.Child] = syntheticParent;
+                }
+            }
+
+            if (childToSyntheticParent.Count == 0)
+                return;
+
+            var emittedParents = new HashSet<VariantTreeNode>();
+            var rebuiltChildren = new List<VariantTreeNode>();
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (child != null && childToSyntheticParent.TryGetValue(child, out var syntheticParent))
+                {
+                    if (emittedParents.Add(syntheticParent))
+                        rebuiltChildren.Add(syntheticParent);
+                    continue;
+                }
+
+                rebuiltChildren.Add(child);
+            }
+
+            node.Children = rebuiltChildren;
+        }
+
+        private static bool IsHiddenTechnicalChildWithCommonLines(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (HasUserVisibleNodeLabelOrAnnotation(node))
+                return false;
+
+            return node.CommonLines != null &&
+                   node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)) &&
+                   GetAllVariants(node).Any(item => item != null);
+        }
+
+        private static string GetFirstMeaningfulLine(IEnumerable<string> lines)
+        {
+            return (lines ?? Enumerable.Empty<string>())
+                .FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        private static void CollapseTransparentDirectVariantWrappers(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                CollapseTransparentDirectVariantWrappers(child);
+
+            var promotedDirectVariants = new List<VariantRenderItem>();
+            var rebuiltChildren = new List<VariantTreeNode>();
+            bool changed = false;
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (IsTransparentDirectVariantWrapper(child))
+                {
+                    promotedDirectVariants.AddRange(
+                        (child.DirectVariants ?? new List<VariantRenderItem>())
+                        .Where(item => item != null));
+                    rebuiltChildren.AddRange(
+                        (child.Children ?? new List<VariantTreeNode>())
+                        .Where(grandChild => grandChild != null));
+                    changed = true;
+                    continue;
+                }
+
+                rebuiltChildren.Add(child);
+            }
+
+            if (!changed)
+                return;
+
+            node.Children = rebuiltChildren;
+            if (promotedDirectVariants.Count > 0)
+            {
+                node.DirectVariants ??= new List<VariantRenderItem>();
+                node.DirectVariants.AddRange(promotedDirectVariants);
+            }
+        }
+
+        private static void MarkTransparentMixedSiblingGroups(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                MarkTransparentMixedSiblingGroups(child);
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (ShouldPreserveTransparentMixedSiblingGroup(node, child))
+                    child.PreserveAsStructuralGroup = true;
+            }
+        }
+
+        private static bool ShouldPreserveTransparentMixedSiblingGroup(
+            VariantTreeNode parent,
+            VariantTreeNode child)
+        {
+            if (parent == null || child == null)
+                return false;
+
+            if (HasUserVisibleNodeLabelOrAnnotation(child))
+                return false;
+
+            if (child.CommonLines != null && child.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return false;
+
+            bool hasDirectOutcome = child.DirectVariants != null &&
+                                    child.DirectVariants.Any(IsRenderableDirectVariant);
+            bool hasNestedOutcome = child.Children != null &&
+                                    child.Children.Any(IsRenderableStructuralNode);
+            if (!hasDirectOutcome || !hasNestedOutcome)
+                return false;
+
+            return HasRenderableSiblingEntry(parent, child);
+        }
+
+        private static bool HasRenderableSiblingEntry(VariantTreeNode parent, VariantTreeNode child)
+        {
+            if (parent == null)
+                return false;
+
+            if ((parent.DirectVariants ?? new List<VariantRenderItem>())
+                .Any(IsRenderableDirectVariant))
+            {
+                return true;
+            }
+
+            return (parent.Children ?? new List<VariantTreeNode>())
+                .Any(sibling => !ReferenceEquals(sibling, child) &&
+                                IsRenderableStructuralNode(sibling));
+        }
+
+        private static bool IsTransparentDirectVariantWrapper(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (node.PreserveAsStructuralGroup)
+                return false;
+
+            if (HasUserVisibleNodeLabelOrAnnotation(node))
+                return false;
+
+            if (node.CommonLines != null && node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return false;
+
+            bool hasDirectVariant = node.DirectVariants != null &&
+                                    node.DirectVariants.Any(item => item != null);
+            bool hasRenderableChild = node.Children != null &&
+                                      node.Children.Any(IsRenderableStructuralNode);
+
+            return hasDirectVariant || hasRenderableChild;
+        }
+
+        private static bool HasUserVisibleNodeLabelOrAnnotation(VariantTreeNode node)
+        {
+            return !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node?.Label)) ||
+                   !string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node?.HeaderAnnotation));
         }
 
         private static void AttachChoiceChildrenToSiblingPromptParents(VariantTreeNode node)
@@ -6376,7 +7043,9 @@ private static string BuildHierarchicalVariantNotes(
                     IsLikelyCancelNode(child);
                 int displayPriority = mixedPartyScanCancelChoice
                     ? -1
-                    : (parentHasMultiNumericPrompt && HasPromptOptionLabels(child.CommonLines) ? 1 : 0);
+                    : (parentHasMultiNumericPrompt && HasPromptOptionLabels(child.CommonLines)
+                        ? 1
+                        : (IsEmptyOrNoOpNode(child) ? 1 : 0));
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
@@ -6427,6 +7096,34 @@ private static string BuildHierarchicalVariantNotes(
                 .ThenBy(entry => entry.PathOrderKey)
                 .ThenBy(entry => entry.ChildNode == null ? 1 : 0)
                 .ToList();
+        }
+
+        private static bool IsEmptyOrNoOpNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node.HeaderAnnotation)))
+                return false;
+
+            if ((node.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false))
+                return false;
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null)
+                .ToList();
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+
+            if (directVariants.Count == 0 && children.Count == 0)
+                return false;
+
+            return directVariants.All(IsEmptyOrNoOpVariant) &&
+                   children.All(IsEmptyOrNoOpNode);
         }
 
         private static Dictionary<string, int> BuildPromptChoiceOrder(IEnumerable<string> commonLines)
@@ -6481,6 +7178,18 @@ private static string BuildHierarchicalVariantNotes(
             if (token.EndsWith(")", StringComparison.Ordinal))
                 token = token.Substring(0, token.Length - 1).Trim();
 
+            var randomMatch = Regex.Match(
+                token,
+                @"^RND\((\d+)\)\s*=\s*(\d+)(?:/(\d+))?$",
+                RegexOptions.IgnoreCase);
+            if (randomMatch.Success &&
+                int.TryParse(randomMatch.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int randomUpperBound) &&
+                int.TryParse(randomMatch.Groups[2].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int firstRandomValue))
+            {
+                key = 50000 + randomUpperBound * 1000 + firstRandomValue;
+                return true;
+            }
+
             if (string.Equals(token, "ESC", StringComparison.OrdinalIgnoreCase))
             {
                 key = 0;
@@ -6507,9 +7216,35 @@ private static string BuildHierarchicalVariantNotes(
 
         private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
         {
+            var renderableChildren = (group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            int siblingDirectVariantCount = group.TreeRoot?.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(group.TreeRoot, renderableChildren.Count);
+
+            var directVariants = (group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+                .Where(v => ShouldRenderDirectVariant(
+                        v,
+                        siblingDirectVariantCount,
+                        renderableChildren.Count,
+                        suppressEmptyPromptTerminalDirectVariants) &&
+                    !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
+                .ToList();
+
+            var singleLeafItem = renderableChildren.Count == 0
+                ? GetSingleLeafVariantItem(group?.TreeRoot)
+                : null;
+            var singleLeaf = singleLeafItem?.Variant;
+            var singleLeafLines = singleLeafItem?.Lines?.ToList();
+
             string header = $"Вариант {groupNumber}";
-            string sharedProbabilityLine = GetSharedProbabilityLine(group?.TreeRoot);
-            var sharedGuardPredicates = GetSharedGuardPredicates(group?.TreeRoot);
+            string sharedProbabilityLine = singleLeaf == null
+                ? GetSharedProbabilityLine(group?.TreeRoot)
+                : null;
+            var sharedGuardPredicates = singleLeaf == null
+                ? GetSharedGuardPredicates(group?.TreeRoot)
+                : null;
             string sharedGuardKey = BuildGuardConditionKey(sharedGuardPredicates);
             string sharedGuardAnnotation = BuildGuardHeaderAnnotation(sharedGuardPredicates);
             string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(
@@ -6519,15 +7254,26 @@ private static string BuildHierarchicalVariantNotes(
             var sharedAnnotations = new List<string>();
             if (!string.IsNullOrWhiteSpace(group?.HeaderAnnotation))
                 sharedAnnotations.Add(group.HeaderAnnotation);
-            if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
-                sharedAnnotations.Add(sharedGuardAnnotation);
-            if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
-                sharedAnnotations.Add(sharedProbabilityAnnotation);
-            if (sharedAnnotations.Count > 0)
-                header += $" ({BuildVariantHeaderAnnotationText(sharedAnnotations)})";
+            if (singleLeaf != null)
+            {
+                AddDistinctHeaderAnnotations(
+                    sharedAnnotations,
+                    BuildVariantHeaderAnnotations(singleLeaf));
+            }
+            else
+            {
+                if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
+                    sharedAnnotations.Add(sharedGuardAnnotation);
+                if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
+                    sharedAnnotations.Add(sharedProbabilityAnnotation);
+            }
+            string topAnnotationText = BuildVariantHeaderAnnotationText(sharedAnnotations);
+            if (!string.IsNullOrWhiteSpace(topAnnotationText))
+                header += $" ({topAnnotationText})";
 
-            if (!string.IsNullOrWhiteSpace(group?.Label))
-                header += $": {group.Label}";
+            string groupLabel = NormalizeUserVisibleChoiceLabel(group?.Label);
+            if (!string.IsNullOrWhiteSpace(groupLabel))
+                header += $": {groupLabel}";
             else
                 header += ":";
 
@@ -6544,21 +7290,15 @@ private static string BuildHierarchicalVariantNotes(
             if (isPureTopLevelNoOp)
                 return;
 
-            var renderableChildren = (group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
-                .Where(IsRenderableStructuralNode)
-                .ToList();
-            int siblingDirectVariantCount = group.TreeRoot?.DirectVariants?.Count(v => v != null) ?? 0;
-            bool suppressEmptyPromptTerminalDirectVariants =
-                ShouldSuppressEmptyPromptTerminalDirectVariants(group.TreeRoot, renderableChildren.Count);
-
-            var directVariants = (group.TreeRoot?.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
-                .Where(v => ShouldRenderDirectVariant(
-                        v,
-                        siblingDirectVariantCount,
-                        renderableChildren.Count,
-                        suppressEmptyPromptTerminalDirectVariants) &&
-                    !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
-                .ToList();
+            if (directVariants.Count == 1 && renderableChildren.Count == 0)
+            {
+                AppendIndentedDisplayLines(
+                    sb,
+                    "   ",
+                    singleLeafLines ?? directVariants[0].Lines,
+                    headerContainsProbability);
+                return;
+            }
 
             bool needGapAfterCommon = (group.TreeRoot?.CommonLines?.Count ?? 0) > 0 &&
                                       (renderableChildren.Count > 0 || directVariants.Count > 0);
@@ -6900,11 +7640,11 @@ private static string BuildHierarchicalVariantNotes(
                 .Select(line => line.Trim())
                 .ToList();
 
-            if (meaningfulLines.Any(line => line.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0))
-                return meaningfulLines.First(line => line.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (meaningfulLines.Any(IsCorrectPartyScanAnswerLine))
+                return meaningfulLines.First(IsCorrectPartyScanAnswerLine);
 
-            if (meaningfulLines.Any(line => line.IndexOf("WRONG", StringComparison.OrdinalIgnoreCase) >= 0))
-                return meaningfulLines.First(line => line.IndexOf("WRONG", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (meaningfulLines.Any(IsWrongPartyScanAnswerLine))
+                return meaningfulLines.First(IsWrongPartyScanAnswerLine);
 
             return NormalizeChoiceLabel(inheritedLabel);
         }
@@ -6988,10 +7728,9 @@ private static string BuildHierarchicalVariantNotes(
 
         private static bool HasCorrectPartyScanOutcome(string label, IEnumerable<string> lines)
         {
-            return (!string.IsNullOrWhiteSpace(label) &&
-                    label.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0) ||
+            return IsCorrectPartyScanAnswerLine(label) ||
                    (lines ?? Enumerable.Empty<string>())
-                   .Any(line => line?.IndexOf("CORRECT", StringComparison.OrdinalIgnoreCase) >= 0);
+                   .Any(IsCorrectPartyScanAnswerLine);
         }
 
         private static bool TryAttachPartyScanAggregateLinesToOutcome(
@@ -7105,8 +7844,9 @@ private static string BuildHierarchicalVariantNotes(
 
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
-            if (!string.IsNullOrWhiteSpace(summary.Label))
-                header += $": {summary.Label}";
+            string summaryLabel = NormalizeUserVisibleChoiceLabel(summary.Label);
+            if (!string.IsNullOrWhiteSpace(summaryLabel))
+                header += $": {summaryLabel}";
             else
                 header += ":";
 
@@ -7145,8 +7885,18 @@ private static string BuildHierarchicalVariantNotes(
 
             string indent = new string(' ', depth * 3);
             string variantNumber = string.Join(".", numbering);
-            var singleLeaf = renderableDirectVariants.Count == 1 && renderableChildren.Count == 0
-                ? renderableDirectVariants[0].Variant
+            var singleLeafItem = renderableChildren.Count == 0
+                ? GetSingleLeafVariantItem(node)
+                : null;
+            var singleLeaf = singleLeafItem?.Variant;
+            var singleLeafLines = singleLeafItem?.Lines?.ToList();
+            string nodeLabel = NormalizeUserVisibleChoiceLabel(node.Label);
+            var nodeCommonLines = node.CommonLines?.ToList() ?? new List<string>();
+            string promotedCommonLabel = string.IsNullOrWhiteSpace(nodeLabel)
+                ? TryPromoteLeadingAnswerLine(nodeCommonLines)
+                : null;
+            string promotedSingleLeafLabel = string.IsNullOrWhiteSpace(nodeLabel)
+                ? TryPromoteLeadingAnswerLine(singleLeafLines)
                 : null;
             string sharedProbabilityLine = singleLeaf == null
                 ? GetSharedProbabilityLine(node, inheritedProbabilityLine)
@@ -7169,8 +7919,9 @@ private static string BuildHierarchicalVariantNotes(
                 var annotations = BuildVariantHeaderAnnotations(singleLeaf, inheritedProbabilityLine, inheritedGuardKey);
                 if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
                     annotations.Insert(0, node.HeaderAnnotation);
-                if (annotations.Count > 0)
-                    header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
+                string annotationText = BuildVariantHeaderAnnotationText(annotations);
+                if (!string.IsNullOrWhiteSpace(annotationText))
+                    header += $" ({annotationText})";
             }
             else
             {
@@ -7181,12 +7932,17 @@ private static string BuildHierarchicalVariantNotes(
                     sharedAnnotations.Add(sharedGuardAnnotation);
                 if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
                     sharedAnnotations.Add(sharedProbabilityAnnotation);
-                if (sharedAnnotations.Count > 0)
-                    header += $" ({BuildVariantHeaderAnnotationText(sharedAnnotations)})";
+                string annotationText = BuildVariantHeaderAnnotationText(sharedAnnotations);
+                if (!string.IsNullOrWhiteSpace(annotationText))
+                    header += $" ({annotationText})";
             }
 
-            if (!string.IsNullOrWhiteSpace(node.Label))
-                header += $": {node.Label}";
+            if (!string.IsNullOrWhiteSpace(nodeLabel))
+                header += $": {nodeLabel}";
+            else if (!string.IsNullOrWhiteSpace(promotedCommonLabel))
+                header += $": {promotedCommonLabel}";
+            else if (!string.IsNullOrWhiteSpace(promotedSingleLeafLabel))
+                header += $": {promotedSingleLeafLabel}";
             else
                 header += ":";
 
@@ -7196,7 +7952,7 @@ private static string BuildHierarchicalVariantNotes(
             AppendIndentedDisplayLines(
                 sb,
                 indent + "   ",
-                node.CommonLines,
+                nodeCommonLines,
                 headerContainsProbability);
 
             if (TryRenderPartyScanLoopBody(
@@ -7214,13 +7970,13 @@ private static string BuildHierarchicalVariantNotes(
                 AppendIndentedDisplayLines(
                     sb,
                     indent + "   ",
-                    renderableDirectVariants[0].Lines,
+                    singleLeafLines ?? renderableDirectVariants[0].Lines,
                     headerContainsProbability);
                 return;
             }
 
             bool needGapAfterCommon =
-                node.CommonLines.Count > 0 &&
+                nodeCommonLines.Count > 0 &&
                 (renderableChildren.Count > 0 || renderableDirectVariants.Count > 0);
             if (needGapAfterCommon)
                 sb.AppendLine();
@@ -7365,9 +8121,11 @@ private static string BuildHierarchicalVariantNotes(
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
             var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine, inheritedGuardKey);
-            if (annotations.Count > 0)
-                header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
-            header += $": {label}";
+            string annotationText = BuildVariantHeaderAnnotationText(annotations);
+            if (!string.IsNullOrWhiteSpace(annotationText))
+                header += $" ({annotationText})";
+            string displayLabel = NormalizeUserVisibleChoiceLabel(label);
+            header += string.IsNullOrWhiteSpace(displayLabel) ? ":" : $": {displayLabel}";
             sb.AppendLine(header);
         }
 
@@ -7391,17 +8149,40 @@ private static string BuildHierarchicalVariantNotes(
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
             var annotations = BuildVariantHeaderAnnotations(item?.Variant, inheritedProbabilityLine, inheritedGuardKey);
-            if (annotations.Count > 0)
-                header += $" ({BuildVariantHeaderAnnotationText(annotations)})";
-            header += ":";
+            string annotationText = BuildVariantHeaderAnnotationText(annotations);
+            if (!string.IsNullOrWhiteSpace(annotationText))
+                header += $" ({annotationText})";
+
+            var lines = item?.Lines?.ToList() ?? new List<string>();
+            string promotedLabel = TryPromoteLeadingAnswerLine(lines);
+            header += string.IsNullOrWhiteSpace(promotedLabel)
+                ? ":"
+                : $": {promotedLabel}";
             sb.AppendLine(header);
             bool headerContainsProbability = VariantHeaderContainsProbability(header);
 
             AppendIndentedDisplayLines(
                 sb,
                 indent + "   ",
-                item?.Lines,
+                lines,
                 headerContainsProbability);
+        }
+
+        private static string TryPromoteLeadingAnswerLine(List<string> lines)
+        {
+            if (lines == null || lines.Count == 0)
+                return null;
+
+            int index = lines.FindIndex(line => !string.IsNullOrWhiteSpace(line));
+            if (index < 0)
+                return null;
+
+            string candidate = lines[index]?.Trim();
+            if (!IsPartyScanAnswerLine(candidate))
+                return null;
+
+            lines.RemoveAt(index);
+            return candidate;
         }
 
         private static void AppendLineToFirstMeaningfulVariant(
@@ -8025,7 +8806,8 @@ private static string BuildHierarchicalVariantNotes(
             string guardConditionKey = BuildGuardConditionKey(item?.Variant) ?? string.Empty;
             string branchKey = string.Join("|",
                 GetRelevantBranchChoices(item?.Variant)
-                    .Select(choice => BuildChoiceDisplayKey(choice) ?? string.Empty));
+                    .Select(choice => BuildUserVisibleChoiceDisplayKey(choice))
+                    .Where(key => !string.IsNullOrWhiteSpace(key)));
             string linesKey = string.Join("\n",
                 (item?.Lines ?? new List<string>())
                     .Select(line => line?.TrimEnd() ?? string.Empty));

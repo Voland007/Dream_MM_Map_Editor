@@ -88,6 +88,8 @@ namespace MMMapEditor
             new Dictionary<string, ExternalCallResultKind>();
         private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
         private Dictionary<string, RegisterValueDistribution> registerRangeDistributions = new Dictionary<string, RegisterValueDistribution>();
+        private Dictionary<string, SortedSet<byte>> registerDiscreteValues = new Dictionary<string, SortedSet<byte>>();
+        private Dictionary<string, byte> registerRandomUpperBounds = new Dictionary<string, byte>();
         private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
         private Dictionary<string, DynamicValueFormulaInfo> dynamicValueFormulas = new Dictionary<string, DynamicValueFormulaInfo>();
@@ -371,6 +373,266 @@ namespace MMMapEditor
             }
         }
 
+        private static SortedSet<byte> NormalizeDiscreteValues(IEnumerable<byte> values)
+        {
+            return values == null
+                ? new SortedSet<byte>()
+                : new SortedSet<byte>(values);
+        }
+
+        private static SortedSet<byte> BuildDiscreteValues(byte min, byte max, RegisterValueDistribution distribution)
+        {
+            if (max < min)
+                return new SortedSet<byte>();
+
+            if (distribution != RegisterValueDistribution.UniformDiscreteRange &&
+                distribution != RegisterValueDistribution.EvenDiscreteRange)
+            {
+                return new SortedSet<byte>();
+            }
+
+            var values = new SortedSet<byte>();
+            for (int value = min; value <= max; value++)
+            {
+                if (distribution == RegisterValueDistribution.EvenDiscreteRange &&
+                    (value & 1) != 0)
+                {
+                    continue;
+                }
+
+                values.Add((byte)value);
+            }
+
+            return values;
+        }
+
+        private static SortedSet<byte> CloneDiscreteValues(IEnumerable<byte> values)
+        {
+            return values == null
+                ? null
+                : new SortedSet<byte>(values);
+        }
+
+        private void SetDiscreteValuesForName(string regUpper, IEnumerable<byte> values)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            var normalized = NormalizeDiscreteValues(values);
+            if (normalized.Count == 0)
+                registerDiscreteValues.Remove(regUpper);
+            else
+                registerDiscreteValues[regUpper] = normalized;
+        }
+
+        private void SetDiscreteValuesForRangeTargets(string regUpper, IEnumerable<byte> values)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            var normalized = NormalizeDiscreteValues(values);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                SetDiscreteValuesForName(regUpper, normalized);
+                return;
+            }
+
+            if (regUpper == fullReg || regUpper == lowReg)
+            {
+                SetDiscreteValuesForName(fullReg, normalized);
+                SetDiscreteValuesForName(lowReg, normalized);
+                registerDiscreteValues.Remove(highReg);
+            }
+            else
+            {
+                SetDiscreteValuesForName(highReg, normalized);
+                registerDiscreteValues.Remove(fullReg);
+            }
+        }
+
+        private void ClearRegisterDiscreteValues(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            registerDiscreteValues.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            registerDiscreteValues.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                registerDiscreteValues.Remove(lowReg);
+                registerDiscreteValues.Remove(highReg);
+            }
+            else
+            {
+                registerDiscreteValues.Remove(regUpper);
+                if (regUpper == lowReg)
+                    registerDiscreteValues.Remove(fullReg);
+            }
+        }
+
+        private void ClearRegisterRandomUpperBound(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            registerRandomUpperBounds.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            registerRandomUpperBounds.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                registerRandomUpperBounds.Remove(lowReg);
+                registerRandomUpperBounds.Remove(highReg);
+            }
+            else
+            {
+                registerRandomUpperBounds.Remove(regUpper);
+                if (regUpper == lowReg)
+                    registerRandomUpperBounds.Remove(fullReg);
+            }
+        }
+
+        public void SetRegisterRandomUpperBound(string reg, byte upperBound)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (upperBound == 0)
+            {
+                ClearRegisterRandomUpperBound(regUpper);
+                return;
+            }
+
+            registerRandomUpperBounds[regUpper] = upperBound;
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out _) &&
+                (regUpper == fullReg || regUpper == lowReg))
+            {
+                registerRandomUpperBounds[fullReg] = upperBound;
+                registerRandomUpperBounds[lowReg] = upperBound;
+            }
+        }
+
+        public bool TryGetRegisterRandomUpperBound(string reg, out byte upperBound)
+        {
+            upperBound = 0;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (registerRandomUpperBounds.TryGetValue(regUpper, out upperBound))
+                return true;
+
+            if ((regUpper == "AL" || regUpper == "AH") && registerRandomUpperBounds.TryGetValue("AX", out upperBound))
+                return true;
+            if ((regUpper == "BL" || regUpper == "BH") && registerRandomUpperBounds.TryGetValue("BX", out upperBound))
+                return true;
+            if ((regUpper == "CL" || regUpper == "CH") && registerRandomUpperBounds.TryGetValue("CX", out upperBound))
+                return true;
+            if ((regUpper == "DL" || regUpper == "DH") && registerRandomUpperBounds.TryGetValue("DX", out upperBound))
+                return true;
+
+            return false;
+        }
+
+        public bool TryGetRegisterDiscreteValues(string reg, out List<byte> values)
+        {
+            values = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (registerDiscreteValues.TryGetValue(regUpper, out var existing) &&
+                existing != null &&
+                existing.Count > 0)
+            {
+                MarkCoordinateSeedRead(regUpper);
+                values = existing.ToList();
+                return true;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                regUpper != fullReg &&
+                registerDiscreteValues.TryGetValue(fullReg, out existing) &&
+                existing != null &&
+                existing.Count > 0)
+            {
+                MarkCoordinateSeedRead(regUpper);
+                values = existing.ToList();
+                return true;
+            }
+
+            return false;
+        }
+
+        public void SetRegisterDiscreteValues(
+            string reg,
+            IEnumerable<byte> values,
+            RegisterValueDistribution distribution = RegisterValueDistribution.Unknown)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            var normalized = NormalizeDiscreteValues(values);
+            if (normalized.Count == 0)
+            {
+                ClearRegisterRange(regUpper);
+                return;
+            }
+
+            SetRegisterRange(regUpper, normalized.Min, normalized.Max, distribution, preserveRandomUpperBound: true);
+            SetDiscreteValuesForRangeTargets(regUpper, normalized);
+        }
+
+        public void SetRegisterDiscreteValuesWithSource(
+            string reg,
+            IEnumerable<byte> values,
+            RegisterValueDistribution distribution,
+            ushort sourceAddr,
+            uint address,
+            string instruction,
+            bool fromTable = false,
+            ushort originalBx = 0,
+            string sourceTable = null,
+            bool sourceIndexExternallyDerived = false,
+            ushort? sourceIndexProviderAddr = null)
+        {
+            SetRegisterDiscreteValues(reg, values, distribution);
+
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            var normalized = NormalizeDiscreteValues(values);
+            if (normalized.Count == 0)
+                return;
+
+            string tableType = sourceTable;
+            if (tableType == null && fromTable)
+                tableType = ResolveKnownTableType(sourceAddr);
+
+            var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
+            registerSources2[regUpper] = srcInfo;
+            registerSources[regUpper] = $"0x{normalized.Min:X2}..0x{normalized.Max:X2} loaded at 0x{address:X4} via {instruction}";
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
+            {
+                registerSources2[fullReg] = srcInfo;
+                registerSources[fullReg] = registerSources[regUpper];
+            }
+        }
+
         private static bool CanCombinePartyPointerBytes(PartyPointerByteReference low, PartyPointerByteReference high)
         {
             if (low == null || high == null || low.IsHighByte || !high.IsHighByte)
@@ -590,9 +852,17 @@ namespace MMMapEditor
             }
         }
 
-        public void SetRegisterRange(string reg, byte min, byte max, RegisterValueDistribution distribution = RegisterValueDistribution.Unknown)
+        public void SetRegisterRange(
+            string reg,
+            byte min,
+            byte max,
+            RegisterValueDistribution distribution = RegisterValueDistribution.Unknown,
+            bool preserveRandomUpperBound = false)
         {
             string regUpper = reg.ToUpperInvariant();
+            ClearRegisterDiscreteValues(regUpper);
+            if (!preserveRandomUpperBound)
+                ClearRegisterRandomUpperBound(regUpper);
             ClearCoordinateSeed(regUpper);
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
@@ -656,6 +926,8 @@ namespace MMMapEditor
                 registers.Remove("AL");
                 registers.Remove("AH");
             }
+
+            SetDiscreteValuesForRangeTargets(regUpper, BuildDiscreteValues(min, max, distribution));
         }
 
         public bool TryGetRegisterDistribution(string reg, out RegisterValueDistribution distribution)
@@ -728,6 +1000,8 @@ namespace MMMapEditor
         public void ClearRegisterRange(string reg)
         {
             string regUpper = reg.ToUpperInvariant();
+            ClearRegisterDiscreteValues(regUpper);
+            ClearRegisterRandomUpperBound(regUpper);
             registerRanges.Remove(regUpper);
             registerRangeDistributions.Remove(regUpper);
 
@@ -1479,6 +1753,8 @@ namespace MMMapEditor
             pendingExternalCallResultKinds.Clear();
             registerRanges.Clear();
             registerRangeDistributions.Clear();
+            registerDiscreteValues.Clear();
+            registerRandomUpperBounds.Clear();
             partyMemberBases.Clear();
             partyFieldValues.Clear();
             dynamicValueFormulas.Clear();
@@ -1734,6 +2010,14 @@ namespace MMMapEditor
             foreach (var kvp in registerRangeDistributions)
             {
                 clone.registerRangeDistributions[kvp.Key] = kvp.Value;
+            }
+            foreach (var kvp in registerDiscreteValues)
+            {
+                clone.registerDiscreteValues[kvp.Key] = CloneDiscreteValues(kvp.Value);
+            }
+            foreach (var kvp in registerRandomUpperBounds)
+            {
+                clone.registerRandomUpperBounds[kvp.Key] = kvp.Value;
             }
             foreach (var kvp in partyMemberBases)
             {

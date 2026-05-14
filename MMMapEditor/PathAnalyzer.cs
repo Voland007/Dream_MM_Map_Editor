@@ -395,10 +395,14 @@ namespace MMMapEditor
             string technicalLabel = path.IsInputChoiceBranch
                 ? (isLinear ? "InputChoiceLinear" : "InputChoiceBranch")
                 : (isLinear ? "Linear" : "Branch");
+            string displayLabel = TryBuildRandomOutcomeChoiceLabel(path, out string randomOutcomeLabel)
+                ? randomOutcomeLabel
+                : technicalLabel;
 
             return new BranchChoice
             {
-                Label = technicalLabel,
+                Label = displayLabel,
+                DisplayHeaderAnnotation = BuildStateConstraintHeaderAnnotation(path),
                 Condition = path.Condition,
                 CompareValue = path.CompareValue,
                 CompareRegister = path.CompareRegister,
@@ -407,6 +411,94 @@ namespace MMMapEditor
                 IsLinear = isLinear,
                 GuardPredicate = path.BranchPartyPredicate?.Clone()
             };
+        }
+
+        private static bool TryBuildRandomOutcomeChoiceLabel(AlternativePath path, out string label)
+        {
+            label = null;
+            if (path?.RegisterState == null ||
+                string.IsNullOrWhiteSpace(path.CompareRegister))
+            {
+                return false;
+            }
+
+            if (!path.RegisterState.TryGetRegisterDistribution(path.CompareRegister, out var distribution) ||
+                !IsRandomLikeDistribution(distribution))
+            {
+                return false;
+            }
+
+            if (!path.RegisterState.TryGetRegisterRandomUpperBound(path.CompareRegister, out byte upperBound) ||
+                upperBound <= 3)
+            {
+                return false;
+            }
+
+            if (!path.RegisterState.TryGetRegisterDiscreteValues(path.CompareRegister, out var values) ||
+                values == null ||
+                values.Count == 0 ||
+                values.Count > 2)
+            {
+                return false;
+            }
+
+            label = $"RND({upperBound})={string.Join("/", values)}";
+            return true;
+        }
+
+        private static bool IsRandomLikeDistribution(RegisterValueDistribution distribution)
+        {
+            return distribution == RegisterValueDistribution.UniformDiscreteRange ||
+                   distribution == RegisterValueDistribution.EvenDiscreteRange;
+        }
+
+        private static string BuildStateConstraintHeaderAnnotation(AlternativePath path)
+        {
+            if (path?.BranchStateValueConstraints == null ||
+                path.BranchStateValueConstraints.Count != 1)
+            {
+                return null;
+            }
+
+            var kvp = path.BranchStateValueConstraints.First();
+            string condition = BuildStateConstraintText(kvp.Key, kvp.Value);
+            return string.IsNullOrWhiteSpace(condition)
+                ? null
+                : $"при условии: {condition}";
+        }
+
+        private static string BuildStateConstraintText(ushort address, StateValueConstraintInfo constraint)
+        {
+            if (constraint == null || constraint.IsEmpty)
+                return null;
+
+            string addressText = $"[0x{address:X4}]";
+
+            if (constraint.ExactValues?.Count == 1)
+                return $"{addressText} = {FormatStateConstraintValue(constraint.ExactValues.First())}";
+
+            if (constraint.ExcludedValues?.Count == 1)
+            {
+                byte value = constraint.ExcludedValues.First();
+                return value == 0
+                    ? $"{addressText} > 0"
+                    : $"{addressText} != {FormatStateConstraintValue(value)}";
+            }
+
+            if (constraint.LowerInclusiveValues?.Count == 1)
+                return $"{addressText} >= {FormatStateConstraintValue(constraint.LowerInclusiveValues.First())}";
+
+            if (constraint.UpperInclusiveValues?.Count == 1)
+                return $"{addressText} <= {FormatStateConstraintValue(constraint.UpperInclusiveValues.First())}";
+
+            return null;
+        }
+
+        private static string FormatStateConstraintValue(byte value)
+        {
+            return value <= 9
+                ? value.ToString()
+                : $"0x{value:X2}";
         }
 
         private List<TextEntry> BuildPathTexts(PathAnalysisResult pathResult,

@@ -4698,6 +4698,7 @@ namespace MMMapEditor
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte n) && n > 0)
                 {
                     registerTracker.SetRegisterRange("AL", 1, n, RegisterValueDistribution.UniformDiscreteRange);
+                    registerTracker.SetRegisterRandomUpperBound("AL", n);
                     registerTracker.MarkRegisterAsPendingExternalCallResult("AX", RegisterTracker.ExternalCallResultKind.Random);
 
                     if (debugMode)
@@ -4728,6 +4729,7 @@ namespace MMMapEditor
                          nRange.Max > 0)
                 {
                     registerTracker.SetRegisterRange("AL", 1, nRange.Max, RegisterValueDistribution.UniformDiscreteRange);
+                    registerTracker.SetRegisterRandomUpperBound("AL", nRange.Max);
                     registerTracker.MarkRegisterAsPendingExternalCallResult("AX");
 
                     if (debugMode)
@@ -6776,6 +6778,75 @@ namespace MMMapEditor
             return (StateValueBoundaryKind.LowerInclusive, (byte)value);
         }
 
+        private bool TryCalculateBranchDiscreteValues(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
+            out string reg, out List<byte> values)
+        {
+            reg = null;
+            values = null;
+
+            if (registerTracker == null)
+                return false;
+
+            reg = registerTracker.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(reg) ||
+                !registerTracker.TryGetRegisterDiscreteValues(reg, out var possibleValues) ||
+                possibleValues == null ||
+                possibleValues.Count == 0)
+            {
+                return false;
+            }
+
+            string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            var filteredValues = new List<byte>();
+
+            if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastCompareImmediate.HasValue)
+            {
+                byte imm = registerTracker.LastCompareImmediate.Value;
+                foreach (byte value in possibleValues)
+                {
+                    if (!TryEvaluateUnsignedCompareImmediateJump(jump, value, imm, out bool currentBranchTaken))
+                        return false;
+
+                    if (currentBranchTaken == branchTaken)
+                        filteredValues.Add(value);
+                }
+            }
+            else if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.Test &&
+                     registerTracker.LastTestMask == 0xFF)
+            {
+                foreach (byte value in possibleValues)
+                {
+                    if (!TryEvaluateTestZeroJump(jump, value, out bool currentBranchTaken))
+                        return false;
+
+                    if (currentBranchTaken == branchTaken)
+                        filteredValues.Add(value);
+                }
+            }
+            else
+            {
+                return false;
+            }
+
+            if (filteredValues.Count == 0)
+                return false;
+
+            values = filteredValues;
+            return true;
+        }
+
+        private static string FormatDiscreteValues(IReadOnlyList<byte> values)
+        {
+            if (values == null || values.Count == 0)
+                return "<empty>";
+
+            if (values.Count <= 12)
+                return string.Join(",", values.Select(value => value.ToString("X2")));
+
+            return $"{values.First():X2}..{values.Last():X2} ({values.Count} values)";
+        }
+
 
 
         private bool TryCalculateBranchConstraint(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
@@ -6949,7 +7020,37 @@ namespace MMMapEditor
         private void ApplyBranchConstraintInPlace(RegisterTracker registerTracker, string mnemonic, bool branchTaken,
             uint instructionAddress, bool debugMode)
         {
-            if (TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out string reg, out int min, out int max))
+            if (TryCalculateBranchDiscreteValues(registerTracker, mnemonic, branchTaken, out string reg, out var discreteValues))
+            {
+                var distribution = GetExistingRegisterDistributionOrUnknown(registerTracker, reg);
+                ushort? sourceAddress = registerTracker.GetSourceAddress(reg);
+                registerTracker.TryGetDynamicValueFormula(reg, out var formulaBeforeConstraint);
+                byte minValue = discreteValues.Min();
+                byte maxValue = discreteValues.Max();
+
+                if (sourceAddress.HasValue)
+                {
+                    registerTracker.SetRegisterDiscreteValuesWithSource(reg, discreteValues, distribution,
+                        sourceAddress.Value, instructionAddress, $"branch constraint after {mnemonic}",
+                        sourceIndexProviderAddr: sourceAddress.Value);
+                    ConstrainEmulatedMemoryRange(sourceAddress.Value, minValue, maxValue);
+                }
+                else
+                {
+                    registerTracker.SetRegisterDiscreteValues(reg, discreteValues, distribution);
+                }
+
+                if (formulaBeforeConstraint != null)
+                    registerTracker.SetDynamicValueFormula(reg, formulaBeforeConstraint.WithValueConstraint(minValue, maxValue));
+
+                if (debugMode)
+                {
+                    string branchText = branchTaken ? "taken" : "linear";
+                    AnalysisDebug.WriteLine(
+                        $"      Уточнили варианты {reg} для ветки {branchText} после {mnemonic}: {FormatDiscreteValues(discreteValues)} (инстр. 0x{instructionAddress:X4})");
+                }
+            }
+            else if (TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out reg, out int min, out int max))
             {
                 var distribution = GetExistingRegisterDistributionOrUnknown(registerTracker, reg);
                 ushort? sourceAddress = registerTracker.GetSourceAddress(reg);
@@ -6985,7 +7086,29 @@ namespace MMMapEditor
         {
             var clone = registerTracker?.Clone() ?? new RegisterTracker();
 
-            if (TryCalculateBranchConstraint(clone, mnemonic, branchTaken, out string reg, out int min, out int max))
+            if (TryCalculateBranchDiscreteValues(clone, mnemonic, branchTaken, out string reg, out var discreteValues))
+            {
+                var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
+                ushort? sourceAddress = clone.GetSourceAddress(reg);
+                clone.TryGetDynamicValueFormula(reg, out var formulaBeforeConstraint);
+                byte minValue = discreteValues.Min();
+                byte maxValue = discreteValues.Max();
+
+                if (sourceAddress.HasValue)
+                {
+                    clone.SetRegisterDiscreteValuesWithSource(reg, discreteValues, distribution,
+                        sourceAddress.Value, instructionAddress, $"branch constraint after {mnemonic}",
+                        sourceIndexProviderAddr: sourceAddress.Value);
+                }
+                else
+                {
+                    clone.SetRegisterDiscreteValues(reg, discreteValues, distribution);
+                }
+
+                if (formulaBeforeConstraint != null)
+                    clone.SetDynamicValueFormula(reg, formulaBeforeConstraint.WithValueConstraint(minValue, maxValue));
+            }
+            else if (TryCalculateBranchConstraint(clone, mnemonic, branchTaken, out reg, out int min, out int max))
             {
                 var distribution = GetExistingRegisterDistributionOrUnknown(clone, reg);
                 ushort? sourceAddress = clone.GetSourceAddress(reg);
@@ -7033,8 +7156,21 @@ namespace MMMapEditor
         {
             var ranges = CloneRangeDictionary(_emulatedMemory8Ranges);
 
-            if (registerTracker == null ||
-                !TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out string reg, out int min, out int max))
+            string reg;
+            int min;
+            int max;
+
+            if (registerTracker == null)
+            {
+                return ranges;
+            }
+
+            if (TryCalculateBranchDiscreteValues(registerTracker, mnemonic, branchTaken, out reg, out var discreteValues))
+            {
+                min = discreteValues.Min();
+                max = discreteValues.Max();
+            }
+            else if (!TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out reg, out min, out max))
             {
                 return ranges;
             }
@@ -7370,10 +7506,24 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(compareRegister))
                 return (1, 1);
 
-            if (!registerTracker.TryGetRegisterRange(compareRegister, out var range) || range == null)
-                return (1, 1);
+            bool hasDiscreteValues = registerTracker.TryGetRegisterDiscreteValues(compareRegister, out var discreteValues) &&
+                discreteValues != null &&
+                discreteValues.Count > 0;
 
-            int total = range.Max - range.Min + 1;
+            ValueRange8 range = null;
+            int total;
+            if (hasDiscreteValues)
+            {
+                total = discreteValues.Count;
+            }
+            else
+            {
+                if (!registerTracker.TryGetRegisterRange(compareRegister, out range) || range == null)
+                    return (1, 1);
+
+                total = range.Max - range.Min + 1;
+            }
+
             if (total <= 0)
                 return (1, 1);
 
@@ -7384,11 +7534,15 @@ namespace MMMapEditor
                 if (!registerTracker.LastCompareImmediate.HasValue)
                     return (1, 1);
 
-                favorable = CountFavorableValues(jump, range, registerTracker.LastCompareImmediate.Value, branchTaken);
+                favorable = hasDiscreteValues
+                    ? CountFavorableValues(jump, discreteValues, registerTracker.LastCompareImmediate.Value, branchTaken)
+                    : CountFavorableValues(jump, range, registerTracker.LastCompareImmediate.Value, branchTaken);
             }
             else if (registerTracker.LastTestMask == 0xFF)
             {
-                favorable = CountFavorableTestZeroValues(jump, range, branchTaken);
+                favorable = hasDiscreteValues
+                    ? CountFavorableTestZeroValues(jump, discreteValues, branchTaken)
+                    : CountFavorableTestZeroValues(jump, range, branchTaken);
             }
             else
             {
@@ -7405,12 +7559,27 @@ namespace MMMapEditor
                 return (1, 1);
 
             if (!registerTracker.TryGetRegisterDistribution(compareRegister, out var distribution) ||
-                distribution != RegisterValueDistribution.UniformDiscreteRange)
+                !IsRandomLikeDistribution(distribution))
             {
                 return (1, 1);
             }
 
             return (favorable, total);
+        }
+
+        private int CountFavorableTestZeroValues(string mnemonic, IReadOnlyList<byte> values, bool branchTaken)
+        {
+            int count = 0;
+            foreach (byte value in values)
+            {
+                if (!TryEvaluateTestZeroJump(mnemonic, value, out bool taken))
+                    return -1;
+
+                if (taken == branchTaken)
+                    count++;
+            }
+
+            return count;
         }
 
         private int CountFavorableTestZeroValues(string mnemonic, ValueRange8 range, bool branchTaken)
@@ -7424,6 +7593,21 @@ namespace MMMapEditor
                     "JNE" or "JNZ" => value != 0,
                     _ => false
                 };
+
+                if (taken == branchTaken)
+                    count++;
+            }
+
+            return count;
+        }
+
+        private int CountFavorableValues(string mnemonic, IReadOnlyList<byte> values, byte imm, bool branchTaken)
+        {
+            int count = 0;
+            foreach (byte value in values)
+            {
+                if (!TryEvaluateUnsignedCompareImmediateJump(mnemonic, value, imm, out bool taken))
+                    return -1;
 
                 if (taken == branchTaken)
                     count++;
@@ -7550,9 +7734,22 @@ namespace MMMapEditor
             bool? resolved = null;
             byte imm = registerTracker.LastCompareImmediate.Value;
 
-            for (int value = range.Min; value <= range.Max; value++)
+            IEnumerable<byte> candidateValues;
+            if (registerTracker.TryGetRegisterDiscreteValues(compareRegister, out var discreteValues) &&
+                discreteValues != null &&
+                discreteValues.Count > 0)
             {
-                if (!TryEvaluateUnsignedCompareImmediateJump(jump, (byte)value, imm, out bool current))
+                candidateValues = discreteValues;
+            }
+            else
+            {
+                candidateValues = Enumerable.Range(range.Min, range.Max - range.Min + 1)
+                    .Select(value => (byte)value);
+            }
+
+            foreach (byte value in candidateValues)
+            {
+                if (!TryEvaluateUnsignedCompareImmediateJump(jump, value, imm, out bool current))
                     return false;
 
                 if (!resolved.HasValue)
@@ -7607,6 +7804,26 @@ namespace MMMapEditor
                 case "JNB":
                 case "JNC":
                     branchTaken = value >= imm;
+                    return true;
+
+                default:
+                    branchTaken = false;
+                    return false;
+            }
+        }
+
+        private static bool TryEvaluateTestZeroJump(string jump, byte value, out bool branchTaken)
+        {
+            switch (jump)
+            {
+                case "JE":
+                case "JZ":
+                    branchTaken = value == 0;
+                    return true;
+
+                case "JNE":
+                case "JNZ":
+                    branchTaken = value != 0;
                     return true;
 
                 default:
