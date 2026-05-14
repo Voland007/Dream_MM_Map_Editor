@@ -5938,7 +5938,7 @@ private static string BuildHierarchicalVariantNotes(
         private static string NormalizeUserVisibleChoiceLabel(string label)
         {
             string normalized = NormalizeChoiceLabel(label);
-            return IsTechnicalChoiceLabel(normalized)
+            return IsTechnicalChoiceLabel(normalized) || IsSyntheticNoBattleLabel(normalized)
                 ? null
                 : normalized;
         }
