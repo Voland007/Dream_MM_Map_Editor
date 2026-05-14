@@ -110,6 +110,8 @@ namespace MMMapEditor
 
             foreach (var obj in allObjects)
             {
+                obj.FlatDisplayPathVariants?.Clear();
+
                 Point pos = new Point(obj.X, obj.Y);
                 string coordKey = $"{obj.X},{obj.Y}";
 
@@ -778,6 +780,12 @@ namespace MMMapEditor
                     normalizedLines.Add("Ничего не происходит");
 
                 int key = BuildFlatSemanticVariantKey(displayIndex++, flatVariant.SourceVariantKey);
+                if (ShouldUseFlatDisplayPathVariant(obj, flatVariant.Variant?.Variant))
+                {
+                    obj.FlatDisplayPathVariants ??= new Dictionary<int, PathVariantInfo>();
+                    obj.FlatDisplayPathVariants[key] = flatVariant.Variant.Variant;
+                }
+
                 result[key] = normalizedLines;
             }
 
@@ -1087,6 +1095,9 @@ namespace MMMapEditor
             if (TryFindPathVariantKey(obj, flatVariant?.Variant, out variantKey))
                 return true;
 
+            if (TryFindPathVariantKeyByRenderIdentity(obj, flatVariant?.Variant, out variantKey))
+                return true;
+
             if (sourceItems == null || flatVariant == null)
                 return false;
 
@@ -1143,6 +1154,53 @@ namespace MMMapEditor
             return false;
         }
 
+        private static bool TryFindPathVariantKeyByRenderIdentity(
+            OvrObject obj,
+            PathVariantInfo renderVariant,
+            out int variantKey)
+        {
+            variantKey = 0;
+            if (obj?.PathVariants == null || renderVariant == null)
+                return false;
+
+            foreach (var kvp in obj.PathVariants.OrderBy(kvp => kvp.Key))
+            {
+                var candidate = kvp.Value;
+                if (candidate == null)
+                    continue;
+
+                if (candidate.PathId == renderVariant.PathId &&
+                    candidate.PathOrderKey == renderVariant.PathOrderKey &&
+                    BuildPathVariantTextKey(candidate) == BuildPathVariantTextKey(renderVariant))
+                {
+                    variantKey = kvp.Key;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string BuildPathVariantTextKey(PathVariantInfo variant)
+        {
+            return string.Join("\n", (variant?.Texts ?? new List<string>())
+                .Select(text => text ?? string.Empty));
+        }
+
+        private static bool ShouldUseFlatDisplayPathVariant(OvrObject obj, PathVariantInfo renderVariant)
+        {
+            if (renderVariant == null)
+                return false;
+
+            return !IsOriginalPathVariantReference(obj, renderVariant);
+        }
+
+        private static bool IsOriginalPathVariantReference(OvrObject obj, PathVariantInfo variant)
+        {
+            return obj?.PathVariants?.Values
+                .Any(candidate => ReferenceEquals(candidate, variant)) == true;
+        }
+
         private static string BuildFlatVariantLineMatchKey(IEnumerable<string> lines)
         {
             return string.Join("\n", (lines ?? Enumerable.Empty<string>())
@@ -1168,6 +1226,12 @@ namespace MMMapEditor
             variant = null;
             if (obj?.PathVariants == null)
                 return false;
+
+            if (obj.FlatDisplayPathVariants != null &&
+                obj.FlatDisplayPathVariants.TryGetValue(displayKey, out variant))
+            {
+                return true;
+            }
 
             if (obj.PathVariants.TryGetValue(displayKey, out variant))
                 return true;

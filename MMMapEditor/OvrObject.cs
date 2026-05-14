@@ -38,6 +38,7 @@ namespace MMMapEditor
 
         // Финальные leaf-варианты пути с привязанными branch-specific данными
         public Dictionary<int, PathVariantInfo> PathVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
+        public Dictionary<int, PathVariantInfo> FlatDisplayPathVariants { get; set; } = new Dictionary<int, PathVariantInfo>();
 
         public bool IsFromTable { get; set; } = false;
         public List<PartyEffect> PartyEffects { get; set; } = new List<PartyEffect>();
