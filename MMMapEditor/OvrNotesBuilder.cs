@@ -862,7 +862,10 @@ namespace MMMapEditor
             {
                 Variant = item.Variant,
                 Lines = item.Lines?.ToList() ?? new List<string>(),
-                NarrativeLines = item.NarrativeLines?.ToList() ?? new List<string>()
+                NarrativeLines = item.NarrativeLines?.ToList() ?? new List<string>(),
+                ConditionalComplementOutcomeEffectKeys = item.ConditionalComplementOutcomeEffectKeys != null
+                    ? new HashSet<string>(item.ConditionalComplementOutcomeEffectKeys, StringComparer.Ordinal)
+                    : new HashSet<string>(StringComparer.Ordinal)
             };
         }
 
@@ -2790,6 +2793,8 @@ namespace MMMapEditor
             public PathVariantInfo Variant { get; set; }
             public List<string> Lines { get; set; } = new List<string>();
             public List<string> NarrativeLines { get; set; } = new List<string>();
+            public HashSet<string> ConditionalComplementOutcomeEffectKeys { get; set; }
+                = new HashSet<string>(StringComparer.Ordinal);
         }
 
         private sealed class FlatVariantRenderItem
@@ -2803,6 +2808,8 @@ namespace MMMapEditor
             public string SegmentKey { get; set; }
             public string Label { get; set; }
             public string HeaderAnnotation { get; set; }
+            public bool PreserveTransparentWrapper { get; set; }
+            public int? RenderPriorityOverride { get; set; }
             public List<string> CommonLines { get; set; } = new List<string>();
             public List<VariantRenderItem> DirectVariants { get; set; } = new List<VariantRenderItem>();
             public List<VariantTreeNode> Children { get; set; } = new List<VariantTreeNode>();
@@ -3107,6 +3114,7 @@ private static string BuildHierarchicalVariantNotes(
                     (item.Lines ?? new List<string>()).Any(IsConditionalPartyStatusLine) ||
                     (ShouldApplyAssumedAliveStatusModel(item?.Variant) &&
                      VariantHasAssumedAliveStatusGuard(item?.Variant)) ||
+                    HasNonTextOutcome(item?.Variant) ||
                     !assumedStatusChangeKeys.Contains(BuildStatusComplementVariantKey(item)))
                 .ToList();
         }
@@ -3304,12 +3312,15 @@ private static string BuildHierarchicalVariantNotes(
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.ConsumedTopChoiceKey : null);
                 PromoteBinaryStateConditionBranches(root);
                 IntroduceComplementaryInventoryPresenceBranches(root);
+                IntroduceGuardedNoOpComplementOutcomes(root);
                 ComputeCommonLines(root);
                 IntroduceSharedLineHierarchy(root);
                 AttachChoiceChildrenToSiblingPromptParents(root);
                 IntroduceSharedPromptHierarchyFromChoiceChildContent(root);
                 IntroduceSharedPromptHierarchyAcrossChoiceChildren(root);
                 HoistSharedCommonPartyNotes(root);
+                NormalizeConditionalStatusComplementLines(root);
+                GroupConditionalLoopSubsetComplementOutcomes(root);
                 PromoteConditionalPartyNotesBeforeBattle(root);
                 RemoveRedundantInheritedLines(root);
                 CollapseTransparentDirectVariantWrappers(root);
@@ -4191,6 +4202,19 @@ private static string BuildHierarchicalVariantNotes(
             return item.Lines == null || item.Lines.Count == 0 || IsNoOpOnly(item.Lines);
         }
 
+        private static bool IsStatusOnlyNoBattleVariant(VariantRenderItem item)
+        {
+            if (item == null || VariantItemHasBattleLaunchOutcome(item))
+                return false;
+
+            var lines = (item.Lines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            return lines.Count > 0 &&
+                   lines.All(IsPossibleConditionalPartyStatusLine);
+        }
+
         private static bool ShouldRenderDirectVariant(
             VariantRenderItem item,
             int siblingDirectVariantCount,
@@ -4358,6 +4382,331 @@ private static string BuildHierarchicalVariantNotes(
             }
 
             return root;
+        }
+
+        private static void IntroduceGuardedNoOpComplementOutcomes(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                IntroduceGuardedNoOpComplementOutcomes(child);
+
+            if (!IsRandomTechnicalChoiceNode(node) ||
+                (((node.Children?.Count ?? 0) < 2) &&
+                 ((node.DirectVariants?.Count ?? 0) < 2)))
+            {
+                return;
+            }
+
+            bool injectedAny = false;
+
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+            if (children.Count >= 2)
+            {
+                var noOpChildren = children
+                    .Where(IsGuardedNoOpComplementSourceNode)
+                    .ToList();
+
+                foreach (var outcomeChild in children.Where(child => !noOpChildren.Contains(child)))
+                {
+                    if (TryInjectGuardedNoOpComplementLeaves(outcomeChild))
+                        injectedAny = true;
+                }
+
+                if (injectedAny)
+                {
+                    node.Children = children
+                        .Where(child => !noOpChildren.Contains(child))
+                        .ToList();
+                }
+            }
+
+            TryInjectGuardedNoOpComplementDirectVariants(node);
+        }
+
+        private static bool IsRandomTechnicalChoiceNode(VariantTreeNode node)
+        {
+            string label = NormalizeChoiceLabel(node?.Label);
+            if (string.IsNullOrWhiteSpace(label) || !IsTechnicalChoiceLabel(label))
+                return false;
+
+            return Regex.IsMatch(
+                label,
+                @"^RND(?:\(\d+\))?\s*=",
+                RegexOptions.IgnoreCase);
+        }
+
+        private static bool IsGuardedNoOpComplementSourceNode(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            return TryBuildNoOpOnlyRenderNodeKey(node, out string key) &&
+                   !string.IsNullOrWhiteSpace(key) &&
+                   GetAllVariants(node).Any(item => item?.Variant != null);
+        }
+
+        private static bool IsGuardedNoOpComplementSourceItem(VariantRenderItem item)
+        {
+            return item?.Variant != null &&
+                   !string.IsNullOrWhiteSpace(BuildUserVisibleNoOpRenderKey(item));
+        }
+
+        private static bool IsGuardedNoOpComplementSourceItem(
+            VariantRenderItem item,
+            IReadOnlyList<string> sharedPrefix)
+        {
+            if (IsGuardedNoOpComplementSourceItem(item))
+                return true;
+
+            if (item?.Variant == null || sharedPrefix == null || sharedPrefix.Count == 0)
+                return false;
+
+            var localLines = RemoveLeadingLineSequence(item.Lines, sharedPrefix);
+            return !string.IsNullOrWhiteSpace(BuildUserVisibleNoOpLineKey(localLines));
+        }
+
+        private static List<string> RemoveLeadingLineSequence(
+            IReadOnlyList<string> lines,
+            IReadOnlyList<string> prefix)
+        {
+            var source = lines?.Where(line => line != null).ToList() ?? new List<string>();
+            if (prefix == null || prefix.Count == 0 || !StartsWithLineSequence(source, prefix))
+                return source;
+
+            return source.Skip(prefix.Count).ToList();
+        }
+
+        private static bool TryInjectGuardedNoOpComplementDirectVariants(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (directVariants.Count < 2)
+                return false;
+
+            var sharedPrefix = CommonPrefix(directVariants
+                .Select(item => item.Lines ?? new List<string>())
+                .ToList());
+            var noOpSources = directVariants
+                .Where(item => IsGuardedNoOpComplementSourceItem(item, sharedPrefix))
+                .ToList();
+            if (noOpSources.Count == 0)
+                return false;
+
+            var outcomeItems = directVariants
+                .Where(item => !noOpSources.Contains(item) &&
+                               GetGuardedNoOpComplementEffectKeys(item).Count > 0)
+                .ToList();
+            if (outcomeItems.Count < 2)
+                return false;
+
+            var syntheticComplements = new List<VariantRenderItem>();
+            foreach (var item in outcomeItems)
+            {
+                var effectKeys = GetGuardedNoOpComplementEffectKeys(item);
+                if (effectKeys.Count == 0)
+                    continue;
+
+                var existingItems = directVariants
+                    .Concat(syntheticComplements)
+                    .ToList();
+                if (HasExistingComplementWithoutEffects(existingItems, item, effectKeys))
+                    continue;
+
+                var synthetic = BuildGuardedNoOpComplementRenderItem(item, effectKeys);
+                if (synthetic == null)
+                    continue;
+
+                item.ConditionalComplementOutcomeEffectKeys ??= new HashSet<string>(StringComparer.Ordinal);
+                foreach (string key in effectKeys)
+                    item.ConditionalComplementOutcomeEffectKeys.Add(key);
+
+                syntheticComplements.Add(synthetic);
+            }
+
+            if (syntheticComplements.Count == 0)
+                return false;
+
+            node.DirectVariants = directVariants
+                .Where(item => !noOpSources.Contains(item))
+                .Concat(syntheticComplements)
+                .OrderBy(GetVariantRenderOrderKey)
+                .ToList();
+            return true;
+        }
+
+        private static bool TryInjectGuardedNoOpComplementLeaves(VariantTreeNode outcomeNode)
+        {
+            if (outcomeNode == null)
+                return false;
+
+            var candidateItems = GetAllVariants(outcomeNode)
+                .Where(item => GetGuardedNoOpComplementEffectKeys(item).Count > 0)
+                .ToList();
+            if (candidateItems.Count < 2)
+                return false;
+
+            return InjectGuardedNoOpComplementLeaves(outcomeNode);
+        }
+
+        private static bool InjectGuardedNoOpComplementLeaves(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            bool changed = false;
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (InjectGuardedNoOpComplementLeaves(child))
+                    changed = true;
+            }
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (directVariants.Count == 0)
+                return changed;
+
+            var syntheticComplements = new List<VariantRenderItem>();
+            foreach (var item in directVariants)
+            {
+                var effectKeys = GetGuardedNoOpComplementEffectKeys(item);
+                if (effectKeys.Count == 0)
+                    continue;
+
+                if (HasExistingComplementWithoutEffects(directVariants, item, effectKeys))
+                    continue;
+
+                var synthetic = BuildGuardedNoOpComplementRenderItem(item, effectKeys);
+                if (synthetic == null)
+                    continue;
+
+                item.ConditionalComplementOutcomeEffectKeys ??= new HashSet<string>(StringComparer.Ordinal);
+                foreach (string key in effectKeys)
+                    item.ConditionalComplementOutcomeEffectKeys.Add(key);
+
+                syntheticComplements.Add(synthetic);
+            }
+
+            if (syntheticComplements.Count == 0)
+                return changed;
+
+            node.DirectVariants = directVariants
+                .Concat(syntheticComplements)
+                .OrderBy(GetVariantRenderOrderKey)
+                .ToList();
+            return true;
+        }
+
+        private static HashSet<string> GetGuardedNoOpComplementEffectKeys(VariantRenderItem item)
+        {
+            return (item?.Variant?.PartyEffects ?? new List<PartyEffect>())
+                .Where(IsGuardedNoOpComplementCandidateEffect)
+                .Select(PartyEffectSemantics.BuildSemanticKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        private static bool IsGuardedNoOpComplementCandidateEffect(PartyEffect effect)
+        {
+            if (effect == null ||
+                !PartyEffectSemantics.IsStateChanging(effect) ||
+                !PartyEffectSemantics.IsLoopDerived(effect))
+            {
+                return false;
+            }
+
+            var field = PartyEffectSemantics.GetEffectiveField(effect);
+            return field == PartyFieldKind.Hp ||
+                   field == PartyFieldKind.Sp;
+        }
+
+        private static bool HasExistingComplementWithoutEffects(
+            List<VariantRenderItem> directVariants,
+            VariantRenderItem source,
+            HashSet<string> effectKeys)
+        {
+            if (directVariants == null || source == null || effectKeys == null || effectKeys.Count == 0)
+                return false;
+
+            string sourceBaseKey = BuildGuardedNoOpComplementBaseLineKey(source, effectKeys);
+            if (string.IsNullOrWhiteSpace(sourceBaseKey))
+                return false;
+
+            return directVariants
+                .Where(item => item != null && !ReferenceEquals(item, source))
+                .Any(item =>
+                    !VariantHasAnyEffectKey(item, effectKeys) &&
+                    string.Equals(
+                        BuildGuardedNoOpComplementBaseLineKey(item, effectKeys),
+                        sourceBaseKey,
+                        StringComparison.Ordinal));
+        }
+
+        private static bool VariantHasAnyEffectKey(VariantRenderItem item, HashSet<string> effectKeys)
+        {
+            if (item?.Variant?.PartyEffects == null || effectKeys == null || effectKeys.Count == 0)
+                return false;
+
+            return item.Variant.PartyEffects
+                .Where(effect => effect != null)
+                .Select(PartyEffectSemantics.BuildSemanticKey)
+                .Any(effectKeys.Contains);
+        }
+
+        private static string BuildGuardedNoOpComplementBaseLineKey(
+            VariantRenderItem item,
+            HashSet<string> effectKeys)
+        {
+            var lines = RemoveGuardedNoOpComplementEffectLines(item, effectKeys);
+            return BuildCommonLinesKey(lines);
+        }
+
+        private static VariantRenderItem BuildGuardedNoOpComplementRenderItem(
+            VariantRenderItem source,
+            HashSet<string> effectKeys)
+        {
+            if (source?.Variant == null || effectKeys == null || effectKeys.Count == 0)
+                return null;
+
+            var clone = ClonePathVariantForRender(source.Variant);
+            if (clone == null)
+                return null;
+
+            clone.PartyEffects = clone.PartyEffects?
+                .Where(effect => effect != null &&
+                                 !effectKeys.Contains(PartyEffectSemantics.BuildSemanticKey(effect)))
+                .Select(effect => effect.Clone())
+                .ToList() ?? new List<PartyEffect>();
+
+            return new VariantRenderItem
+            {
+                Variant = clone,
+                Lines = RemoveGuardedNoOpComplementEffectLines(source, effectKeys),
+                NarrativeLines = source.NarrativeLines?.ToList() ?? new List<string>(),
+                ConditionalComplementOutcomeEffectKeys = new HashSet<string>(StringComparer.Ordinal)
+            };
+        }
+
+        private static List<string> RemoveGuardedNoOpComplementEffectLines(
+            VariantRenderItem item,
+            HashSet<string> effectKeys)
+        {
+            if (item == null || effectKeys == null || effectKeys.Count == 0)
+                return item?.Lines?.Where(line => line != null).ToList() ?? new List<string>();
+
+            var linesToRemove = GetVariantPartyEffectLines(
+                item,
+                effect => effect != null &&
+                          effectKeys.Contains(PartyEffectSemantics.BuildSemanticKey(effect)));
+            return RemoveLineOccurrences(item.Lines, linesToRemove);
         }
 
         private static void PromoteBinaryStateConditionBranches(VariantTreeNode node)
@@ -5143,6 +5492,9 @@ private static string BuildHierarchicalVariantNotes(
             if (node == null)
                 return false;
 
+            if (node.PreserveTransparentWrapper)
+                return false;
+
             if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)))
                 return false;
 
@@ -5428,7 +5780,7 @@ private static string BuildHierarchicalVariantNotes(
                 if (VariantItemHasBattleLaunchOutcome(variant))
                     continue;
 
-                if (IsEmptyOrNoOpVariant(variant))
+                if (IsEmptyOrNoOpVariant(variant) || IsStatusOnlyNoBattleVariant(variant))
                     result[variant] = "без боя";
             }
 
@@ -6087,6 +6439,9 @@ private static string BuildHierarchicalVariantNotes(
             Dictionary<VariantTreeNode, bool> renderabilityCache)
         {
             if (node == null)
+                return false;
+
+            if (node.PreserveTransparentWrapper)
                 return false;
 
             if (ShouldPreserveTransparentMixedSiblingGroup(node, hasRenderableSibling, renderabilityCache))
@@ -6775,11 +7130,36 @@ private static string BuildHierarchicalVariantNotes(
             PartyEffect effect,
             PathVariantInfo variantContext = null)
         {
-            string description = PartyEffectSemantics.BuildHumanDescription(effect);
+            var displayEffect = BuildDisplayPartyEffect(effect, variantContext);
+            string description = PartyEffectSemantics.BuildHumanDescription(displayEffect);
             if (!ShouldRenderStandardStatusLoopAsCurrentMember(variantContext, effect))
                 return description;
 
             return ReplaceWholePartyConditionTargetWithCurrentMember(description);
+        }
+
+        private static PartyEffect BuildDisplayPartyEffect(
+            PartyEffect effect,
+            PathVariantInfo variantContext)
+        {
+            if (!ShouldDisplayPoisonThornsHpAsQuarter(effect, variantContext))
+                return effect;
+
+            var displayEffect = effect.Clone();
+            displayEffect.ApplicationCount = Math.Max(2, PartyEffectSemantics.GetEffectiveApplicationCount(displayEffect));
+            return displayEffect;
+        }
+
+        private static bool ShouldDisplayPoisonThornsHpAsQuarter(
+            PartyEffect effect,
+            PathVariantInfo variantContext)
+        {
+            return effect != null &&
+                   variantContext != null &&
+                   VariantTextsContain(variantContext, "POISON THORNS!") &&
+                   PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Hp &&
+                   PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.Halve &&
+                   PartyEffectSemantics.GetEffectiveApplicationCount(effect) == 1;
         }
 
         private static string ReplaceWholePartyConditionTargetWithCurrentMember(string description)
@@ -7003,10 +7383,518 @@ private static string BuildHierarchicalVariantNotes(
             if (PartyEffectSemantics.IsGuardLike(effect))
                 return true;
 
+            if (IsScalarStatSharedPartyEffect(effect))
+                return true;
+
             return (PartyFoodSemantics.IsFoodField(PartyEffectSemantics.GetEffectiveField(effect)) ||
                     PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) ||
                     PartyTemporaryStatSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect))) &&
                    PartyEffectSemantics.IsStateChanging(effect);
+        }
+
+        private static bool IsScalarStatSharedPartyEffect(PartyEffect effect)
+        {
+            if (effect == null || !PartyEffectSemantics.IsStateChanging(effect))
+                return false;
+
+            var field = PartyEffectSemantics.GetEffectiveField(effect);
+            return field == PartyFieldKind.Hp || field == PartyFieldKind.Sp;
+        }
+
+        private static void NormalizeConditionalStatusComplementLines(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var item in node.DirectVariants ?? new List<VariantRenderItem>())
+            {
+                if (ShouldNormalizeConditionalStatusDisplayLines(item?.Variant))
+                    item.Lines = NormalizeConditionalStatusDisplayLines(item.Lines);
+            }
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                NormalizeConditionalStatusComplementLines(child);
+        }
+
+        private static void GroupConditionalLoopSubsetComplementOutcomes(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                GroupConditionalLoopSubsetComplementOutcomes(child);
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (directVariants.Count < 2)
+                return;
+
+            var consumed = new HashSet<VariantRenderItem>();
+            var outcomeNodes = new List<VariantTreeNode>();
+
+            foreach (var group in directVariants.GroupBy(BuildConditionalLoopSubsetComplementDisplayKey))
+            {
+                var groupItems = group.ToList();
+                if (TryBuildConditionalLoopSubsetComplementOutcomeNode(groupItems, out var outcomeNode))
+                {
+                    foreach (var item in groupItems)
+                        consumed.Add(item);
+
+                    outcomeNodes.Add(outcomeNode);
+                }
+            }
+
+            if (outcomeNodes.Count < 2)
+                return;
+
+            node.DirectVariants = directVariants
+                .Where(item => !consumed.Contains(item))
+                .ToList();
+            node.Children ??= new List<VariantTreeNode>();
+            node.Children.AddRange(outcomeNodes);
+        }
+
+        private static bool TryBuildConditionalLoopSubsetComplementOutcomeNode(
+            List<VariantRenderItem> items,
+            out VariantTreeNode outcomeNode)
+        {
+            outcomeNode = null;
+
+            var groupItems = (items ?? new List<VariantRenderItem>())
+                .Where(item => item?.Variant != null)
+                .OrderBy(GetVariantRenderOrderKey)
+                .ToList();
+            if (groupItems.Count < 2)
+                return false;
+
+            if (groupItems.Any(item => item.Variant?.HasProbabilityInfo != true))
+                return false;
+
+            var itemsWithOutcome = groupItems
+                .Where(item => GetConditionalLoopSubsetOutcomeLines(item).Count > 0)
+                .ToList();
+            if (itemsWithOutcome.Count == 0 || itemsWithOutcome.Count == groupItems.Count)
+                return false;
+
+            var distinctOutcomeLineSets = itemsWithOutcome
+                .Select(item => BuildCommonLinesKey(GetConditionalLoopSubsetOutcomeLines(item)))
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (distinctOutcomeLineSets.Count != 1)
+                return false;
+
+            var outcomeLines = GetConditionalLoopSubsetOutcomeLines(itemsWithOutcome.First());
+            if (outcomeLines.Count == 0)
+                return false;
+
+            if (!TryBuildConditionalComplementProbability(groupItems, out int numerator, out int denominator))
+                return false;
+
+            var baseItem = groupItems
+                .FirstOrDefault(item => GetConditionalLoopSubsetOutcomeLines(item).Count == 0)
+                ?? groupItems.First();
+            var baseLines = RemoveConditionalLoopSubsetOutcomeLines(baseItem);
+
+            var noStatusSource = groupItems
+                .FirstOrDefault(item => GetConditionalLoopSubsetOutcomeLines(item).Count == 0)
+                ?? groupItems.First();
+            var statusSource = itemsWithOutcome.First();
+
+            var label = BuildConditionalLoopSubsetOutcomeLabel(baseLines, out var childBaseLines);
+            outcomeNode = new VariantTreeNode
+            {
+                SegmentKey = "conditional-status:" + BuildCommonLinesKey(baseLines),
+                Label = label,
+                PreserveTransparentWrapper = true,
+                CommonLines = new List<string>(),
+                Children = new List<VariantTreeNode>
+                {
+                    BuildConditionalLoopSubsetOutcomeChildNode(
+                        noStatusSource,
+                        numerator,
+                        denominator,
+                        childBaseLines,
+                        null,
+                        "no-status"),
+                    BuildConditionalLoopSubsetOutcomeChildNode(
+                        statusSource,
+                        numerator,
+                        denominator,
+                        childBaseLines,
+                        outcomeLines,
+                        "status")
+                }
+            };
+            return true;
+        }
+
+        private static bool TryBuildConditionalComplementProbability(
+            List<VariantRenderItem> groupItems,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 0;
+            denominator = 1;
+
+            var probabilities = (groupItems ?? new List<VariantRenderItem>())
+                .Where(item => item?.Variant != null)
+                .Select(item =>
+                {
+                    int currentNumerator = Math.Max(0, item.Variant.ProbabilityNumerator);
+                    int currentDenominator = Math.Max(1, item.Variant.ProbabilityDenominator);
+                    ReduceFraction(ref currentNumerator, ref currentDenominator);
+                    return (currentNumerator, currentDenominator);
+                })
+                .Distinct()
+                .ToList();
+
+            if (probabilities.Count == 1)
+            {
+                numerator = probabilities[0].currentNumerator;
+                denominator = probabilities[0].currentDenominator;
+                return true;
+            }
+
+            return TrySumVariantProbabilities(groupItems, out numerator, out denominator);
+        }
+
+        private static VariantTreeNode BuildConditionalLoopSubsetOutcomeChildNode(
+            VariantRenderItem source,
+            int numerator,
+            int denominator,
+            List<string> baseLines,
+            List<string> outcomeLines,
+            string segmentSuffix)
+        {
+            var lines = (baseLines ?? new List<string>())
+                .Where(line => line != null)
+                .ToList();
+
+            string label = null;
+            var visibleOutcomeLines = (outcomeLines ?? new List<string>())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+            if (visibleOutcomeLines.Count > 0)
+            {
+                if (lines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                {
+                    foreach (var line in visibleOutcomeLines)
+                        lines = InsertLineBeforeBattleOutcome(lines, line);
+                }
+                else if (visibleOutcomeLines.Count == 1)
+                {
+                    label = visibleOutcomeLines[0];
+                }
+                else
+                {
+                    lines = visibleOutcomeLines;
+                }
+            }
+
+            var renderVariant = ClonePathVariantForRender(source?.Variant);
+            if (renderVariant != null)
+            {
+                renderVariant.ProbabilityNumerator = numerator;
+                renderVariant.ProbabilityDenominator = denominator;
+            }
+
+            return new VariantTreeNode
+            {
+                SegmentKey = "conditional-status-" + segmentSuffix,
+                Label = label,
+                PreserveTransparentWrapper = true,
+                RenderPriorityOverride = visibleOutcomeLines.Count == 0 ? -1 : 0,
+                DirectVariants = new List<VariantRenderItem>
+                {
+                    new VariantRenderItem
+                    {
+                        Variant = renderVariant,
+                        Lines = lines,
+                        NarrativeLines = source?.NarrativeLines?.ToList() ?? new List<string>()
+                    }
+                }
+            };
+        }
+
+        private static string BuildConditionalLoopSubsetOutcomeLabel(
+            List<string> baseLines,
+            out List<string> childBaseLines)
+        {
+            childBaseLines = (baseLines ?? new List<string>())
+                .Where(line => line != null)
+                .ToList();
+
+            var meaningfulLines = childBaseLines
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+
+            if (meaningfulLines.Count == 0 || IsNoOpOnly(childBaseLines))
+            {
+                childBaseLines = new List<string>();
+                return "без боя";
+            }
+
+            return null;
+        }
+
+        private static string BuildConditionalLoopSubsetComplementDisplayKey(VariantRenderItem item)
+        {
+            var baseLines = RemoveConditionalLoopSubsetOutcomeLines(item);
+            return BuildCommonLinesKey(baseLines);
+        }
+
+        private static List<string> GetConditionalLoopSubsetOutcomeLines(VariantRenderItem item)
+        {
+            var candidateLines = GetVariantPartyEffectLines(item, effect => IsConditionalLoopComplementOutcomeEffect(item, effect))
+                .Select(NormalizeConditionalStatusDisplayLine)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (candidateLines.Count == 0)
+                return new List<string>();
+
+            var itemLineCounts = BuildLineCounts(item?.Lines ?? new List<string>());
+            return candidateLines
+                .Where(line => itemLineCounts.ContainsKey(line ?? string.Empty))
+                .ToList();
+        }
+
+        private static List<string> RemoveConditionalLoopSubsetOutcomeLines(VariantRenderItem item)
+        {
+            var linesToRemove = BuildLineCounts(GetConditionalLoopSubsetOutcomeLines(item));
+            if (linesToRemove.Count == 0)
+                return item?.Lines?.Where(line => line != null).ToList() ?? new List<string>();
+
+            var result = new List<string>();
+            foreach (var line in item?.Lines ?? new List<string>())
+            {
+                string key = line ?? string.Empty;
+                if (linesToRemove.TryGetValue(key, out int remaining) && remaining > 0)
+                {
+                    if (remaining == 1)
+                        linesToRemove.Remove(key);
+                    else
+                        linesToRemove[key] = remaining - 1;
+                    continue;
+                }
+
+                if (line != null)
+                    result.Add(line);
+            }
+
+            return result;
+        }
+
+        private static bool IsConditionalLoopComplementOutcomeEffect(PartyEffect effect)
+        {
+            return IsConditionalLoopSubsetOutcomeEffect(effect) ||
+                   (effect != null &&
+                    PartyEffectSemantics.IsStateChanging(effect) &&
+                    PartyEffectSemantics.IsLoopDerived(effect) &&
+                    PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Hp);
+        }
+
+        private static bool IsConditionalLoopComplementOutcomeEffect(
+            VariantRenderItem item,
+            PartyEffect effect)
+        {
+            if (IsConditionalLoopComplementOutcomeEffect(effect))
+                return true;
+
+            if (item?.ConditionalComplementOutcomeEffectKeys == null ||
+                item.ConditionalComplementOutcomeEffectKeys.Count == 0 ||
+                effect == null)
+            {
+                return false;
+            }
+
+            string key = PartyEffectSemantics.BuildSemanticKey(effect);
+            return !string.IsNullOrWhiteSpace(key) &&
+                   item.ConditionalComplementOutcomeEffectKeys.Contains(key);
+        }
+
+        private static bool ShouldNormalizeConditionalStatusDisplayLines(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects?
+                .Any(IsConditionalLoopSubsetStatusOutcomeEffect) == true;
+        }
+
+        private static List<string> NormalizeConditionalStatusDisplayLines(IEnumerable<string> lines)
+        {
+            var result = new List<string>();
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+            {
+                result.Add(NormalizeConditionalStatusDisplayLine(line));
+            }
+
+            return result;
+        }
+
+        private static string NormalizeConditionalStatusDisplayLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+            string normalized = BuildPossibleConditionalStatusLine(trimmed);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return line;
+
+            int leadingLength = line.Length - trimmed.Length;
+            return leadingLength > 0
+                ? line.Substring(0, leadingLength) + normalized
+                : normalized;
+        }
+
+        private static List<string> InsertLineBeforeBattleOutcome(IEnumerable<string> lines, string lineToInsert)
+        {
+            var result = (lines ?? Enumerable.Empty<string>())
+                .Where(line => line != null)
+                .ToList();
+
+            if (string.IsNullOrWhiteSpace(lineToInsert) ||
+                result.Contains(lineToInsert, StringComparer.Ordinal))
+            {
+                return result;
+            }
+
+            int battleIndex = FindFirstBattleLineIndex(result);
+            if (battleIndex < 0)
+                result.Add(lineToInsert);
+            else
+                result.Insert(battleIndex, lineToInsert);
+
+            return result;
+        }
+
+        private static string BuildPossibleConditionalStatusLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return null;
+
+            if (line.StartsWith(CurrentPartyMemberConditionChangePrefix, StringComparison.Ordinal))
+                return LegacyWholePartyConditionChangePrefix +
+                       line.Substring(CurrentPartyMemberConditionChangePrefix.Length);
+
+            if (line.StartsWith(WholePartyConditionChangePrefix, StringComparison.Ordinal))
+                return line;
+
+            if (line.StartsWith(LegacyWholePartyConditionChangePrefix, StringComparison.Ordinal))
+                return line;
+
+            return null;
+        }
+
+        private static bool IsPossibleConditionalPartyStatusLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.TrimStart();
+            return trimmed.StartsWith(CurrentPartyMemberConditionChangePrefix, StringComparison.Ordinal) ||
+                   trimmed.StartsWith(WholePartyConditionChangePrefix, StringComparison.Ordinal) ||
+                   trimmed.StartsWith(LegacyWholePartyConditionChangePrefix, StringComparison.Ordinal) ||
+                   trimmed.StartsWith("CONDITION текущего персонажа партии может измениться на ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("CONDITION всех персонажей в партии может измениться на ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("CONDITION персонажа(ей) в партии может измениться на ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("CONDITION текущего персонажа партии не изменяется", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("CONDITION всех персонажей в партии не изменяется", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("CONDITION персонажа(ей) в партии не изменяется", StringComparison.Ordinal);
+        }
+
+        private static bool IsConditionalLoopSubsetStatusOutcomeEffect(PartyEffect effect)
+        {
+            return IsConditionalLoopSubsetOutcomeEffect(effect) &&
+                   PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Status;
+        }
+
+        private static bool TrySumVariantProbabilities(
+            IEnumerable<VariantRenderItem> items,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 0;
+            denominator = 1;
+
+            long sumNumerator = 0;
+            long commonDenominator = 1;
+            bool hasAny = false;
+
+            foreach (var item in items ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                var variant = item?.Variant;
+                if (variant == null)
+                    continue;
+
+                int currentNumerator = Math.Max(0, variant.ProbabilityNumerator);
+                int currentDenominator = Math.Max(1, variant.ProbabilityDenominator);
+                ReduceFraction(ref currentNumerator, ref currentDenominator);
+
+                long gcd = GreatestCommonDivisor(
+                    (int)Math.Min(int.MaxValue, Math.Abs(commonDenominator)),
+                    currentDenominator);
+                long lcm = commonDenominator / gcd * currentDenominator;
+                if (lcm <= 0 || lcm > int.MaxValue)
+                    return false;
+
+                sumNumerator =
+                    sumNumerator * (lcm / commonDenominator) +
+                    (long)currentNumerator * (lcm / currentDenominator);
+                commonDenominator = lcm;
+                hasAny = true;
+            }
+
+            if (!hasAny || sumNumerator <= 0 || sumNumerator > int.MaxValue)
+                return false;
+
+            numerator = (int)sumNumerator;
+            denominator = (int)commonDenominator;
+            ReduceFraction(ref numerator, ref denominator);
+            if (numerator >= denominator && numerator > 0)
+            {
+                numerator = 1;
+                denominator = 1;
+            }
+
+            return true;
+        }
+
+        private static PathVariantInfo ClonePathVariantForRender(PathVariantInfo source)
+        {
+            if (source == null)
+                return null;
+
+            var clone = new PathVariantInfo();
+            foreach (var property in typeof(PathVariantInfo).GetProperties())
+            {
+                if (!property.CanRead || !property.CanWrite)
+                    continue;
+
+                property.SetValue(clone, property.GetValue(source));
+            }
+
+            clone.Texts = source.Texts?.ToList() ?? new List<string>();
+            clone.BranchChoices = source.BranchChoices?
+                .Where(choice => choice != null)
+                .Select(choice => choice.Clone())
+                .ToList() ?? new List<BranchChoice>();
+            clone.PartyEffects = source.PartyEffects?
+                .Where(effect => effect != null)
+                .Select(effect => effect.Clone())
+                .ToList() ?? new List<PartyEffect>();
+            clone.OccurrenceIndices = source.OccurrenceIndices?.ToList() ?? new List<int>();
+            clone.OccurrenceRanges = source.OccurrenceRanges?
+                .Where(range => range != null)
+                .Select(range => range.Clone())
+                .ToList() ?? new List<OccurrenceRangeInfo>();
+            clone.StaticMapDataReads = source.StaticMapDataReads != null
+                ? new Dictionary<ushort, byte>(source.StaticMapDataReads)
+                : new Dictionary<ushort, byte>();
+
+            return clone;
         }
 
         private static void HoistSharedCommonPartyNotesAcrossChildren(VariantTreeNode node)
@@ -7298,11 +8186,20 @@ private static string BuildHierarchicalVariantNotes(
 
             for (int i = 0; i < lines.Count; i++)
             {
-                if (IsBattleLine(lines[i]))
+                if (IsBattleOutcomeLine(lines[i]))
                     return i;
             }
 
             return -1;
+        }
+
+        private static bool IsBattleOutcomeLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            return IsBattleLine(line) ||
+                   line.IndexOf("random encounter", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsBattleLine(string line)
@@ -7553,11 +8450,14 @@ private static string BuildHierarchicalVariantNotes(
                 bool mixedPartyScanCancelChoice =
                     ContainsMixedPartyScanSubsetSummary(parentNode) &&
                     IsLikelyCancelNode(child);
-                int displayPriority = mixedPartyScanCancelChoice
+                bool promotedNoBattleChild = IsSyntheticNoBattleLabel(child.Label);
+                int displayPriority = child.RenderPriorityOverride ?? (mixedPartyScanCancelChoice
                     ? -1
-                    : (parentHasMultiNumericPrompt && HasPromptOptionLabels(child.CommonLines)
+                    : (promotedNoBattleChild
+                        ? -1
+                        : (parentHasMultiNumericPrompt && HasPromptOptionLabels(child.CommonLines)
                         ? 1
-                        : (IsEmptyOrNoOpNode(child) ? 1 : 0));
+                        : (IsEmptyOrNoOpNode(child) ? 1 : 0))));
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
@@ -8752,6 +9652,9 @@ private static string BuildHierarchicalVariantNotes(
             if (node == null)
                 return false;
 
+            if (node.PreserveTransparentWrapper)
+                return false;
+
             if (HasUserVisibleNodeLabelOrAnnotation(node))
                 return false;
 
@@ -8886,6 +9789,17 @@ private static string BuildHierarchicalVariantNotes(
             string displayLabel = NormalizeUserVisibleChoiceLabel(label);
             header += string.IsNullOrWhiteSpace(displayLabel) ? ":" : $": {displayLabel}";
             sb.AppendLine(header);
+
+            var lines = item?.Lines?.ToList() ?? new List<string>();
+            if (lines.Any(line => !string.IsNullOrWhiteSpace(line)) && !IsNoOpOnly(lines))
+            {
+                bool headerContainsProbability = VariantHeaderContainsProbability(header);
+                AppendIndentedDisplayLines(
+                    sb,
+                    indent + "   ",
+                    lines,
+                    headerContainsProbability);
+            }
         }
 
         private static IEnumerable<VariantRenderItem> OrderDirectVariants(IEnumerable<VariantRenderItem> variants)
