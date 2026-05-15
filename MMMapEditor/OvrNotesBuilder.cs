@@ -1267,6 +1267,18 @@ namespace MMMapEditor
             return renderableChildren.Any(TreeContainsPromptBranching);
         }
 
+        private static bool TreeContainsPartyScan(VariantTreeNode node)
+        {
+            if (node == null)
+                return false;
+
+            if (FindImmediatePartyScanPromptNode(node) != null)
+                return true;
+
+            return (node.Children ?? new List<VariantTreeNode>())
+                .Any(TreeContainsPartyScan);
+        }
+
         private static List<FlatVariantRenderItem> BuildFlatVariantLinesFromTree(
             VariantTreeNode node,
             out bool containsPartyScan)
@@ -2865,6 +2877,7 @@ namespace MMMapEditor
         {
             public PathVariantInfo Variant { get; set; }
             public List<string> Lines { get; set; } = new List<string>();
+            public List<string> HeaderAnnotations { get; set; } = new List<string>();
         }
 
         private sealed class VariantTreeNode
@@ -2888,6 +2901,19 @@ namespace MMMapEditor
             public string ConsumedTopChoiceKey { get; set; }
             public bool GroupedByChoice { get; set; }
             public int SourceOrderKey { get; set; } = int.MaxValue;
+        }
+
+        private sealed class SemanticVariantRenderAnalysis
+        {
+            public List<VariantRenderItem> Items { get; set; } = new List<VariantRenderItem>();
+            public List<VariantRenderItem> SourceItems { get; set; } = new List<VariantRenderItem>();
+            public Dictionary<int, VariantRenderItem> SourceItemsByKey { get; set; }
+                = new Dictionary<int, VariantRenderItem>();
+            public List<TopLevelVariantGroup> Groups { get; set; } = new List<TopLevelVariantGroup>();
+            public bool ContainsPartyScan { get; set; }
+            public bool HasPromptBranching { get; set; }
+            public bool HasMeaningfulChoiceHierarchy { get; set; }
+            public bool HasCommonPrefixHierarchy { get; set; }
         }
 
         private sealed class OrderedRenderEntry
@@ -2961,15 +2987,15 @@ namespace MMMapEditor
             public bool HasAdjustedMemory { get; set; }
         }
 
-private static string BuildHierarchicalVariantNotes(
-    OvrObject obj,
-    byte defaultRandomEncounterMonsterPowerCap,
-    byte defaultRandomEncounterMonsterLevelCap,
-    byte defaultRandomEncounterMonsterBatchCountCap,
-    byte defaultDarkeningLevel,
-    byte defaultRandomEncounterChance,
-    string specialSpoilerLine,
-    string inlineSpecialSpoilerLine)
+        private static string BuildHierarchicalVariantNotes(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string specialSpoilerLine,
+            string inlineSpecialSpoilerLine)
         {
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
@@ -2985,54 +3011,27 @@ private static string BuildHierarchicalVariantNotes(
             if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
-            var items = BuildVariantRenderItems(
+            var analysis = BuildSemanticVariantRenderAnalysis(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
                 defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance,
-                inlineSpecialSpoilerLine);
-
-            if (items.Count <= 1)
+                inlineSpecialSpoilerLine,
+                specialSpoilerLine);
+            if (analysis == null)
                 return null;
 
-            items = ApplySingleMemberPartyScanDisplayModel(items);
-            if (items.Count <= 1)
-                return null;
-
-            items = DeduplicateDisplayedVariantItems(items);
-            items = ApplySingleMemberPartyScanDisplayModel(items);
-
-            if (items.Count <= 1)
-                return null;
-
-            AppendLineToFirstMeaningfulVariantItem(items, specialSpoilerLine);
-
-            if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(items, out string resourceAttritionHierarchy))
+            if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(analysis.Items, out string resourceAttritionHierarchy))
                 return resourceAttritionHierarchy;
 
-            var groups = BuildTopLevelVariantGroups(obj, items);
-            if (groups.Count == 0)
-                return null;
-
-            // Иерархический вывод нужен либо когда есть реальные choice-ветки,
-            // либо когда хотя бы внутри одной смысловой группы остаётся
-            // нетривиальный общий текстовый префикс. Это позволяет не терять
-            // иерархию в случаях вида "no-op + несколько родственных исходов".
-            bool hasMeaningfulChoiceHierarchy = items.Any(item =>
-                GetRelevantBranchChoices(item?.Variant).Any());
-
-            bool hasCommonPrefixHierarchy = groups.Any(group =>
-                (group?.Items?.Count ?? 0) > 1 &&
-                (group.TreeRoot?.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false));
-
-            if (!hasMeaningfulChoiceHierarchy && !hasCommonPrefixHierarchy)
+            if (!analysis.HasMeaningfulChoiceHierarchy && !analysis.HasCommonPrefixHierarchy)
                 return null;
 
             bool hasRealMultiplicity =
-                groups.Count > 1 ||
-                groups.Any(group =>
+                analysis.Groups.Count > 1 ||
+                analysis.Groups.Any(group =>
                     (group?.TreeRoot?.Children?.Any(IsRenderableStructuralNode) ?? false) ||
                     (CountRenderableDirectVariants(group?.TreeRoot) > 1));
 
@@ -3041,10 +3040,10 @@ private static string BuildHierarchicalVariantNotes(
 
             var sb = new StringBuilder();
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
-            for (int i = 0; i < groups.Count; i++)
+            for (int i = 0; i < analysis.Groups.Count; i++)
             {
-                RenderTopLevelGroup(groups[i], sb, i + 1);
-                if (i < groups.Count - 1)
+                RenderTopLevelGroup(analysis.Groups[i], sb, i + 1);
+                if (i < analysis.Groups.Count - 1)
                     sb.AppendLine();
             }
 
@@ -3075,6 +3074,45 @@ private static string BuildHierarchicalVariantNotes(
             if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
+            var analysis = BuildSemanticVariantRenderAnalysis(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine,
+                specialSpoilerLine);
+            if (analysis == null)
+                return null;
+
+            if (TryBuildInventoryResourceAttritionRandomOutcomeModel(analysis.Items, out var resourceAttritionModel))
+                return BuildInventoryResourceAttritionFlatNotes(resourceAttritionModel);
+
+            if (!analysis.ContainsPartyScan &&
+                !analysis.HasPromptBranching &&
+                !analysis.HasMeaningfulChoiceHierarchy &&
+                !analysis.HasCommonPrefixHierarchy)
+            {
+                return null;
+            }
+
+            return BuildFlatSemanticVariantNotesFromAnalysis(obj, analysis);
+        }
+
+        private static SemanticVariantRenderAnalysis BuildSemanticVariantRenderAnalysis(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine,
+            string specialSpoilerLine = null)
+        {
+            if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
+                return null;
+
             var items = BuildVariantRenderItems(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
@@ -3099,9 +3137,527 @@ private static string BuildHierarchicalVariantNotes(
 
             AppendLineToFirstMeaningfulVariantItem(items, specialSpoilerLine);
 
-            return TryBuildInventoryResourceAttritionRandomOutcomeModel(items, out var resourceAttritionModel)
-                ? BuildInventoryResourceAttritionFlatNotes(resourceAttritionModel)
+            var sourceItems = items
+                .Select(CloneVariantRenderItemForSourceMatch)
+                .Where(item => item != null)
+                .ToList();
+
+            var groups = BuildTopLevelVariantGroups(obj, items);
+            if (groups.Count == 0)
+                return null;
+
+            return new SemanticVariantRenderAnalysis
+            {
+                Items = items,
+                SourceItems = sourceItems,
+                SourceItemsByKey = BuildSourceVariantItemMap(obj, sourceItems),
+                Groups = groups,
+                ContainsPartyScan = groups.Any(group => TreeContainsPartyScan(group?.TreeRoot)),
+                HasPromptBranching = groups.Any(group => TreeContainsPromptBranching(group?.TreeRoot)),
+                HasMeaningfulChoiceHierarchy = items.Any(item => GetRelevantBranchChoices(item?.Variant).Any()),
+                HasCommonPrefixHierarchy = groups.Any(group =>
+                    (group?.Items?.Count ?? 0) > 1 &&
+                    (group.TreeRoot?.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false))
+            };
+        }
+
+        private static string BuildFlatSemanticVariantNotesFromAnalysis(
+            OvrObject obj,
+            SemanticVariantRenderAnalysis analysis)
+        {
+            if (analysis?.Groups == null || analysis.Groups.Count == 0)
+                return null;
+
+            var flatVariants = BuildFlatTerminalVariantsFromAnalysis(analysis)
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (flatVariants.Count == 0)
+                return null;
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+
+            for (int i = 0; i < flatVariants.Count; i++)
+            {
+                var flatVariant = flatVariants[i];
+                var annotations = new List<string>();
+                AddDistinctHeaderAnnotations(annotations, flatVariant.HeaderAnnotations);
+                AddDistinctHeaderAnnotations(
+                    annotations,
+                    BuildFlatVariantHeaderAnnotations(obj, flatVariant.Variant));
+
+                string header = $"Вариант {i + 1}";
+                string annotationText = BuildVariantHeaderAnnotationText(annotations);
+                if (!string.IsNullOrWhiteSpace(annotationText))
+                    header += $" ({annotationText})";
+                header += ":";
+
+                sb.AppendLine(header);
+                bool headerContainsProbability = VariantHeaderContainsProbability(header);
+
+                var lines = flatVariant.Lines?
+                    .Where(line => line != null)
+                    .ToList() ?? new List<string>();
+                if (!lines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                    lines.Add("Ничего не происходит");
+
+                foreach (var line in lines)
+                {
+                    foreach (var part in SplitDisplayLines(FormatVariantLine(line, headerContainsProbability)))
+                        sb.AppendLine(part);
+                }
+
+                if (i < flatVariants.Count - 1)
+                    sb.AppendLine();
+            }
+
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromAnalysis(
+            SemanticVariantRenderAnalysis analysis)
+        {
+            var result = new List<FlatVariantRenderItem>();
+            foreach (var group in analysis?.Groups ?? new List<TopLevelVariantGroup>())
+                result.AddRange(BuildFlatTerminalVariantsFromTopLevelGroup(group));
+
+            return result;
+        }
+
+        private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromTopLevelGroup(
+            TopLevelVariantGroup group)
+        {
+            var result = new List<FlatVariantRenderItem>();
+            if (group?.TreeRoot == null)
+                return result;
+
+            var renderableChildren = (group.TreeRoot.Children ?? Enumerable.Empty<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            int siblingDirectVariantCount = group.TreeRoot.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(group.TreeRoot, renderableChildren.Count);
+
+            var directVariants = (group.TreeRoot.DirectVariants ?? Enumerable.Empty<VariantRenderItem>())
+                .Where(v => ShouldRenderDirectVariant(
+                        v,
+                        siblingDirectVariantCount,
+                        renderableChildren.Count,
+                        suppressEmptyPromptTerminalDirectVariants) &&
+                    !ShouldSuppressAsRedundantTopLevelNoOpLeaf(group, v))
+                .ToList();
+
+            var prefix = group.TreeRoot.CommonLines?.ToList() ?? new List<string>();
+            var pathAnnotations = new List<string>();
+            AddFlatPathLabel(pathAnnotations, prefix, group.Label);
+            AddFlatPathHeaderAnnotations(pathAnnotations, null, group.HeaderAnnotation);
+
+            if (IsPureTopLevelNoOpGroup(group))
+            {
+                result.Add(CreateFlatTerminalVariant(null, prefix, pathAnnotations));
+                return result;
+            }
+
+            var singleLeafItem = renderableChildren.Count == 0
+                ? GetSingleLeafVariantItem(group.TreeRoot)
                 : null;
+            if (directVariants.Count == 1 && renderableChildren.Count == 0)
+            {
+                result.Add(CreateFlatTerminalVariant(
+                    singleLeafItem ?? directVariants[0],
+                    prefix,
+                    pathAnnotations));
+                return result;
+            }
+
+            bool canPromoteNoToChoice =
+                renderableChildren.Count > 0 &&
+                PromptContainsChoiceLabel(group.TreeRoot.CommonLines, "N)") &&
+                !HasNodeWithLabel(group.TreeRoot, "N)");
+            int noChoiceCount = directVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+            var syntheticChoiceLabels = BuildSyntheticChoiceLabels(group.TreeRoot, directVariants, renderableChildren);
+            var syntheticChildLabels = BuildSyntheticChildLabels(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels);
+
+            foreach (var child in renderableChildren)
+            {
+                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) &&
+                    string.IsNullOrWhiteSpace(child.Label))
+                {
+                    child.Label = syntheticChildLabel;
+                }
+            }
+
+            foreach (var entry in BuildOrderedRenderEntries(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels))
+            {
+                if (entry.ChildNode != null)
+                {
+                    result.AddRange(BuildFlatTerminalVariantsFromTreeNode(
+                        entry.ChildNode,
+                        prefix,
+                        pathAnnotations,
+                        BuildSiblingNoOpLeafKeysForRenderEntry(
+                            entry,
+                            renderableChildren,
+                            directVariants)));
+                }
+                else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
+                {
+                    result.Add(CreateFlatChoiceTerminalVariant(
+                        entry.DirectVariant,
+                        prefix,
+                        pathAnnotations,
+                        syntheticLabel));
+                }
+                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
+                {
+                    result.Add(CreateFlatChoiceTerminalVariant(
+                        entry.DirectVariant,
+                        prefix,
+                        pathAnnotations,
+                        "N)"));
+                }
+                else
+                {
+                    result.Add(CreateFlatLooseTerminalVariant(
+                        entry.DirectVariant,
+                        prefix,
+                        pathAnnotations));
+                }
+            }
+
+            return result;
+        }
+
+        private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromTreeNode(
+            VariantTreeNode node,
+            List<string> inheritedLines,
+            List<string> inheritedHeaderAnnotations,
+            IReadOnlySet<string> siblingNoOpLeafKeys = null)
+        {
+            var result = new List<FlatVariantRenderItem>();
+            if (!IsRenderableStructuralNode(node))
+                return result;
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            renderableChildren = SuppressNoOpChildrenInTransparentRenderNode(
+                node,
+                renderableChildren,
+                siblingNoOpLeafKeys);
+
+            int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
+            bool suppressEmptyPromptTerminalDirectVariants =
+                ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildren.Count);
+            var renderableDirectVariants = OrderDirectVariants(node.DirectVariants)
+                .Where(v => ShouldRenderDirectVariant(
+                    v,
+                    siblingDirectVariantCount,
+                    renderableChildren.Count,
+                    suppressEmptyPromptTerminalDirectVariants))
+                .ToList();
+            renderableDirectVariants = SuppressInheritedDuplicateNoOpDirectVariants(
+                node,
+                renderableChildren,
+                renderableDirectVariants,
+                siblingNoOpLeafKeys);
+
+            if (renderableChildren.Count == 1 &&
+                renderableDirectVariants.Count == 0 &&
+                IsTransparentRenderNode(node))
+            {
+                return BuildFlatTerminalVariantsFromTreeNode(
+                    renderableChildren[0],
+                    inheritedLines,
+                    inheritedHeaderAnnotations,
+                    siblingNoOpLeafKeys);
+            }
+
+            var nodeLines = node.CommonLines?.ToList() ?? new List<string>();
+            var singleLeafItem = renderableChildren.Count == 0
+                ? GetSingleLeafVariantItem(node)
+                : null;
+            var singleLeafLines = singleLeafItem?.Lines?.ToList();
+            string nodeLabel = NormalizeUserVisibleChoiceLabel(node.Label);
+            string promotedCommonLabel = string.IsNullOrWhiteSpace(nodeLabel)
+                ? TryPromoteLeadingAnswerLine(nodeLines)
+                : null;
+            string promotedSingleLeafLabel = string.IsNullOrWhiteSpace(nodeLabel)
+                ? TryPromoteLeadingAnswerLine(singleLeafLines)
+                : null;
+
+            var prefix = inheritedLines?.ToList() ?? new List<string>();
+            prefix.AddRange(nodeLines);
+
+            var pathAnnotations = inheritedHeaderAnnotations?.ToList() ?? new List<string>();
+            AddFlatPathLabel(
+                pathAnnotations,
+                prefix,
+                nodeLabel ?? promotedCommonLabel ?? promotedSingleLeafLabel);
+            AddFlatPathHeaderAnnotations(pathAnnotations, null, node.HeaderAnnotation);
+
+            if (TryBuildFlatPartyScanOutcomeLines(node, prefix, out var partyScanLines))
+            {
+                foreach (var flatVariant in partyScanLines)
+                {
+                    var annotations = pathAnnotations.ToList();
+                    AddDistinctHeaderAnnotations(annotations, flatVariant.HeaderAnnotations);
+                    flatVariant.HeaderAnnotations = annotations;
+                    result.Add(flatVariant);
+                }
+
+                return result;
+            }
+
+            if (renderableChildren.Count == 0 && renderableDirectVariants.Count == 0)
+            {
+                if (prefix.Any(line => !string.IsNullOrWhiteSpace(line)) || pathAnnotations.Count > 0)
+                    result.Add(CreateFlatTerminalVariant(null, prefix, pathAnnotations));
+
+                return result;
+            }
+
+            if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
+            {
+                var leaf = CreateFlatTerminalVariant(
+                    singleLeafItem ?? renderableDirectVariants[0],
+                    prefix,
+                    pathAnnotations);
+                if (singleLeafItem != null && singleLeafLines != null)
+                    leaf.Lines = prefix.Concat(singleLeafLines).ToList();
+
+                result.Add(leaf);
+                return result;
+            }
+
+            bool canPromoteNoToChoice =
+                renderableChildren.Count > 0 &&
+                PromptContainsChoiceLabel(node.CommonLines, "N)") &&
+                !HasNodeWithLabel(node, "N)");
+            int noChoiceCount = renderableDirectVariants.Count(v => ShouldRenderAsNoChoiceVariant(v));
+            var syntheticChoiceLabels = BuildSyntheticChoiceLabels(node, renderableDirectVariants, renderableChildren);
+            var syntheticChildLabels = BuildSyntheticChildLabels(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
+
+            foreach (var child in renderableChildren)
+            {
+                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) &&
+                    string.IsNullOrWhiteSpace(child.Label))
+                {
+                    child.Label = syntheticChildLabel;
+                }
+            }
+
+            var orderedEntries = BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
+            bool parentHeaderIsOnlyVariantNumber =
+                pathAnnotations.Count == 0 &&
+                !prefix.Any(line => !string.IsNullOrWhiteSpace(line));
+
+            foreach (var entry in orderedEntries)
+            {
+                if (ShouldSkipNoOpRenderEntryInTransparentParent(parentHeaderIsOnlyVariantNumber, entry, orderedEntries))
+                    continue;
+
+                if (entry.ChildNode != null)
+                {
+                    result.AddRange(BuildFlatTerminalVariantsFromTreeNode(
+                        entry.ChildNode,
+                        prefix,
+                        pathAnnotations,
+                        BuildSiblingNoOpLeafKeysForRenderEntry(
+                            entry,
+                            renderableChildren,
+                            renderableDirectVariants)));
+                }
+                else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
+                {
+                    result.Add(CreateFlatChoiceTerminalVariant(
+                        entry.DirectVariant,
+                        prefix,
+                        pathAnnotations,
+                        syntheticLabel));
+                }
+                else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
+                {
+                    result.Add(CreateFlatChoiceTerminalVariant(
+                        entry.DirectVariant,
+                        prefix,
+                        pathAnnotations,
+                        "N)"));
+                }
+                else
+                {
+                    result.Add(CreateFlatLooseTerminalVariant(
+                        entry.DirectVariant,
+                        prefix,
+                        pathAnnotations));
+                }
+            }
+
+            return result;
+        }
+
+        private static FlatVariantRenderItem CreateFlatChoiceTerminalVariant(
+            VariantRenderItem item,
+            List<string> inheritedLines,
+            List<string> inheritedHeaderAnnotations,
+            string label)
+        {
+            var annotations = inheritedHeaderAnnotations?.ToList() ?? new List<string>();
+
+            var itemLines = item?.Lines?.ToList() ?? new List<string>();
+            AddFlatPathLabel(annotations, itemLines, label);
+            if (itemLines.Any(line => !string.IsNullOrWhiteSpace(line)) && IsNoOpOnly(itemLines))
+                itemLines.Clear();
+
+            return new FlatVariantRenderItem
+            {
+                Variant = item?.Variant,
+                Lines = (inheritedLines ?? new List<string>()).Concat(itemLines).ToList(),
+                HeaderAnnotations = annotations
+            };
+        }
+
+        private static FlatVariantRenderItem CreateFlatLooseTerminalVariant(
+            VariantRenderItem item,
+            List<string> inheritedLines,
+            List<string> inheritedHeaderAnnotations)
+        {
+            var annotations = inheritedHeaderAnnotations?.ToList() ?? new List<string>();
+            var itemLines = item?.Lines?.ToList() ?? new List<string>();
+            string promotedLabel = TryPromoteLeadingAnswerLine(itemLines);
+            AddFlatPathLabel(annotations, itemLines, promotedLabel);
+
+            return new FlatVariantRenderItem
+            {
+                Variant = item?.Variant,
+                Lines = (inheritedLines ?? new List<string>()).Concat(itemLines).ToList(),
+                HeaderAnnotations = annotations
+            };
+        }
+
+        private static FlatVariantRenderItem CreateFlatTerminalVariant(
+            VariantRenderItem item,
+            List<string> inheritedLines,
+            List<string> inheritedHeaderAnnotations)
+        {
+            return new FlatVariantRenderItem
+            {
+                Variant = item?.Variant,
+                Lines = (inheritedLines ?? new List<string>())
+                    .Concat(item?.Lines ?? new List<string>())
+                    .ToList(),
+                HeaderAnnotations = inheritedHeaderAnnotations?.ToList() ?? new List<string>()
+            };
+        }
+
+        private static void AddFlatPathHeaderAnnotations(
+            List<string> target,
+            string label,
+            string headerAnnotation)
+        {
+            if (target == null)
+                return;
+
+            string displayLabel = BuildFlatChoiceLabelHeaderAnnotation(label);
+            if (!string.IsNullOrWhiteSpace(displayLabel))
+                AddDistinctHeaderAnnotations(target, new[] { displayLabel });
+
+            string displayHeaderAnnotation = NormalizeUserVisibleHeaderAnnotation(headerAnnotation);
+            if (!string.IsNullOrWhiteSpace(displayHeaderAnnotation))
+                AddDistinctHeaderAnnotations(target, new[] { displayHeaderAnnotation });
+        }
+
+        private static void AddFlatPathLabel(
+            List<string> headerAnnotations,
+            List<string> bodyLines,
+            string label)
+        {
+            if (TryBuildFlatChoiceLabelHeaderAnnotation(label, out string headerAnnotation))
+            {
+                AddDistinctHeaderAnnotations(headerAnnotations, new[] { headerAnnotation });
+                return;
+            }
+
+            string displayLabel = NormalizeUserVisibleChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(displayLabel) || bodyLines == null)
+                return;
+
+            if (!bodyLines.Any(line => string.Equals(line?.Trim(), displayLabel, StringComparison.Ordinal)))
+                bodyLines.Add(displayLabel);
+        }
+
+        private static string BuildFlatChoiceLabelHeaderAnnotation(string label)
+        {
+            return TryBuildFlatChoiceLabelHeaderAnnotation(label, out string annotation)
+                ? annotation
+                : null;
+        }
+
+        private static bool TryBuildFlatChoiceLabelHeaderAnnotation(string label, out string annotation)
+        {
+            annotation = null;
+            string displayLabel = NormalizeUserVisibleChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(displayLabel))
+                return false;
+
+            if (IsFlatOutcomeBodyLabel(displayLabel))
+                return false;
+
+            string token = displayLabel.EndsWith(")", StringComparison.Ordinal)
+                ? displayLabel.Substring(0, displayLabel.Length - 1).Trim()
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(token) &&
+                (string.Equals(token, "ESC", StringComparison.OrdinalIgnoreCase) ||
+                 Regex.IsMatch(token, @"^[A-Za-z0-9]$", RegexOptions.CultureInvariant)))
+            {
+                annotation = "выбор " + token.ToUpperInvariant();
+                return true;
+            }
+
+            if (IsPartyScanAnswerLine(displayLabel) ||
+                IsFlatConditionChoiceLabel(displayLabel))
+            {
+                annotation = displayLabel;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsFlatConditionChoiceLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string trimmed = label.Trim();
+            if (trimmed.StartsWith("при условии:", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return Regex.IsMatch(
+                trimmed,
+                @"(?:\bесть|\bотсутствует|\bвзят|\bне\s+взят)$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        private static bool IsFlatOutcomeBodyLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string trimmed = label.TrimStart();
+            return IsConditionalPartyStatusLine(trimmed) ||
+                   IsBattleOutcomeLine(trimmed) ||
+                   trimmed.StartsWith("!", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("+", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("У партии", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("У всех", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("Телепорт ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("Монстры битвы ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("На ячейке ", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("Ничего не происходит", StringComparison.Ordinal) ||
+                   trimmed.StartsWith("POOF", StringComparison.OrdinalIgnoreCase);
         }
 
         private static List<VariantRenderItem> BuildVariantRenderItems(
@@ -4372,6 +4928,11 @@ private static string BuildHierarchicalVariantNotes(
 
             return normalized.Count == 1 &&
                    string.Equals(normalized[0], "Ничего не происходит (не выполнены условия для наступления ни одного варианта)", StringComparison.Ordinal);
+        }
+
+        private static bool IsUserVisibleNoOpOnly(IEnumerable<string> lines)
+        {
+            return !string.IsNullOrWhiteSpace(BuildUserVisibleNoOpLineKey(lines));
         }
 
         private static string BuildTopLevelGroupKey(VariantRenderItem item)
@@ -8874,7 +9435,7 @@ private static string BuildHierarchicalVariantNotes(
             if ((group.TreeRoot.Children?.Any(IsRenderableStructuralNode) ?? false))
                 return false;
 
-            if (!IsNoOpOnly(group.TreeRoot.CommonLines))
+            if (!IsUserVisibleNoOpOnly(group.TreeRoot.CommonLines))
                 return false;
 
             return !(group.TreeRoot.DirectVariants?.Any(v => v != null &&
@@ -8887,7 +9448,7 @@ private static string BuildHierarchicalVariantNotes(
             if (group?.TreeRoot == null || item == null)
                 return false;
 
-            return IsNoOpOnly(group.TreeRoot.CommonLines) &&
+            return IsUserVisibleNoOpOnly(group.TreeRoot.CommonLines) &&
                    !(group.TreeRoot.Children?.Any(IsRenderableStructuralNode) ?? false) &&
                    ShouldRenderAsNoChoiceVariant(item);
         }
