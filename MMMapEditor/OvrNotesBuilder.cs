@@ -3262,7 +3262,10 @@ namespace MMMapEditor
             if (renderableChildren.Count == 0 && directVariants.Count == 0)
             {
                 if (prefix.Any(line => !string.IsNullOrWhiteSpace(line)) || pathAnnotations.Count > 0)
-                    result.Add(CreateFlatTerminalVariant(null, prefix, pathAnnotations));
+                    result.Add(CreateFlatTerminalVariant(
+                        GetSingleLeafVariantItem(group.TreeRoot),
+                        prefix,
+                        pathAnnotations));
 
                 return result;
             }
@@ -3273,7 +3276,7 @@ namespace MMMapEditor
             if (directVariants.Count == 1 && renderableChildren.Count == 0)
             {
                 result.Add(CreateFlatTerminalVariant(
-                    singleLeafItem ?? directVariants[0],
+                    PreferItemWithVariant(singleLeafItem, directVariants[0]),
                     prefix,
                     pathAnnotations));
                 return result;
@@ -3428,8 +3431,9 @@ namespace MMMapEditor
 
             if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
             {
+                var leafItem = PreferItemWithVariant(singleLeafItem, renderableDirectVariants[0]);
                 var leaf = CreateFlatTerminalVariant(
-                    singleLeafItem ?? renderableDirectVariants[0],
+                    leafItem,
                     prefix,
                     pathAnnotations);
                 if (singleLeafItem != null && singleLeafLines != null)
@@ -4783,6 +4787,36 @@ namespace MMMapEditor
             return variants.Count == 1
                 ? variants[0]
                 : null;
+        }
+
+        private static VariantRenderItem PreferItemWithVariant(
+            VariantRenderItem preferred,
+            VariantRenderItem fallback)
+        {
+            if (preferred == null)
+                return fallback;
+
+            if (preferred.Variant != null || fallback?.Variant == null)
+                return preferred;
+
+            return new VariantRenderItem
+            {
+                Variant = fallback.Variant,
+                Lines = (preferred.Lines != null && preferred.Lines.Count > 0
+                        ? preferred.Lines
+                        : fallback.Lines)
+                    ?.ToList() ?? new List<string>(),
+                NarrativeLines = (preferred.NarrativeLines != null && preferred.NarrativeLines.Count > 0
+                        ? preferred.NarrativeLines
+                        : fallback.NarrativeLines)
+                    ?.ToList() ?? new List<string>(),
+                ConditionalComplementOutcomeEffectKeys =
+                    new HashSet<string>(
+                        preferred.ConditionalComplementOutcomeEffectKeys ??
+                        fallback.ConditionalComplementOutcomeEffectKeys ??
+                        new HashSet<string>(StringComparer.Ordinal),
+                        StringComparer.Ordinal)
+            };
         }
 
         private static bool IsRenderableStructuralNode(VariantTreeNode node)
