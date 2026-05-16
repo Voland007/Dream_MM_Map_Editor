@@ -2876,8 +2876,20 @@ namespace MMMapEditor
         private sealed class FlatVariantRenderItem
         {
             public PathVariantInfo Variant { get; set; }
+            public decimal OrderKey { get; set; } = decimal.MaxValue;
             public List<string> Lines { get; set; } = new List<string>();
             public List<string> HeaderAnnotations { get; set; } = new List<string>();
+        }
+
+        private sealed class FlatVariantDisplayGroup
+        {
+            public FlatVariantRenderItem Item { get; set; }
+            public decimal OrderKey { get; set; } = decimal.MaxValue;
+            public int SourceIndex { get; set; } = int.MaxValue;
+            public List<string> HeaderAnnotations { get; set; } = new List<string>();
+            public List<string> NonChoiceHeaderAnnotations { get; set; } = new List<string>();
+            public List<string> SimpleChoiceHeaderAnnotations { get; set; } = new List<string>();
+            public int SourceVariantCount { get; set; }
         }
 
         private sealed class VariantTreeNode
@@ -3023,8 +3035,12 @@ namespace MMMapEditor
             if (analysis == null)
                 return null;
 
-            if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(analysis.Items, out string resourceAttritionHierarchy))
+            if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(
+                    analysis.SourceItems ?? analysis.Items,
+                    out string resourceAttritionHierarchy))
+            {
                 return resourceAttritionHierarchy;
+            }
 
             if (!analysis.HasMeaningfulChoiceHierarchy && !analysis.HasCommonPrefixHierarchy)
                 return null;
@@ -3086,8 +3102,12 @@ namespace MMMapEditor
             if (analysis == null)
                 return null;
 
-            if (TryBuildInventoryResourceAttritionRandomOutcomeModel(analysis.Items, out var resourceAttritionModel))
+            if (TryBuildInventoryResourceAttritionRandomOutcomeModel(
+                    analysis.SourceItems ?? analysis.Items,
+                    out var resourceAttritionModel))
+            {
                 return BuildInventoryResourceAttritionFlatNotes(resourceAttritionModel);
+            }
 
             if (!analysis.ContainsPartyScan &&
                 !analysis.HasPromptBranching &&
@@ -3171,8 +3191,9 @@ namespace MMMapEditor
             var flatVariants = BuildFlatTerminalVariantsFromAnalysis(analysis)
                 .Where(variant => variant != null)
                 .ToList();
+            flatVariants = NormalizeFlatTerminalVariantsForDisplay(obj, flatVariants);
 
-            if (flatVariants.Count == 0)
+            if (flatVariants.Count <= 1)
                 return null;
 
             var sb = new StringBuilder();
@@ -3225,6 +3246,172 @@ namespace MMMapEditor
             return result;
         }
 
+        private static List<FlatVariantRenderItem> NormalizeFlatTerminalVariantsForDisplay(
+            OvrObject obj,
+            List<FlatVariantRenderItem> variants)
+        {
+            var groups = new List<FlatVariantDisplayGroup>();
+            var groupsByKey = new Dictionary<string, FlatVariantDisplayGroup>(StringComparer.Ordinal);
+
+            int sourceIndex = 0;
+            foreach (var variant in variants ?? new List<FlatVariantRenderItem>())
+            {
+                int currentSourceIndex = sourceIndex++;
+                if (variant == null)
+                    continue;
+
+                var lines = (variant.Lines ?? new List<string>())
+                    .Select(line => line?.TrimEnd() ?? string.Empty)
+                    .ToList();
+                decimal orderKey = GetFlatVariantRenderOrderKey(variant);
+
+                var annotations = new List<string>();
+                AddDistinctHeaderAnnotations(annotations, variant.HeaderAnnotations);
+                AddDistinctHeaderAnnotations(
+                    annotations,
+                    BuildFlatVariantHeaderAnnotations(obj, variant.Variant));
+
+                var nonChoiceAnnotations = annotations
+                    .Where(annotation => !IsSimpleFlatChoiceHeaderAnnotation(annotation))
+                    .ToList();
+                string key = string.Join(
+                    "\n---\n",
+                    string.Join("|", nonChoiceAnnotations),
+                    string.Join("\n", lines));
+
+                if (!groupsByKey.TryGetValue(key, out var group))
+                {
+                    group = new FlatVariantDisplayGroup
+                    {
+                        Item = new FlatVariantRenderItem
+                        {
+                            Variant = variant.Variant,
+                            OrderKey = orderKey,
+                            Lines = lines,
+                            HeaderAnnotations = annotations.ToList()
+                        },
+                        OrderKey = orderKey,
+                        SourceIndex = currentSourceIndex,
+                        HeaderAnnotations = annotations.ToList(),
+                        SourceVariantCount = 1
+                    };
+                    AddDistinctHeaderAnnotations(group.NonChoiceHeaderAnnotations, nonChoiceAnnotations);
+                    AddDistinctHeaderAnnotations(
+                        group.SimpleChoiceHeaderAnnotations,
+                        annotations.Where(IsSimpleFlatChoiceHeaderAnnotation));
+
+                    groupsByKey[key] = group;
+                    groups.Add(group);
+                    continue;
+                }
+
+                if (orderKey < group.OrderKey)
+                {
+                    group.OrderKey = orderKey;
+                    group.Item.OrderKey = orderKey;
+                    group.Item.Variant = variant.Variant;
+                }
+
+                if (currentSourceIndex < group.SourceIndex)
+                    group.SourceIndex = currentSourceIndex;
+
+                group.SourceVariantCount++;
+                AddDistinctHeaderAnnotations(group.HeaderAnnotations, annotations);
+                AddDistinctHeaderAnnotations(group.NonChoiceHeaderAnnotations, nonChoiceAnnotations);
+                AddDistinctHeaderAnnotations(
+                    group.SimpleChoiceHeaderAnnotations,
+                    annotations.Where(IsSimpleFlatChoiceHeaderAnnotation));
+            }
+
+            bool suppressSimpleChoiceAnnotations = false;
+
+            foreach (var group in groups)
+            {
+                bool suppressGroupSimpleChoiceAnnotations =
+                    group.SourceVariantCount > 1 &&
+                    group.SimpleChoiceHeaderAnnotations.Count > 1;
+                suppressSimpleChoiceAnnotations |= suppressGroupSimpleChoiceAnnotations;
+
+                group.Item.HeaderAnnotations = suppressGroupSimpleChoiceAnnotations
+                    ? group.HeaderAnnotations
+                        .Where(annotation => !IsSimpleFlatChoiceHeaderAnnotation(annotation))
+                        .ToList()
+                    : group.HeaderAnnotations.ToList();
+                group.Item.OrderKey = group.OrderKey;
+            }
+
+            bool sortSuppressedSimpleChoiceGroups =
+                suppressSimpleChoiceAnnotations &&
+                ShouldSortSuppressedSimpleChoiceGroups(groups);
+
+            var orderedGroups = sortSuppressedSimpleChoiceGroups
+                ? groups
+                    .Select((group, index) => new { group, index })
+                    .OrderBy(item => item.group.OrderKey)
+                    .ThenBy(item => item.group.SourceIndex)
+                    .ThenBy(item => item.index)
+                    .Select(item => item.group)
+                    .ToList()
+                : groups;
+
+            return orderedGroups
+                .Select(group => group.Item)
+                .Where(item => item != null)
+                .ToList();
+        }
+
+        private static decimal GetFlatVariantRenderOrderKey(FlatVariantRenderItem variant)
+        {
+            if (variant == null)
+                return decimal.MaxValue;
+
+            return variant.OrderKey < decimal.MaxValue
+                ? variant.OrderKey
+                : GetPathOrderKey(variant.Variant);
+        }
+
+        private static bool ShouldSortSuppressedSimpleChoiceGroups(
+            List<FlatVariantDisplayGroup> groups)
+        {
+            if (groups == null || groups.Count == 0)
+                return false;
+
+            if (groups.Any(group =>
+                group?.NonChoiceHeaderAnnotations?.Count > 0 ||
+                group?.Item?.Lines?.Any(line =>
+                    string.Equals(
+                        line?.Trim(),
+                        "Ничего не происходит (не выполнены условия для наступления ни одного варианта)",
+                        StringComparison.Ordinal) ||
+                    string.Equals(
+                        line?.Trim(),
+                        "Ничего не происходит",
+                        StringComparison.Ordinal)) == true) == true)
+            {
+                return true;
+            }
+
+            return groups
+                .Select(group => group?.Item?.Lines?
+                    .FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?
+                    .Trim())
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Distinct(StringComparer.Ordinal)
+                .Count() > 1;
+        }
+
+        private static bool IsSimpleFlatChoiceHeaderAnnotation(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            return Regex.IsMatch(
+                normalized,
+                @"^выбор\s+(?:ESC|[A-Za-z0-9])$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
         private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromTopLevelGroup(
             TopLevelVariantGroup group)
         {
@@ -3255,7 +3442,11 @@ namespace MMMapEditor
 
             if (IsPureTopLevelNoOpGroup(group))
             {
-                result.Add(CreateFlatTerminalVariant(null, prefix, pathAnnotations));
+                result.Add(CreateFlatTerminalVariant(
+                    GetSingleLeafVariantItem(group.TreeRoot),
+                    prefix,
+                    pathAnnotations,
+                    includeItemLines: false));
                 return result;
             }
 
@@ -3424,7 +3615,7 @@ namespace MMMapEditor
             if (renderableChildren.Count == 0 && renderableDirectVariants.Count == 0)
             {
                 if (prefix.Any(line => !string.IsNullOrWhiteSpace(line)) || pathAnnotations.Count > 0)
-                    result.Add(CreateFlatTerminalVariant(null, prefix, pathAnnotations));
+                    result.Add(CreateFlatTerminalVariant(singleLeafItem, prefix, pathAnnotations, includeItemLines: false));
 
                 return result;
             }
@@ -3525,6 +3716,7 @@ namespace MMMapEditor
             return new FlatVariantRenderItem
             {
                 Variant = item?.Variant,
+                OrderKey = GetVariantRenderOrderKey(item),
                 Lines = (inheritedLines ?? new List<string>()).Concat(itemLines).ToList(),
                 HeaderAnnotations = annotations
             };
@@ -3543,6 +3735,7 @@ namespace MMMapEditor
             return new FlatVariantRenderItem
             {
                 Variant = item?.Variant,
+                OrderKey = GetVariantRenderOrderKey(item),
                 Lines = (inheritedLines ?? new List<string>()).Concat(itemLines).ToList(),
                 HeaderAnnotations = annotations
             };
@@ -3551,13 +3744,19 @@ namespace MMMapEditor
         private static FlatVariantRenderItem CreateFlatTerminalVariant(
             VariantRenderItem item,
             List<string> inheritedLines,
-            List<string> inheritedHeaderAnnotations)
+            List<string> inheritedHeaderAnnotations,
+            bool includeItemLines = true)
         {
+            var itemLines = includeItemLines
+                ? item?.Lines ?? new List<string>()
+                : new List<string>();
+
             return new FlatVariantRenderItem
             {
                 Variant = item?.Variant,
+                OrderKey = GetVariantRenderOrderKey(item),
                 Lines = (inheritedLines ?? new List<string>())
-                    .Concat(item?.Lines ?? new List<string>())
+                    .Concat(itemLines)
                     .ToList(),
                 HeaderAnnotations = inheritedHeaderAnnotations?.ToList() ?? new List<string>()
             };
