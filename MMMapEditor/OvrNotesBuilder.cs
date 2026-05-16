@@ -3259,6 +3259,14 @@ namespace MMMapEditor
                 return result;
             }
 
+            if (renderableChildren.Count == 0 && directVariants.Count == 0)
+            {
+                if (prefix.Any(line => !string.IsNullOrWhiteSpace(line)) || pathAnnotations.Count > 0)
+                    result.Add(CreateFlatTerminalVariant(null, prefix, pathAnnotations));
+
+                return result;
+            }
+
             var singleLeafItem = renderableChildren.Count == 0
                 ? GetSingleLeafVariantItem(group.TreeRoot)
                 : null;
