@@ -1972,6 +1972,9 @@ namespace MMMapEditor
             if (stateChangingSiblings.Count == 0)
                 return false;
 
+            if (HasNonLocalGuardedBranchChoice(promptOnlyVariant))
+                return false;
+
             if (stateChangingSiblings.Any(HasConditionalLoopSubsetOutcomeEffects))
                 return true;
 
@@ -1981,6 +1984,13 @@ namespace MMMapEditor
                 IsBranchHistoryCoveredBy(
                     promptBranchKeys,
                     BuildPromptShadowBranchChoiceKeySet(other)));
+        }
+
+        private bool HasNonLocalGuardedBranchChoice(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?
+                .Any(choice => choice?.GuardPredicate != null &&
+                               !IsLoopLocalBranchChoiceForIdentity(choice)) == true;
         }
 
         private HashSet<string> BuildPromptShadowBranchChoiceKeySet(PathVariantInfo variant)

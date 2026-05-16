@@ -48,7 +48,8 @@ namespace MMMapEditor
         Food = 24,
         MaxHp = 25,
         MaxHpLow = 26,
-        MaxHpHigh = 27
+        MaxHpHigh = 27,
+        Technical7D = 28
     }
 
     public enum PartyMemberSelectionKind
@@ -242,6 +243,7 @@ namespace MMMapEditor
 
         public string FieldName { get; set; }
         public byte? FieldOffset { get; set; }
+        public ValueRange8 FieldOffsetRange { get; set; }
         public string Source { get; set; }
         public PartyFieldKind Kind { get; set; } = PartyFieldKind.Unknown;
         public PartyFieldBitTransform BitTransform { get; set; }
@@ -276,6 +278,7 @@ namespace MMMapEditor
                 IsCompare = IsCompare,
                 FieldName = FieldName,
                 FieldOffset = FieldOffset,
+                FieldOffsetRange = FieldOffsetRange == null ? null : new ValueRange8(FieldOffsetRange.Min, FieldOffsetRange.Max),
                 Source = Source,
                 Kind = Kind,
                 BitTransform = BitTransform?.Clone()
@@ -285,6 +288,9 @@ namespace MMMapEditor
         public override string ToString()
         {
             string offsetText = $"0x{Offset:X2}";
+            if (FieldOffsetRange != null && !FieldOffsetRange.IsExact)
+                offsetText = $"0x{FieldOffsetRange.Min:X2}..0x{FieldOffsetRange.Max:X2}";
+
             string effectiveText = EffectiveAddress.HasValue ? $"0x{EffectiveAddress.Value:X4}" : "?";
             string nameText = !string.IsNullOrWhiteSpace(FieldName) ? FieldName : Field.ToString();
             string access = IsCompare ? "Compare" : IsRead && IsWrite ? "ReadWrite" : IsRead ? "Read" : IsWrite ? "Write" : "UnknownAccess";

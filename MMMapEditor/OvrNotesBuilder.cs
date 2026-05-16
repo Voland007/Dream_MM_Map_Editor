@@ -25,6 +25,7 @@ namespace MMMapEditor
             new Lazy<HashSet<string>>(BuildKnownLootItemNames);
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
+        private const string GuardHeaderAnnotationPrefix = "при условии:";
         private const string WholePartyConditionChangePrefix = "CONDITION персонажа(ей) в партии изменяется на ";
         private const string LegacyWholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
@@ -1716,7 +1717,27 @@ namespace MMMapEditor
             return !string.IsNullOrEmpty(variantHeader)
                 && (variantHeader.IndexOf("вероятность наступления", StringComparison.OrdinalIgnoreCase) >= 0 ||
                     variantHeader.IndexOf("вероятность при выполнении условий", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    variantHeader.IndexOf("при условии:", StringComparison.OrdinalIgnoreCase) >= 0);
+                    HeaderContainsVisibleGuardCondition(variantHeader));
+        }
+
+        private static bool HeaderContainsVisibleGuardCondition(string variantHeader)
+        {
+            if (string.IsNullOrWhiteSpace(variantHeader))
+                return false;
+
+            if (variantHeader.IndexOf(GuardHeaderAnnotationPrefix, StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+
+            if (variantHeader.IndexOf("главный квест игры выполнен", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                variantHeader.IndexOf("главный квест игры не выполнен", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            return Regex.IsMatch(
+                variantHeader,
+                @"\([^)]*(?:>=|<=|!=|=|>|<)\s*(?:0x[0-9A-Fa-f]+|\d+)[^)]*\)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
 
         private static string FormatVariantLine(string line, bool headerContainsProbability)
@@ -2586,7 +2607,7 @@ namespace MMMapEditor
             string text = PartyEffectSemantics.BuildPredicateListDisplayText(predicates);
             return string.IsNullOrWhiteSpace(text)
                 ? null
-                : "при условии: " + text;
+                : GuardHeaderAnnotationPrefix + " " + text;
         }
 
         private static bool IsGuardConditionVisibleInScope(PathVariantInfo variant, string suppressedGuardKey)
@@ -2687,9 +2708,13 @@ namespace MMMapEditor
             if (TrySplitInventoryPresenceHeaderAnnotation(
                     normalized,
                     out string itemName,
-                    out string presenceLabel))
+                    out string presenceLabel,
+                    out string slotLabel))
             {
-                return $"{InlineNoteStyleCodec.EncodeItemNameText(itemName)} {presenceLabel}";
+                string itemPresenceText = $"{InlineNoteStyleCodec.EncodeItemNameText(itemName)} {presenceLabel}";
+                return string.IsNullOrWhiteSpace(slotLabel)
+                    ? itemPresenceText
+                    : $"{slotLabel}: {itemPresenceText}";
             }
 
             return normalized;
@@ -2727,21 +2752,32 @@ namespace MMMapEditor
             if (GetInventoryPresenceChoiceInfos(variant).Count > 0)
                 return new List<string>();
 
+            string variantOutcomeFamilyKey = BuildInventoryComplementOutcomeFamilyKey(variant);
+
             var candidates = obj.PathVariants.Values
                 .Where(pathVariant => pathVariant != null && !ReferenceEquals(pathVariant, variant))
-                .SelectMany(GetInventoryPresenceChoiceInfos)
-                .GroupBy(info => info.ItemName, StringComparer.Ordinal)
+                .SelectMany(pathVariant => GetInventoryPresenceChoiceInfos(pathVariant)
+                    .Select(info => new
+                    {
+                        Info = info,
+                        OutcomeFamilyKey = BuildInventoryComplementOutcomeFamilyKey(pathVariant)
+                    }))
+                .Where(candidate =>
+                    string.IsNullOrWhiteSpace(variantOutcomeFamilyKey) ||
+                    string.Equals(candidate.OutcomeFamilyKey, variantOutcomeFamilyKey, StringComparison.Ordinal))
+                .GroupBy(candidate => BuildInventoryPresenceChoiceKey(candidate.Info), StringComparer.Ordinal)
                 .Select(group =>
                 {
                     var presenceLabels = group
-                        .Select(info => info.PresenceLabel)
+                        .Select(candidate => candidate.Info.PresenceLabel)
                         .Where(label => !string.IsNullOrWhiteSpace(label))
                         .Distinct(StringComparer.Ordinal)
                         .ToList();
 
                     return new
                     {
-                        ItemName = group.Key,
+                        ItemName = group.First().Info.ItemName,
+                        SlotLabel = group.First().Info.SlotLabel,
                         PresenceLabels = presenceLabels
                     };
                 })
@@ -2754,7 +2790,13 @@ namespace MMMapEditor
                 return new List<string>();
             }
 
-            return new List<string> { $"{candidates[0].ItemName} {oppositePresence}" };
+            return new List<string>
+            {
+                BuildInventoryPresenceHeaderAnnotation(
+                    candidates[0].ItemName,
+                    oppositePresence,
+                    candidates[0].SlotLabel)
+            };
         }
 
         private static bool ShouldSuppressSelfDisableOccurrenceHeaderAnnotation(
@@ -2948,8 +2990,16 @@ namespace MMMapEditor
         private sealed class InventoryPresenceChoiceInfo
         {
             public string ItemName { get; set; }
+            public string SlotLabel { get; set; }
             public string PresenceLabel { get; set; }
             public string HeaderAnnotation { get; set; }
+        }
+
+        private sealed class InventoryPresenceChoiceShadowInfo
+        {
+            public string ItemName { get; set; }
+            public byte? FieldOffset { get; set; }
+            public ValueRange8 FieldOffsetRange { get; set; }
         }
 
         private enum StateConditionPolarity
@@ -3856,8 +3906,11 @@ namespace MMMapEditor
                 return false;
 
             string trimmed = label.Trim();
-            if (trimmed.StartsWith("при условии:", StringComparison.OrdinalIgnoreCase))
+            if (HasGuardHeaderAnnotationPrefix(trimmed) ||
+                IsMainQuestCompletionHeaderAnnotation(trimmed))
+            {
                 return true;
+            }
 
             return Regex.IsMatch(
                 trimmed,
@@ -5687,8 +5740,8 @@ namespace MMMapEditor
                 return false;
 
             var match = Regex.Match(
-                normalized,
-                @"^при условии:\s*\[0x([0-9A-Fa-f]{1,4})\]\s*(=|!=|>|<|>=|<=)\s*(0x[0-9A-Fa-f]{1,2}|\d+)\s*$",
+                StripGuardHeaderAnnotationPrefix(normalized),
+                @"^\[0x([0-9A-Fa-f]{1,4})\]\s*(>=|<=|!=|=|>|<)\s*(0x[0-9A-Fa-f]{1,2}|\d+)\s*$",
                 RegexOptions.IgnoreCase);
             if (!match.Success)
                 return false;
@@ -5759,6 +5812,7 @@ namespace MMMapEditor
             if (!TryFindSingleInventoryPresenceChildSide(
                     node,
                     out string itemName,
+                    out string slotLabel,
                     out string observedPresenceLabel))
             {
                 return;
@@ -5767,14 +5821,22 @@ namespace MMMapEditor
             if (!TryGetOppositeInventoryPresenceLabel(observedPresenceLabel, out string oppositePresenceLabel))
                 return;
 
+            var observedOutcomeFamilyKeys = BuildInventoryPresenceChildOutcomeFamilyKeys(
+                node,
+                itemName,
+                slotLabel,
+                observedPresenceLabel);
+
             var directVariantsToMove = node.DirectVariants
-                .Where(item => item != null && !VariantHasInventoryPresenceChoiceForItem(item.Variant, itemName))
+                .Where(item => item != null &&
+                               !VariantHasInventoryPresenceChoiceForItem(item.Variant, itemName, slotLabel) &&
+                               ShouldMoveToInventoryComplement(item, observedOutcomeFamilyKeys))
                 .ToList();
 
             if (directVariantsToMove.Count == 0)
                 return;
 
-            string inferredHeaderAnnotation = NormalizeHeaderAnnotation($"{itemName} {oppositePresenceLabel}");
+            string inferredHeaderAnnotation = BuildInventoryPresenceHeaderAnnotation(itemName, oppositePresenceLabel, slotLabel);
             var complementNode = node.Children.FirstOrDefault(child =>
                 child != null &&
                 string.IsNullOrWhiteSpace(child.Label) &&
@@ -5787,7 +5849,7 @@ namespace MMMapEditor
             {
                 complementNode = new VariantTreeNode
                 {
-                    SegmentKey = $"INVENTORY_COMPLEMENT|{itemName}|{oppositePresenceLabel}",
+                    SegmentKey = $"INVENTORY_COMPLEMENT|{slotLabel}|{itemName}|{oppositePresenceLabel}",
                     HeaderAnnotation = inferredHeaderAnnotation
                 };
                 node.Children.Add(complementNode);
@@ -5802,12 +5864,65 @@ namespace MMMapEditor
                 .ToList();
         }
 
+        private static bool ShouldMoveToInventoryComplement(
+            VariantRenderItem item,
+            HashSet<string> observedOutcomeFamilyKeys)
+        {
+            if (observedOutcomeFamilyKeys == null || observedOutcomeFamilyKeys.Count == 0)
+                return true;
+
+            string itemOutcomeFamilyKey = BuildInventoryComplementOutcomeFamilyKey(item);
+            return string.IsNullOrWhiteSpace(itemOutcomeFamilyKey) ||
+                   observedOutcomeFamilyKeys.Contains(itemOutcomeFamilyKey);
+        }
+
+        private static HashSet<string> BuildInventoryPresenceChildOutcomeFamilyKeys(
+            VariantTreeNode node,
+            string itemName,
+            string slotLabel,
+            string presenceLabel)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            if (node?.Children == null || string.IsNullOrWhiteSpace(itemName) || string.IsNullOrWhiteSpace(presenceLabel))
+                return result;
+
+            foreach (var child in node.Children)
+            {
+                if (!TrySplitInventoryPresenceHeaderAnnotation(
+                        child?.HeaderAnnotation,
+                        out string childItemName,
+                        out string childPresenceLabel,
+                        out string childSlotLabel))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(childItemName, itemName, StringComparison.Ordinal) ||
+                    !string.Equals(childSlotLabel ?? string.Empty, slotLabel ?? string.Empty, StringComparison.Ordinal) ||
+                    !string.Equals(childPresenceLabel, presenceLabel, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                foreach (var item in GetAllVariants(child))
+                {
+                    string key = BuildInventoryComplementOutcomeFamilyKey(item);
+                    if (!string.IsNullOrWhiteSpace(key))
+                        result.Add(key);
+                }
+            }
+
+            return result;
+        }
+
         private static bool TryFindSingleInventoryPresenceChildSide(
             VariantTreeNode node,
             out string itemName,
+            out string slotLabel,
             out string presenceLabel)
         {
             itemName = null;
+            slotLabel = null;
             presenceLabel = null;
 
             var candidates = (node?.Children ?? new List<VariantTreeNode>())
@@ -5816,11 +5931,12 @@ namespace MMMapEditor
                     TrySplitInventoryPresenceHeaderAnnotation(
                         child?.HeaderAnnotation,
                         out string childItemName,
-                        out string childPresenceLabel)
-                        ? new { ItemName = childItemName, PresenceLabel = childPresenceLabel }
+                        out string childPresenceLabel,
+                        out string childSlotLabel)
+                        ? new { ItemName = childItemName, SlotLabel = childSlotLabel, PresenceLabel = childPresenceLabel }
                         : null)
                 .Where(candidate => candidate != null)
-                .GroupBy(candidate => candidate.ItemName, StringComparer.Ordinal)
+                .GroupBy(candidate => BuildInventoryPresenceChoiceKey(candidate.ItemName, candidate.SlotLabel), StringComparer.Ordinal)
                 .Select(group =>
                 {
                     var presenceLabels = group
@@ -5831,7 +5947,8 @@ namespace MMMapEditor
 
                     return new
                     {
-                        ItemName = group.Key,
+                        ItemName = group.First().ItemName,
+                        SlotLabel = group.First().SlotLabel,
                         PresenceLabels = presenceLabels
                     };
                 })
@@ -5842,6 +5959,7 @@ namespace MMMapEditor
                 return false;
 
             itemName = candidates[0].ItemName;
+            slotLabel = candidates[0].SlotLabel;
             presenceLabel = candidates[0].PresenceLabels[0];
             return !string.IsNullOrWhiteSpace(itemName) &&
                    !string.IsNullOrWhiteSpace(presenceLabel);
@@ -5849,13 +5967,43 @@ namespace MMMapEditor
 
         private static bool VariantHasInventoryPresenceChoiceForItem(
             PathVariantInfo variant,
-            string itemName)
+            string itemName,
+            string slotLabel)
         {
             if (variant == null || string.IsNullOrWhiteSpace(itemName))
                 return false;
 
             return GetInventoryPresenceChoiceInfos(variant)
-                .Any(info => string.Equals(info.ItemName, itemName, StringComparison.Ordinal));
+                .Any(info =>
+                    string.Equals(info.ItemName, itemName, StringComparison.Ordinal) &&
+                    string.Equals(info.SlotLabel ?? string.Empty, slotLabel ?? string.Empty, StringComparison.Ordinal));
+        }
+
+        private static string BuildInventoryComplementOutcomeFamilyKey(PathVariantInfo variant)
+        {
+            return BuildInventoryComplementOutcomeFamilyKey(DecodeNoteTexts(variant?.Texts));
+        }
+
+        private static string BuildInventoryComplementOutcomeFamilyKey(VariantRenderItem item)
+        {
+            return BuildInventoryComplementOutcomeFamilyKey(item?.Lines);
+        }
+
+        private static string BuildInventoryComplementOutcomeFamilyKey(IEnumerable<string> lines)
+        {
+            foreach (var line in (lines ?? Enumerable.Empty<string>()).SelectMany(SplitDisplayLines))
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                    continue;
+
+                if (IsCorrectPartyScanAnswerLine(line))
+                    return "answer:correct";
+
+                if (IsWrongPartyScanAnswerLine(line))
+                    return "answer:wrong";
+            }
+
+            return null;
         }
 
         private static IEnumerable<BranchChoice> GetRelevantBranchChoices(PathVariantInfo variant)
@@ -5878,19 +6026,95 @@ namespace MMMapEditor
             }
 
             var seenInventoryPresenceItems = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var candidate in CollapseFlagPropagatedInputChoiceDuplicates(candidates))
+            var collapsedCandidates = CollapseFlagPropagatedInputChoiceDuplicates(candidates);
+            foreach (var candidate in SuppressInventorySlotChoicesShadowedByRange(collapsedCandidates))
             {
                 if (candidate?.Normalized == null)
                     continue;
 
                 if (TryBuildInventoryPresenceChoiceInfo(candidate.Normalized, out var itemPresenceInfo) &&
-                    !seenInventoryPresenceItems.Add(itemPresenceInfo.ItemName))
+                    !seenInventoryPresenceItems.Add(BuildInventoryPresenceChoiceKey(itemPresenceInfo)))
                 {
                     continue;
                 }
 
                 yield return candidate.Normalized;
             }
+        }
+
+        private static List<BranchChoiceDisplayCandidate> SuppressInventorySlotChoicesShadowedByRange(
+            List<BranchChoiceDisplayCandidate> choices)
+        {
+            var source = choices ?? new List<BranchChoiceDisplayCandidate>();
+            var rangeInfos = source
+                .Select(candidate => TryBuildInventoryPresenceChoiceShadowInfo(candidate?.Normalized, out var info) ? info : null)
+                .Where(info => info != null &&
+                               info.FieldOffsetRange != null &&
+                               !info.FieldOffsetRange.IsExact &&
+                               PartyInventorySemantics.IsInventorySlotRange(info.FieldOffsetRange))
+                .ToList();
+
+            if (rangeInfos.Count == 0)
+                return source;
+
+            var result = new List<BranchChoiceDisplayCandidate>();
+            foreach (var candidate in source)
+            {
+                if (TryBuildInventoryPresenceChoiceShadowInfo(candidate?.Normalized, out var slotInfo) &&
+                    slotInfo.FieldOffset.HasValue &&
+                    rangeInfos.Any(rangeInfo =>
+                        string.Equals(rangeInfo.ItemName, slotInfo.ItemName, StringComparison.OrdinalIgnoreCase) &&
+                        SlotOffsetIsInsideRange(slotInfo.FieldOffset.Value, rangeInfo.FieldOffsetRange)))
+                {
+                    continue;
+                }
+
+                result.Add(candidate);
+            }
+
+            return result;
+        }
+
+        private static bool TryBuildInventoryPresenceChoiceShadowInfo(
+            BranchChoice choice,
+            out InventoryPresenceChoiceShadowInfo info)
+        {
+            info = null;
+            if (!TryBuildInventoryPresenceChoiceInfo(choice, out var presenceInfo) ||
+                string.IsNullOrWhiteSpace(presenceInfo?.ItemName))
+            {
+                return false;
+            }
+
+            var fieldRef = choice?.ComparedPartyField;
+            if (fieldRef == null)
+                return false;
+
+            var range = fieldRef.FieldOffsetRange;
+            byte? exactOffset = null;
+            if (range == null)
+            {
+                exactOffset = fieldRef.FieldOffset;
+            }
+            else if (range.IsExact)
+            {
+                exactOffset = range.Min;
+            }
+
+            info = new InventoryPresenceChoiceShadowInfo
+            {
+                ItemName = presenceInfo.ItemName.Trim(),
+                FieldOffset = exactOffset,
+                FieldOffsetRange = range
+            };
+            return true;
+        }
+
+        private static bool SlotOffsetIsInsideRange(byte offset, ValueRange8 range)
+        {
+            return range != null &&
+                   offset >= range.Min &&
+                   offset <= range.Max;
         }
 
         private static List<InventoryPresenceChoiceInfo> GetInventoryPresenceChoiceInfos(PathVariantInfo variant)
@@ -5900,7 +6124,8 @@ namespace MMMapEditor
                 .Where(info => info != null)
                 .GroupBy(info => info.HeaderAnnotation, StringComparer.Ordinal)
                 .Select(group => group.First())
-                .OrderBy(info => info.ItemName, StringComparer.Ordinal)
+                .OrderBy(info => info.SlotLabel ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(info => info.ItemName, StringComparer.Ordinal)
                 .ThenBy(info => info.PresenceLabel, StringComparer.Ordinal)
                 .ToList();
         }
@@ -5919,6 +6144,7 @@ namespace MMMapEditor
             }
 
             itemName = itemName?.Trim();
+            string slotLabel = PartyInventorySemantics.GetSlotFieldLabel(choice?.ComparedPartyField)?.Trim();
             presenceLabel = presenceLabel?.Trim();
             if (string.IsNullOrWhiteSpace(itemName) ||
                 string.IsNullOrWhiteSpace(presenceLabel))
@@ -5929,10 +6155,47 @@ namespace MMMapEditor
             info = new InventoryPresenceChoiceInfo
             {
                 ItemName = itemName,
+                SlotLabel = slotLabel,
                 PresenceLabel = presenceLabel,
-                HeaderAnnotation = NormalizeHeaderAnnotation($"{itemName} {presenceLabel}")
+                HeaderAnnotation = BuildInventoryPresenceHeaderAnnotation(itemName, presenceLabel, slotLabel)
             };
             return true;
+        }
+
+        private static string BuildInventoryPresenceHeaderAnnotation(
+            string itemName,
+            string presenceLabel,
+            string slotLabel)
+        {
+            string normalizedItemName = itemName?.Trim();
+            string normalizedPresenceLabel = presenceLabel?.Trim();
+            string normalizedSlotLabel = slotLabel?.Trim();
+
+            if (string.IsNullOrWhiteSpace(normalizedItemName) ||
+                string.IsNullOrWhiteSpace(normalizedPresenceLabel))
+            {
+                return null;
+            }
+
+            string annotation = string.IsNullOrWhiteSpace(normalizedSlotLabel)
+                ? $"{normalizedItemName} {normalizedPresenceLabel}"
+                : $"{normalizedSlotLabel}: {normalizedItemName} {normalizedPresenceLabel}";
+
+            return NormalizeHeaderAnnotation(annotation);
+        }
+
+        private static string BuildInventoryPresenceChoiceKey(InventoryPresenceChoiceInfo info)
+        {
+            return info == null
+                ? "<NULL_INVENTORY_PRESENCE>"
+                : BuildInventoryPresenceChoiceKey(info.ItemName, info.SlotLabel);
+        }
+
+        private static string BuildInventoryPresenceChoiceKey(string itemName, string slotLabel)
+        {
+            return string.Join("|",
+                itemName?.Trim() ?? string.Empty,
+                slotLabel?.Trim() ?? string.Empty);
         }
 
         private static bool TrySplitInventoryPresenceHeaderAnnotation(
@@ -5940,8 +6203,22 @@ namespace MMMapEditor
             out string itemName,
             out string presenceLabel)
         {
+            return TrySplitInventoryPresenceHeaderAnnotation(
+                annotation,
+                out itemName,
+                out presenceLabel,
+                out _);
+        }
+
+        private static bool TrySplitInventoryPresenceHeaderAnnotation(
+            string annotation,
+            out string itemName,
+            out string presenceLabel,
+            out string slotLabel)
+        {
             itemName = null;
             presenceLabel = null;
+            slotLabel = null;
 
             string normalized = NormalizeHeaderAnnotation(annotation);
             if (string.IsNullOrWhiteSpace(normalized))
@@ -5953,12 +6230,43 @@ namespace MMMapEditor
                 if (!normalized.EndsWith(suffix, StringComparison.Ordinal))
                     continue;
 
-                itemName = normalized.Substring(0, normalized.Length - suffix.Length).Trim();
+                string subject = normalized.Substring(0, normalized.Length - suffix.Length).Trim();
+                int slotSeparatorIndex = subject.IndexOf(": ", StringComparison.Ordinal);
+                if (slotSeparatorIndex > 0)
+                {
+                    string candidateSlotLabel = subject.Substring(0, slotSeparatorIndex).Trim();
+                    string candidateItemName = subject.Substring(slotSeparatorIndex + 2).Trim();
+                    if (IsInventoryPresenceSlotLabel(candidateSlotLabel) &&
+                        !string.IsNullOrWhiteSpace(candidateItemName))
+                    {
+                        slotLabel = candidateSlotLabel;
+                        itemName = candidateItemName;
+                    }
+                    else
+                    {
+                        itemName = subject;
+                    }
+                }
+                else
+                {
+                    itemName = subject;
+                }
+
                 presenceLabel = label;
                 return !string.IsNullOrWhiteSpace(itemName);
             }
 
             return false;
+        }
+
+        private static bool IsInventoryPresenceSlotLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string normalized = label.Trim();
+            return normalized.StartsWith("backpack слот ", StringComparison.Ordinal) ||
+                   normalized.StartsWith("слот инвентаря ", StringComparison.Ordinal);
         }
 
         private static bool TryGetOppositeInventoryPresenceLabel(
@@ -6079,11 +6387,18 @@ namespace MMMapEditor
                     out string itemPresenceLabel))
             {
                 inferredLabel = null;
-                displayHeaderAnnotation = $"{itemPresenceName} {itemPresenceLabel}";
+                string itemPresenceSlotLabel =
+                    PartyInventorySemantics.GetSlotFieldLabel(choice?.ComparedPartyField);
+                displayHeaderAnnotation = BuildInventoryPresenceHeaderAnnotation(
+                    itemPresenceName,
+                    itemPresenceLabel,
+                    itemPresenceSlotLabel);
             }
             else
             {
                 inferredLabel = InferChoiceLabel(choice);
+                if (string.IsNullOrWhiteSpace(displayHeaderAnnotation))
+                    displayHeaderAnnotation = BuildBranchGuardHeaderAnnotation(choice);
             }
 
             string label = rawLabelIsTechnical
@@ -6108,6 +6423,16 @@ namespace MMMapEditor
                 ComparedPartyField = choice.ComparedPartyField?.Clone(),
                 GuardPredicate = choice.GuardPredicate?.Clone()
             };
+        }
+
+        private static string BuildBranchGuardHeaderAnnotation(BranchChoice choice)
+        {
+            if (choice?.GuardPredicate == null || IsPartyLoopTraversalBranchChoice(choice))
+                return null;
+
+            var predicates = PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(
+                new[] { choice.GuardPredicate });
+            return BuildGuardHeaderAnnotation(predicates);
         }
 
         private static string InferChoiceLabel(BranchChoice choice)
@@ -6828,7 +7153,34 @@ namespace MMMapEditor
             string normalized = NormalizeHeaderAnnotation(annotation);
             return IsTechnicalHeaderAnnotation(normalized)
                 ? null
+                : StripGuardHeaderAnnotationPrefix(normalized);
+        }
+
+        private static bool HasGuardHeaderAnnotationPrefix(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            return normalized?.StartsWith(GuardHeaderAnnotationPrefix, StringComparison.OrdinalIgnoreCase) == true;
+        }
+
+        private static string StripGuardHeaderAnnotationPrefix(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return normalized;
+
+            return HasGuardHeaderAnnotationPrefix(normalized)
+                ? normalized.Substring(GuardHeaderAnnotationPrefix.Length).TrimStart()
                 : normalized;
+        }
+
+        private static bool IsMainQuestCompletionHeaderAnnotation(string annotation)
+        {
+            string normalized = StripGuardHeaderAnnotationPrefix(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            return normalized.IndexOf("главный квест игры выполнен", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   normalized.IndexOf("главный квест игры не выполнен", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static bool IsTechnicalChoiceLabel(string label)
@@ -6854,8 +7206,8 @@ namespace MMMapEditor
                 return false;
 
             return Regex.IsMatch(
-                normalized,
-                @"^при условии:\s*\[0x[0-9A-Fa-f]+\]\s*(?:=|!=|>|<|>=|<=)",
+                StripGuardHeaderAnnotationPrefix(normalized),
+                @"^\[0x[0-9A-Fa-f]+\]\s*(?:>=|<=|!=|=|>|<)",
                 RegexOptions.IgnoreCase);
         }
 
@@ -10312,10 +10664,11 @@ namespace MMMapEditor
 
             if (renderableDirectVariants.Count == 1 && renderableChildren.Count == 0)
             {
+                var leafLines = singleLeafLines ?? renderableDirectVariants[0].Lines;
                 AppendIndentedDisplayLines(
                     sb,
                     indent + "   ",
-                    singleLeafLines ?? renderableDirectVariants[0].Lines,
+                    leafLines,
                     headerContainsProbability);
                 return;
             }

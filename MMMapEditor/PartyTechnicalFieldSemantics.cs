@@ -19,11 +19,20 @@ namespace MMMapEditor
     {
         public const int RanalouQuestLineFieldOffset = 0x71;
         public const string RanalouQuestLineFieldLabel = "поле прогресса линейки квестов волшебника RANALOU (+0x71)";
+        public const int MainQuestCompletionFieldOffset = 0x7D;
+        public const byte MainQuestCompletedThreshold = 0x80;
+        public const string MainQuestCompletionFieldLabel = "поле завершения главного квеста (+0x7D)";
 
         public static bool IsTrackedField(PartyFieldKind field)
         {
             return field == PartyFieldKind.Technical71 ||
+                   field == PartyFieldKind.Technical7D ||
                    PartyQuestLordFieldSemantics.IsQuestField(field);
+        }
+
+        public static bool IsMainQuestCompletionField(PartyFieldKind field)
+        {
+            return field == PartyFieldKind.Technical7D;
         }
 
         public static string GetFieldLabel(PartyFieldKind field)
@@ -31,6 +40,7 @@ namespace MMMapEditor
             return field switch
             {
                 PartyFieldKind.Technical71 => RanalouQuestLineFieldLabel,
+                PartyFieldKind.Technical7D => MainQuestCompletionFieldLabel,
                 _ when PartyQuestLordFieldSemantics.IsQuestField(field) => PartyQuestLordFieldSemantics.GetFieldLabel(field),
                 _ => null
             };
@@ -41,13 +51,26 @@ namespace MMMapEditor
             if (!IsTrackedField(field))
                 return 0;
 
-            return operation switch
+            byte mask = operation switch
             {
                 PartyEffectOperation.BitSet => immediateValue,
                 PartyEffectOperation.BitClear => unchecked((byte)~immediateValue),
                 PartyEffectOperation.BitToggle => immediateValue,
                 _ => 0
             };
+
+            return FilterRelevantMask(field, mask);
+        }
+
+        public static byte FilterRelevantMask(PartyFieldKind field, byte mask)
+        {
+            if (!IsTrackedField(field))
+                return 0;
+
+            if (IsMainQuestCompletionField(field))
+                return (byte)(mask & MainQuestCompletedThreshold);
+
+            return mask;
         }
     }
 }

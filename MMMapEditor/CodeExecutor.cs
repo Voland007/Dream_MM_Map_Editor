@@ -130,6 +130,7 @@ namespace MMMapEditor
         private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
         private const int PARTY_QUEST_LORD2_OFFSET = PartyQuestLordFieldSemantics.Lord2FieldOffset;
         private const int PARTY_QUEST_LORD3_OFFSET = PartyQuestLordFieldSemantics.Lord3FieldOffset;
+        private const int PARTY_MAIN_QUEST_COMPLETION_OFFSET = PartyTechnicalFieldSemantics.MainQuestCompletionFieldOffset;
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
         private const uint DISPLAY_TEXT_ROUTINE_ADDRESS = 0x4FB5;
@@ -981,6 +982,7 @@ namespace MMMapEditor
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
                 PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
                 PARTY_QUEST_LORD3_OFFSET => PartyFieldKind.Technical77,
+                PARTY_MAIN_QUEST_COMPLETION_OFFSET => PartyFieldKind.Technical7D,
                 _ => PartyFieldKind.Unknown
             };
         }
@@ -1150,10 +1152,14 @@ namespace MMMapEditor
 
             PartyFieldKind field = PartyFieldKind.Unknown;
             int resolvedOffset = offset;
+            ValueRange8 fieldOffsetRange = null;
             if (rangedOffset != null)
             {
                 int minOffset = offset + rangedOffset.Min;
                 int maxOffset = offset + rangedOffset.Max;
+                if (minOffset >= byte.MinValue && maxOffset <= byte.MaxValue)
+                    fieldOffsetRange = new ValueRange8((byte)minOffset, (byte)maxOffset);
+
                 if (!TryResolvePartyFieldKindFromRange(minOffset, maxOffset, rangedDistribution, out field))
                 {
                     if (!allowUnknownField)
@@ -1183,8 +1189,11 @@ namespace MMMapEditor
                 Offset = resolvedOffset,
                 EffectiveAddress = effectiveAddress,
                 FieldOffset = resolvedOffset >= byte.MinValue && resolvedOffset <= byte.MaxValue ? (byte)resolvedOffset : (byte?)null,
+                FieldOffsetRange = fieldOffsetRange,
                 FieldName = field != PartyFieldKind.Unknown
                     ? GetPartyFieldLabel(field)
+                    : fieldOffsetRange != null && !fieldOffsetRange.IsExact
+                        ? $"техническое байтовое поле персонажа +0x{fieldOffsetRange.Min:X2}..+0x{fieldOffsetRange.Max:X2}"
                     : resolvedOffset >= byte.MinValue && resolvedOffset <= byte.MaxValue
                         ? $"техническое байтовое поле персонажа +0x{resolvedOffset:X2}"
                         : null
@@ -1948,6 +1957,7 @@ namespace MMMapEditor
                 ValueKnowledge = PartyValueKnowledge.ExactImmediate,
                 ImmediateValue = compareValue,
                 FieldOffset = comparedField.FieldOffset,
+                FieldOffsetRange = comparedField.FieldOffsetRange == null ? null : new ValueRange8(comparedField.FieldOffsetRange.Min, comparedField.FieldOffsetRange.Max),
                 InstructionAddress = instructionAddress,
                 TargetMember = comparedField.Member?.Clone(),
                 Description = BuildPartyPredicateDescription(comparedField.Field, comparison, compareValue)
@@ -2061,9 +2071,19 @@ namespace MMMapEditor
 
             string valueText = PartyAlignmentSemantics.IsAlignmentField(field)
                 ? PartyAlignmentSemantics.FormatAlignmentValue(value)
-                : $"0x{value:X2}";
+                : field == PartyFieldKind.Status
+                    ? FormatStatusPredicateValue(value)
+                    : $"0x{value:X2}";
 
             return $"{fieldText} {comparisonText} {valueText}";
+        }
+
+        private static string FormatStatusPredicateValue(ushort value)
+        {
+            var statusNames = PartyStatusSemantics.GetStatusNamesForExactValue((byte)value);
+            return statusNames.Count > 0
+                ? string.Join(", ", statusNames)
+                : $"0x{value:X2}";
         }
 
         private string BuildPartyPredicateKey(PartyPredicate predicate)
@@ -2087,6 +2107,7 @@ namespace MMMapEditor
             return string.Join("|",
                 predicate.Field,
                 predicate.FieldOffset?.ToString("X2") ?? "-",
+                predicate.FieldOffsetRange == null ? "-" : $"{predicate.FieldOffsetRange.Min:X2}-{predicate.FieldOffsetRange.Max:X2}",
                 predicate.Comparison,
                 predicate.ValueKnowledge,
                 predicate.ImmediateValue?.ToString() ?? "-",
@@ -2118,6 +2139,7 @@ namespace MMMapEditor
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
                 FieldOffset = fieldRef.FieldOffset,
+                FieldOffsetRange = fieldRef.FieldOffsetRange == null ? null : new ValueRange8(fieldRef.FieldOffsetRange.Min, fieldRef.FieldOffsetRange.Max),
                 FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsRead = true
@@ -2163,6 +2185,9 @@ namespace MMMapEditor
             }
             else if (IsRawTechnicalPartyField(fieldRef))
             {
+                if (HasNonExactFieldOffsetRange(fieldRef))
+                    return;
+
                 AddResolvedPartyEffect(
                     result,
                     PartyEffectFactory.CreateRawTechnicalFieldReadEffect(
@@ -2192,6 +2217,7 @@ namespace MMMapEditor
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
                 FieldOffset = fieldRef.FieldOffset,
+                FieldOffsetRange = fieldRef.FieldOffsetRange == null ? null : new ValueRange8(fieldRef.FieldOffsetRange.Min, fieldRef.FieldOffsetRange.Max),
                 FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsWrite = true
@@ -2335,7 +2361,7 @@ namespace MMMapEditor
                         exactValue));
                 }
             }
-            else if (IsRawTechnicalPartyField(fieldRef))
+            else if (IsRawTechnicalPartyField(fieldRef) && !HasNonExactFieldOffsetRange(fieldRef))
             {
                 bool sameRawSourceField =
                     sourceFieldValue != null &&
@@ -2510,11 +2536,15 @@ namespace MMMapEditor
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
                 FieldOffset = fieldRef.FieldOffset,
+                FieldOffsetRange = fieldRef.FieldOffsetRange == null ? null : new ValueRange8(fieldRef.FieldOffsetRange.Min, fieldRef.FieldOffsetRange.Max),
                 FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsRead = true,
                 IsCompare = true
             });
+
+            if (HasNonExactFieldOffsetRange(fieldRef))
+                return;
 
             AddResolvedPartyEffect(
                 result,
@@ -2543,11 +2573,15 @@ namespace MMMapEditor
                 Field = fieldRef.Field,
                 Offset = fieldRef.Offset,
                 FieldOffset = fieldRef.FieldOffset,
+                FieldOffsetRange = fieldRef.FieldOffsetRange == null ? null : new ValueRange8(fieldRef.FieldOffsetRange.Min, fieldRef.FieldOffsetRange.Max),
                 FieldName = fieldRef.FieldName,
                 EffectiveAddress = fieldRef.EffectiveAddress,
                 IsRead = true,
                 IsCompare = true
             });
+
+            if (HasNonExactFieldOffsetRange(fieldRef))
+                return;
 
             AddResolvedPartyEffect(
                 result,
@@ -2852,6 +2886,12 @@ namespace MMMapEditor
                    fieldRef.FieldOffset.HasValue;
         }
 
+        private static bool HasNonExactFieldOffsetRange(PartyFieldReference fieldRef)
+        {
+            return fieldRef?.FieldOffsetRange != null &&
+                   !fieldRef.FieldOffsetRange.IsExact;
+        }
+
         private static bool IsTrackablePartyField(PartyFieldReference fieldRef)
         {
             return fieldRef != null &&
@@ -2860,6 +2900,13 @@ namespace MMMapEditor
 
         private static string GetRawTechnicalPartyFieldLabel(PartyFieldReference fieldRef)
         {
+            string itemSlotLabel = PartyInventorySemantics.GetSlotFieldLabel(fieldRef);
+            if (!string.IsNullOrWhiteSpace(itemSlotLabel))
+                return itemSlotLabel;
+
+            if (fieldRef?.FieldOffsetRange != null && !fieldRef.FieldOffsetRange.IsExact)
+                return $"техническое байтовое поле персонажа +0x{fieldRef.FieldOffsetRange.Min:X2}..+0x{fieldRef.FieldOffsetRange.Max:X2}";
+
             return fieldRef?.FieldOffset.HasValue == true
                 ? $"техническое байтовое поле персонажа +0x{fieldRef.FieldOffset.Value:X2}"
                 : null;
@@ -2891,6 +2938,7 @@ namespace MMMapEditor
         private static bool IsComparablePartyField(PartyFieldKind field)
         {
             return field == PartyFieldKind.sex ||
+                   field == PartyFieldKind.Status ||
                    IsTrackedPartyField(field) ||
                    PartyAlignmentSemantics.IsAlignmentField(field);
         }
@@ -2963,14 +3011,18 @@ namespace MMMapEditor
 
             void AddEffect(PartyEffectOperation operation, byte mask)
             {
-                if (mask == 0)
+                byte trackedMask = PartyTechnicalFieldSemantics.IsTrackedField(field)
+                    ? PartyTechnicalFieldSemantics.FilterRelevantMask(field, mask)
+                    : mask;
+
+                if (trackedMask == 0)
                     return;
 
                 PartyEffect effect = PartyEffectFactory.CreateTrackedTechnicalFieldBitEffect(
                     member,
                     field,
                     operation,
-                    mask,
+                    trackedMask,
                     instructionAddress);
                 if (effect != null)
                     effects.Add(effect);
@@ -5690,8 +5742,17 @@ namespace MMMapEditor
                     };
                 }
 
-                if (IsRepeatedPartyInventoryScanMatchBranch(insn, br, fileLength, currentAddress, nextAddress,
-                        condJumpTarget, registerTracker) &&
+                bool isPartyInventoryScanMatchBranch = TryGetPartyInventoryScanMatchSlotRange(
+                    insn,
+                    br,
+                    fileLength,
+                    currentAddress,
+                    nextAddress,
+                    condJumpTarget,
+                    registerTracker,
+                    out var partyInventoryScanSlotRange);
+
+                if (isPartyInventoryScanMatchBranch &&
                     processedBackEdges != null &&
                     !processedBackEdges.Add((currentAddress, condJumpTarget)))
                 {
@@ -5753,6 +5814,7 @@ namespace MMMapEditor
                         BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                         BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: true, (uint)insn.Address)
                     };
+                    ApplyPartyInventoryScanSlotRange(altPath, partyInventoryScanSlotRange);
 
                     if (!result.AlternativePaths.Any(p => p.Address == altPath.Address &&
                                                            p.TargetAddress == altPath.TargetAddress))
@@ -5800,6 +5862,7 @@ namespace MMMapEditor
                         BranchPartyCondition = InferPartyConditionForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                         BranchPartyPredicate = InferPartyPredicateForBranch(registerTracker, insn.Mnemonic, branchTaken: false, (uint)insn.Address)
                     };
+                    ApplyPartyInventoryScanSlotRange(linearPath, partyInventoryScanSlotRange);
 
                     if (!result.AlternativePaths.Any(p => p.Address == linearPath.Address &&
                                                            p.TargetAddress == linearPath.TargetAddress))
@@ -6138,6 +6201,22 @@ namespace MMMapEditor
         private bool IsRepeatedPartyInventoryScanMatchBranch(X86Instruction insn, BinaryReader br, long fileLength,
             uint currentAddress, uint nextAddress, uint condJumpTarget, RegisterTracker registerTracker)
         {
+            return TryGetPartyInventoryScanMatchSlotRange(
+                insn,
+                br,
+                fileLength,
+                currentAddress,
+                nextAddress,
+                condJumpTarget,
+                registerTracker,
+                out _);
+        }
+
+        private bool TryGetPartyInventoryScanMatchSlotRange(X86Instruction insn, BinaryReader br, long fileLength,
+            uint currentAddress, uint nextAddress, uint condJumpTarget, RegisterTracker registerTracker,
+            out ValueRange8 slotRange)
+        {
+            slotRange = null;
             if (insn == null ||
                 br?.BaseStream == null ||
                 !br.BaseStream.CanSeek ||
@@ -6157,21 +6236,77 @@ namespace MMMapEditor
 
             var comparedField = registerTracker.LastComparedPartyField;
             if (!IsRawTechnicalPartyField(comparedField) ||
-                !comparedField.FieldOffset.HasValue ||
-                !PartyInventorySemantics.IsInventorySlotOffset(comparedField.FieldOffset))
+                !PartyInventorySemantics.IsInventorySlotReference(comparedField.FieldOffset, comparedField.FieldOffsetRange))
             {
                 return false;
             }
 
-            if (!LooksLikeSimpleTerminalByteStateWrite(br, fileLength, condJumpTarget))
+            if (!WindowContainsPartyInventoryScanExhaustion(
+                    br,
+                    fileLength,
+                    nextAddress,
+                    currentAddress,
+                    condJumpTarget,
+                    out byte? slotUpperExclusive))
+            {
+                return false;
+            }
+
+            byte start = comparedField.FieldOffsetRange?.Min ??
+                         comparedField.FieldOffset ??
+                         PartyInventorySemantics.FirstSlotOffset;
+            byte end = comparedField.FieldOffsetRange?.Max ?? PartyInventorySemantics.LastBackpackSlotOffset;
+            if (slotUpperExclusive.HasValue && slotUpperExclusive.Value > start)
+                end = (byte)Math.Min(end, slotUpperExclusive.Value - 1);
+
+            if (start < PartyInventorySemantics.FirstSlotOffset)
+                start = PartyInventorySemantics.FirstSlotOffset;
+            if (end > PartyInventorySemantics.LastBackpackSlotOffset)
+                end = PartyInventorySemantics.LastBackpackSlotOffset;
+
+            if (end < start)
                 return false;
 
-            return WindowContainsPartyInventoryScanExhaustion(br, fileLength, nextAddress, currentAddress, condJumpTarget);
+            slotRange = new ValueRange8(start, end);
+            return true;
+        }
+
+        private static void ApplyPartyInventoryScanSlotRange(AlternativePath path, ValueRange8 slotRange)
+        {
+            if (path == null || slotRange == null || slotRange.IsExact)
+                return;
+
+            if (path.ComparedPartyField != null)
+            {
+                path.ComparedPartyField.FieldOffsetRange = new ValueRange8(slotRange.Min, slotRange.Max);
+                path.ComparedPartyField.FieldOffset = slotRange.Min;
+                path.ComparedPartyField.FieldName =
+                    $"техническое байтовое поле персонажа +0x{slotRange.Min:X2}..+0x{slotRange.Max:X2}";
+            }
+
+            if (path.BranchPartyPredicate != null)
+            {
+                path.BranchPartyPredicate.FieldOffsetRange = new ValueRange8(slotRange.Min, slotRange.Max);
+                path.BranchPartyPredicate.FieldOffset = slotRange.Min;
+            }
         }
 
         private bool WindowContainsPartyInventoryScanExhaustion(BinaryReader br, long fileLength,
             uint scanStartAddress, uint matchBranchAddress, uint matchBranchTarget)
         {
+            return WindowContainsPartyInventoryScanExhaustion(
+                br,
+                fileLength,
+                scanStartAddress,
+                matchBranchAddress,
+                matchBranchTarget,
+                out _);
+        }
+
+        private bool WindowContainsPartyInventoryScanExhaustion(BinaryReader br, long fileLength,
+            uint scanStartAddress, uint matchBranchAddress, uint matchBranchTarget, out byte? slotUpperExclusive)
+        {
+            slotUpperExclusive = null;
             if (br?.BaseStream == null ||
                 !br.BaseStream.CanSeek ||
                 scanStartAddress >= fileLength ||
@@ -6204,8 +6339,11 @@ namespace MMMapEditor
                     targetAddress <= matchBranchAddress &&
                     IsCarrySetJump(instruction.Mnemonic))
                 {
-                    if (InstructionImmediatelyFollowsCmpClImmediate(br, address))
+                    if (TryReadCmpClImmediateBeforeInstruction(br, address, out byte slotLimit))
+                    {
                         sawSlotBackEdge = true;
+                        slotUpperExclusive = slotLimit;
+                    }
                     else if (InstructionImmediatelyFollowsCmpBlAgainstPartyCount(br, address))
                         sawPartyBackEdge = true;
                 }
@@ -6217,7 +6355,7 @@ namespace MMMapEditor
                 address = nextAddress;
             }
 
-            return sawSlotBackEdge && sawPartyBackEdge && sawExhaustedTerminalWrite;
+            return sawSlotBackEdge && (sawPartyBackEdge || sawExhaustedTerminalWrite);
         }
 
         private bool LooksLikeSimpleTerminalByteStateWrite(BinaryReader br, long fileLength, uint address)
@@ -6239,13 +6377,25 @@ namespace MMMapEditor
 
         private bool InstructionImmediatelyFollowsCmpClImmediate(BinaryReader br, uint instructionAddress)
         {
+            return TryReadCmpClImmediateBeforeInstruction(br, instructionAddress, out _);
+        }
+
+        private bool TryReadCmpClImmediateBeforeInstruction(BinaryReader br, uint instructionAddress, out byte immediate)
+        {
+            immediate = 0;
             if (instructionAddress < 3)
                 return false;
 
             byte[] bytes = ReadBytesAt(br, instructionAddress - 3, 3);
-            return bytes.Length == 3 &&
-                   bytes[0] == 0x80 &&
-                   bytes[1] == 0xF9;
+            if (bytes.Length != 3 ||
+                bytes[0] != 0x80 ||
+                bytes[1] != 0xF9)
+            {
+                return false;
+            }
+
+            immediate = bytes[2];
+            return true;
         }
 
         private bool InstructionImmediatelyFollowsCmpBlAgainstPartyCount(BinaryReader br, uint instructionAddress)

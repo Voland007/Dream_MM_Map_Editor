@@ -610,6 +610,7 @@ namespace MMMapEditor
             return string.Join("|",
                 predicate.Field,
                 predicate.FieldOffset?.ToString("X2", CultureInfo.InvariantCulture) ?? "-",
+                predicate.FieldOffsetRange == null ? "-" : $"{predicate.FieldOffsetRange.Min:X2}-{predicate.FieldOffsetRange.Max:X2}",
                 predicate.Comparison,
                 predicate.ValueKnowledge,
                 predicate.ImmediateValue?.ToString() ?? "-",
@@ -621,6 +622,9 @@ namespace MMMapEditor
         {
             if (predicate == null)
                 return null;
+
+            if (TryBuildMainQuestCompletionPredicateDisplayText(predicate, out string mainQuestCompletionText))
+                return mainQuestCompletionText;
 
             string targetText = BuildPredicateTargetDisplayText(predicate.TargetMember);
             string fieldText = FormatPredicateFieldName(predicate);
@@ -641,6 +645,69 @@ namespace MMMapEditor
                 return string.Join(" ", parts);
 
             return predicate.Description;
+        }
+
+        private static bool TryBuildMainQuestCompletionPredicateDisplayText(PartyPredicate predicate, out string text)
+        {
+            text = null;
+            if (predicate == null ||
+                predicate.Field != PartyFieldKind.Technical7D ||
+                !predicate.ImmediateValue.HasValue)
+            {
+                return false;
+            }
+
+            if (!TryResolveMainQuestCompletionPredicateState(
+                    predicate.Comparison,
+                    predicate.ImmediateValue.Value,
+                    out bool completed))
+            {
+                return false;
+            }
+
+            if (predicate.TargetMember?.IsPartyLoopMember == true)
+            {
+                text = completed
+                    ? "хотя бы у одного персонажа партии главный квест игры выполнен"
+                    : "ни у одного персонажа партии главный квест игры не выполнен";
+                return true;
+            }
+
+            string targetText = BuildPredicateTargetDisplayText(predicate.TargetMember);
+            string stateText = completed
+                ? "главный квест игры выполнен"
+                : "главный квест игры не выполнен";
+            text = string.IsNullOrWhiteSpace(targetText)
+                ? stateText
+                : $"{targetText} {stateText}";
+            return true;
+        }
+
+        private static bool TryResolveMainQuestCompletionPredicateState(
+            PartyPredicateComparison comparison,
+            ushort value,
+            out bool completed)
+        {
+            completed = false;
+            const ushort threshold = PartyTechnicalFieldSemantics.MainQuestCompletedThreshold;
+
+            switch (comparison)
+            {
+                case PartyPredicateComparison.GreaterOrEqual when value == threshold:
+                    completed = true;
+                    return true;
+                case PartyPredicateComparison.GreaterThan when value == threshold - 1:
+                    completed = true;
+                    return true;
+                case PartyPredicateComparison.LessThan when value == threshold:
+                    completed = false;
+                    return true;
+                case PartyPredicateComparison.LessOrEqual when value == threshold - 1:
+                    completed = false;
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         public static string BuildPredicateListDisplayText(IEnumerable<PartyPredicate> predicates)
@@ -668,7 +735,7 @@ namespace MMMapEditor
                 return $"у персонажа {FormatMemberDisplay(member.MemberIndex.Value)}";
 
             if (member.IsPartyLoopMember)
-                return "у текущего персонажа";
+                return "хотя бы у одного персонажа партии";
 
             return member.SelectionKind switch
             {
@@ -700,21 +767,33 @@ namespace MMMapEditor
             if (predicate.ImmediateRange != null)
             {
                 return predicate.ImmediateRange.IsExact
-                    ? FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateRange.Min)
-                    : $"{FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateRange.Min)}-{FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateRange.Max)}";
+                    ? FormatPredicateImmediateValue(predicate, predicate.ImmediateRange.Min)
+                    : $"{FormatPredicateImmediateValue(predicate, predicate.ImmediateRange.Min)}-{FormatPredicateImmediateValue(predicate, predicate.ImmediateRange.Max)}";
             }
 
             if (predicate.ImmediateValue.HasValue)
-                return FormatPredicateImmediateValue(predicate.Field, predicate.ImmediateValue.Value);
+                return FormatPredicateImmediateValue(predicate, predicate.ImmediateValue.Value);
 
             return null;
         }
 
-        private static string FormatPredicateImmediateValue(PartyFieldKind field, ushort value)
+        private static string FormatPredicateImmediateValue(PartyPredicate predicate, ushort value)
         {
-            return PartyAlignmentSemantics.IsAlignmentField(field)
-                ? PartyAlignmentSemantics.FormatAlignmentValue(value)
-                : value.ToString(CultureInfo.InvariantCulture);
+            if (PartyInventorySemantics.TryFormatItemCode(predicate, value, out string itemText))
+                return itemText;
+
+            PartyFieldKind field = predicate?.Field ?? PartyFieldKind.Unknown;
+            if (PartyAlignmentSemantics.IsAlignmentField(field))
+                return PartyAlignmentSemantics.FormatAlignmentValue(value);
+
+            if (field == PartyFieldKind.Status)
+            {
+                var statusNames = PartyStatusSemantics.GetStatusNamesForExactValue((byte)value);
+                if (statusNames.Count > 0)
+                    return string.Join(", ", statusNames);
+            }
+
+            return value.ToString(CultureInfo.InvariantCulture);
         }
 
         private static string FormatPredicateFieldName(PartyPredicate predicate)
@@ -722,8 +801,9 @@ namespace MMMapEditor
             if (predicate == null)
                 return null;
 
-            if (PartyInventorySemantics.IsInventorySlotOffset(predicate.FieldOffset))
-                return "слот инвентаря";
+            string itemSlotLabel = PartyInventorySemantics.GetSlotFieldLabel(predicate);
+            if (!string.IsNullOrWhiteSpace(itemSlotLabel))
+                return itemSlotLabel;
 
             if (predicate.Field == PartyFieldKind.Unknown && predicate.FieldOffset.HasValue)
                 return $"техническое поле +0x{predicate.FieldOffset.Value:X2}";
@@ -1089,6 +1169,9 @@ namespace MMMapEditor
             if (PartyFoodSemantics.IsFoodField(field))
                 return BuildFoodFieldDescription(effect, scope, condition);
 
+            if (PartyTechnicalFieldSemantics.IsMainQuestCompletionField(field))
+                return BuildMainQuestCompletionFieldDescription(effect, field, scope, condition);
+
             return BuildRanalouQuestLineDescription(effect, field, scope, condition);
         }
 
@@ -1170,18 +1253,22 @@ namespace MMMapEditor
             if (effect == null || !effect.TechnicalFieldOffset.HasValue)
                 return null;
 
-            string fieldLabel = $"техническое байтовое поле персонажа +0x{effect.TechnicalFieldOffset.Value:X2}";
+            string fieldLabel = PartyInventorySemantics.GetSlotFieldLabel(effect.TechnicalFieldOffset) ??
+                                $"техническое байтовое поле персонажа +0x{effect.TechnicalFieldOffset.Value:X2}";
             string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
             var operation = GetEffectiveOperation(effect);
             var knowledge = GetEffectiveValueKnowledge(effect);
+            string immediateValueText = effect.ImmediateValue.HasValue
+                ? FormatRawTechnicalFieldValue(effect.TechnicalFieldOffset, effect.ImmediateValue.Value)
+                : null;
 
             string body = operation switch
             {
                 PartyEffectOperation.Read => effect.ImmediateValue.HasValue
                     ? ComposeQuestLordSentence(
                         targetPrefix,
-                        $"Читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})",
-                        $"читается {fieldLabel} (=0x{effect.ImmediateValue.Value:X2})")
+                        $"Читается {fieldLabel} (= {immediateValueText})",
+                        $"читается {fieldLabel} (= {immediateValueText})")
                     : ComposeQuestLordSentence(
                         targetPrefix,
                         $"Читается {fieldLabel}",
@@ -1194,8 +1281,8 @@ namespace MMMapEditor
                             (byte)effect.ImmediateValue.Value)
                         : ComposeQuestLordSentence(
                             targetPrefix,
-                            $"Проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}",
-                            $"проверяется {fieldLabel} на значение 0x{effect.ImmediateValue.Value:X2}")
+                            $"Проверяется {fieldLabel} на значение {immediateValueText}",
+                            $"проверяется {fieldLabel} на значение {immediateValueText}")
                     : ComposeQuestLordSentence(
                         targetPrefix,
                         $"Проверяется {fieldLabel}",
@@ -1227,8 +1314,8 @@ namespace MMMapEditor
                 PartyEffectOperation.Write => effect.ImmediateValue.HasValue
                     ? ComposeQuestLordSentence(
                         targetPrefix,
-                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}",
-                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}")
+                        $"{fieldLabel} становится равным {immediateValueText}",
+                        $"{fieldLabel} становится равным {immediateValueText}")
                     : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
                 _ => !string.IsNullOrWhiteSpace(effect.Description)
                     ? effect.Description
@@ -1238,6 +1325,13 @@ namespace MMMapEditor
             return string.IsNullOrWhiteSpace(body)
                 ? body
                 : $"-=*{body}*=-";
+        }
+
+        private static string FormatRawTechnicalFieldValue(byte? fieldOffset, ushort value)
+        {
+            return PartyInventorySemantics.TryFormatItemCode(fieldOffset, value, out string itemText)
+                ? itemText
+                : $"0x{value:X2}";
         }
 
         private static string BuildRawTechnicalBitCompareDescription(string targetPrefix, string fieldLabel, byte mask)
@@ -1544,6 +1638,158 @@ namespace MMMapEditor
             };
 
             return WrapTechnicalQuestLordNote(body);
+        }
+
+        private static string BuildMainQuestCompletionFieldDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || field != PartyFieldKind.Technical7D)
+                return null;
+
+            const string fieldLabel = PartyTechnicalFieldSemantics.MainQuestCompletionFieldLabel;
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            string body = operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel} (={FormatMainQuestCompletionValue(effect.ImmediateValue.Value)})",
+                        $"читается {fieldLabel} (={FormatMainQuestCompletionValue(effect.ImmediateValue.Value)})")
+                    : ComposeQuestLordSentence(targetPrefix, $"Читается {fieldLabel}", $"читается {fieldLabel}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? BuildMainQuestCompletionBitCompareDescription(
+                            targetPrefix,
+                            fieldLabel,
+                            (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется {fieldLabel} на значение {FormatMainQuestCompletionValue(effect.ImmediateValue.Value)}",
+                            $"проверяется {fieldLabel} на значение {FormatMainQuestCompletionValue(effect.ImmediateValue.Value)}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Проверяется {fieldLabel}", $"проверяется {fieldLabel}"),
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? BuildMainQuestCompletionBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        PartyEffectOperation.BitSet,
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? BuildMainQuestCompletionBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        PartyEffectOperation.BitClear,
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? BuildMainQuestCompletionBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        PartyEffectOperation.BitToggle,
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? BuildMainQuestCompletionWriteDescription(targetPrefix, effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+
+            return WrapTechnicalQuestLordNote(body);
+        }
+
+        private static string FormatMainQuestCompletionValue(ushort value)
+        {
+            string stateText = value >= PartyTechnicalFieldSemantics.MainQuestCompletedThreshold
+                ? "главный квест игры выполнен"
+                : "главный квест игры не выполнен";
+            return $"0x{value:X2} ({stateText})";
+        }
+
+        private static string BuildMainQuestCompletionBitCompareDescription(
+            string targetPrefix,
+            string fieldLabel,
+            byte mask)
+        {
+            if ((mask & PartyTechnicalFieldSemantics.MainQuestCompletedThreshold) != 0)
+            {
+                return ComposeQuestLordSentence(
+                    targetPrefix,
+                    "Проверяется, выполнен ли главный квест игры",
+                    "проверяется, выполнен ли главный квест игры");
+            }
+
+            return BuildRanalouBitCompareDescription(targetPrefix, fieldLabel, mask);
+        }
+
+        private static string BuildMainQuestCompletionBitOperationDescription(
+            string targetPrefix,
+            string fieldLabel,
+            PartyEffectOperation operation,
+            byte mask)
+        {
+            if ((mask & PartyTechnicalFieldSemantics.MainQuestCompletedThreshold) == 0)
+            {
+                return operation switch
+                {
+                    PartyEffectOperation.BitSet => BuildRanalouBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "устанавливается",
+                        "устанавливаются",
+                        mask),
+                    PartyEffectOperation.BitClear => BuildRanalouBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "сбрасывается",
+                        "сбрасываются",
+                        mask),
+                    PartyEffectOperation.BitToggle => BuildRanalouBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "переключается",
+                        "переключаются",
+                        mask),
+                    _ => ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}")
+                };
+            }
+
+            return operation switch
+            {
+                PartyEffectOperation.BitSet => ComposeQuestLordSentence(
+                    targetPrefix,
+                    "Главный квест игры отмечается выполненным",
+                    "главный квест игры отмечается выполненным"),
+                PartyEffectOperation.BitClear => ComposeQuestLordSentence(
+                    targetPrefix,
+                    "Сбрасывается отметка выполнения главного квеста игры",
+                    "сбрасывается отметка выполнения главного квеста игры"),
+                PartyEffectOperation.BitToggle => ComposeQuestLordSentence(
+                    targetPrefix,
+                    "Переключается отметка выполнения главного квеста игры",
+                    "переключается отметка выполнения главного квеста игры"),
+                _ => ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}")
+            };
+        }
+
+        private static string BuildMainQuestCompletionWriteDescription(string targetPrefix, ushort value)
+        {
+            return value >= PartyTechnicalFieldSemantics.MainQuestCompletedThreshold
+                ? ComposeQuestLordSentence(
+                    targetPrefix,
+                    "Главный квест игры отмечается выполненным",
+                    "главный квест игры отмечается выполненным")
+                : ComposeQuestLordSentence(
+                    targetPrefix,
+                    "Главный квест игры отмечается невыполненным",
+                    "главный квест игры отмечается невыполненным");
         }
 
         private static string BuildRanalouBitCompareDescription(string targetPrefix, string fieldLabel, byte mask)
@@ -2012,7 +2258,7 @@ namespace MMMapEditor
                 PartyFieldKind.sex => "пол",
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
-                PartyFieldKind.Status => "status",
+                PartyFieldKind.Status => "CONDITION",
                 _ when IsTrackedByteField(field)
                     => GetTrackedFieldLabel(field),
                 _ => field.ToString()

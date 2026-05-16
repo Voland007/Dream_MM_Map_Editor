@@ -863,6 +863,7 @@ namespace MMMapEditor
         public ushort? ImmediateValue { get; set; }
         public ValueRange8 ImmediateRange { get; set; }
         public byte? FieldOffset { get; set; }
+        public ValueRange8 FieldOffsetRange { get; set; }
         public uint InstructionAddress { get; set; }
         public PartyMemberReference TargetMember { get; set; }
         public string Description { get; set; }
@@ -877,6 +878,7 @@ namespace MMMapEditor
                 ImmediateValue = ImmediateValue,
                 ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
                 FieldOffset = FieldOffset,
+                FieldOffsetRange = FieldOffsetRange == null ? null : new ValueRange8(FieldOffsetRange.Min, FieldOffsetRange.Max),
                 InstructionAddress = InstructionAddress,
                 TargetMember = TargetMember?.Clone(),
                 Description = Description

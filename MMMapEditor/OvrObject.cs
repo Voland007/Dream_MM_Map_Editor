@@ -948,6 +948,9 @@ namespace MMMapEditor
                 CompareValue?.ToString() ?? string.Empty,
                 ComparedPartyField?.Field.ToString() ?? string.Empty,
                 ComparedPartyField?.FieldOffset?.ToString("X2") ?? string.Empty,
+                ComparedPartyField?.FieldOffsetRange == null
+                    ? string.Empty
+                    : $"{ComparedPartyField.FieldOffsetRange.Min:X2}-{ComparedPartyField.FieldOffsetRange.Max:X2}",
                 IsLinear.ToString(),
                 guardKey);
         }
