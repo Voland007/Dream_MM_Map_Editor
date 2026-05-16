@@ -4188,7 +4188,9 @@ namespace MMMapEditor
                 return;
 
             var lastText = result.OrderedTexts
-                .Where(t => t != null && !string.IsNullOrEmpty(t.Text) && !t.IsContextual)
+                .Where(t => t != null &&
+                            !string.IsNullOrEmpty(t.Text) &&
+                            TrySplitOverlayTextEntry(t.Text, out _, out _))
                 .OrderBy(t => t.Order)
                 .LastOrDefault();
 
@@ -4206,9 +4208,8 @@ namespace MMMapEditor
             lastText.Text = updatedText;
             lastText.Address = instructionAddress;
 
-            if (result.FoundTexts.Contains(previousText))
-                result.FoundTexts.Remove(previousText);
-            result.FoundTexts.Add(updatedText);
+            RemoveLegacyText(result, previousText, lastText.IsContextual);
+            AddLegacyText(result, updatedText, lastText.IsContextual);
 
             if (debugMode)
             {
