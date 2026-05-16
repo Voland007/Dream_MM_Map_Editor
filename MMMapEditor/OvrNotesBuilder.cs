@@ -3599,6 +3599,20 @@ namespace MMMapEditor
                 bodyLines.Add(displayLabel);
         }
 
+        private static void PrependBodyOnlyLabelLine(List<string> bodyLines, string label)
+        {
+            string displayLabel = NormalizeUserVisibleChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(displayLabel) ||
+                bodyLines == null ||
+                !IsFlatOutcomeBodyLabel(displayLabel))
+            {
+                return;
+            }
+
+            if (!bodyLines.Any(line => string.Equals(line?.Trim(), displayLabel, StringComparison.Ordinal)))
+                bodyLines.Insert(0, displayLabel);
+        }
+
         private static string BuildFlatChoiceLabelHeaderAnnotation(string label)
         {
             return TryBuildFlatChoiceLabelHeaderAnnotation(label, out string annotation)
@@ -3628,8 +3642,7 @@ namespace MMMapEditor
                 return true;
             }
 
-            if (IsPartyScanAnswerLine(displayLabel) ||
-                IsFlatConditionChoiceLabel(displayLabel))
+            if (IsFlatConditionChoiceLabel(displayLabel))
             {
                 annotation = displayLabel;
                 return true;
@@ -3659,7 +3672,8 @@ namespace MMMapEditor
                 return false;
 
             string trimmed = label.TrimStart();
-            return IsConditionalPartyStatusLine(trimmed) ||
+            return IsPartyScanAnswerLine(trimmed) ||
+                   IsConditionalPartyStatusLine(trimmed) ||
                    IsBattleOutcomeLine(trimmed) ||
                    trimmed.StartsWith("!", StringComparison.Ordinal) ||
                    trimmed.StartsWith("+", StringComparison.Ordinal) ||
@@ -9939,6 +9953,13 @@ namespace MMMapEditor
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
             string summaryLabel = NormalizeUserVisibleChoiceLabel(summary.Label);
+            var lines = summary.Lines?.ToList() ?? new List<string>();
+            if (IsFlatOutcomeBodyLabel(summaryLabel))
+            {
+                PrependBodyOnlyLabelLine(lines, summaryLabel);
+                summaryLabel = null;
+            }
+
             if (!string.IsNullOrWhiteSpace(summaryLabel))
                 header += $": {summaryLabel}";
             else
@@ -9948,7 +9969,7 @@ namespace MMMapEditor
             AppendIndentedDisplayLines(
                 sb,
                 indent + "   ",
-                summary.Lines,
+                lines,
                 headerContainsProbability);
         }
 
@@ -10011,6 +10032,12 @@ namespace MMMapEditor
             var singleLeafLines = singleLeafItem?.Lines?.ToList();
             string nodeLabel = NormalizeUserVisibleChoiceLabel(node.Label);
             var nodeCommonLines = node.CommonLines?.ToList() ?? new List<string>();
+            if (IsFlatOutcomeBodyLabel(nodeLabel))
+            {
+                PrependBodyOnlyLabelLine(nodeCommonLines, nodeLabel);
+                nodeLabel = null;
+            }
+
             string promotedCommonLabel = string.IsNullOrWhiteSpace(nodeLabel)
                 ? TryPromoteLeadingAnswerLine(nodeCommonLines)
                 : null;
@@ -10453,11 +10480,17 @@ namespace MMMapEditor
             string annotationText = BuildVariantHeaderAnnotationText(annotations);
             if (!string.IsNullOrWhiteSpace(annotationText))
                 header += $" ({annotationText})";
+            var lines = item?.Lines?.ToList() ?? new List<string>();
             string displayLabel = NormalizeUserVisibleChoiceLabel(label);
+            if (IsFlatOutcomeBodyLabel(displayLabel))
+            {
+                PrependBodyOnlyLabelLine(lines, displayLabel);
+                displayLabel = null;
+            }
+
             header += string.IsNullOrWhiteSpace(displayLabel) ? ":" : $": {displayLabel}";
             sb.AppendLine(header);
 
-            var lines = item?.Lines?.ToList() ?? new List<string>();
             if (lines.Any(line => !string.IsNullOrWhiteSpace(line)) && !IsNoOpOnly(lines))
             {
                 bool headerContainsProbability = VariantHeaderContainsProbability(header);
@@ -10518,7 +10551,7 @@ namespace MMMapEditor
                 return null;
 
             string candidate = lines[index]?.Trim();
-            if (!IsPartyScanAnswerLine(candidate))
+            if (!IsPartyScanAnswerLine(candidate) || IsFlatOutcomeBodyLabel(candidate))
                 return null;
 
             lines.RemoveAt(index);
