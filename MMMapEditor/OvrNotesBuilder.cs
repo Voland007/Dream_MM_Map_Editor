@@ -45,6 +45,8 @@ namespace MMMapEditor
         private static readonly Dictionary<ushort, string[]> KnownBinaryStateConditionLabels =
             new Dictionary<ushort, string[]>
             {
+                { 0x3C9E, new[] { "LEVITATE отсутствует", "LEVITATE активно" } },
+                { 0x3CA1, new[] { "PSYCHIC PROTECTION отсутствует", "PSYCHIC PROTECTION активно" } },
                 { 0xC980, new[] { "квест не взят", "квест взят" } }
             };
 
@@ -7127,8 +7129,14 @@ namespace MMMapEditor
             }
 
             var field = PartyEffectSemantics.GetEffectiveField(effect);
-            return field == PartyFieldKind.Hp ||
-                   field == PartyFieldKind.Sp;
+            if (field != PartyFieldKind.Hp &&
+                field != PartyFieldKind.Sp)
+            {
+                return false;
+            }
+
+            return PartyEffectSemantics.HasEffectiveGuardPredicates(effect) ||
+                   PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None;
         }
 
         private static bool HasExistingComplementWithoutEffects(
@@ -9991,36 +9999,11 @@ namespace MMMapEditor
             PartyEffect effect,
             PathVariantInfo variantContext = null)
         {
-            var displayEffect = BuildDisplayPartyEffect(effect, variantContext);
-            string description = PartyEffectSemantics.BuildHumanDescription(displayEffect);
+            string description = PartyEffectSemantics.BuildHumanDescription(effect);
             if (!ShouldRenderStandardStatusLoopAsCurrentMember(variantContext, effect))
                 return description;
 
             return ReplaceWholePartyConditionTargetWithCurrentMember(description);
-        }
-
-        private static PartyEffect BuildDisplayPartyEffect(
-            PartyEffect effect,
-            PathVariantInfo variantContext)
-        {
-            if (!ShouldDisplayPoisonThornsHpAsQuarter(effect, variantContext))
-                return effect;
-
-            var displayEffect = effect.Clone();
-            displayEffect.ApplicationCount = Math.Max(2, PartyEffectSemantics.GetEffectiveApplicationCount(displayEffect));
-            return displayEffect;
-        }
-
-        private static bool ShouldDisplayPoisonThornsHpAsQuarter(
-            PartyEffect effect,
-            PathVariantInfo variantContext)
-        {
-            return effect != null &&
-                   variantContext != null &&
-                   VariantTextsContain(variantContext, "POISON THORNS!") &&
-                   PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Hp &&
-                   PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.Halve &&
-                   PartyEffectSemantics.GetEffectiveApplicationCount(effect) == 1;
         }
 
         private static string ReplaceWholePartyConditionTargetWithCurrentMember(string description)
@@ -10350,9 +10333,6 @@ namespace MMMapEditor
             if (outcomeLines.Count == 0)
                 return false;
 
-            if (!TryBuildConditionalComplementProbability(groupItems, out int numerator, out int denominator))
-                return false;
-
             var baseItem = groupItems
                 .FirstOrDefault(item => GetConditionalLoopSubsetOutcomeLines(item).Count == 0)
                 ?? groupItems.First();
@@ -10374,15 +10354,11 @@ namespace MMMapEditor
                 {
                     BuildConditionalLoopSubsetOutcomeChildNode(
                         noStatusSource,
-                        numerator,
-                        denominator,
                         childBaseLines,
                         null,
                         "no-status"),
                     BuildConditionalLoopSubsetOutcomeChildNode(
                         statusSource,
-                        numerator,
-                        denominator,
                         childBaseLines,
                         outcomeLines,
                         "status")
@@ -10391,40 +10367,8 @@ namespace MMMapEditor
             return true;
         }
 
-        private static bool TryBuildConditionalComplementProbability(
-            List<VariantRenderItem> groupItems,
-            out int numerator,
-            out int denominator)
-        {
-            numerator = 0;
-            denominator = 1;
-
-            var probabilities = (groupItems ?? new List<VariantRenderItem>())
-                .Where(item => item?.Variant != null)
-                .Select(item =>
-                {
-                    int currentNumerator = Math.Max(0, item.Variant.ProbabilityNumerator);
-                    int currentDenominator = Math.Max(1, item.Variant.ProbabilityDenominator);
-                    ReduceFraction(ref currentNumerator, ref currentDenominator);
-                    return (currentNumerator, currentDenominator);
-                })
-                .Distinct()
-                .ToList();
-
-            if (probabilities.Count == 1)
-            {
-                numerator = probabilities[0].currentNumerator;
-                denominator = probabilities[0].currentDenominator;
-                return true;
-            }
-
-            return TrySumVariantProbabilities(groupItems, out numerator, out denominator);
-        }
-
         private static VariantTreeNode BuildConditionalLoopSubsetOutcomeChildNode(
             VariantRenderItem source,
-            int numerator,
-            int denominator,
             List<string> baseLines,
             List<string> outcomeLines,
             string segmentSuffix)
@@ -10457,6 +10401,9 @@ namespace MMMapEditor
             var renderVariant = ClonePathVariantForRender(source?.Variant);
             if (renderVariant != null)
             {
+                int numerator = Math.Max(0, renderVariant.ProbabilityNumerator);
+                int denominator = Math.Max(1, renderVariant.ProbabilityDenominator);
+                ReduceFraction(ref numerator, ref denominator);
                 renderVariant.ProbabilityNumerator = numerator;
                 renderVariant.ProbabilityDenominator = denominator;
             }

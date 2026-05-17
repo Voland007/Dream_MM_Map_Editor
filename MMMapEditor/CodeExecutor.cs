@@ -8093,6 +8093,12 @@ namespace MMMapEditor
                    memAddr == BATTLE_MONSTER_COUNT_ADDRESS;
         }
 
+        private static bool ShouldTrackUnknownExternalStateGuardAddress(ushort memAddr)
+        {
+            return memAddr == 0x3C9E ||
+                   memAddr == 0x3CA1;
+        }
+
         private bool TryGetExactBattleMonsterCount(PathAnalysisResult result, out byte battleMonsterCount)
         {
             if (_emulatedMemory8.TryGetValue(BATTLE_MONSTER_COUNT_ADDRESS, out battleMonsterCount))
@@ -11029,6 +11035,25 @@ namespace MMMapEditor
 
                     if (debugMode)
                         AnalysisDebug.WriteLine($"        Распознано текущее число членов партии в AL как диапазон 1..{PARTY_MEMBER_COUNT}");
+                }
+                else if (ShouldTrackUnknownExternalStateGuardAddress(memAddr))
+                {
+                    registerTracker.ClearConcreteByteRegisterValueKeepSemantic("AL");
+                    registerTracker.ClearPartyFieldValue("AL");
+                    registerTracker.ClearPartyFieldValue("AX");
+                    registerTracker.ClearPartyPointerByteValue("AL");
+                    registerTracker.ClearPartyMemberBase("AX");
+                    registerTracker.SetRegisterRangeWithSource(
+                        "AL",
+                        0,
+                        byte.MaxValue,
+                        RegisterValueDistribution.Unknown,
+                        memAddr,
+                        address,
+                        $"MOV AL, [0x{memAddr:X4}]",
+                        sourceIndexProviderAddr: memAddr);
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        Загрузили AL из неизвестного внешнего состояния [0x{memAddr:X4}] = 0x00..0xFF");
                 }
                 else
                 {
