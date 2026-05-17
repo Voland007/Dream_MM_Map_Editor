@@ -387,13 +387,18 @@ namespace MMMapEditor.Tests
         {
             WriteVerboseTestLog($"\n--- Проверка режима: {modeName} ---");
 
+            ISet<Point> cellsToCheck = testCase.ExpectedCellTexts != null
+                ? new HashSet<Point>(testCase.ExpectedCellTexts.Keys)
+                : null;
+
             var loadResult = OvrOverlayLoader.Load(
                 testCase.OvrFilePath,
                 new Dictionary<Point, string>(centralOptions),
                 null,
                 null,
                 useHierarchical,
-                preAnalyzedObjects);
+                preAnalyzedObjects,
+                cellsToCheck);
 
             WriteVerboseTestLog(
                 $"Load({modeName}) завершён. NotesPerCell={loadResult.NotesPerCell.Count}, " +

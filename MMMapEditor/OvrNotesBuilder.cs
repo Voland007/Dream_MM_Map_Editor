@@ -2,6 +2,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Text;
+using System.Runtime.CompilerServices;
 
 namespace MMMapEditor
 {
@@ -23,6 +24,8 @@ namespace MMMapEditor
     {
         private static readonly Lazy<HashSet<string>> KnownLootItemNames =
             new Lazy<HashSet<string>>(BuildKnownLootItemNames);
+        private static readonly ConditionalWeakTable<OvrObject, VariantRenderPreparationCache> VariantRenderPreparationCaches =
+            new ConditionalWeakTable<OvrObject, VariantRenderPreparationCache>();
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
         private const string GuardHeaderAnnotationPrefix = "при условии:";
@@ -51,7 +54,8 @@ namespace MMMapEditor
             Dictionary<Point, string> existingNotes = null,
             Dictionary<Point, Directions<bool>> existingMessageStates = null,
             bool? useHierarchicalView = null,
-            IReadOnlyList<OvrObject> preAnalyzedObjects = null)
+            IReadOnlyList<OvrObject> preAnalyzedObjects = null,
+            ISet<Point> cellsToBuild = null)
         {
             var result = new OvrNotesBuildResult
             {
@@ -119,6 +123,9 @@ namespace MMMapEditor
 
                 Point pos = new Point(obj.X, obj.Y);
                 string coordKey = $"{obj.X},{obj.Y}";
+
+                if (cellsToBuild != null && !cellsToBuild.Contains(pos))
+                    continue;
 
                 if (!result.CentralOptions.TryGetValue(pos, out string existingOption))
                     continue;
@@ -581,7 +588,7 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
-            var variantContents = BuildRawVariantContentsFromPathVariants(
+            var variantContents = GetRawVariantContentsFromPathVariants(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -3298,6 +3305,23 @@ namespace MMMapEditor
             public InventoryResourceAttritionNoteModel InventoryResourceAttrition { get; set; }
         }
 
+        private sealed class VariantRenderPreparationCache
+        {
+            public object Sync { get; } = new object();
+            public Dictionary<string, VariantRenderPreparation> Entries { get; } =
+                new Dictionary<string, VariantRenderPreparation>(StringComparer.Ordinal);
+        }
+
+        private sealed class VariantRenderPreparation
+        {
+            public bool LoopInternalStatusGuardCollapsedLinesComputed { get; set; }
+            public List<string> LoopInternalStatusGuardCollapsedLines { get; set; }
+            public bool RawVariantContentsComputed { get; set; }
+            public Dictionary<int, List<string>> RawVariantContents { get; set; }
+            public bool SemanticNoteModelComputed { get; set; }
+            public SemanticNoteModel SemanticNoteModel { get; set; }
+        }
+
         private sealed class OrderedRenderEntry
         {
             public int OccurrenceOrderKey { get; set; }
@@ -3419,7 +3443,7 @@ namespace MMMapEditor
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
 
-            if (TryBuildLoopInternalStatusGuardCollapsedLines(
+            if (TryGetLoopInternalStatusGuardCollapsedLines(
                     obj,
                     defaultRandomEncounterMonsterPowerCap,
                     defaultRandomEncounterMonsterLevelCap,
@@ -3432,7 +3456,7 @@ namespace MMMapEditor
                 return BuildLoopInternalStatusGuardCollapsedNote(collapsedLines);
             }
 
-            var rawVariantContents = BuildRawVariantContentsFromPathVariants(
+            var rawVariantContents = GetRawVariantContentsFromPathVariants(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -3443,7 +3467,7 @@ namespace MMMapEditor
             if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
-            var noteModel = BuildSemanticNoteModel(
+            var noteModel = GetSemanticNoteModel(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -3501,7 +3525,7 @@ namespace MMMapEditor
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
 
-            if (TryBuildLoopInternalStatusGuardCollapsedLines(
+            if (TryGetLoopInternalStatusGuardCollapsedLines(
                     obj,
                     defaultRandomEncounterMonsterPowerCap,
                     defaultRandomEncounterMonsterLevelCap,
@@ -3514,7 +3538,7 @@ namespace MMMapEditor
                 return BuildLoopInternalStatusGuardCollapsedNote(collapsedLines);
             }
 
-            var rawVariantContents = BuildRawVariantContentsFromPathVariants(
+            var rawVariantContents = GetRawVariantContentsFromPathVariants(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -3525,7 +3549,7 @@ namespace MMMapEditor
             if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
-            var noteModel = BuildSemanticNoteModel(
+            var noteModel = GetSemanticNoteModel(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -3699,6 +3723,197 @@ namespace MMMapEditor
             }
 
             return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static bool TryGetLoopInternalStatusGuardCollapsedLines(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine,
+            out List<string> lines)
+        {
+            lines = null;
+            if (obj == null)
+                return false;
+
+            var cache = VariantRenderPreparationCaches.GetValue(
+                obj,
+                _ => new VariantRenderPreparationCache());
+            string cacheKey = BuildVariantRenderPreparationCacheKey(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+
+            lock (cache.Sync)
+            {
+                var preparation = GetOrCreateVariantRenderPreparation(cache, cacheKey);
+                if (!preparation.LoopInternalStatusGuardCollapsedLinesComputed)
+                {
+                    preparation.LoopInternalStatusGuardCollapsedLinesComputed = true;
+                    preparation.LoopInternalStatusGuardCollapsedLines =
+                        TryBuildLoopInternalStatusGuardCollapsedLines(
+                            obj,
+                            defaultRandomEncounterMonsterPowerCap,
+                            defaultRandomEncounterMonsterLevelCap,
+                            defaultRandomEncounterMonsterBatchCountCap,
+                            defaultDarkeningLevel,
+                            defaultRandomEncounterChance,
+                            inlineSpecialSpoilerLine,
+                            out var computedLines)
+                            ? computedLines?.ToList()
+                            : null;
+                }
+
+                if (preparation.LoopInternalStatusGuardCollapsedLines == null)
+                    return false;
+
+                lines = preparation.LoopInternalStatusGuardCollapsedLines.ToList();
+                return true;
+            }
+        }
+
+        private static Dictionary<int, List<string>> GetRawVariantContentsFromPathVariants(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
+        {
+            if (obj == null)
+                return new Dictionary<int, List<string>>();
+
+            var cache = VariantRenderPreparationCaches.GetValue(
+                obj,
+                _ => new VariantRenderPreparationCache());
+            string cacheKey = BuildVariantRenderPreparationCacheKey(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+
+            lock (cache.Sync)
+            {
+                var preparation = GetOrCreateVariantRenderPreparation(cache, cacheKey);
+                if (!preparation.RawVariantContentsComputed)
+                {
+                    preparation.RawVariantContentsComputed = true;
+                    preparation.RawVariantContents = CloneVariantContents(
+                        BuildRawVariantContentsFromPathVariants(
+                            obj,
+                            defaultRandomEncounterMonsterPowerCap,
+                            defaultRandomEncounterMonsterLevelCap,
+                            defaultRandomEncounterMonsterBatchCountCap,
+                            defaultDarkeningLevel,
+                            defaultRandomEncounterChance,
+                            inlineSpecialSpoilerLine));
+                }
+
+                return CloneVariantContents(preparation.RawVariantContents);
+            }
+        }
+
+        private static SemanticNoteModel GetSemanticNoteModel(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine,
+            string specialSpoilerLine = null)
+        {
+            if (obj == null)
+                return null;
+
+            var cache = VariantRenderPreparationCaches.GetValue(
+                obj,
+                _ => new VariantRenderPreparationCache());
+            string cacheKey = BuildVariantRenderPreparationCacheKey(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine,
+                specialSpoilerLine);
+
+            lock (cache.Sync)
+            {
+                var preparation = GetOrCreateVariantRenderPreparation(cache, cacheKey);
+                if (!preparation.SemanticNoteModelComputed)
+                {
+                    preparation.SemanticNoteModelComputed = true;
+                    preparation.SemanticNoteModel = BuildSemanticNoteModel(
+                        obj,
+                        defaultRandomEncounterMonsterPowerCap,
+                        defaultRandomEncounterMonsterLevelCap,
+                        defaultRandomEncounterMonsterBatchCountCap,
+                        defaultDarkeningLevel,
+                        defaultRandomEncounterChance,
+                        inlineSpecialSpoilerLine,
+                        specialSpoilerLine);
+                }
+
+                return preparation.SemanticNoteModel;
+            }
+        }
+
+        private static VariantRenderPreparation GetOrCreateVariantRenderPreparation(
+            VariantRenderPreparationCache cache,
+            string cacheKey)
+        {
+            if (!cache.Entries.TryGetValue(cacheKey, out var preparation))
+            {
+                preparation = new VariantRenderPreparation();
+                cache.Entries[cacheKey] = preparation;
+            }
+
+            return preparation;
+        }
+
+        private static string BuildVariantRenderPreparationCacheKey(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine,
+            string specialSpoilerLine = null)
+        {
+            return string.Join(
+                "\u001F",
+                obj?.PathVariants?.Count.ToString(CultureInfo.InvariantCulture) ?? "0",
+                defaultRandomEncounterMonsterPowerCap.ToString(CultureInfo.InvariantCulture),
+                defaultRandomEncounterMonsterLevelCap.ToString(CultureInfo.InvariantCulture),
+                defaultRandomEncounterMonsterBatchCountCap.ToString(CultureInfo.InvariantCulture),
+                defaultDarkeningLevel.ToString(CultureInfo.InvariantCulture),
+                defaultRandomEncounterChance.ToString(CultureInfo.InvariantCulture),
+                inlineSpecialSpoilerLine ?? string.Empty,
+                specialSpoilerLine ?? string.Empty);
+        }
+
+        private static Dictionary<int, List<string>> CloneVariantContents(
+            Dictionary<int, List<string>> source)
+        {
+            var result = new Dictionary<int, List<string>>();
+            foreach (var kvp in source ?? new Dictionary<int, List<string>>())
+                result[kvp.Key] = kvp.Value?.ToList() ?? new List<string>();
+
+            return result;
         }
 
         private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromAnalysis(

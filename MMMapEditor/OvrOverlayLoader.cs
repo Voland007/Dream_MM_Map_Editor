@@ -54,7 +54,8 @@ namespace MMMapEditor
             Dictionary<Point, string> seedNotes = null,
             Dictionary<Point, Directions<bool>> seedMessageStates = null,
             bool? useHierarchicalView = null,
-            IReadOnlyList<OvrObject> preAnalyzedObjects = null)
+            IReadOnlyList<OvrObject> preAnalyzedObjects = null,
+            ISet<Point> cellsToBuild = null)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
@@ -70,7 +71,8 @@ namespace MMMapEditor
                 seedNotes,
                 seedMessageStates,
                 useHierarchicalView,
-                preAnalyzedObjects);
+                preAnalyzedObjects,
+                cellsToBuild);
 
             var result = new OvrOverlayLoadResult
             {
