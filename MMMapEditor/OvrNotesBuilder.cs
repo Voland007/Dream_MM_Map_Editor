@@ -49,6 +49,11 @@ namespace MMMapEditor
                 { 0x3CA1, new[] { "PSYCHIC PROTECTION отсутствует", "PSYCHIC PROTECTION активно" } },
                 { 0xC980, new[] { "квест не взят", "квест взят" } }
             };
+        private static readonly string[] KnownProtectiveSpellConditionNames =
+        {
+            "LEVITATE",
+            "PSYCHIC PROTECTION"
+        };
 
         public static OvrNotesBuildResult BuildNotes(
             string filename,
@@ -3036,6 +3041,14 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(normalized))
                 return normalized;
 
+            if (TrySplitProtectiveSpellStateHeaderAnnotation(
+                    normalized,
+                    out string spellName,
+                    out string spellStateLabel))
+            {
+                return $"{InlineNoteStyleCodec.EncodeItemNameText(spellName)} {spellStateLabel}";
+            }
+
             if (TrySplitInventoryPresenceHeaderAnnotation(
                     normalized,
                     out string itemName,
@@ -3049,6 +3062,39 @@ namespace MMMapEditor
             }
 
             return normalized;
+        }
+
+        private static bool TrySplitProtectiveSpellStateHeaderAnnotation(
+            string annotation,
+            out string spellName,
+            out string stateLabel)
+        {
+            spellName = null;
+            stateLabel = null;
+
+            string normalized = StripGuardHeaderAnnotationPrefix(NormalizeHeaderAnnotation(annotation));
+            if (string.IsNullOrWhiteSpace(normalized))
+                return false;
+
+            foreach (string label in new[] { "активно", "отсутствует" })
+            {
+                string suffix = " " + label;
+                if (!normalized.EndsWith(suffix, StringComparison.Ordinal))
+                    continue;
+
+                string candidateSpellName = normalized.Substring(0, normalized.Length - suffix.Length).Trim();
+                if (!KnownProtectiveSpellConditionNames.Any(name =>
+                        string.Equals(name, candidateSpellName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                spellName = candidateSpellName;
+                stateLabel = label;
+                return true;
+            }
+
+            return false;
         }
 
         private static List<string> BuildInventoryPresenceHeaderAnnotationsForVariantPath(
