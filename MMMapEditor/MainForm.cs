@@ -2642,6 +2642,10 @@ namespace MMMapEditor
                         ApplyMutedParentheticalNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.SubtleMechanicsNote:
+                        ApplySubtleMechanicsNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2750,6 +2754,13 @@ namespace MMMapEditor
         {
             rt.SelectionColor = Color.FromArgb(145, 145, 145);
             rt.SelectionBackColor = rt.BackColor;
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplySubtleMechanicsNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(150, 150, 150);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(170, 185, 190), 0.16);
             rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
         }
 

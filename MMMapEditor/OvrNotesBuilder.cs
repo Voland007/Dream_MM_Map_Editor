@@ -185,6 +185,10 @@ namespace MMMapEditor
                     fileNameOnly,
                     obj);
                 string trailingRepeatedBattleWarningLine = BuildTrailingRepeatedBattleWarningLine(obj);
+                string specialFullNotes = TryBuildSpecialFullNotes(
+                    fileNameOnly,
+                    obj,
+                    useHierarchical);
 
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
@@ -212,7 +216,11 @@ namespace MMMapEditor
                 StringBuilder newNotes = new StringBuilder();
                 var inlineStyles = new List<NoteInlineStyleSpan>();
 
-                if (!useHierarchical && !string.IsNullOrWhiteSpace(flatSemanticNotes))
+                if (!string.IsNullOrWhiteSpace(specialFullNotes))
+                {
+                    AppendRenderedText(newNotes, inlineStyles, specialFullNotes);
+                }
+                else if (!useHierarchical && !string.IsNullOrWhiteSpace(flatSemanticNotes))
                 {
                     AppendRenderedText(newNotes, inlineStyles, flatSemanticNotes);
                 }
@@ -12908,6 +12916,165 @@ namespace MMMapEditor
 
             return InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
                 BuildAreaA3MountainWheelExplanation());
+        }
+
+        private static string TryBuildSpecialFullNotes(string fileNameOnly, OvrObject obj, bool useHierarchical)
+        {
+            string sorpigalLeprechaunNote = TryBuildSorpigalLeprechaunGuideNote(
+                fileNameOnly,
+                obj,
+                useHierarchical);
+            if (!string.IsNullOrWhiteSpace(sorpigalLeprechaunNote))
+                return sorpigalLeprechaunNote;
+
+            return null;
+        }
+
+        private static string TryBuildSorpigalLeprechaunGuideNote(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical)
+        {
+            if (!string.Equals(fileNameOnly, "SORPIGAL.OVR", StringComparison.OrdinalIgnoreCase) ||
+                obj == null ||
+                obj.X != 11 ||
+                obj.Y != 3 ||
+                obj.PatchAddress != 0x0160 ||
+                obj.PathVariants == null)
+            {
+                return null;
+            }
+
+            string promptText = obj.PathVariants.Values
+                .Where(variant => variant != null)
+                .SelectMany(variant => DecodeNoteTexts(variant.Texts))
+                .FirstOrDefault(text =>
+                    !string.IsNullOrWhiteSpace(text) &&
+                    text.IndexOf("TENACIOUS LEPRECHAUN", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (string.IsNullOrWhiteSpace(promptText))
+                return null;
+
+            var paidChoiceTargets = obj.PathVariants.Values
+                .Where(variant =>
+                    variant != null &&
+                    variant.HasTeleportTarget &&
+                    variant.PartyEffects != null &&
+                    variant.PartyEffects.Count > 0)
+                .Select(variant => new
+                {
+                    Choice = TryGetSorpigalStoredTownChoice(variant),
+                    Teleport = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte).GetTeleportDescription()
+                })
+                .Where(entry =>
+                    entry.Choice.HasValue &&
+                    entry.Choice.Value >= 1 &&
+                    entry.Choice.Value <= 5 &&
+                    !string.IsNullOrWhiteSpace(entry.Teleport))
+                .GroupBy(entry => entry.Choice.Value)
+                .ToDictionary(group => group.Key, group => group.First().Teleport);
+
+            if (paidChoiceTargets.Count != 5)
+                return null;
+
+            string noGemTeleport = obj.PathVariants.Values
+                .Where(variant =>
+                    variant != null &&
+                    variant.HasTeleportTarget &&
+                    (variant.PartyEffects == null || variant.PartyEffects.Count == 0))
+                .Select(variant => variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte).GetTeleportDescription())
+                .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
+            if (string.IsNullOrWhiteSpace(noGemTeleport))
+                return null;
+
+            return useHierarchical
+                ? BuildSorpigalLeprechaunGuideHierarchicalNote(promptText, paidChoiceTargets, noGemTeleport)
+                : BuildSorpigalLeprechaunGuideFlatNote(promptText, paidChoiceTargets, noGemTeleport);
+        }
+
+        private static int? TryGetSorpigalStoredTownChoice(PathVariantInfo variant)
+        {
+            foreach (var choice in variant?.BranchChoices ?? new List<BranchChoice>())
+            {
+                string combined = $"{choice?.Condition} {choice?.DisplayHeaderAnnotation}";
+                var match = Regex.Match(
+                    combined,
+                    @"\[0xCC3E\]\s*=\s*0x(?<hex>[0-9A-Fa-f]{2})",
+                    RegexOptions.CultureInvariant);
+                if (!match.Success)
+                    continue;
+
+                int asciiValue = int.Parse(
+                    match.Groups["hex"].Value,
+                    NumberStyles.HexNumber,
+                    CultureInfo.InvariantCulture);
+                int choiceNumber = asciiValue - '0';
+                if (choiceNumber >= 1 && choiceNumber <= 5)
+                    return choiceNumber;
+            }
+
+            return null;
+        }
+
+        private static string BuildSorpigalLeprechaunGuideHierarchicalNote(
+            string promptText,
+            IReadOnlyDictionary<int, string> paidChoiceTargets,
+            string noGemTeleport)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1:");
+            AppendIndentedDisplayLines(sb, "   ", SplitDisplayLines(promptText), headerContainsProbability: false);
+            sb.AppendLine();
+            sb.AppendLine("   Вариант 1.1: ESC)");
+
+            for (int choice = 1; choice <= 5; choice++)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"   Вариант 1.{choice + 1}: {choice})");
+                sb.AppendLine("      Вариант 1." + (choice + 1) + ".1 (GEM есть хотя бы у одного персонажа партии):");
+                sb.AppendLine("         " + BuildSorpigalGemChargeNote());
+                sb.AppendLine($"         {paidChoiceTargets[choice]}");
+                sb.AppendLine();
+                sb.AppendLine("      Вариант 1." + (choice + 1) + ".2 (GEM нет ни у одного персонажа партии):");
+                sb.AppendLine($"         {noGemTeleport}");
+            }
+
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string BuildSorpigalLeprechaunGuideFlatNote(
+            string promptText,
+            IReadOnlyDictionary<int, string> paidChoiceTargets,
+            string noGemTeleport)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            int variantNumber = 1;
+
+            sb.AppendLine($"Вариант {variantNumber++} (выбор ESC):");
+            AppendLines(sb, SplitDisplayLines(promptText));
+
+            for (int choice = 1; choice <= 5; choice++)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Вариант {variantNumber++} (выбор {choice}; GEM есть хотя бы у одного персонажа партии):");
+                AppendLines(sb, SplitDisplayLines(promptText));
+                sb.AppendLine(BuildSorpigalGemChargeNote());
+                sb.AppendLine(paidChoiceTargets[choice]);
+
+                sb.AppendLine();
+                sb.AppendLine($"Вариант {variantNumber++} (выбор {choice}; GEM нет ни у одного персонажа партии):");
+                AppendLines(sb, SplitDisplayLines(promptText));
+                sb.AppendLine(noGemTeleport);
+            }
+
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string BuildSorpigalGemChargeNote()
+        {
+            return InlineNoteStyleCodec.EncodeSubtleMechanicsNoteText(
+                "*** У первого персонажа партии, у которого есть GEM, уменьшается GEMS на 1 ***");
         }
 
         private static string BuildAreaA3MountainWheelExplanation()

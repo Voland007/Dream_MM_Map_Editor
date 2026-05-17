@@ -307,7 +307,8 @@ namespace MMMapEditor
         BattleMonsterStrengthDecrease = 16,
         ItemName = 17,
         HpRestoredToMaximum = 18,
-        AlignmentRestoreKeyword = 19
+        AlignmentRestoreKeyword = 19,
+        SubtleMechanicsNote = 20
     }
 
     public sealed class NoteInlineStyleSpan

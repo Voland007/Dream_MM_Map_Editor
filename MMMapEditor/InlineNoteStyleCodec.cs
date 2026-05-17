@@ -35,6 +35,7 @@ namespace MMMapEditor
         private const string PersistentCounterProgressionTokenPrefix = "[[PCOUNTER:";
         private const string DynamicRandomBoundDependencyTokenPrefix = "[[DYNBOUND:";
         private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
+        private const string SubtleMechanicsNoteTokenPrefix = "[[SUBTLEMECH:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
@@ -99,6 +100,11 @@ namespace MMMapEditor
         public static string EncodeMutedParentheticalNoteText(string visibleText)
         {
             return EncodeTextStyleToken(MutedParentheticalNoteTokenPrefix, visibleText);
+        }
+
+        public static string EncodeSubtleMechanicsNoteText(string visibleText)
+        {
+            return EncodeTextStyleToken(SubtleMechanicsNoteTokenPrefix, visibleText);
         }
 
         public static string EncodeWheelRewardExplanationText(string visibleText)
@@ -333,6 +339,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.MutedParentheticalNote
                     });
                     i += mutedConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    SubtleMechanicsNoteTokenPrefix,
+                    out string subtleMechanicsText,
+                    out int subtleMechanicsConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(subtleMechanicsText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = subtleMechanicsText.Length,
+                        Kind = NoteInlineStyleKind.SubtleMechanicsNote
+                    });
+                    i += subtleMechanicsConsumedLength;
                     continue;
                 }
 
