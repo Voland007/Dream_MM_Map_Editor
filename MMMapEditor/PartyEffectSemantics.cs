@@ -23,6 +23,8 @@ namespace MMMapEditor
     public static class PartyEffectSemantics
     {
         private const ushort StandardActivePartyMemberStatusThreshold = 0x80;
+        private const ushort PartySexMaleValue = 0x01;
+        private const ushort PartySexFemaleValue = 0x02;
 
         private static string FormatMemberDisplay(int memberIndex)
         {
@@ -313,6 +315,15 @@ namespace MMMapEditor
                         return BuildWholePartyConditionChangeDescription(conditionStatusesText);
                     }
 
+                    if (scope == PartyEffectScope.CurrentLoopMember &&
+                        (operation == PartyEffectOperation.BitSet ||
+                         operation == PartyEffectOperation.BitClear ||
+                         operation == PartyEffectOperation.BitToggle ||
+                         operation == PartyEffectOperation.Write))
+                    {
+                        return $"CONDITION текущего персонажа партии изменяется на {conditionStatusesText}";
+                    }
+
                     string statusTarget = BuildStatusTarget(effect, scope, condition);
                     return operation switch
                     {
@@ -570,7 +581,11 @@ namespace MMMapEditor
 
             var normalized = predicate.Clone();
             if (normalized.TargetMember != null)
+            {
                 normalized.TargetMember = NormalizeLoopTargetMember(normalized.TargetMember);
+                if (normalized.LoopQuantifier == PartyPredicateLoopQuantifier.Unspecified)
+                    normalized.LoopQuantifier = PartyPredicateLoopQuantifier.Any;
+            }
 
             return normalized;
         }
@@ -611,6 +626,9 @@ namespace MMMapEditor
                 predicate.Field,
                 predicate.FieldOffset?.ToString("X2", CultureInfo.InvariantCulture) ?? "-",
                 predicate.FieldOffsetRange == null ? "-" : $"{predicate.FieldOffsetRange.Min:X2}-{predicate.FieldOffsetRange.Max:X2}",
+                predicate.TargetMember?.IsPartyLoopMember == true
+                    ? predicate.LoopQuantifier.ToString()
+                    : "-",
                 predicate.Comparison,
                 predicate.ValueKnowledge,
                 predicate.ImmediateValue?.ToString() ?? "-",
@@ -623,8 +641,14 @@ namespace MMMapEditor
             if (predicate == null)
                 return null;
 
+            if (TryBuildSexPredicateDisplayText(predicate, out string sexPredicateText))
+                return sexPredicateText;
+
             if (TryBuildMainQuestCompletionPredicateDisplayText(predicate, out string mainQuestCompletionText))
                 return mainQuestCompletionText;
+
+            if (TryBuildLoopPredicateDisplayText(predicate, out string loopPredicateText))
+                return loopPredicateText;
 
             string targetText = BuildPredicateTargetDisplayText(predicate.TargetMember);
             string fieldText = FormatPredicateFieldName(predicate);
@@ -647,6 +671,82 @@ namespace MMMapEditor
             return predicate.Description;
         }
 
+        private static bool TryBuildSexPredicateDisplayText(PartyPredicate predicate, out string text)
+        {
+            text = null;
+            if (!TryResolveSexPredicateCondition(predicate, out PartyConditionKind condition))
+                return false;
+
+            if (predicate.TargetMember?.IsPartyLoopMember == true)
+            {
+                bool none = predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None;
+                string genderPhrase = none && TryResolveSexValueCondition(predicate.ImmediateValue.Value, out var testedCondition)
+                    ? FormatSexPredicateGenderPhrase(testedCondition)
+                    : FormatSexPredicateGenderPhrase(condition);
+                text = none
+                    ? $"ни один персонаж партии не является {genderPhrase}"
+                    : $"хотя бы один персонаж партии является {genderPhrase}";
+                return true;
+            }
+
+            string singleGenderPhrase = FormatSexPredicateGenderPhrase(condition);
+            string targetText = BuildSexPredicateTargetText(predicate.TargetMember);
+            text = $"{targetText} является {singleGenderPhrase}";
+            return true;
+        }
+
+        private static bool TryResolveSexValueCondition(ushort value, out PartyConditionKind condition)
+        {
+            condition = value switch
+            {
+                PartySexMaleValue => PartyConditionKind.MaleOnly,
+                PartySexFemaleValue => PartyConditionKind.FemaleOnly,
+                _ => PartyConditionKind.None
+            };
+
+            return condition != PartyConditionKind.None;
+        }
+
+        private static string FormatSexPredicateGenderPhrase(PartyConditionKind condition)
+        {
+            return condition == PartyConditionKind.MaleOnly ? "мужчиной" : "женщиной";
+        }
+
+        private static bool TryResolveSexPredicateCondition(PartyPredicate predicate, out PartyConditionKind condition)
+        {
+            condition = PartyConditionKind.None;
+            if (predicate?.Field != PartyFieldKind.sex || !predicate.ImmediateValue.HasValue)
+                return false;
+
+            ushort immediateValue = predicate.ImmediateValue.Value;
+            condition = predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal when immediateValue == PartySexMaleValue => PartyConditionKind.MaleOnly,
+                PartyPredicateComparison.NotEqual when immediateValue == PartySexMaleValue => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.Equal when immediateValue == PartySexFemaleValue => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.NotEqual when immediateValue == PartySexFemaleValue => PartyConditionKind.MaleOnly,
+                _ => PartyConditionKind.None
+            };
+
+            return condition != PartyConditionKind.None;
+        }
+
+        private static string BuildSexPredicateTargetText(PartyMemberReference member)
+        {
+            if (member == null)
+                return "персонаж";
+
+            if (member.MemberIndex.HasValue)
+                return $"персонаж {FormatMemberDisplay(member.MemberIndex.Value)}";
+
+            return member.SelectionKind switch
+            {
+                PartyMemberSelectionKind.Random => "случайный персонаж",
+                PartyMemberSelectionKind.Dynamic => "выбранный персонаж",
+                _ => "персонаж"
+            };
+        }
+
         private static bool TryBuildMainQuestCompletionPredicateDisplayText(PartyPredicate predicate, out string text)
         {
             text = null;
@@ -667,9 +767,16 @@ namespace MMMapEditor
 
             if (predicate.TargetMember?.IsPartyLoopMember == true)
             {
-                text = completed
-                    ? "хотя бы у одного персонажа партии главный квест игры выполнен"
-                    : "ни у одного персонажа партии главный квест игры не выполнен";
+                text = predicate.LoopQuantifier switch
+                {
+                    PartyPredicateLoopQuantifier.None when completed =>
+                        "ни у одного персонажа партии главный квест игры не выполнен",
+                    PartyPredicateLoopQuantifier.None =>
+                        "у всех персонажей партии главный квест игры выполнен",
+                    _ => completed
+                        ? "хотя бы у одного персонажа партии главный квест игры выполнен"
+                        : "хотя бы у одного персонажа партии главный квест игры не выполнен"
+                };
                 return true;
             }
 
@@ -708,6 +815,41 @@ namespace MMMapEditor
                 default:
                     return false;
             }
+        }
+
+        private static bool TryBuildLoopPredicateDisplayText(PartyPredicate predicate, out string text)
+        {
+            text = null;
+            if (predicate?.TargetMember?.IsPartyLoopMember != true)
+                return false;
+
+            string targetText = BuildLoopPredicateTargetDisplayText(predicate);
+            string fieldText = FormatPredicateFieldName(predicate);
+            string comparisonText = FormatPredicateComparison(predicate.Comparison);
+            string valueText = FormatPredicateValue(predicate);
+
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(targetText))
+                parts.Add(targetText);
+            if (!string.IsNullOrWhiteSpace(fieldText))
+                parts.Add(fieldText);
+            if (!string.IsNullOrWhiteSpace(comparisonText))
+                parts.Add(comparisonText);
+            if (!string.IsNullOrWhiteSpace(valueText))
+                parts.Add(valueText);
+
+            if (parts.Count == 0)
+                return false;
+
+            text = string.Join(" ", parts);
+            return true;
+        }
+
+        private static string BuildLoopPredicateTargetDisplayText(PartyPredicate predicate)
+        {
+            return predicate?.LoopQuantifier == PartyPredicateLoopQuantifier.None
+                ? "ни у одного персонажа партии"
+                : "хотя бы у одного персонажа партии";
         }
 
         public static string BuildPredicateListDisplayText(IEnumerable<PartyPredicate> predicates)

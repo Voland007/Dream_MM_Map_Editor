@@ -211,6 +211,76 @@ namespace MMMapEditor
             return true;
         }
 
+        public static bool TryFormatItemCodeRange(
+            ushort minValue,
+            ushort maxValueInclusive,
+            out string itemText)
+        {
+            itemText = null;
+            if (minValue > maxValueInclusive ||
+                minValue > byte.MaxValue ||
+                maxValueInclusive > byte.MaxValue)
+            {
+                return false;
+            }
+
+            var itemNames = new System.Collections.Generic.List<string>();
+            for (ushort value = minValue; value <= maxValueInclusive; value++)
+            {
+                if (!TryFormatItemCode(value, allowEmpty: false, out string singleItemText) ||
+                    string.IsNullOrWhiteSpace(singleItemText))
+                {
+                    return false;
+                }
+
+                itemNames.Add(singleItemText.Trim());
+            }
+
+            itemText = FormatItemNameRange(itemNames);
+            return !string.IsNullOrWhiteSpace(itemText);
+        }
+
+        private static string FormatItemNameRange(System.Collections.Generic.List<string> itemNames)
+        {
+            if (itemNames == null || itemNames.Count == 0)
+                return null;
+
+            if (itemNames.Count == 1)
+                return itemNames[0];
+
+            string sharedSuffix = TryGetSharedTrailingWordSuffix(itemNames);
+            if (!string.IsNullOrWhiteSpace(sharedSuffix))
+            {
+                var prefixes = itemNames
+                    .Select(name => name.Substring(0, name.Length - sharedSuffix.Length).TrimEnd())
+                    .Where(prefix => !string.IsNullOrWhiteSpace(prefix))
+                    .ToList();
+
+                if (prefixes.Count == itemNames.Count)
+                    return $"{string.Join("/", prefixes)}{sharedSuffix}";
+            }
+
+            return string.Join("/", itemNames);
+        }
+
+        private static string TryGetSharedTrailingWordSuffix(System.Collections.Generic.List<string> itemNames)
+        {
+            string first = itemNames?.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(first))
+                return null;
+
+            int separatorIndex = first.LastIndexOf(' ');
+            if (separatorIndex <= 0 || separatorIndex >= first.Length - 1)
+                return null;
+
+            string suffix = first.Substring(separatorIndex);
+            return itemNames.All(name =>
+                !string.IsNullOrWhiteSpace(name) &&
+                name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                ? suffix
+                : null;
+        }
+
         private static PartyPredicateComparison InferComparisonFromCondition(BranchChoice choice)
         {
             string mnemonic = ExtractMnemonic(choice?.Condition);

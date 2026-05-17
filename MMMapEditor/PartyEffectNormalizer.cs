@@ -31,7 +31,9 @@ namespace MMMapEditor
                 .Select(e => e.Clone())
                 .ToList() ?? new List<PartyEffect>();
 
-            PromotePartyScanLoopEffects(source, allPartyEffects);
+            bool preferCurrentLoopMemberForPromptChoice = IsPromptChoicePartyScan(source);
+
+            PromotePartyScanLoopEffects(source, allPartyEffects, preferCurrentLoopMemberForPromptChoice);
             result.AddRange(allPartyEffects);
 
             var pendingStatOperations = CollectPendingStatOperations(source);
@@ -70,7 +72,7 @@ namespace MMMapEditor
                     effect.Condition = inferredCondition;
                 }
 
-                NormalizeLoopDerivedEffect(effect);
+                NormalizeLoopDerivedEffect(effect, preferCurrentLoopMemberForPromptChoice);
             }
 
             result = RemoveRedundantStatWrittenEffects(result);
@@ -342,7 +344,10 @@ namespace MMMapEditor
             return field == PartyFieldKind.Hp || field == PartyFieldKind.Sp;
         }
 
-        private static void PromotePartyScanLoopEffects(PathAnalysisResult source, List<PartyEffect> effects)
+        private static void PromotePartyScanLoopEffects(
+            PathAnalysisResult source,
+            List<PartyEffect> effects,
+            bool preferCurrentLoopMemberForPromptChoice)
         {
             if (source == null ||
                 source.LoopSemantic != LoopSemanticKind.PartyMemberScan ||
@@ -359,8 +364,31 @@ namespace MMMapEditor
                 source.LoopEndAddress)))
             {
                 effect.IsLoopDerived = true;
-                NormalizeLoopDerivedEffect(effect);
+                NormalizeLoopDerivedEffect(effect, preferCurrentLoopMemberForPromptChoice);
             }
+        }
+
+        private static bool IsPromptChoicePartyScan(PathAnalysisResult source)
+        {
+            if (source == null || source.LoopSemantic != LoopSemanticKind.PartyMemberScan)
+                return false;
+
+            return source.TerminatedByPromptLoopBackEdge || HasInputChoiceBranch(source);
+        }
+
+        private static bool HasInputChoiceBranch(PathAnalysisResult source)
+        {
+            if (source?.InlineBranchChoices?.Any(choice => IsInputChoiceBranchLabel(choice?.Label)) == true)
+                return true;
+
+            return source?.AlternativePaths?.Any(path => path?.IsInputChoiceBranch == true) == true;
+        }
+
+        private static bool IsInputChoiceBranchLabel(string label)
+        {
+            string normalized = label?.Trim();
+            return string.Equals(normalized, "InputChoiceBranch", System.StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "InputChoiceLinear", System.StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool ShouldPromotePartyScanLoopEffect(PartyEffect effect, uint loopStartAddress, uint loopEndAddress)
@@ -414,7 +442,9 @@ namespace MMMapEditor
             return true;
         }
 
-        private static void NormalizeLoopDerivedEffect(PartyEffect effect)
+        private static void NormalizeLoopDerivedEffect(
+            PartyEffect effect,
+            bool preferCurrentLoopMemberForPromptChoice = false)
         {
             if (effect == null || !PartyEffectSemantics.IsLoopDerived(effect))
                 return;
@@ -434,6 +464,12 @@ namespace MMMapEditor
                 effect.Scope = condition != PartyConditionKind.None || PartyEffectSemantics.HasEffectiveGuardPredicates(effect)
                     ? PartyEffectScope.PartySubset
                     : PartyEffectScope.WholeParty;
+
+                if (preferCurrentLoopMemberForPromptChoice &&
+                    IsPromptChoiceCurrentMemberStatusWrite(effect))
+                {
+                    effect.Scope = PartyEffectScope.CurrentLoopMember;
+                }
             }
             else
             {
@@ -448,6 +484,13 @@ namespace MMMapEditor
             string humanDescription = PartyEffectSemantics.BuildHumanDescription(effect);
             if (!string.IsNullOrWhiteSpace(humanDescription))
                 effect.Description = humanDescription;
+        }
+
+        private static bool IsPromptChoiceCurrentMemberStatusWrite(PartyEffect effect)
+        {
+            return PartyEffectSemantics.IsStandardActivePartyStatusGuardedLoop(effect) &&
+                   PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.Write &&
+                   effect.ImmediateValue == PartyStatusSemantics.EradicatedValue;
         }
     }
 }

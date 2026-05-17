@@ -26,6 +26,10 @@ namespace MMMapEditor
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
         private const string GuardHeaderAnnotationPrefix = "при условии:";
+        private const string LoopInternalEradicatedExclusionAnnotation =
+            "за исключением персонажей, у которых CONDITION == ERADICATED";
+        private const string NoOpLine = "Ничего не происходит";
+        private const string NoOpBecauseNoConditionsLine = "Ничего не происходит (не выполнены условия для наступления ни одного варианта)";
         private const string WholePartyConditionChangePrefix = "CONDITION персонажа(ей) в партии изменяется на ";
         private const string LegacyWholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
@@ -246,11 +250,10 @@ namespace MMMapEditor
                         {
                             var variant = sortedVariants[i];
                             string variantHeader = BuildVariantHeader(obj, variant.Key, i + 1);
-                            bool headerContainsProbability = VariantHeaderContainsProbability(variantHeader);
                             AppendRenderedText(newNotes, inlineStyles, $"{variantHeader}:\n");
 
                             foreach (var line in variant.Value)
-                                AppendRenderedText(newNotes, inlineStyles, FormatVariantLine(line, headerContainsProbability) + "\n");
+                                AppendRenderedText(newNotes, inlineStyles, line + "\n");
 
                             if (i < sortedVariants.Count - 1)
                                 AppendRenderedText(newNotes, inlineStyles, "\n");
@@ -605,6 +608,189 @@ namespace MMMapEditor
             return variantContents;
         }
 
+        private static bool TryBuildLoopInternalStatusGuardCollapsedLines(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine,
+            out List<string> lines)
+        {
+            lines = null;
+
+            var variants = obj?.PathVariants?.Values
+                .Where(variant => variant != null)
+                .OrderBy(GetPathOrderKey)
+                .ToList();
+            if (variants == null || variants.Count < 2)
+                return false;
+
+            string narrativeKey = BuildDecodedTextKey(variants[0].Texts);
+            if (string.IsNullOrWhiteSpace(narrativeKey) ||
+                variants.Any(variant => BuildDecodedTextKey(variant.Texts) != narrativeKey) ||
+                !IsNorthClericsCureNarrative(narrativeKey))
+            {
+                return false;
+            }
+
+            if (variants.Any(HasDisqualifyingOutcomeForLoopInternalStatusGuardCollapse) ||
+                variants.Any(HasDisqualifyingBranchChoiceForLoopInternalStatusGuardCollapse))
+            {
+                return false;
+            }
+
+            var effectVariants = variants
+                .Where(variant => variant.PartyEffects?.Any(IsLoopInternalEradicatedStatusGuardedSubsetEffect) == true)
+                .ToList();
+            if (effectVariants.Count != 1)
+                return false;
+
+            var renderVariant = effectVariants[0];
+            OvrObject variantObject = renderVariant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
+            lines = BuildVariantLines(
+                variantObject,
+                renderVariant.Texts,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
+            lines = NormalizeLoopInternalStatusGuardCollapsedEffectLines(lines);
+            lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
+
+            return lines.Any(line => !string.IsNullOrWhiteSpace(line));
+        }
+
+        private static bool IsNorthClericsCureNarrative(string narrativeKey)
+        {
+            return !string.IsNullOrWhiteSpace(narrativeKey) &&
+                   narrativeKey.Contains("WE ARE THE CLERICS OF THE N.", StringComparison.Ordinal) &&
+                   narrativeKey.Contains("YOUR PARTY IS CURED!", StringComparison.Ordinal);
+        }
+
+        private static List<string> NormalizeLoopInternalStatusGuardCollapsedEffectLines(IEnumerable<string> sourceLines)
+        {
+            var result = new List<string>();
+            foreach (var line in sourceLines ?? Enumerable.Empty<string>())
+            {
+                string normalizedLine = line;
+                if (string.Equals(
+                        normalizedLine,
+                        "CONDITION подходящих персонажей партии изменяется на GOOD",
+                        StringComparison.Ordinal))
+                {
+                    normalizedLine = "CONDITION персонажей партии изменяется на GOOD";
+                }
+                else if (string.Equals(
+                             normalizedLine,
+                             InlineNoteStyleCodec.EncodeHpRestoredToMaximumText(
+                                 "HP части партии восстанавливается до максимального значения"),
+                             StringComparison.Ordinal) ||
+                         string.Equals(
+                             normalizedLine,
+                             "HP части партии восстанавливается до максимального значения",
+                             StringComparison.Ordinal))
+                {
+                    normalizedLine = InlineNoteStyleCodec.EncodeHpRestoredToMaximumText(
+                        "HP персонажей партии восстанавливается до максимального значения");
+                }
+
+                result.Add(normalizedLine);
+            }
+
+            return result;
+        }
+
+        private static string BuildLoopInternalStatusGuardCollapsedNote(IEnumerable<string> lines)
+        {
+            var displayLines = (lines ?? Enumerable.Empty<string>())
+                .ToList();
+            if (displayLines.Count == 0)
+                return null;
+
+            var builder = new StringBuilder();
+            builder.AppendLine("Эта ячейка содержит различные варианты текста:");
+            builder.AppendLine($"Вариант 1 ({LoopInternalEradicatedExclusionAnnotation}):");
+            foreach (string line in displayLines)
+                builder.AppendLine(line ?? string.Empty);
+
+            return builder.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string BuildDecodedTextKey(IEnumerable<string> rawTexts)
+        {
+            var lines = DecodeNoteTexts(rawTexts)
+                .Select(line => line ?? string.Empty)
+                .ToList();
+
+            return string.Join("\n", lines);
+        }
+
+        private static bool HasDisqualifyingOutcomeForLoopInternalStatusGuardCollapse(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return true;
+
+            return variant.RandomEncounterMonsterPowerCap.HasValue ||
+                   variant.RandomEncounterMonsterLevelCap.HasValue ||
+                   variant.RandomEncounterMonsterBatchCountCap.HasValue ||
+                   variant.DarkeningLevel.HasValue ||
+                   variant.RandomEncounterChance.HasValue ||
+                   variant.RandomEncounterRubicon.HasValue ||
+                   variant.BattleMonsterStrengthAdjustment != 0 ||
+                   variant.CallsRandomEncounter ||
+                   variant.HasTeleportTarget ||
+                   variant.BattleMonsterCount.HasValue ||
+                   variant.BattleMonsterCountRange != null ||
+                   variant.IsBattleMonsterCountIndeterminate ||
+                   (variant.PersistentCounterProgressions != null && variant.PersistentCounterProgressions.Count > 0) ||
+                   (variant.DynamicRandomBoundDependencies != null && variant.DynamicRandomBoundDependencies.Count > 0) ||
+                   (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0) ||
+                   (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0) ||
+                   variant.HasAnyTableLoad ||
+                   (variant.LoadedValues != null && variant.LoadedValues.Count > 0) ||
+                   (variant.PartyEffects != null &&
+                    variant.PartyEffects.Any(effect => !IsLoopInternalEradicatedStatusGuardedSubsetEffect(effect)));
+        }
+
+        private static bool HasDisqualifyingBranchChoiceForLoopInternalStatusGuardCollapse(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?.Any(choice =>
+                choice != null &&
+                !IsPartyLoopTraversalBranchChoice(choice) &&
+                !IsLoopInternalEradicatedStatusGuardBranchChoice(choice)) == true;
+        }
+
+        private static bool IsLoopInternalEradicatedStatusGuardBranchChoice(BranchChoice choice)
+        {
+            return IsEradicatedStatusPredicate(choice?.GuardPredicate);
+        }
+
+        private static bool IsLoopInternalEradicatedStatusGuardedSubsetEffect(PartyEffect effect)
+        {
+            return effect != null &&
+                   PartyEffectSemantics.IsLoopDerived(effect) &&
+                   PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
+                   PartyEffectSemantics.GetEffectiveGuardPredicates(effect)
+                       .Any(IsEradicatedStatusPredicate);
+        }
+
+        private static bool IsEradicatedStatusPredicate(PartyPredicate predicate)
+        {
+            return predicate != null &&
+                   predicate.Field == PartyFieldKind.Status &&
+                   (!predicate.FieldOffset.HasValue ||
+                    predicate.FieldOffset.Value == PartyStatusSemantics.FieldOffset) &&
+                   predicate.ValueKnowledge == PartyValueKnowledge.ExactImmediate &&
+                   predicate.ImmediateValue == 0xFF &&
+                   predicate.ImmediateRange == null &&
+                   (predicate.Comparison == PartyPredicateComparison.Equal ||
+                    predicate.Comparison == PartyPredicateComparison.NotEqual);
+        }
+
         private static Dictionary<int, List<string>> BuildRawVariantContentsFromPathVariants(
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
@@ -636,7 +822,7 @@ namespace MMMapEditor
                     inlineSpecialSpoilerLine);
 
                 if (lines.Count == 0)
-                    lines.Add("Ничего не происходит (не выполнены условия для наступления ни одного варианта)");
+                    lines.Add(BuildNoOpLine(variant));
 
                 variantContents[variantNumber] = lines;
             }
@@ -778,7 +964,9 @@ namespace MMMapEditor
                 }
 
                 if (!normalizedLines.Any(line => !string.IsNullOrWhiteSpace(line)))
-                    normalizedLines.Add("Ничего не происходит");
+                    normalizedLines.Add(BuildNoOpLine(flatVariant.Variant?.Variant));
+                else
+                    NormalizeNoOpOnlyLine(normalizedLines, flatVariant.Variant?.Variant);
 
                 int key = BuildFlatSemanticVariantKey(displayIndex++, flatVariant.SourceVariantKey);
                 if (ShouldUseFlatDisplayPathVariant(obj, flatVariant.Variant?.Variant))
@@ -1587,42 +1775,85 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
-            var lines = new List<string>();
-            var narrativeLines = RemoveAdjacentDuplicatePromptLines(DecodeNoteTexts(rawTexts));
-            InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
-            var monsterStatLines = GetMonsterStatLines(
+            var parts = BuildVariantLineParts(
                 variantObject,
+                rawTexts,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
                 defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
-                defaultRandomEncounterChance);
-            var specialNoteLines = GetSpecialNoteLines(variantObject);
-            var promotedConditionLines = GetPromotedFlatConditionLines(variantObject);
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
 
-            if (narrativeLines.Count > 0 && promotedConditionLines.Count > 0)
+            return ComposeVariantLines(parts, promoteConditionLinesNearPrompt: true);
+        }
+
+        private static VariantLineParts BuildVariantLineParts(
+            OvrObject variantObject,
+            IEnumerable<string> rawTexts,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine)
+        {
+            var narrativeLines = RemoveAdjacentDuplicatePromptLines(DecodeNoteTexts(rawTexts));
+            InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
+
+            return new VariantLineParts
+            {
+                VariantContext = GetSinglePathVariantContext(variantObject),
+                NarrativeLines = narrativeLines,
+                MonsterStatLines = GetMonsterStatLines(
+                    variantObject,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
+                    defaultDarkeningLevel,
+                    defaultRandomEncounterChance),
+                SpecialNoteLines = GetSpecialNoteLines(variantObject),
+                PromotableConditionLines = GetPromotableConditionLines(variantObject),
+                BattleLines = GetBattleLines(variantObject)
+            };
+        }
+
+        private static List<string> ComposeVariantLines(
+            VariantLineParts parts,
+            bool promoteConditionLinesNearPrompt)
+        {
+            var lines = new List<string>();
+            var narrativeLines = parts?.NarrativeLines?.ToList() ?? new List<string>();
+            var specialNoteLines = parts?.SpecialNoteLines?.ToList() ?? new List<string>();
+            var promotableConditionLines = parts?.PromotableConditionLines?.ToList() ?? new List<string>();
+
+            if (promoteConditionLinesNearPrompt &&
+                narrativeLines.Count > 0 &&
+                promotableConditionLines.Count > 0)
             {
                 lines.Add(narrativeLines[0]);
-                lines.AddRange(promotedConditionLines);
+                lines.AddRange(promotableConditionLines);
                 lines.AddRange(narrativeLines.Skip(1));
-                specialNoteLines = RemoveLineOccurrences(specialNoteLines, promotedConditionLines);
+                specialNoteLines = RemoveLineOccurrences(specialNoteLines, promotableConditionLines);
             }
             else
             {
                 lines.AddRange(narrativeLines);
             }
 
-            lines.AddRange(monsterStatLines);
+            lines.AddRange(parts?.MonsterStatLines ?? new List<string>());
             lines.AddRange(specialNoteLines);
-            lines.AddRange(GetBattleLines(variantObject));
+                lines.AddRange(parts?.BattleLines ?? new List<string>());
 
             if (lines.Count == 0)
-                lines.Add("Ничего не происходит");
+                lines.Add(BuildNoOpLine(parts?.VariantContext));
+            else
+                NormalizeNoOpOnlyLine(lines, parts?.VariantContext);
 
             return lines;
         }
 
-        private static List<string> GetPromotedFlatConditionLines(OvrObject obj)
+        private static List<string> GetPromotableConditionLines(OvrObject obj)
         {
             if (obj?.PartyEffects == null || obj.PartyEffects.Count == 0)
                 return new List<string>();
@@ -1675,26 +1906,54 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
-            var lines = new List<string>();
-            var narrativeLines = RemoveAdjacentDuplicatePromptLines(DecodeNoteTexts(rawTexts));
-            InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
-            var specialNoteLines = GetSpecialNoteLines(variantObject);
-
-            lines.AddRange(narrativeLines);
-            lines.AddRange(GetMonsterStatLines(
+            var parts = BuildVariantLineParts(
                 variantObject,
+                rawTexts,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
                 defaultRandomEncounterMonsterBatchCountCap,
                 defaultDarkeningLevel,
-                defaultRandomEncounterChance));
-            lines.AddRange(specialNoteLines);
-            lines.AddRange(GetBattleLines(variantObject));
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine);
 
-            if (lines.Count == 0)
-                lines.Add("Ничего не происходит");
+            return ComposeVariantLines(parts, promoteConditionLinesNearPrompt: false);
+        }
 
-            return lines;
+        private static string BuildNoOpLine(PathVariantInfo variant)
+        {
+            return ShouldExplainNoOpAsUnmetConditions(variant)
+                ? NoOpBecauseNoConditionsLine
+                : NoOpLine;
+        }
+
+        private static void NormalizeNoOpOnlyLine(List<string> lines, PathVariantInfo variant)
+        {
+            if (lines == null || lines.Count == 0)
+                return;
+
+            var meaningfulIndices = lines
+                .Select((line, index) => new { Line = line, Index = index })
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Line))
+                .ToList();
+            if (meaningfulIndices.Count != 1)
+                return;
+
+            var entry = meaningfulIndices[0];
+            if (!string.Equals(entry.Line.Trim(), NoOpLine, StringComparison.Ordinal))
+                return;
+
+            lines[entry.Index] = BuildNoOpLine(variant);
+        }
+
+        private static bool ShouldExplainNoOpAsUnmetConditions(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(BuildProbabilityLine(variant)))
+                return false;
+
+            return !ShouldDisplayGuardCondition(variant);
         }
 
         private static string BuildVariantHeader(OvrObject obj, int variantKey, int displayVariantNumber)
@@ -1703,7 +1962,7 @@ namespace MMMapEditor
 
             if (TryResolvePathVariantForDisplayKey(obj, variantKey, out var pathVariant))
             {
-                var annotations = BuildFlatVariantHeaderAnnotations(obj, pathVariant);
+                var annotations = BuildTerminalVariantHeaderAnnotations(obj, pathVariant);
                 string annotationText = BuildVariantHeaderAnnotationText(annotations);
                 if (!string.IsNullOrWhiteSpace(annotationText))
                     header += $" ({annotationText})";
@@ -1738,14 +1997,6 @@ namespace MMMapEditor
                 variantHeader,
                 @"\([^)]*(?:>=|<=|!=|=|>|<)\s*(?:0x[0-9A-Fa-f]+|\d+)[^)]*\)",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        }
-
-        private static string FormatVariantLine(string line, bool headerContainsProbability)
-        {
-            if (string.Equals(line, "Ничего не происходит", StringComparison.Ordinal) && !headerContainsProbability)
-                return "Ничего не происходит (не выполнены условия для наступления ни одного варианта)";
-
-            return line;
         }
 
         private static bool TryBuildCollapsedCappedRandomPartialBattleNote(
@@ -1859,7 +2110,7 @@ namespace MMMapEditor
             sb.AppendLine($"{BuildVariantHeader(obj, noOpEntry.Key, displayVariantNumber++)}:");
             AppendLines(sb, variantContents.TryGetValue(noOpEntry.Key, out var noOpLines)
                 ? noOpLines
-                : new List<string> { "Ничего не происходит" });
+                : new List<string> { BuildNoOpLine(noOpEntry.Value) });
 
             foreach (var passthroughEntry in passthroughEntries.OrderBy(kvp => GetPathOrderKey(kvp.Value)))
             {
@@ -2254,7 +2505,7 @@ namespace MMMapEditor
             string line,
             bool headerContainsProbability)
         {
-            foreach (var part in SplitDisplayLines(FormatVariantLine(line, headerContainsProbability)))
+            foreach (var part in SplitDisplayLines(line))
                 sb.AppendLine(indent + part);
         }
 
@@ -2417,6 +2668,7 @@ namespace MMMapEditor
 
             return variant?.GetGuardPredicates()?
                 .Where(predicate => predicate != null)
+                .Where(predicate => !IsRedundantAliveStatusPredicateForNotes(predicate))
                 .Where(predicate => !IsSatisfiedByUserVisibleAssumptions(predicate, variant))
                 .Where(predicate =>
                     !structurallyRenderedPredicateKeys.Contains(PartyEffectSemantics.BuildPredicateKey(predicate)))
@@ -2441,6 +2693,32 @@ namespace MMMapEditor
             return IsContradictedByAssumedFoodBelowCap(predicate) ||
                    (ShouldApplyAssumedAliveStatusModel(variant) &&
                     IsContradictedByAssumedStatusBelowDeathThreshold(predicate));
+        }
+
+        private static bool IsRedundantAliveStatusPredicateForNotes(PartyPredicate predicate)
+        {
+            if (!TryGetImmediateStatusPredicate(predicate, out ushort value))
+                return false;
+
+            if (predicate.Comparison == PartyPredicateComparison.LessThan &&
+                value == AssumedUserVisibleStatusUpperBoundExclusive)
+            {
+                return true;
+            }
+
+            if (predicate.Comparison == PartyPredicateComparison.LessOrEqual &&
+                value + 1 == AssumedUserVisibleStatusUpperBoundExclusive)
+            {
+                return true;
+            }
+
+            if (predicate.LoopQuantifier != PartyPredicateLoopQuantifier.None)
+                return false;
+
+            return (predicate.Comparison == PartyPredicateComparison.GreaterOrEqual &&
+                    value == AssumedUserVisibleStatusUpperBoundExclusive) ||
+                   (predicate.Comparison == PartyPredicateComparison.GreaterThan &&
+                    value + 1 == AssumedUserVisibleStatusUpperBoundExclusive);
         }
 
         private static bool IsSatisfiedByAssumedFoodBelowCap(PartyPredicate predicate)
@@ -2556,7 +2834,7 @@ namespace MMMapEditor
             return GetRelevantBranchChoices(variant)
                 .Where(choice => choice?.GuardPredicate != null)
                 .Where(choice => PartyInventorySemantics.TryBuildItemPresenceChoiceLabel(choice, out _))
-                .Select(choice => PartyEffectSemantics.BuildPredicateKey(choice.GuardPredicate))
+                .Select(choice => PartyEffectSemantics.BuildPredicateKey(choice.GetGuardPredicateForDisplay()))
                 .Where(key => !string.IsNullOrWhiteSpace(key))
                 .ToHashSet(StringComparer.Ordinal);
         }
@@ -2654,18 +2932,51 @@ namespace MMMapEditor
             return annotations;
         }
 
-        private static List<string> BuildFlatVariantHeaderAnnotations(
+        private static List<string> BuildTerminalVariantHeaderAnnotations(
             OvrObject obj,
-            PathVariantInfo variant)
+            PathVariantInfo variant,
+            IEnumerable<string> visiblePathAnnotations = null)
         {
             var annotations = new List<string>();
             AddDistinctHeaderAnnotations(
                 annotations,
-                BuildInventoryPresenceHeaderAnnotationsForFlat(obj, variant));
+                visiblePathAnnotations);
+
+            var inventoryAnnotations = BuildInventoryPresenceHeaderAnnotationsForVariantPath(obj, variant)
+                .Where(annotation => !HasVisibleInventoryPresenceAnnotationForSameItem(annotations, annotation))
+                .Where(annotation => !ContainsHeaderAnnotation(annotations, annotation))
+                .ToList();
+            AddDistinctHeaderAnnotations(
+                annotations,
+                inventoryAnnotations);
             AddDistinctHeaderAnnotations(
                 annotations,
                 BuildVariantHeaderAnnotations(variant));
             return annotations;
+        }
+
+        private static bool HasVisibleInventoryPresenceAnnotationForSameItem(
+            IEnumerable<string> visibleAnnotations,
+            string candidate)
+        {
+            if (!TrySplitInventoryPresenceHeaderAnnotation(
+                    candidate,
+                    out string candidateItemName,
+                    out _,
+                    out string candidateSlotLabel))
+            {
+                return false;
+            }
+
+            return (visibleAnnotations ?? Enumerable.Empty<string>())
+                .Any(annotation =>
+                    TrySplitInventoryPresenceHeaderAnnotation(
+                        annotation,
+                        out string itemName,
+                        out _,
+                        out string slotLabel) &&
+                    string.Equals(itemName, candidateItemName, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(slotLabel ?? string.Empty, candidateSlotLabel ?? string.Empty, StringComparison.OrdinalIgnoreCase));
         }
 
         private static void AddDistinctHeaderAnnotations(
@@ -2684,6 +2995,17 @@ namespace MMMapEditor
                 if (!target.Contains(normalized, StringComparer.Ordinal))
                     target.Add(normalized);
             }
+        }
+
+        private static bool ContainsHeaderAnnotation(IEnumerable<string> annotations, string candidate)
+        {
+            string normalizedCandidate = NormalizeHeaderAnnotation(candidate);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate))
+                return false;
+
+            return (annotations ?? Enumerable.Empty<string>())
+                .Select(NormalizeHeaderAnnotation)
+                .Any(annotation => string.Equals(annotation, normalizedCandidate, StringComparison.Ordinal));
         }
 
         private static string BuildVariantHeaderAnnotationText(IEnumerable<string> annotations)
@@ -2720,7 +3042,7 @@ namespace MMMapEditor
             return normalized;
         }
 
-        private static List<string> BuildInventoryPresenceHeaderAnnotationsForFlat(
+        private static List<string> BuildInventoryPresenceHeaderAnnotationsForVariantPath(
             OvrObject obj,
             PathVariantInfo variant)
         {
@@ -2970,6 +3292,12 @@ namespace MMMapEditor
             public bool HasCommonPrefixHierarchy { get; set; }
         }
 
+        private sealed class SemanticNoteModel
+        {
+            public SemanticVariantRenderAnalysis Variants { get; set; }
+            public InventoryResourceAttritionNoteModel InventoryResourceAttrition { get; set; }
+        }
+
         private sealed class OrderedRenderEntry
         {
             public int OccurrenceOrderKey { get; set; }
@@ -2978,6 +3306,7 @@ namespace MMMapEditor
             public int ChoiceOrderKey { get; set; } = int.MaxValue;
             public bool HasChoiceOrderKey { get; set; }
             public VariantTreeNode ChildNode { get; set; }
+            public string ChildLabelOverride { get; set; }
             public VariantRenderItem DirectVariant { get; set; }
         }
 
@@ -3000,6 +3329,34 @@ namespace MMMapEditor
             public string ItemName { get; set; }
             public byte? FieldOffset { get; set; }
             public ValueRange8 FieldOffsetRange { get; set; }
+        }
+
+        private sealed class InventoryItemRangeDisplayInfo
+        {
+            public string Annotation { get; set; }
+            public HashSet<string> PredicateKeys { get; set; } = new HashSet<string>(StringComparer.Ordinal);
+            public int InsertBeforeChoiceIndex { get; set; } = int.MaxValue;
+            public byte LowerInclusive { get; set; }
+            public byte UpperExclusive { get; set; }
+            public string ScopeKey { get; set; }
+        }
+
+        private sealed class BranchChoicePredicateInfo
+        {
+            public BranchChoice Choice { get; set; }
+            public PartyPredicate Predicate { get; set; }
+            public string PredicateKey { get; set; }
+            public int Index { get; set; }
+        }
+
+        private sealed class VariantLineParts
+        {
+            public PathVariantInfo VariantContext { get; set; }
+            public List<string> NarrativeLines { get; set; } = new List<string>();
+            public List<string> MonsterStatLines { get; set; } = new List<string>();
+            public List<string> SpecialNoteLines { get; set; } = new List<string>();
+            public List<string> PromotableConditionLines { get; set; } = new List<string>();
+            public List<string> BattleLines { get; set; } = new List<string>();
         }
 
         private enum StateConditionPolarity
@@ -3062,6 +3419,19 @@ namespace MMMapEditor
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
 
+            if (TryBuildLoopInternalStatusGuardCollapsedLines(
+                    obj,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
+                    defaultDarkeningLevel,
+                    defaultRandomEncounterChance,
+                    inlineSpecialSpoilerLine,
+                    out var collapsedLines))
+            {
+                return BuildLoopInternalStatusGuardCollapsedNote(collapsedLines);
+            }
+
             var rawVariantContents = BuildRawVariantContentsFromPathVariants(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
@@ -3073,7 +3443,7 @@ namespace MMMapEditor
             if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
-            var analysis = BuildSemanticVariantRenderAnalysis(
+            var noteModel = BuildSemanticNoteModel(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -3082,16 +3452,18 @@ namespace MMMapEditor
                 defaultRandomEncounterChance,
                 inlineSpecialSpoilerLine,
                 specialSpoilerLine);
-            if (analysis == null)
+            if (noteModel?.Variants == null)
                 return null;
 
-            if (TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(
-                    analysis.SourceItems ?? analysis.Items,
+            if (noteModel.InventoryResourceAttrition != null &&
+                TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(
+                    noteModel.InventoryResourceAttrition,
                     out string resourceAttritionHierarchy))
             {
                 return resourceAttritionHierarchy;
             }
 
+            var analysis = noteModel.Variants;
             if (!analysis.HasMeaningfulChoiceHierarchy && !analysis.HasCommonPrefixHierarchy)
                 return null;
 
@@ -3129,6 +3501,19 @@ namespace MMMapEditor
             if (obj?.PathVariants == null || obj.PathVariants.Count <= 1)
                 return null;
 
+            if (TryBuildLoopInternalStatusGuardCollapsedLines(
+                    obj,
+                    defaultRandomEncounterMonsterPowerCap,
+                    defaultRandomEncounterMonsterLevelCap,
+                    defaultRandomEncounterMonsterBatchCountCap,
+                    defaultDarkeningLevel,
+                    defaultRandomEncounterChance,
+                    inlineSpecialSpoilerLine,
+                    out var collapsedLines))
+            {
+                return BuildLoopInternalStatusGuardCollapsedNote(collapsedLines);
+            }
+
             var rawVariantContents = BuildRawVariantContentsFromPathVariants(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
@@ -3140,6 +3525,45 @@ namespace MMMapEditor
             if (CanBuildCollapsedCappedRandomPartialBattleNote(obj, rawVariantContents))
                 return null;
 
+            var noteModel = BuildSemanticNoteModel(
+                obj,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                inlineSpecialSpoilerLine,
+                specialSpoilerLine);
+            if (noteModel?.Variants == null)
+                return null;
+
+            if (noteModel.InventoryResourceAttrition != null)
+            {
+                return BuildInventoryResourceAttritionFlatNotes(noteModel.InventoryResourceAttrition);
+            }
+
+            var analysis = noteModel.Variants;
+            if (!analysis.ContainsPartyScan &&
+                !analysis.HasPromptBranching &&
+                !analysis.HasMeaningfulChoiceHierarchy &&
+                !analysis.HasCommonPrefixHierarchy)
+            {
+                return null;
+            }
+
+            return BuildFlatSemanticVariantNotesFromAnalysis(obj, analysis);
+        }
+
+        private static SemanticNoteModel BuildSemanticNoteModel(
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string inlineSpecialSpoilerLine,
+            string specialSpoilerLine = null)
+        {
             var analysis = BuildSemanticVariantRenderAnalysis(
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
@@ -3152,22 +3576,15 @@ namespace MMMapEditor
             if (analysis == null)
                 return null;
 
-            if (TryBuildInventoryResourceAttritionRandomOutcomeModel(
-                    analysis.SourceItems ?? analysis.Items,
-                    out var resourceAttritionModel))
-            {
-                return BuildInventoryResourceAttritionFlatNotes(resourceAttritionModel);
-            }
+            TryBuildInventoryResourceAttritionRandomOutcomeModel(
+                analysis.SourceItems ?? analysis.Items,
+                out var resourceAttritionModel);
 
-            if (!analysis.ContainsPartyScan &&
-                !analysis.HasPromptBranching &&
-                !analysis.HasMeaningfulChoiceHierarchy &&
-                !analysis.HasCommonPrefixHierarchy)
+            return new SemanticNoteModel
             {
-                return null;
-            }
-
-            return BuildFlatSemanticVariantNotesFromAnalysis(obj, analysis);
+                Variants = analysis,
+                InventoryResourceAttrition = resourceAttritionModel
+            };
         }
 
         private static SemanticVariantRenderAnalysis BuildSemanticVariantRenderAnalysis(
@@ -3252,11 +3669,10 @@ namespace MMMapEditor
             for (int i = 0; i < flatVariants.Count; i++)
             {
                 var flatVariant = flatVariants[i];
-                var annotations = new List<string>();
-                AddDistinctHeaderAnnotations(annotations, flatVariant.HeaderAnnotations);
-                AddDistinctHeaderAnnotations(
-                    annotations,
-                    BuildFlatVariantHeaderAnnotations(obj, flatVariant.Variant));
+                var annotations = BuildTerminalVariantHeaderAnnotations(
+                    obj,
+                    flatVariant.Variant,
+                    flatVariant.HeaderAnnotations);
 
                 string header = $"Вариант {i + 1}";
                 string annotationText = BuildVariantHeaderAnnotationText(annotations);
@@ -3265,17 +3681,16 @@ namespace MMMapEditor
                 header += ":";
 
                 sb.AppendLine(header);
-                bool headerContainsProbability = VariantHeaderContainsProbability(header);
 
                 var lines = flatVariant.Lines?
                     .Where(line => line != null)
                     .ToList() ?? new List<string>();
                 if (!lines.Any(line => !string.IsNullOrWhiteSpace(line)))
-                    lines.Add("Ничего не происходит");
+                    lines.Add(BuildNoOpLine(flatVariant.Variant));
 
                 foreach (var line in lines)
                 {
-                    foreach (var part in SplitDisplayLines(FormatVariantLine(line, headerContainsProbability)))
+                    foreach (var part in SplitDisplayLines(line))
                         sb.AppendLine(part);
                 }
 
@@ -3316,10 +3731,12 @@ namespace MMMapEditor
                 decimal orderKey = GetFlatVariantRenderOrderKey(variant);
 
                 var annotations = new List<string>();
-                AddDistinctHeaderAnnotations(annotations, variant.HeaderAnnotations);
                 AddDistinctHeaderAnnotations(
                     annotations,
-                    BuildFlatVariantHeaderAnnotations(obj, variant.Variant));
+                    BuildTerminalVariantHeaderAnnotations(
+                        obj,
+                        variant.Variant,
+                        variant.HeaderAnnotations));
 
                 var nonChoiceAnnotations = annotations
                     .Where(annotation => !IsSimpleFlatChoiceHeaderAnnotation(annotation))
@@ -3374,10 +3791,13 @@ namespace MMMapEditor
             }
 
             bool suppressSimpleChoiceAnnotations = false;
+            bool suppressRepeatedSimpleChoiceAnnotations =
+                ShouldSuppressRepeatedSimpleChoiceAnnotations(groups);
 
             foreach (var group in groups)
             {
                 bool suppressGroupSimpleChoiceAnnotations =
+                    suppressRepeatedSimpleChoiceAnnotations ||
                     group.SourceVariantCount > 1 &&
                     group.SimpleChoiceHeaderAnnotations.Count > 1;
                 suppressSimpleChoiceAnnotations |= suppressGroupSimpleChoiceAnnotations;
@@ -3450,6 +3870,28 @@ namespace MMMapEditor
                 .Count() > 1;
         }
 
+        private static bool ShouldSuppressRepeatedSimpleChoiceAnnotations(
+            List<FlatVariantDisplayGroup> groups)
+        {
+            var source = groups?
+                .Where(group => group != null)
+                .ToList() ?? new List<FlatVariantDisplayGroup>();
+            if (source.Count == 0)
+                return false;
+
+            var repeatedSimpleChoiceAnnotations = source
+                .SelectMany(group => group.SimpleChoiceHeaderAnnotations ?? new List<string>())
+                .GroupBy(annotation => annotation, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToList();
+
+            return repeatedSimpleChoiceAnnotations.Count > 0 &&
+                   repeatedSimpleChoiceAnnotations.All(IsBinaryFlatChoiceHeaderAnnotation) &&
+                   (HasOnlyCompactBinaryPromptGroups(source) ||
+                    HasSexWriteLoopSubsetOutcomeGroup(source));
+        }
+
         private static bool IsSimpleFlatChoiceHeaderAnnotation(string annotation)
         {
             string normalized = NormalizeHeaderAnnotation(annotation);
@@ -3460,6 +3902,61 @@ namespace MMMapEditor
                 normalized,
                 @"^выбор\s+(?:ESC|[A-Za-z0-9])$",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
+
+        private static bool IsBinaryFlatChoiceHeaderAnnotation(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            return string.Equals(normalized, "выбор Y", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "выбор N", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasOnlyCompactBinaryPromptGroups(List<FlatVariantDisplayGroup> groups)
+        {
+            var promptGroupCounts = groups?
+                .Select(group => BuildBinaryPromptKey(group?.Item?.Lines))
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .GroupBy(key => key, StringComparer.Ordinal)
+                .Select(group => group.Count())
+                .ToList() ?? new List<int>();
+
+            return promptGroupCounts.Count > 0 &&
+                   promptGroupCounts.All(count => count <= 2);
+        }
+
+        private static bool HasSexWriteLoopSubsetOutcomeGroup(List<FlatVariantDisplayGroup> groups)
+        {
+            return groups?.Any(group =>
+                group?.Item?.Variant?.PartyEffects?.Any(IsSexWriteLoopSubsetOutcomeEffect) == true) == true;
+        }
+
+        private static string BuildBinaryPromptKey(List<string> lines)
+        {
+            if (lines == null || lines.Count == 0)
+                return null;
+
+            var promptLines = new List<string>();
+            foreach (string line in lines)
+            {
+                string normalized = line?.TrimEnd() ?? string.Empty;
+                if (promptLines.Count == 0 && string.IsNullOrWhiteSpace(normalized))
+                    continue;
+
+                promptLines.Add(normalized);
+                if (IsBinaryPromptLine(normalized))
+                    return string.Join("\n", promptLines).Trim();
+            }
+
+            return null;
+        }
+
+        private static bool IsBinaryPromptLine(string line)
+        {
+            return !string.IsNullOrWhiteSpace(line) &&
+                   Regex.IsMatch(
+                       line,
+                       @"\(\s*Y\s*/\s*N\s*\)\s*\?",
+                       RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
 
         private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromTopLevelGroup(
@@ -3531,16 +4028,12 @@ namespace MMMapEditor
             var syntheticChoiceLabels = BuildSyntheticChoiceLabels(group.TreeRoot, directVariants, renderableChildren);
             var syntheticChildLabels = BuildSyntheticChildLabels(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels);
 
-            foreach (var child in renderableChildren)
-            {
-                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) &&
-                    string.IsNullOrWhiteSpace(child.Label))
-                {
-                    child.Label = syntheticChildLabel;
-                }
-            }
-
-            foreach (var entry in BuildOrderedRenderEntries(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels))
+            foreach (var entry in BuildOrderedRenderEntries(
+                group.TreeRoot,
+                renderableChildren,
+                directVariants,
+                syntheticChoiceLabels,
+                syntheticChildLabels))
             {
                 if (entry.ChildNode != null)
                 {
@@ -3551,7 +4044,8 @@ namespace MMMapEditor
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
-                            directVariants)));
+                            directVariants),
+                        entry.ChildLabelOverride));
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -3585,7 +4079,8 @@ namespace MMMapEditor
             VariantTreeNode node,
             List<string> inheritedLines,
             List<string> inheritedHeaderAnnotations,
-            IReadOnlySet<string> siblingNoOpLeafKeys = null)
+            IReadOnlySet<string> siblingNoOpLeafKeys = null,
+            string nodeLabelOverride = null)
         {
             var result = new List<FlatVariantRenderItem>();
             if (!IsRenderableStructuralNode(node))
@@ -3597,7 +4092,8 @@ namespace MMMapEditor
             renderableChildren = SuppressNoOpChildrenInTransparentRenderNode(
                 node,
                 renderableChildren,
-                siblingNoOpLeafKeys);
+                siblingNoOpLeafKeys,
+                nodeLabelOverride);
 
             int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
             bool suppressEmptyPromptTerminalDirectVariants =
@@ -3617,7 +4113,7 @@ namespace MMMapEditor
 
             if (renderableChildren.Count == 1 &&
                 renderableDirectVariants.Count == 0 &&
-                IsTransparentRenderNode(node))
+                IsTransparentRenderNode(node, nodeLabelOverride))
             {
                 return BuildFlatTerminalVariantsFromTreeNode(
                     renderableChildren[0],
@@ -3631,7 +4127,7 @@ namespace MMMapEditor
                 ? GetSingleLeafVariantItem(node)
                 : null;
             var singleLeafLines = singleLeafItem?.Lines?.ToList();
-            string nodeLabel = NormalizeUserVisibleChoiceLabel(node.Label);
+            string nodeLabel = NormalizeUserVisibleChoiceLabel(GetEffectiveNodeLabel(node, nodeLabelOverride));
             string promotedCommonLabel = string.IsNullOrWhiteSpace(nodeLabel)
                 ? TryPromoteLeadingAnswerLine(nodeLines)
                 : null;
@@ -3692,16 +4188,12 @@ namespace MMMapEditor
             var syntheticChoiceLabels = BuildSyntheticChoiceLabels(node, renderableDirectVariants, renderableChildren);
             var syntheticChildLabels = BuildSyntheticChildLabels(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
 
-            foreach (var child in renderableChildren)
-            {
-                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) &&
-                    string.IsNullOrWhiteSpace(child.Label))
-                {
-                    child.Label = syntheticChildLabel;
-                }
-            }
-
-            var orderedEntries = BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
+            var orderedEntries = BuildOrderedRenderEntries(
+                node,
+                renderableChildren,
+                renderableDirectVariants,
+                syntheticChoiceLabels,
+                syntheticChildLabels);
             bool parentHeaderIsOnlyVariantNumber =
                 pathAnnotations.Count == 0 &&
                 !prefix.Any(line => !string.IsNullOrWhiteSpace(line));
@@ -3720,7 +4212,8 @@ namespace MMMapEditor
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
-                            renderableDirectVariants)));
+                            renderableDirectVariants),
+                        entry.ChildLabelOverride));
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -3938,6 +4431,365 @@ namespace MMMapEditor
                    trimmed.StartsWith("POOF", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static PathVariantInfo NormalizeInventoryItemRangePredicatesForDisplay(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            var rangeInfos = BuildInventoryItemRangeDisplayInfosForVariant(obj, variant)
+                .Where(info => info != null && !string.IsNullOrWhiteSpace(info.Annotation))
+                .ToList();
+            if (rangeInfos.Count == 0)
+                return variant;
+
+            var clone = ClonePathVariantForRender(variant);
+            var consumedPredicateKeys = rangeInfos
+                .SelectMany(info => info.PredicateKeys ?? new HashSet<string>())
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
+            var infosByIndex = rangeInfos
+                .GroupBy(info => info.InsertBeforeChoiceIndex)
+                .ToDictionary(group => group.Key, group => group.ToList());
+
+            var normalizedChoices = new List<BranchChoice>();
+            var choices = clone.BranchChoices ?? new List<BranchChoice>();
+            for (int index = 0; index < choices.Count; index++)
+            {
+                if (infosByIndex.TryGetValue(index, out var insertedInfos))
+                {
+                    foreach (var info in insertedInfos)
+                        normalizedChoices.Add(CreateInventoryItemRangeBranchChoice(info.Annotation));
+                }
+
+                string predicateKey = BuildChoiceDisplayPredicateKey(choices[index]);
+                if (!string.IsNullOrWhiteSpace(predicateKey) &&
+                    consumedPredicateKeys.Contains(predicateKey))
+                {
+                    continue;
+                }
+
+                normalizedChoices.Add(choices[index]);
+            }
+
+            if (infosByIndex.TryGetValue(int.MaxValue, out var trailingInfos))
+            {
+                foreach (var info in trailingInfos)
+                    normalizedChoices.Add(CreateInventoryItemRangeBranchChoice(info.Annotation));
+            }
+
+            clone.BranchChoices = normalizedChoices;
+            return clone;
+        }
+
+        private static BranchChoice CreateInventoryItemRangeBranchChoice(string annotation)
+        {
+            return new BranchChoice
+            {
+                DisplayHeaderAnnotation = NormalizeHeaderAnnotation(annotation),
+                Condition = "InventoryItemRange",
+                IsLinear = false
+            };
+        }
+
+        private static List<InventoryItemRangeDisplayInfo> BuildInventoryItemRangeDisplayInfosForVariant(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            var explicitInfos = BuildExplicitInventoryItemRangeDisplayInfos(variant);
+            if (explicitInfos.Count > 0)
+                return explicitInfos;
+
+            return InferComplementaryInventoryItemRangeDisplayInfos(obj, variant);
+        }
+
+        private static List<InventoryItemRangeDisplayInfo> BuildExplicitInventoryItemRangeDisplayInfos(
+            PathVariantInfo variant)
+        {
+            var result = new List<InventoryItemRangeDisplayInfo>();
+            var choices = GetInventoryItemThresholdChoiceInfos(variant);
+            var consumed = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var lower in choices.OrderBy(info => info.Index))
+            {
+                if (consumed.Contains(lower.PredicateKey) ||
+                    lower.Predicate.LoopQuantifier != PartyPredicateLoopQuantifier.Any ||
+                    !TryGetInventoryItemLowerBound(lower.Predicate, out byte lowerInclusive))
+                {
+                    continue;
+                }
+
+                var upper = choices
+                    .Where(candidate =>
+                        !consumed.Contains(candidate.PredicateKey) &&
+                        candidate.Predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None &&
+                        SameInventoryItemRangePredicateScope(lower.Predicate, candidate.Predicate) &&
+                        TryGetInventoryItemLowerBound(candidate.Predicate, out byte upperExclusive) &&
+                        upperExclusive > lowerInclusive)
+                    .OrderBy(candidate =>
+                        TryGetInventoryItemLowerBound(candidate.Predicate, out byte upperExclusive)
+                            ? upperExclusive
+                            : byte.MaxValue)
+                    .ThenBy(candidate => candidate.Index)
+                    .FirstOrDefault();
+
+                if (upper == null ||
+                    !TryGetInventoryItemLowerBound(upper.Predicate, out byte selectedUpperExclusive) ||
+                    !TryBuildInventoryItemRangeDisplayInfo(
+                        lowerInclusive,
+                        selectedUpperExclusive,
+                        "есть",
+                        Math.Min(lower.Index, upper.Index),
+                        new[] { lower.PredicateKey, upper.PredicateKey },
+                        BuildInventoryItemRangePredicateScopeKey(lower.Predicate),
+                        out var info))
+                {
+                    continue;
+                }
+
+                result.Add(info);
+                consumed.Add(lower.PredicateKey);
+                consumed.Add(upper.PredicateKey);
+            }
+
+            return result;
+        }
+
+        private static List<InventoryItemRangeDisplayInfo> InferComplementaryInventoryItemRangeDisplayInfos(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            if (obj?.PathVariants == null || variant == null)
+                return new List<InventoryItemRangeDisplayInfo>();
+
+            var knownRanges = obj.PathVariants.Values
+                .Where(pathVariant => pathVariant != null && !ReferenceEquals(pathVariant, variant))
+                .SelectMany(BuildExplicitInventoryItemRangeDisplayInfos)
+                .ToList();
+            if (knownRanges.Count == 0)
+                return new List<InventoryItemRangeDisplayInfo>();
+
+            var result = new List<InventoryItemRangeDisplayInfo>();
+            foreach (var choiceInfo in GetInventoryItemThresholdChoiceInfos(variant))
+            {
+                if (choiceInfo.Predicate.LoopQuantifier != PartyPredicateLoopQuantifier.None ||
+                    !TryGetInventoryItemLowerBound(choiceInfo.Predicate, out byte lowerInclusive))
+                {
+                    continue;
+                }
+
+                var knownRange = knownRanges
+                    .Where(range =>
+                        range.LowerInclusive == lowerInclusive &&
+                        string.Equals(
+                            range.ScopeKey,
+                            BuildInventoryItemRangePredicateScopeKey(choiceInfo.Predicate),
+                            StringComparison.Ordinal))
+                    .OrderBy(range => range.UpperExclusive)
+                    .FirstOrDefault();
+
+                if (knownRange == null ||
+                    !TryBuildInventoryItemRangeDisplayInfo(
+                        knownRange.LowerInclusive,
+                        knownRange.UpperExclusive,
+                        "отсутствует",
+                        choiceInfo.Index,
+                        new[] { choiceInfo.PredicateKey },
+                        knownRange.ScopeKey,
+                        out var info))
+                {
+                    continue;
+                }
+
+                result.Add(info);
+            }
+
+            return result;
+        }
+
+        private static List<BranchChoicePredicateInfo> GetInventoryItemThresholdChoiceInfos(
+            PathVariantInfo variant)
+        {
+            var result = new List<BranchChoicePredicateInfo>();
+            var choices = variant?.BranchChoices ?? new List<BranchChoice>();
+            for (int index = 0; index < choices.Count; index++)
+            {
+                var predicate = choices[index]?.GetGuardPredicateForDisplay();
+                string predicateKey = PartyEffectSemantics.BuildPredicateKey(predicate);
+                if (!IsInventoryItemThresholdPredicate(predicate) ||
+                    string.IsNullOrWhiteSpace(predicateKey))
+                {
+                    continue;
+                }
+
+                result.Add(new BranchChoicePredicateInfo
+                {
+                    Choice = choices[index],
+                    Predicate = predicate,
+                    PredicateKey = predicateKey,
+                    Index = index
+                });
+            }
+
+            return result;
+        }
+
+        private static bool TryBuildInventoryItemRangeDisplayInfo(
+            byte lowerInclusive,
+            byte upperExclusive,
+            string presenceLabel,
+            int insertBeforeChoiceIndex,
+            IEnumerable<string> predicateKeys,
+            string scopeKey,
+            out InventoryItemRangeDisplayInfo info)
+        {
+            info = null;
+            if (upperExclusive <= lowerInclusive ||
+                !PartyInventorySemantics.TryFormatItemCodeRange(
+                    lowerInclusive,
+                    (byte)(upperExclusive - 1),
+                    out string itemRangeText))
+            {
+                return false;
+            }
+
+            string annotation = BuildInventoryPresenceHeaderAnnotation(
+                itemRangeText,
+                presenceLabel,
+                slotLabel: null);
+            if (string.IsNullOrWhiteSpace(annotation))
+                return false;
+
+            info = new InventoryItemRangeDisplayInfo
+            {
+                Annotation = annotation,
+                InsertBeforeChoiceIndex = insertBeforeChoiceIndex,
+                LowerInclusive = lowerInclusive,
+                UpperExclusive = upperExclusive,
+                ScopeKey = scopeKey
+            };
+
+            foreach (string key in predicateKeys ?? Enumerable.Empty<string>())
+            {
+                if (!string.IsNullOrWhiteSpace(key))
+                    info.PredicateKeys.Add(key);
+            }
+
+            return true;
+        }
+
+        private static bool IsInventoryItemThresholdPredicate(PartyPredicate predicate)
+        {
+            return predicate != null &&
+                   predicate.ValueKnowledge == PartyValueKnowledge.ExactImmediate &&
+                   predicate.ImmediateValue.HasValue &&
+                   predicate.ImmediateValue.Value <= byte.MaxValue &&
+                   predicate.ImmediateRange == null &&
+                   PartyInventorySemantics.IsInventorySlotReference(
+                       predicate.FieldOffset,
+                       predicate.FieldOffsetRange) &&
+                   TryGetInventoryItemLowerBound(predicate, out _);
+        }
+
+        private static bool TryGetInventoryItemLowerBound(PartyPredicate predicate, out byte lowerBound)
+        {
+            lowerBound = 0;
+            if (predicate == null ||
+                !predicate.ImmediateValue.HasValue ||
+                predicate.ImmediateValue.Value > byte.MaxValue)
+            {
+                return false;
+            }
+
+            byte value = (byte)predicate.ImmediateValue.Value;
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.GreaterOrEqual:
+                    lowerBound = value;
+                    return true;
+                case PartyPredicateComparison.GreaterThan when value < byte.MaxValue:
+                    lowerBound = (byte)(value + 1);
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool SameInventoryItemRangePredicateScope(
+            PartyPredicate left,
+            PartyPredicate right)
+        {
+            if (left == null || right == null)
+                return false;
+
+            return left.Field == right.Field &&
+                   string.Equals(
+                       BuildPredicateTargetKeyForDisplayMerge(left.TargetMember),
+                       BuildPredicateTargetKeyForDisplayMerge(right.TargetMember),
+                       StringComparison.Ordinal) &&
+                   InventorySlotReferencesOverlap(left, right);
+        }
+
+        private static bool InventorySlotReferencesOverlap(
+            PartyPredicate left,
+            PartyPredicate right)
+        {
+            if (!TryGetInventorySlotReferenceRange(left, out byte leftMin, out byte leftMax) ||
+                !TryGetInventorySlotReferenceRange(right, out byte rightMin, out byte rightMax))
+            {
+                return false;
+            }
+
+            return leftMin <= rightMax && rightMin <= leftMax;
+        }
+
+        private static bool TryGetInventorySlotReferenceRange(
+            PartyPredicate predicate,
+            out byte min,
+            out byte max)
+        {
+            min = 0;
+            max = 0;
+            if (predicate == null)
+                return false;
+
+            if (predicate.FieldOffsetRange != null)
+            {
+                min = predicate.FieldOffsetRange.Min;
+                max = predicate.FieldOffsetRange.Max;
+                return PartyInventorySemantics.IsInventorySlotRange(predicate.FieldOffsetRange);
+            }
+
+            if (PartyInventorySemantics.IsInventorySlotOffset(predicate.FieldOffset))
+            {
+                min = predicate.FieldOffset.Value;
+                max = predicate.FieldOffset.Value;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string BuildInventoryItemRangePredicateScopeKey(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return null;
+
+            if (!TryGetInventorySlotReferenceRange(predicate, out byte min, out byte max))
+                return null;
+
+            return string.Join("|",
+                predicate.Field,
+                $"{min:X2}-{max:X2}",
+                BuildPredicateTargetKeyForDisplayMerge(predicate.TargetMember));
+        }
+
+        private static string BuildChoiceDisplayPredicateKey(BranchChoice choice)
+        {
+            var predicate = choice?.GetGuardPredicateForDisplay();
+            return predicate == null
+                ? null
+                : PartyEffectSemantics.BuildPredicateKey(predicate);
+        }
+
         private static List<VariantRenderItem> BuildVariantRenderItems(
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
@@ -3955,14 +4807,15 @@ namespace MMMapEditor
                 .Where(v => v != null)
                 .OrderBy(GetPathOrderKey))
             {
-                if (ShouldSuppressByUserVisibleAssumptions(variant))
+                var displayVariant = NormalizeInventoryItemRangePredicatesForDisplay(obj, variant);
+                if (ShouldSuppressByUserVisibleAssumptions(displayVariant))
                     continue;
 
-                var variantObject = variant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
-                var narrativeLines = DecodeNoteTexts(variant.Texts);
+                var variantObject = displayVariant.ToOvrObject(obj.X, obj.Y, obj.DirectionByte);
+                var narrativeLines = DecodeNoteTexts(displayVariant.Texts);
                 var lines = BuildVariantLinesForHierarchy(
                     variantObject,
-                    variant.Texts,
+                    displayVariant.Texts,
                     defaultRandomEncounterMonsterPowerCap,
                     defaultRandomEncounterMonsterLevelCap,
                     defaultRandomEncounterMonsterBatchCountCap,
@@ -3978,13 +4831,304 @@ namespace MMMapEditor
 
                 items.Add(new VariantRenderItem
                 {
-                    Variant = variant,
+                    Variant = displayVariant,
                     Lines = lines,
                     NarrativeLines = narrativeLines
                 });
             }
 
+            items = CollapseExhaustiveGuardDuplicateItems(items);
             return SuppressStatusComplementVariantsByUserVisibleAssumptions(items);
+        }
+
+        private static List<VariantRenderItem> CollapseExhaustiveGuardDuplicateItems(
+            List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (source.Count <= 1)
+                return source;
+
+            var consumed = new HashSet<VariantRenderItem>();
+            var replacements = new Dictionary<VariantRenderItem, VariantRenderItem>();
+
+            foreach (var group in source
+                .Select(item => new
+                {
+                    Item = item,
+                    Key = BuildDisplayedVariantItemKeyExcludingOwnGuardPredicate(item)
+                })
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Key))
+                .GroupBy(entry => entry.Key, StringComparer.Ordinal))
+            {
+                var groupItems = group
+                    .Select(entry => entry.Item)
+                    .Where(item => item != null)
+                    .ToList();
+                if (groupItems.Count < 2)
+                    continue;
+
+                if (!TryGetExhaustiveGuardDuplicatePredicateKeys(groupItems, out var predicateKeysToStrip))
+                    continue;
+
+                var first = groupItems
+                    .OrderBy(GetVariantRenderOrderKey)
+                    .First();
+                replacements[first] = CloneVariantRenderItemWithoutGuardPredicates(
+                    first,
+                    predicateKeysToStrip);
+
+                foreach (var item in groupItems)
+                {
+                    if (!ReferenceEquals(item, first))
+                        consumed.Add(item);
+                }
+            }
+
+            if (replacements.Count == 0)
+                return source;
+
+            var result = new List<VariantRenderItem>();
+            foreach (var item in source)
+            {
+                if (consumed.Contains(item))
+                    continue;
+
+                result.Add(replacements.TryGetValue(item, out var replacement)
+                    ? replacement
+                    : item);
+            }
+
+            return result;
+        }
+
+        private static string BuildDisplayedVariantItemKeyExcludingOwnGuardPredicate(
+            VariantRenderItem item)
+        {
+            if (!TryGetSingleComplementaryGuardPredicate(item, out var predicate, out string predicateKey))
+                return null;
+
+            return BuildDisplayedVariantItemKeyExcludingGuardPredicates(
+                item,
+                new HashSet<string>(new[] { predicateKey }, StringComparer.Ordinal));
+        }
+
+        private static string BuildDisplayedVariantItemKeyExcludingGuardPredicates(
+            VariantRenderItem item,
+            HashSet<string> predicateKeysToExclude)
+        {
+            string occurrenceKey = BuildOccurrenceLine(item?.Variant) ?? string.Empty;
+            string probabilityKey = BuildProbabilityLine(item?.Variant) ?? string.Empty;
+            string guardConditionKey = string.Join("&",
+                GetDisplayGuardPredicates(item?.Variant)
+                    .Where(predicate => !ContainsPredicateKey(predicateKeysToExclude, predicate))
+                    .Select(PartyEffectSemantics.BuildPredicateKey)
+                    .OrderBy(key => key));
+            string branchKey = string.Join("|",
+                GetRelevantBranchChoices(item?.Variant)
+                    .Where(choice => !ContainsPredicateKey(predicateKeysToExclude, choice?.GetGuardPredicateForDisplay()))
+                    .Select(choice => BuildUserVisibleChoiceDisplayKey(choice))
+                    .Where(key => !string.IsNullOrWhiteSpace(key)));
+            string linesKey = string.Join("\n",
+                (item?.Lines ?? new List<string>())
+                    .Select(line => line?.TrimEnd() ?? string.Empty));
+
+            return string.Join("\n---\n", occurrenceKey, probabilityKey, guardConditionKey, branchKey, linesKey);
+        }
+
+        private static bool TryGetExhaustiveGuardDuplicatePredicateKeys(
+            List<VariantRenderItem> items,
+            out HashSet<string> predicateKeys)
+        {
+            predicateKeys = new HashSet<string>(StringComparer.Ordinal);
+
+            var predicates = new List<PartyPredicate>();
+            foreach (var item in items ?? new List<VariantRenderItem>())
+            {
+                if (!TryGetSingleComplementaryGuardPredicate(item, out var predicate, out string predicateKey))
+                    return false;
+
+                if (predicateKeys.Add(predicateKey))
+                    predicates.Add(predicate);
+            }
+
+            return predicates.Count == 2 &&
+                   AreExhaustiveComplementaryPredicates(predicates[0], predicates[1]);
+        }
+
+        private static bool TryGetSingleComplementaryGuardPredicate(
+            VariantRenderItem item,
+            out PartyPredicate predicate,
+            out string predicateKey)
+        {
+            predicate = null;
+            predicateKey = null;
+
+            var predicates = (item?.Variant?.BranchChoices ?? new List<BranchChoice>())
+                .Where(choice => choice?.GuardPredicate != null)
+                .Select(choice => choice.GetGuardPredicateForDisplay())
+                .Where(IsPotentialExhaustiveComplementPredicate)
+                .GroupBy(BuildExhaustiveGuardPredicateKey)
+                .Select(group => group.First())
+                .ToList();
+
+            if (predicates.Count != 1)
+                return false;
+
+            predicate = predicates[0];
+            predicateKey = BuildExhaustiveGuardPredicateKey(predicate);
+            return !string.IsNullOrWhiteSpace(predicateKey);
+        }
+
+        private static string BuildExhaustiveGuardPredicateKey(PartyPredicate predicate)
+        {
+            string key = PartyEffectSemantics.BuildPredicateKey(predicate);
+            if (predicate == null)
+                return key;
+
+            bool hasDisplayLoopQuantifier =
+                predicate.LoopQuantifier == PartyPredicateLoopQuantifier.Any ||
+                predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None;
+            return hasDisplayLoopQuantifier
+                ? $"{key}|display-q:{predicate.LoopQuantifier}"
+                : key;
+        }
+
+        private static bool IsPotentialExhaustiveComplementPredicate(PartyPredicate predicate)
+        {
+            if (predicate == null ||
+                PartyInventorySemantics.IsInventoryItemPresencePredicate(predicate) ||
+                predicate.ValueKnowledge != PartyValueKnowledge.ExactImmediate ||
+                !predicate.ImmediateValue.HasValue ||
+                predicate.ImmediateRange != null)
+            {
+                return false;
+            }
+
+            return predicate.Comparison == PartyPredicateComparison.Equal ||
+                   predicate.Comparison == PartyPredicateComparison.NotEqual ||
+                   predicate.Comparison == PartyPredicateComparison.LessThan ||
+                   predicate.Comparison == PartyPredicateComparison.LessOrEqual ||
+                   predicate.Comparison == PartyPredicateComparison.GreaterThan ||
+                   predicate.Comparison == PartyPredicateComparison.GreaterOrEqual;
+        }
+
+        private static bool AreExhaustiveComplementaryPredicates(
+            PartyPredicate first,
+            PartyPredicate second)
+        {
+            if (!HaveSamePredicateBoundary(first, second))
+                return false;
+
+            return AreExhaustiveComplementaryComparisons(first.Comparison, second.Comparison) ||
+                   AreExhaustiveComplementaryComparisons(second.Comparison, first.Comparison) ||
+                   AreExhaustiveComplementaryLoopQuantifiers(first, second);
+        }
+
+        private static bool AreExhaustiveComplementaryLoopQuantifiers(
+            PartyPredicate first,
+            PartyPredicate second)
+        {
+            if (first == null || second == null ||
+                first.Comparison != second.Comparison)
+            {
+                return false;
+            }
+
+            return (first.LoopQuantifier == PartyPredicateLoopQuantifier.Any &&
+                    second.LoopQuantifier == PartyPredicateLoopQuantifier.None) ||
+                   (first.LoopQuantifier == PartyPredicateLoopQuantifier.None &&
+                    second.LoopQuantifier == PartyPredicateLoopQuantifier.Any);
+        }
+
+        private static bool HaveSamePredicateBoundary(PartyPredicate first, PartyPredicate second)
+        {
+            if (first == null || second == null)
+                return false;
+
+            return first.Field == second.Field &&
+                   first.FieldOffset == second.FieldOffset &&
+                   BuildRangeKey(first.FieldOffsetRange) == BuildRangeKey(second.FieldOffsetRange) &&
+                   first.ValueKnowledge == second.ValueKnowledge &&
+                   first.ImmediateValue == second.ImmediateValue &&
+                   BuildRangeKey(first.ImmediateRange) == BuildRangeKey(second.ImmediateRange) &&
+                   BuildPredicateTargetKeyForDisplayMerge(first.TargetMember) ==
+                   BuildPredicateTargetKeyForDisplayMerge(second.TargetMember);
+        }
+
+        private static bool AreExhaustiveComplementaryComparisons(
+            PartyPredicateComparison first,
+            PartyPredicateComparison second)
+        {
+            return (first == PartyPredicateComparison.Equal && second == PartyPredicateComparison.NotEqual) ||
+                   (first == PartyPredicateComparison.LessThan && second == PartyPredicateComparison.GreaterOrEqual) ||
+                   (first == PartyPredicateComparison.LessOrEqual && second == PartyPredicateComparison.GreaterThan);
+        }
+
+        private static string BuildRangeKey(ValueRange8 range)
+        {
+            return range == null
+                ? "-"
+                : $"{range.Min:X2}-{range.Max:X2}";
+        }
+
+        private static string BuildPredicateTargetKeyForDisplayMerge(PartyMemberReference member)
+        {
+            if (member == null)
+                return "-";
+
+            if (member.IsPartyLoopMember)
+                return $"{PartyMemberSelectionKind.Dynamic}:Loop:-:-:-";
+
+            return string.Join(":",
+                member.SelectionKind,
+                member.IsPartyLoopMember ? "Loop" : "Direct",
+                member.MemberIndex?.ToString() ?? "-",
+                member.PointerTableAddress?.ToString("X4") ?? "-",
+                member.StructureAddress?.ToString("X4") ?? "-");
+        }
+
+        private static bool ContainsPredicateKey(
+            HashSet<string> predicateKeys,
+            PartyPredicate predicate)
+        {
+            if (predicateKeys == null || predicateKeys.Count == 0 || predicate == null)
+                return false;
+
+            string key = PartyEffectSemantics.BuildPredicateKey(predicate);
+            if (!string.IsNullOrWhiteSpace(key) && predicateKeys.Contains(key))
+                return true;
+
+            string exhaustiveKey = BuildExhaustiveGuardPredicateKey(predicate);
+            return !string.IsNullOrWhiteSpace(exhaustiveKey) &&
+                   predicateKeys.Contains(exhaustiveKey);
+        }
+
+        private static VariantRenderItem CloneVariantRenderItemWithoutGuardPredicates(
+            VariantRenderItem item,
+            HashSet<string> predicateKeysToStrip)
+        {
+            if (item == null)
+                return null;
+
+            var renderVariant = ClonePathVariantForRender(item.Variant);
+            if (renderVariant != null)
+            {
+                renderVariant.BranchChoices = renderVariant.BranchChoices?
+                    .Where(choice => !ContainsPredicateKey(predicateKeysToStrip, choice?.GetGuardPredicateForDisplay()))
+                    .ToList() ?? new List<BranchChoice>();
+            }
+
+            return new VariantRenderItem
+            {
+                Variant = renderVariant,
+                Lines = item.Lines?.ToList() ?? new List<string>(),
+                NarrativeLines = item.NarrativeLines?.ToList() ?? new List<string>(),
+                ConditionalComplementOutcomeEffectKeys = item.ConditionalComplementOutcomeEffectKeys != null
+                    ? new HashSet<string>(item.ConditionalComplementOutcomeEffectKeys, StringComparer.Ordinal)
+                    : new HashSet<string>(StringComparer.Ordinal)
+            };
         }
 
         private static List<VariantRenderItem> SuppressStatusComplementVariantsByUserVisibleAssumptions(
@@ -4229,6 +5373,7 @@ namespace MMMapEditor
                     FlattenTransparentStructuralWrappers(
                         SimplifyGenericChoiceTree(
                             CompressVariantTree(root))));
+                CollapseSingleSubvariantBranches(group);
             }
 
             groups = groups
@@ -4313,8 +5458,21 @@ namespace MMMapEditor
             List<VariantRenderItem> items,
             out string hierarchy)
         {
-            hierarchy = null;
             if (!TryBuildInventoryResourceAttritionRandomOutcomeModel(items, out var model))
+            {
+                hierarchy = null;
+                return false;
+            }
+
+            return TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(model, out hierarchy);
+        }
+
+        private static bool TryBuildInventoryResourceAttritionRandomOutcomeHierarchy(
+            InventoryResourceAttritionNoteModel model,
+            out string hierarchy)
+        {
+            hierarchy = null;
+            if (model == null)
                 return false;
 
             var rootLines = model.RootLines;
@@ -4422,6 +5580,7 @@ namespace MMMapEditor
                         item?.Variant,
                         out var itemChoice,
                         out string itemName,
+                        out string slotLabel,
                         out string presenceLabel))
                 {
                     continue;
@@ -4430,14 +5589,14 @@ namespace MMMapEditor
                 if (!TryClassifyResourceAttrition(item, out var resourceKind))
                     continue;
 
-                string groupKey = $"{itemName}\n{presenceLabel}";
+                string groupKey = $"{BuildInventoryPresenceChoiceKey(itemName, slotLabel)}\n{presenceLabel}";
                 var outcomeKind = ClassifyResourceRandomOutcome(item);
                 if (!grouped.TryGetValue(groupKey, out var group))
                 {
                     group = new InventoryResourceGroup
                     {
                         Label = null,
-                        HeaderAnnotation = $"{itemName} {presenceLabel}",
+                        HeaderAnnotation = BuildInventoryPresenceHeaderAnnotation(itemName, presenceLabel, slotLabel),
                         Comparison = itemChoice.GuardPredicate?.Comparison ?? PartyPredicateComparison.Unknown,
                         NarrativePrefixLines = item?.NarrativeLines?.ToList() ?? new List<string>()
                     };
@@ -4586,16 +5745,26 @@ namespace MMMapEditor
             PathVariantInfo variant,
             out BranchChoice itemChoice,
             out string itemName,
+            out string slotLabel,
             out string presenceLabel)
         {
             itemChoice = null;
             itemName = null;
+            slotLabel = null;
             presenceLabel = null;
             itemChoice = GetRelevantBranchChoices(variant)
-                .FirstOrDefault(choice => PartyInventorySemantics.TryBuildItemPresenceChoiceParts(choice, out _, out _));
+                .FirstOrDefault(choice => TryBuildInventoryPresenceChoiceInfo(choice, out _));
 
-            return itemChoice != null &&
-                   PartyInventorySemantics.TryBuildItemPresenceChoiceParts(itemChoice, out itemName, out presenceLabel);
+            if (itemChoice == null ||
+                !TryBuildInventoryPresenceChoiceInfo(itemChoice, out var info))
+            {
+                return false;
+            }
+
+            itemName = info.ItemName;
+            slotLabel = info.SlotLabel;
+            presenceLabel = info.PresenceLabel;
+            return true;
         }
 
         private static List<ResourceRandomOutcomeKind> GetModelOutcomeKinds(
@@ -5041,7 +6210,193 @@ namespace MMMapEditor
 
         private static bool HasRenderableTopLevelContent(TopLevelVariantGroup group)
         {
-            return IsRenderableStructuralNode(group?.TreeRoot);
+            return IsRenderableStructuralNode(group?.TreeRoot) ||
+                   !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(group?.Label)) ||
+                   !string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(group?.HeaderAnnotation));
+        }
+
+        private static void CollapseSingleSubvariantBranches(TopLevelVariantGroup group)
+        {
+            if (group?.TreeRoot == null)
+                return;
+
+            CollapseSingleSubvariantBranches(group.TreeRoot);
+            PromoteCollapsedRootMetadataToTopLevelGroup(group);
+        }
+
+        private static void CollapseSingleSubvariantBranches(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                CollapseSingleSubvariantBranches(child);
+
+            node.Children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+
+            while (TryGetSingleSubvariantChild(node, out var child))
+                MergeSingleSubvariantChildIntoParent(node, child);
+        }
+
+        private static bool TryGetSingleSubvariantChild(
+            VariantTreeNode node,
+            out VariantTreeNode child)
+        {
+            child = null;
+            if (node == null)
+                return false;
+
+            if ((node.DirectVariants ?? new List<VariantRenderItem>()).Any(item => item != null))
+                return false;
+
+            var renderableChildren = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            if (renderableChildren.Count != 1)
+                return false;
+
+            node.Children = renderableChildren;
+            child = renderableChildren[0];
+            return child != null;
+        }
+
+        private static void MergeSingleSubvariantChildIntoParent(
+            VariantTreeNode parent,
+            VariantTreeNode child)
+        {
+            if (parent == null || child == null)
+                return;
+
+            MergeCollapsedChildLabelIntoParent(parent, child.Label);
+            parent.HeaderAnnotation = MergeHeaderAnnotations(parent.HeaderAnnotation, child.HeaderAnnotation);
+
+            if (!parent.RenderPriorityOverride.HasValue && child.RenderPriorityOverride.HasValue)
+                parent.RenderPriorityOverride = child.RenderPriorityOverride;
+
+            parent.PreserveTransparentWrapper = parent.PreserveTransparentWrapper || child.PreserveTransparentWrapper;
+            parent.CommonLines ??= new List<string>();
+            parent.CommonLines.AddRange((child.CommonLines ?? new List<string>())
+                .Where(line => line != null));
+            parent.DirectVariants = (child.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            parent.Children = (child.Children ?? new List<VariantTreeNode>())
+                .Where(grandChild => grandChild != null)
+                .ToList();
+        }
+
+        private static void PromoteCollapsedRootMetadataToTopLevelGroup(TopLevelVariantGroup group)
+        {
+            var root = group?.TreeRoot;
+            if (root == null)
+                return;
+
+            group.HeaderAnnotation = MergeHeaderAnnotations(group.HeaderAnnotation, root.HeaderAnnotation);
+            root.HeaderAnnotation = null;
+
+            string rootLabel = NormalizeChoiceLabel(root.Label);
+            if (!string.IsNullOrWhiteSpace(rootLabel))
+            {
+                string groupLabel = NormalizeChoiceLabel(group.Label);
+                if (string.IsNullOrWhiteSpace(groupLabel))
+                {
+                    group.Label = rootLabel;
+                }
+                else if (!string.Equals(groupLabel, rootLabel, StringComparison.OrdinalIgnoreCase))
+                {
+                    MergeCollapsedLabelIntoTopLevelGroup(group, root, rootLabel);
+                }
+            }
+
+            root.Label = null;
+        }
+
+        private static void MergeCollapsedChildLabelIntoParent(VariantTreeNode parent, string childLabel)
+        {
+            string normalizedChildLabel = NormalizeChoiceLabel(childLabel);
+            if (parent == null || string.IsNullOrWhiteSpace(normalizedChildLabel))
+                return;
+
+            string normalizedParentLabel = NormalizeChoiceLabel(parent.Label);
+            if (string.IsNullOrWhiteSpace(normalizedParentLabel))
+            {
+                parent.Label = normalizedChildLabel;
+                return;
+            }
+
+            if (string.Equals(normalizedParentLabel, normalizedChildLabel, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            string displayLabel = NormalizeUserVisibleChoiceLabel(normalizedChildLabel);
+            if (string.IsNullOrWhiteSpace(displayLabel))
+                return;
+
+            if (IsFlatConditionChoiceLabel(displayLabel) || HasGuardHeaderAnnotationPrefix(displayLabel))
+            {
+                parent.HeaderAnnotation = MergeHeaderAnnotations(parent.HeaderAnnotation, displayLabel);
+                return;
+            }
+
+            parent.CommonLines ??= new List<string>();
+            if (!parent.CommonLines.Any(line => string.Equals(line?.Trim(), displayLabel, StringComparison.Ordinal)))
+                parent.CommonLines.Add(displayLabel);
+        }
+
+        private static void MergeCollapsedLabelIntoTopLevelGroup(
+            TopLevelVariantGroup group,
+            VariantTreeNode root,
+            string label)
+        {
+            string displayLabel = NormalizeUserVisibleChoiceLabel(label);
+            if (string.IsNullOrWhiteSpace(displayLabel))
+                return;
+
+            if (IsFlatConditionChoiceLabel(displayLabel) || HasGuardHeaderAnnotationPrefix(displayLabel))
+            {
+                group.HeaderAnnotation = MergeHeaderAnnotations(group.HeaderAnnotation, displayLabel);
+                return;
+            }
+
+            root.CommonLines ??= new List<string>();
+            if (!root.CommonLines.Any(line => string.Equals(line?.Trim(), displayLabel, StringComparison.Ordinal)))
+                root.CommonLines.Insert(0, displayLabel);
+        }
+
+        private static string MergeHeaderAnnotations(params string[] annotations)
+        {
+            var merged = new List<string>();
+            foreach (string annotation in annotations ?? new string[0])
+            {
+                foreach (string part in SplitMergedHeaderAnnotation(annotation))
+                {
+                    string displayPart = NormalizeUserVisibleHeaderAnnotation(part);
+                    if (string.IsNullOrWhiteSpace(displayPart))
+                        continue;
+
+                    if (!merged.Contains(displayPart, StringComparer.Ordinal))
+                        merged.Add(displayPart);
+                }
+            }
+
+            return merged.Count == 0
+                ? null
+                : string.Join("; ", merged);
+        }
+
+        private static IEnumerable<string> SplitMergedHeaderAnnotation(string annotation)
+        {
+            string normalized = NormalizeHeaderAnnotation(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                yield break;
+
+            foreach (string part in normalized.Split(';'))
+            {
+                string trimmed = part?.Trim();
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    yield return trimmed;
+            }
         }
 
         private static VariantRenderItem GetSingleLeafVariantItem(VariantTreeNode node)
@@ -6014,6 +7369,9 @@ namespace MMMapEditor
             var candidates = new List<BranchChoiceDisplayCandidate>();
             foreach (var choice in variant.BranchChoices)
             {
+                if (IsPartyLoopGuardBranchChoice(variant, choice))
+                    continue;
+
                 var normalized = NormalizeBranchChoiceForDisplay(choice);
                 if (normalized != null)
                 {
@@ -6040,6 +7398,39 @@ namespace MMMapEditor
 
                 yield return candidate.Normalized;
             }
+        }
+
+        private static bool IsPartyLoopGuardBranchChoice(PathVariantInfo variant, BranchChoice choice)
+        {
+            if (choice?.GuardPredicate == null ||
+                variant?.PartyEffects == null ||
+                !variant.PartyEffects.Any(IsSexWriteLoopSubsetOutcomeEffect))
+            {
+                return false;
+            }
+
+            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GetGuardPredicateForDisplay());
+            string rawChoicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
+            if (string.IsNullOrWhiteSpace(choicePredicateKey) &&
+                string.IsNullOrWhiteSpace(rawChoicePredicateKey))
+            {
+                return false;
+            }
+
+            return variant.PartyEffects
+                .Where(IsSexWriteLoopSubsetOutcomeEffect)
+                .SelectMany(effect => PartyEffectSemantics.GetEffectiveGuardPredicates(effect))
+                .Select(PartyEffectSemantics.BuildPredicateKey)
+                .Any(key =>
+                    string.Equals(key, choicePredicateKey, StringComparison.Ordinal) ||
+                    string.Equals(key, rawChoicePredicateKey, StringComparison.Ordinal));
+        }
+
+        private static bool IsSexWriteLoopSubsetOutcomeEffect(PartyEffect effect)
+        {
+            return IsConditionalLoopSubsetOutcomeEffect(effect) &&
+                   PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.sex &&
+                   PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.Write;
         }
 
         private static List<BranchChoiceDisplayCandidate> SuppressInventorySlotChoicesShadowedByRange(
@@ -6146,6 +7537,26 @@ namespace MMMapEditor
             itemName = itemName?.Trim();
             string slotLabel = PartyInventorySemantics.GetSlotFieldLabel(choice?.ComparedPartyField)?.Trim();
             presenceLabel = presenceLabel?.Trim();
+            if (TrySplitInventoryPresenceHeaderAnnotation(
+                    choice?.DisplayHeaderAnnotation,
+                    out string headerItemName,
+                    out string headerPresenceLabel,
+                    out string headerSlotLabel) &&
+                string.Equals(
+                    headerItemName?.Trim(),
+                    itemName,
+                    StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(headerSlotLabel) ||
+                 string.Equals(
+                     headerSlotLabel.Trim(),
+                     slotLabel,
+                     StringComparison.OrdinalIgnoreCase)))
+            {
+                presenceLabel = headerPresenceLabel?.Trim();
+                if (!string.IsNullOrWhiteSpace(headerSlotLabel))
+                    slotLabel = headerSlotLabel.Trim();
+            }
+
             if (string.IsNullOrWhiteSpace(itemName) ||
                 string.IsNullOrWhiteSpace(presenceLabel))
             {
@@ -6421,7 +7832,7 @@ namespace MMMapEditor
                 CompareMemoryAddress = choice.CompareMemoryAddress,
                 IsLinear = choice.IsLinear,
                 ComparedPartyField = choice.ComparedPartyField?.Clone(),
-                GuardPredicate = choice.GuardPredicate?.Clone()
+                GuardPredicate = choice.GetGuardPredicateForDisplay()
             };
         }
 
@@ -6430,8 +7841,11 @@ namespace MMMapEditor
             if (choice?.GuardPredicate == null || IsPartyLoopTraversalBranchChoice(choice))
                 return null;
 
+            var predicate = choice.GetGuardPredicateForDisplay();
             var predicates = PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(
-                new[] { choice.GuardPredicate });
+                new[] { predicate })
+                .Where(p => !IsRedundantAliveStatusPredicateForNotes(p))
+                .ToList();
             return BuildGuardHeaderAnnotation(predicates);
         }
 
@@ -7726,9 +9140,9 @@ namespace MMMapEditor
             return node.Children != null && node.Children.Any(HasAnyVariantItem);
         }
 
-        private static bool HasUserVisibleNodeLabelOrAnnotation(VariantTreeNode node)
+        private static bool HasUserVisibleNodeLabelOrAnnotation(VariantTreeNode node, string labelOverride = null)
         {
-            return !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node?.Label)) ||
+            return !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(GetEffectiveNodeLabel(node, labelOverride))) ||
                    !string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node?.HeaderAnnotation));
         }
 
@@ -8438,7 +9852,7 @@ namespace MMMapEditor
             if (effect == null || choice?.GuardPredicate == null)
                 return false;
 
-            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
+            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GetGuardPredicateForDisplay());
             if (string.IsNullOrWhiteSpace(choicePredicateKey))
                 return false;
 
@@ -9663,7 +11077,8 @@ namespace MMMapEditor
             VariantTreeNode parentNode,
             IEnumerable<VariantTreeNode> children,
             IEnumerable<VariantRenderItem> directVariants,
-            IReadOnlyDictionary<VariantRenderItem, string> syntheticDirectLabels = null)
+            IReadOnlyDictionary<VariantRenderItem, string> syntheticDirectLabels = null,
+            IReadOnlyDictionary<VariantTreeNode, string> syntheticChildLabels = null)
         {
             var result = new List<OrderedRenderEntry>();
             var promptChoiceOrder = BuildPromptChoiceOrder(parentNode?.CommonLines);
@@ -9678,18 +11093,21 @@ namespace MMMapEditor
 
             foreach (var child in childList)
             {
-                bool hasChoiceOrder = TryGetChoiceOrderKey(child.Label, promptChoiceOrder, out int choiceOrderKey);
+                string syntheticChildLabel = null;
+                syntheticChildLabels?.TryGetValue(child, out syntheticChildLabel);
+                string effectiveChildLabel = GetEffectiveNodeLabel(child, syntheticChildLabel);
+                bool hasChoiceOrder = TryGetChoiceOrderKey(effectiveChildLabel, promptChoiceOrder, out int choiceOrderKey);
                 bool mixedPartyScanCancelChoice =
                     ContainsMixedPartyScanSubsetSummary(parentNode) &&
                     IsLikelyCancelNode(child);
-                bool promotedNoBattleChild = IsSyntheticNoBattleLabel(child.Label);
+                bool promotedNoBattleChild = IsSyntheticNoBattleLabel(effectiveChildLabel);
                 int displayPriority = child.RenderPriorityOverride ?? (mixedPartyScanCancelChoice
                     ? -1
                     : (promotedNoBattleChild
                         ? -1
                         : (parentHasMultiNumericPrompt && HasPromptOptionLabels(child.CommonLines)
                         ? 1
-                        : (IsEmptyOrNoOpNode(child) ? 1 : 0))));
+                        : (IsEmptyOrNoOpNode(child, syntheticChildLabel) ? 1 : 0))));
                 result.Add(new OrderedRenderEntry
                 {
                     OccurrenceOrderKey = GetNodeOccurrenceOrderKey(child),
@@ -9697,7 +11115,10 @@ namespace MMMapEditor
                     PathOrderKey = GetNodeRenderOrderKey(child),
                     ChoiceOrderKey = choiceOrderKey,
                     HasChoiceOrderKey = hasChoiceOrder,
-                    ChildNode = child
+                    ChildNode = child,
+                    ChildLabelOverride = string.IsNullOrWhiteSpace(child.Label)
+                        ? syntheticChildLabel
+                        : null
                 });
             }
 
@@ -9753,12 +11174,19 @@ namespace MMMapEditor
                 StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool IsEmptyOrNoOpNode(VariantTreeNode node)
+        private static string GetEffectiveNodeLabel(VariantTreeNode node, string labelOverride)
+        {
+            return !string.IsNullOrWhiteSpace(node?.Label)
+                ? node.Label
+                : labelOverride;
+        }
+
+        private static bool IsEmptyOrNoOpNode(VariantTreeNode node, string labelOverride = null)
         {
             if (node == null)
                 return false;
 
-            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)))
+            if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(GetEffectiveNodeLabel(node, labelOverride))))
                 return false;
 
             if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node.HeaderAnnotation)))
@@ -9778,7 +11206,7 @@ namespace MMMapEditor
                 return false;
 
             return directVariants.All(IsEmptyOrNoOpVariant) &&
-                   children.All(IsEmptyOrNoOpNode);
+                   children.All(child => IsEmptyOrNoOpNode(child));
         }
 
         private static Dictionary<string, int> BuildPromptChoiceOrder(IEnumerable<string> commonLines)
@@ -9968,16 +11396,15 @@ namespace MMMapEditor
             var syntheticChoiceLabels = BuildSyntheticChoiceLabels(group.TreeRoot, directVariants, renderableChildren);
             var syntheticChildLabels = BuildSyntheticChildLabels(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels);
 
-            foreach (var child in renderableChildren)
-            {
-                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) && string.IsNullOrWhiteSpace(child.Label))
-                    child.Label = syntheticChildLabel;
-            }
-
             int childIndex = 1;
             bool wroteAnyChild = false;
 
-            foreach (var entry in BuildOrderedRenderEntries(group.TreeRoot, renderableChildren, directVariants, syntheticChoiceLabels))
+            foreach (var entry in BuildOrderedRenderEntries(
+                group.TreeRoot,
+                renderableChildren,
+                directVariants,
+                syntheticChoiceLabels,
+                syntheticChildLabels))
             {
                 if (wroteAnyChild)
                     sb.AppendLine();
@@ -9994,7 +11421,8 @@ namespace MMMapEditor
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
-                            directVariants));
+                            directVariants),
+                        entry.ChildLabelOverride);
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -10531,7 +11959,8 @@ namespace MMMapEditor
             int depth,
             string inheritedProbabilityLine = null,
             string inheritedGuardKey = null,
-            IReadOnlySet<string> siblingNoOpLeafKeys = null)
+            IReadOnlySet<string> siblingNoOpLeafKeys = null,
+            string nodeLabelOverride = null)
         {
             if (!IsRenderableStructuralNode(node))
                 return;
@@ -10542,7 +11971,8 @@ namespace MMMapEditor
             renderableChildren = SuppressNoOpChildrenInTransparentRenderNode(
                 node,
                 renderableChildren,
-                siblingNoOpLeafKeys);
+                siblingNoOpLeafKeys,
+                nodeLabelOverride);
             int siblingDirectVariantCount = node.DirectVariants?.Count(v => v != null) ?? 0;
             bool suppressEmptyPromptTerminalDirectVariants =
                 ShouldSuppressEmptyPromptTerminalDirectVariants(node, renderableChildren.Count);
@@ -10561,7 +11991,7 @@ namespace MMMapEditor
 
             if (renderableChildren.Count == 1 &&
                 renderableDirectVariants.Count == 0 &&
-                IsTransparentRenderNode(node))
+                IsTransparentRenderNode(node, nodeLabelOverride))
             {
                 RenderVariantTreeNode(
                     renderableChildren[0],
@@ -10581,7 +12011,7 @@ namespace MMMapEditor
                 : null;
             var singleLeaf = singleLeafItem?.Variant;
             var singleLeafLines = singleLeafItem?.Lines?.ToList();
-            string nodeLabel = NormalizeUserVisibleChoiceLabel(node.Label);
+            string nodeLabel = NormalizeUserVisibleChoiceLabel(GetEffectiveNodeLabel(node, nodeLabelOverride));
             var nodeCommonLines = node.CommonLines?.ToList() ?? new List<string>();
             if (IsFlatOutcomeBodyLabel(nodeLabel))
             {
@@ -10687,17 +12117,16 @@ namespace MMMapEditor
             var syntheticChoiceLabels = BuildSyntheticChoiceLabels(node, renderableDirectVariants, renderableChildren);
             var syntheticChildLabels = BuildSyntheticChildLabels(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
 
-            foreach (var child in renderableChildren)
-            {
-                if (syntheticChildLabels.TryGetValue(child, out string syntheticChildLabel) && string.IsNullOrWhiteSpace(child.Label))
-                    child.Label = syntheticChildLabel;
-            }
-
             int nestedIndex = 1;
             bool wroteAny = false;
             string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
             string descendantSuppressedGuardKey = sharedGuardKey ?? inheritedGuardKey;
-            var orderedEntries = BuildOrderedRenderEntries(node, renderableChildren, renderableDirectVariants, syntheticChoiceLabels);
+            var orderedEntries = BuildOrderedRenderEntries(
+                node,
+                renderableChildren,
+                renderableDirectVariants,
+                syntheticChoiceLabels,
+                syntheticChildLabels);
             bool parentHeaderIsOnlyVariantNumber = Regex.IsMatch(
                 header.Trim(),
                 @"^Вариант\s+\d+(?:\.\d+)*:$",
@@ -10723,7 +12152,8 @@ namespace MMMapEditor
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
-                            renderableDirectVariants));
+                            renderableDirectVariants),
+                        entry.ChildLabelOverride);
                 }
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
@@ -10779,7 +12209,7 @@ namespace MMMapEditor
             if (entry.ChildNode == null)
                 return false;
 
-            if (TryBuildNoOpOnlyRenderNodeKey(entry.ChildNode, out _))
+            if (TryBuildNoOpOnlyRenderNodeKey(entry.ChildNode, entry.ChildLabelOverride, out _))
                 return true;
 
             return !string.IsNullOrWhiteSpace(
@@ -10817,12 +12247,13 @@ namespace MMMapEditor
         private static List<VariantTreeNode> SuppressNoOpChildrenInTransparentRenderNode(
             VariantTreeNode node,
             List<VariantTreeNode> renderableChildren,
-            IReadOnlySet<string> siblingNoOpLeafKeys)
+            IReadOnlySet<string> siblingNoOpLeafKeys,
+            string nodeLabelOverride = null)
         {
             if (node == null ||
                 renderableChildren == null ||
                 renderableChildren.Count <= 1 ||
-                !IsTransparentRenderNode(node))
+                !IsTransparentRenderNode(node, nodeLabelOverride))
             {
                 return renderableChildren ?? new List<VariantTreeNode>();
             }
@@ -10845,10 +12276,20 @@ namespace MMMapEditor
             return result.Count == 0 ? renderableChildren : result;
         }
 
-        private static bool TryBuildNoOpOnlyRenderNodeKey(VariantTreeNode node, out string key)
+        private static bool TryBuildNoOpOnlyRenderNodeKey(
+            VariantTreeNode node,
+            out string key)
+        {
+            return TryBuildNoOpOnlyRenderNodeKey(node, null, out key);
+        }
+
+        private static bool TryBuildNoOpOnlyRenderNodeKey(
+            VariantTreeNode node,
+            string labelOverride,
+            out string key)
         {
             key = null;
-            if (node == null || HasUserVisibleNodeLabelOrAnnotation(node))
+            if (node == null || HasUserVisibleNodeLabelOrAnnotation(node, labelOverride))
                 return false;
 
             var keys = new HashSet<string>(StringComparer.Ordinal);
@@ -10893,7 +12334,7 @@ namespace MMMapEditor
             return true;
         }
 
-        private static bool IsTransparentRenderNode(VariantTreeNode node)
+        private static bool IsTransparentRenderNode(VariantTreeNode node, string labelOverride = null)
         {
             if (node == null)
                 return false;
@@ -10901,7 +12342,7 @@ namespace MMMapEditor
             if (node.PreserveTransparentWrapper)
                 return false;
 
-            if (HasUserVisibleNodeLabelOrAnnotation(node))
+            if (HasUserVisibleNodeLabelOrAnnotation(node, labelOverride))
                 return false;
 
             return node.CommonLines == null ||
@@ -11718,7 +13159,7 @@ namespace MMMapEditor
                 ? BuildGuardConditionKey(guardedVariant) ?? string.Empty
                 : string.Empty;
             string inventoryPresenceKey = TryResolvePathVariantForDisplayKey(obj, variantKey, out var inventoryVariant)
-                ? string.Join("|", BuildInventoryPresenceHeaderAnnotationsForFlat(obj, inventoryVariant))
+                ? string.Join("|", BuildInventoryPresenceHeaderAnnotationsForVariantPath(obj, inventoryVariant))
                 : string.Empty;
             string linesKey = string.Join("\n", (lines ?? new List<string>()).Select(line => line ?? string.Empty));
             return string.Join("\n---\n", occurrenceKey, probabilityKey, guardKey, inventoryPresenceKey, linesKey);

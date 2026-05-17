@@ -855,10 +855,18 @@ namespace MMMapEditor
         GreaterOrEqual = 6
     }
 
+    public enum PartyPredicateLoopQuantifier
+    {
+        Unspecified = 0,
+        Any = 1,
+        None = 2
+    }
+
     public class PartyPredicate
     {
         public PartyFieldKind Field { get; set; } = PartyFieldKind.Unknown;
         public PartyPredicateComparison Comparison { get; set; } = PartyPredicateComparison.Unknown;
+        public PartyPredicateLoopQuantifier LoopQuantifier { get; set; } = PartyPredicateLoopQuantifier.Unspecified;
         public PartyValueKnowledge ValueKnowledge { get; set; } = PartyValueKnowledge.Unknown;
         public ushort? ImmediateValue { get; set; }
         public ValueRange8 ImmediateRange { get; set; }
@@ -874,6 +882,7 @@ namespace MMMapEditor
             {
                 Field = Field,
                 Comparison = Comparison,
+                LoopQuantifier = LoopQuantifier,
                 ValueKnowledge = ValueKnowledge,
                 ImmediateValue = ImmediateValue,
                 ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),

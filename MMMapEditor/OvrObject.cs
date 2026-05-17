@@ -934,10 +934,63 @@ namespace MMMapEditor
             };
         }
 
+        public PartyPredicate GetGuardPredicateForDisplay()
+        {
+            var predicate = GuardPredicate?.Clone();
+            if (predicate?.TargetMember != null &&
+                predicate.LoopQuantifier == PartyPredicateLoopQuantifier.Unspecified)
+            {
+                if (IsMainQuestCompletionPredicate(predicate))
+                {
+                    if (IsLinear && TryInvertPredicateComparison(predicate.Comparison, out var invertedComparison))
+                        predicate.Comparison = invertedComparison;
+
+                    predicate.LoopQuantifier = IsLinear
+                        ? PartyPredicateLoopQuantifier.None
+                        : PartyPredicateLoopQuantifier.Any;
+                }
+                else
+                {
+                    if (!IsLinear && TryInvertPredicateComparison(predicate.Comparison, out var invertedComparison))
+                        predicate.Comparison = invertedComparison;
+
+                    predicate.LoopQuantifier = IsLinear
+                        ? PartyPredicateLoopQuantifier.Any
+                        : PartyPredicateLoopQuantifier.None;
+                }
+            }
+
+            return predicate;
+        }
+
+        private static bool IsMainQuestCompletionPredicate(PartyPredicate predicate)
+        {
+            return predicate?.Field == PartyFieldKind.Technical7D &&
+                   predicate.ImmediateValue.HasValue;
+        }
+
+        private static bool TryInvertPredicateComparison(
+            PartyPredicateComparison comparison,
+            out PartyPredicateComparison inverted)
+        {
+            inverted = comparison switch
+            {
+                PartyPredicateComparison.Equal => PartyPredicateComparison.NotEqual,
+                PartyPredicateComparison.NotEqual => PartyPredicateComparison.Equal,
+                PartyPredicateComparison.LessThan => PartyPredicateComparison.GreaterOrEqual,
+                PartyPredicateComparison.LessOrEqual => PartyPredicateComparison.GreaterThan,
+                PartyPredicateComparison.GreaterThan => PartyPredicateComparison.LessOrEqual,
+                PartyPredicateComparison.GreaterOrEqual => PartyPredicateComparison.LessThan,
+                _ => PartyPredicateComparison.Unknown
+            };
+
+            return inverted != PartyPredicateComparison.Unknown;
+        }
+
         public string GetIdentityKey()
         {
             string guardKey = HasGuardPredicate
-                ? PartyEffectSemantics.BuildPredicateKey(GuardPredicate)
+                ? PartyEffectSemantics.BuildPredicateKey(GetGuardPredicateForDisplay())
                 : "<NO_GUARD>";
 
             return string.Join("|",
@@ -1206,7 +1259,7 @@ namespace MMMapEditor
 
             return BranchChoices
                 .Where(choice => choice?.GuardPredicate != null)
-                .Select(choice => choice.GuardPredicate)
+                .Select(choice => choice.GetGuardPredicateForDisplay())
                 .GroupBy(PartyEffectSemantics.BuildPredicateKey)
                 .Select(group => group.First().Clone())
                 .OrderBy(PartyEffectSemantics.BuildPredicateKey)

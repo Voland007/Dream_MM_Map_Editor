@@ -29,6 +29,8 @@ namespace MMMapEditor
     public class PathAnalyzer
     {
         private const ushort PartyCountAddress = 0x3BC0;
+        private const ushort PartySexMaleValue = 0x01;
+        private const ushort PartySexFemaleValue = 0x02;
         private const int MaxPathProcessingDepth = 24;
         private const int MaxPathVariantsPerSingleOccurrence = 3072;
 
@@ -399,7 +401,7 @@ namespace MMMapEditor
                 ? randomOutcomeLabel
                 : technicalLabel;
 
-            return new BranchChoice
+            var choice = new BranchChoice
             {
                 Label = displayLabel,
                 DisplayHeaderAnnotation = BuildStateConstraintHeaderAnnotation(path),
@@ -411,6 +413,11 @@ namespace MMMapEditor
                 IsLinear = isLinear,
                 GuardPredicate = path.BranchPartyPredicate?.Clone()
             };
+
+            if (PartyInventorySemantics.TryBuildItemPresenceChoiceLabel(choice, out string itemPresenceLabel))
+                choice.DisplayHeaderAnnotation = itemPresenceLabel;
+
+            return choice;
         }
 
         private static bool TryBuildRandomOutcomeChoiceLabel(AlternativePath path, out string label)
@@ -1635,6 +1642,58 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool IsContradictoryNoOutcomeLoopGuardVariant(PathVariantInfo variant)
+        {
+            if (variant == null || HasAnyOutcome(variant))
+                return false;
+
+            var sexGuards = (variant.GetGuardPredicates() ?? Array.Empty<PartyPredicate>())
+                .Select(TryBuildLoopSexGuardKey)
+                .Where(key => key.HasValue)
+                .Select(key => key.Value)
+                .ToList();
+            if (sexGuards.Count < 2)
+                return false;
+
+            return sexGuards
+                .GroupBy(key => key.Condition)
+                .Any(group =>
+                    group.Any(key => key.Quantifier == PartyPredicateLoopQuantifier.Any) &&
+                    group.Any(key => key.Quantifier == PartyPredicateLoopQuantifier.None));
+        }
+
+        private (PartyConditionKind Condition, PartyPredicateLoopQuantifier Quantifier)? TryBuildLoopSexGuardKey(
+            PartyPredicate predicate)
+        {
+            if (predicate?.Field != PartyFieldKind.sex ||
+                !predicate.ImmediateValue.HasValue)
+            {
+                return null;
+            }
+
+            var condition = predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal when predicate.ImmediateValue.Value == PartySexMaleValue
+                    => PartyConditionKind.MaleOnly,
+                PartyPredicateComparison.NotEqual when predicate.ImmediateValue.Value == PartySexFemaleValue
+                    => PartyConditionKind.MaleOnly,
+                PartyPredicateComparison.Equal when predicate.ImmediateValue.Value == PartySexFemaleValue
+                    => PartyConditionKind.FemaleOnly,
+                PartyPredicateComparison.NotEqual when predicate.ImmediateValue.Value == PartySexMaleValue
+                    => PartyConditionKind.FemaleOnly,
+                _ => PartyConditionKind.None
+            };
+
+            if (condition == PartyConditionKind.None ||
+                (predicate.LoopQuantifier != PartyPredicateLoopQuantifier.Any &&
+                 predicate.LoopQuantifier != PartyPredicateLoopQuantifier.None))
+            {
+                return null;
+            }
+
+            return (condition, predicate.LoopQuantifier);
+        }
+
         public Dictionary<int, PathVariantInfo> BuildFinalPathVariants(List<PathVariantInfo> allResults)
         {
             var finalVariants = new Dictionary<int, PathVariantInfo>();
@@ -1642,6 +1701,7 @@ namespace MMMapEditor
             var leafResults = allResults
                 .Where(r => r.IsLeaf)
                 .Where(IsMeaningfulLeaf)
+                .Where(r => !IsContradictoryNoOutcomeLoopGuardVariant(r))
                 .OrderBy(GetPathOrderKey)
                 .ToList();
 
@@ -2715,15 +2775,19 @@ namespace MMMapEditor
                 return false;
             }
 
-            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
-            if (string.IsNullOrWhiteSpace(choicePredicateKey))
+            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GetGuardPredicateForDisplay());
+            string rawChoicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
+            if (string.IsNullOrWhiteSpace(choicePredicateKey) &&
+                string.IsNullOrWhiteSpace(rawChoicePredicateKey))
                 return false;
 
             return variant.PartyEffects
                 .Where(IsConditionalLoopSubsetOutcomeEffect)
                 .SelectMany(effect => PartyEffectSemantics.GetEffectiveGuardPredicates(effect))
                 .Select(PartyEffectSemantics.BuildPredicateKey)
-                .Any(key => string.Equals(key, choicePredicateKey, StringComparison.Ordinal));
+                .Any(key =>
+                    string.Equals(key, choicePredicateKey, StringComparison.Ordinal) ||
+                    string.Equals(key, rawChoicePredicateKey, StringComparison.Ordinal));
         }
 
         private string BuildLoopNormalizedPredicateKey(PartyPredicate predicate)
