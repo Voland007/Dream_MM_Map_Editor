@@ -45,12 +45,14 @@ namespace MMMapEditor
         private static readonly Dictionary<ushort, string[]> KnownBinaryStateConditionLabels =
             new Dictionary<ushort, string[]>
             {
+                { 0x3C98, new[] { "PROTECTION FROM POISON отсутствует", "PROTECTION FROM POISON активно" } },
                 { 0x3C9E, new[] { "LEVITATE отсутствует", "LEVITATE активно" } },
                 { 0x3CA1, new[] { "PSYCHIC PROTECTION отсутствует", "PSYCHIC PROTECTION активно" } },
                 { 0xC980, new[] { "квест не взят", "квест взят" } }
             };
         private static readonly string[] KnownProtectiveSpellConditionNames =
         {
+            "PROTECTION FROM POISON",
             "LEVITATE",
             "PSYCHIC PROTECTION"
         };
