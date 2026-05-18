@@ -308,7 +308,8 @@ namespace MMMapEditor
         ItemName = 17,
         HpRestoredToMaximum = 18,
         AlignmentRestoreKeyword = 19,
-        SubtleMechanicsNote = 20
+        SubtleMechanicsNote = 20,
+        ConditionalRewardMechanicsNote = 21
     }
 
     public sealed class NoteInlineStyleSpan
@@ -643,6 +644,8 @@ namespace MMMapEditor
                 PartyFieldKind.TempAccuracy => "временный ACCURANCY",
                 PartyFieldKind.TempLuck => "временный LUCK",
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                _ when field.HasValue && PartyPermanentStatSemantics.IsTrackedField(field.Value) =>
+                    PartyPermanentStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
                     PartyTemporaryStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTechnicalFieldSemantics.IsTrackedField(field.Value) =>
@@ -657,6 +660,8 @@ namespace MMMapEditor
             {
                 PartyFieldKind.TempLevel => "временного уровня",
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                _ when field.HasValue && PartyPermanentStatSemantics.IsTrackedField(field.Value) =>
+                    PartyPermanentStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
                     PartyTemporaryStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTechnicalFieldSemantics.IsTrackedField(field.Value) =>
@@ -871,6 +876,7 @@ namespace MMMapEditor
         public PartyValueKnowledge ValueKnowledge { get; set; } = PartyValueKnowledge.Unknown;
         public ushort? ImmediateValue { get; set; }
         public ValueRange8 ImmediateRange { get; set; }
+        public DynamicValueFormulaInfo ComparedFormula { get; set; }
         public byte? FieldOffset { get; set; }
         public ValueRange8 FieldOffsetRange { get; set; }
         public uint InstructionAddress { get; set; }
@@ -887,6 +893,7 @@ namespace MMMapEditor
                 ValueKnowledge = ValueKnowledge,
                 ImmediateValue = ImmediateValue,
                 ImmediateRange = ImmediateRange == null ? null : new ValueRange8(ImmediateRange.Min, ImmediateRange.Max),
+                ComparedFormula = ComparedFormula?.Clone(),
                 FieldOffset = FieldOffset,
                 FieldOffsetRange = FieldOffsetRange == null ? null : new ValueRange8(FieldOffsetRange.Min, FieldOffsetRange.Max),
                 InstructionAddress = InstructionAddress,

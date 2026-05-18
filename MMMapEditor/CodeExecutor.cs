@@ -118,6 +118,14 @@ namespace MMMapEditor
         private const int PARTY_TEMP_ACCURACY_OFFSET = PartyTemporaryStatSemantics.TempAccuracyFieldOffset;
         private const int PARTY_TEMP_LUCK_OFFSET = PartyTemporaryStatSemantics.TempLuckFieldOffset;
         private const int PARTY_TEMP_LEVEL_OFFSET = PartyTemporaryStatSemantics.TempLevelFieldOffset;
+        private const int PARTY_PERMANENT_INTELLECT_OFFSET = PartyPermanentStatSemantics.PermanentIntellectFieldOffset;
+        private const int PARTY_PERMANENT_MIGHT_OFFSET = PartyPermanentStatSemantics.PermanentMightFieldOffset;
+        private const int PARTY_PERMANENT_PERSONALITY_OFFSET = PartyPermanentStatSemantics.PermanentPersonalityFieldOffset;
+        private const int PARTY_PERMANENT_ENDURANCE_OFFSET = PartyPermanentStatSemantics.PermanentEnduranceFieldOffset;
+        private const int PARTY_PERMANENT_SPEED_OFFSET = PartyPermanentStatSemantics.PermanentSpeedFieldOffset;
+        private const int PARTY_PERMANENT_ACCURACY_OFFSET = PartyPermanentStatSemantics.PermanentAccuracyFieldOffset;
+        private const int PARTY_PERMANENT_LUCK_OFFSET = PartyPermanentStatSemantics.PermanentLuckFieldOffset;
+        private const int PARTY_PERMANENT_STAT_RAISE_FLAGS_OFFSET = PartyPermanentStatSemantics.RaiseFlagsFieldOffset;
         private const int PARTY_SP_LOW_OFFSET = 0x2B;
         private const int PARTY_SP_HIGH_OFFSET = 0x2C;
         private const int PARTY_HP_LOW_OFFSET = 0x33;
@@ -970,6 +978,13 @@ namespace MMMapEditor
                 PARTY_TEMP_ACCURACY_OFFSET => PartyFieldKind.TempAccuracy,
                 PARTY_TEMP_LUCK_OFFSET => PartyFieldKind.TempLuck,
                 PARTY_TEMP_LEVEL_OFFSET => PartyFieldKind.TempLevel,
+                PARTY_PERMANENT_INTELLECT_OFFSET => PartyFieldKind.PermanentIntellect,
+                PARTY_PERMANENT_MIGHT_OFFSET => PartyFieldKind.PermanentMight,
+                PARTY_PERMANENT_PERSONALITY_OFFSET => PartyFieldKind.PermanentPersonality,
+                PARTY_PERMANENT_ENDURANCE_OFFSET => PartyFieldKind.PermanentEndurance,
+                PARTY_PERMANENT_SPEED_OFFSET => PartyFieldKind.PermanentSpeed,
+                PARTY_PERMANENT_ACCURACY_OFFSET => PartyFieldKind.PermanentAccuracy,
+                PARTY_PERMANENT_LUCK_OFFSET => PartyFieldKind.PermanentLuck,
                 PARTY_SP_LOW_OFFSET => PartyFieldKind.SpLow,
                 PARTY_SP_HIGH_OFFSET => PartyFieldKind.SpHigh,
                 PARTY_HP_LOW_OFFSET => PartyFieldKind.HpLow,
@@ -982,6 +997,7 @@ namespace MMMapEditor
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
                 PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
                 PARTY_QUEST_LORD3_OFFSET => PartyFieldKind.Technical77,
+                PARTY_PERMANENT_STAT_RAISE_FLAGS_OFFSET => PartyFieldKind.PermanentStatRaiseFlags,
                 PARTY_MAIN_QUEST_COMPLETION_OFFSET => PartyFieldKind.Technical7D,
                 _ => PartyFieldKind.Unknown
             };
@@ -1906,6 +1922,8 @@ namespace MMMapEditor
             string comparedRegister = registerTracker.LastFlagsRegister?.ToUpperInvariant();
             PartyFieldReference comparedField = null;
             ushort compareValue = 0;
+            PartyValueKnowledge valueKnowledge = PartyValueKnowledge.ExactImmediate;
+            DynamicValueFormulaInfo comparedFormula = null;
 
             switch (registerTracker.LastFlagsOrigin)
             {
@@ -1913,7 +1931,15 @@ namespace MMMapEditor
                     if (!registerTracker.LastCompareImmediate.HasValue)
                         return null;
 
-                    comparedField = registerTracker.LastComparedPartyField?.Clone();
+                    if (!string.IsNullOrWhiteSpace(comparedRegister) &&
+                        registerTracker.TryGetDynamicValueFormula(comparedRegister, out var formula) &&
+                        IsComparablePartyFormula(formula))
+                    {
+                        comparedFormula = formula.Clone();
+                        comparedField = comparedFormula.SourceField?.Clone();
+                    }
+
+                    comparedField ??= registerTracker.LastComparedPartyField?.Clone();
                     if (comparedField == null)
                     {
                         if (string.IsNullOrWhiteSpace(comparedRegister))
@@ -1927,12 +1953,13 @@ namespace MMMapEditor
                     break;
 
                 case RegisterTracker.FlagsOriginKind.Test:
-                    if (!TryInferSignTestPredicateContext(
+                    if (!TryInferTestPredicateContext(
                             registerTracker,
                             comparedRegister,
                             mnemonic,
                             out comparedField,
-                            out compareValue))
+                            out compareValue,
+                            out valueKnowledge))
                     {
                         return null;
                     }
@@ -1954,41 +1981,86 @@ namespace MMMapEditor
             {
                 Field = comparedField.Field,
                 Comparison = comparison,
-                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ValueKnowledge = valueKnowledge,
                 ImmediateValue = compareValue,
+                ComparedFormula = comparedFormula,
                 FieldOffset = comparedField.FieldOffset,
                 FieldOffsetRange = comparedField.FieldOffsetRange == null ? null : new ValueRange8(comparedField.FieldOffsetRange.Min, comparedField.FieldOffsetRange.Max),
                 InstructionAddress = instructionAddress,
                 TargetMember = comparedField.Member?.Clone(),
-                Description = BuildPartyPredicateDescription(comparedField.Field, comparison, compareValue)
+                Description = comparedFormula == null
+                    ? BuildPartyPredicateDescription(comparedField.Field, comparison, compareValue)
+                    : BuildPartyPredicateDescription(comparedFormula, comparison, compareValue)
             };
         }
 
-        private bool TryInferSignTestPredicateContext(
+        private static bool IsComparablePartyFormula(DynamicValueFormulaInfo formula)
+        {
+            if (formula?.SourceField == null || formula.Multiplier != 1)
+                return false;
+
+            return IsComparablePartyField(formula.SourceField.Field) ||
+                   IsRawTechnicalPartyField(formula.SourceField);
+        }
+
+        private bool TryInferTestPredicateContext(
             RegisterTracker registerTracker,
             string comparedRegister,
             string mnemonic,
             out PartyFieldReference comparedField,
-            out ushort compareValue)
+            out ushort compareValue,
+            out PartyValueKnowledge valueKnowledge)
         {
             comparedField = null;
             compareValue = 0;
+            valueKnowledge = PartyValueKnowledge.Unknown;
 
             string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+            if (jump == "JE" || jump == "JZ" || jump == "JNE" || jump == "JNZ")
+            {
+                if (!registerTracker.LastTestMask.HasValue || registerTracker.LastTestMask.Value == 0)
+                    return false;
+
+                if (!TryGetTestComparedPartyField(registerTracker, comparedRegister, out comparedField))
+                    return false;
+
+                compareValue = registerTracker.LastTestMask.Value;
+                valueKnowledge = PartyValueKnowledge.ExactDerived;
+                return true;
+            }
+
             if (jump != "JS" && jump != "JNS")
                 return false;
 
             if (!registerTracker.LastTestMask.HasValue || (registerTracker.LastTestMask.Value & 0x80) == 0)
                 return false;
 
-            if (string.IsNullOrWhiteSpace(comparedRegister))
-                return false;
-
-            if (!registerTracker.TryGetPartyFieldValue(comparedRegister, out comparedField) || comparedField == null)
+            if (!TryGetTestComparedPartyField(registerTracker, comparedRegister, out comparedField))
                 return false;
 
             compareValue = 0x80;
+            valueKnowledge = PartyValueKnowledge.ExactDerived;
             return true;
+        }
+
+        private bool TryGetTestComparedPartyField(
+            RegisterTracker registerTracker,
+            string comparedRegister,
+            out PartyFieldReference comparedField)
+        {
+            comparedField = null;
+            if (registerTracker == null)
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(comparedRegister) &&
+                registerTracker.TryGetPartyFieldValue(comparedRegister, out comparedField) &&
+                comparedField != null)
+            {
+                return true;
+            }
+
+            comparedField = registerTracker.LastComparedPartyField?.Clone();
+            return comparedField != null;
         }
 
         private PartyPredicateComparison ResolvePredicateComparisonForBranch(
@@ -2076,6 +2148,32 @@ namespace MMMapEditor
                     : $"0x{value:X2}";
 
             return $"{fieldText} {comparisonText} {valueText}";
+        }
+
+        private string BuildPartyPredicateDescription(
+            DynamicValueFormulaInfo formula,
+            PartyPredicateComparison comparison,
+            ushort value)
+        {
+            if (formula == null)
+                return BuildPartyPredicateDescription(PartyFieldKind.Unknown, comparison, value);
+
+            string comparisonText = comparison switch
+            {
+                PartyPredicateComparison.Equal => "==",
+                PartyPredicateComparison.NotEqual => "!=",
+                PartyPredicateComparison.LessThan => "<",
+                PartyPredicateComparison.LessOrEqual => "<=",
+                PartyPredicateComparison.GreaterThan => ">",
+                PartyPredicateComparison.GreaterOrEqual => ">=",
+                _ => "?"
+            };
+
+            string valueText = PartyAlignmentSemantics.IsAlignmentField(formula.SourceField?.Field ?? PartyFieldKind.Unknown)
+                ? PartyAlignmentSemantics.FormatAlignmentValue(value)
+                : $"0x{value:X2}";
+
+            return $"{formula.GetFormulaExpression()} {comparisonText} {valueText}";
         }
 
         private static string FormatStatusPredicateValue(ushort value)
@@ -2876,6 +2974,7 @@ namespace MMMapEditor
         private static bool IsTrackedPartyField(PartyFieldKind field)
         {
             return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyPermanentStatSemantics.IsTrackedField(field) ||
                    PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
@@ -2932,6 +3031,9 @@ namespace MMMapEditor
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
                 return PartyTemporaryStatSemantics.GetRelevantMask(operation, immediateValue);
 
+            if (PartyPermanentStatSemantics.IsTrackedField(field))
+                return PartyPermanentStatSemantics.GetRelevantMask(field, operation, immediateValue);
+
             return PartyTechnicalFieldSemantics.GetRelevantMask(field, operation, immediateValue);
         }
 
@@ -2953,6 +3055,7 @@ namespace MMMapEditor
                 PartyFieldKind.MaxHpHigh => "старший байт максимального HP",
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,
+                _ when PartyPermanentStatSemantics.IsTrackedField(field) => PartyPermanentStatSemantics.GetFieldLabel(field),
                 _ when PartyTemporaryStatSemantics.IsTrackedField(field) => PartyTemporaryStatSemantics.GetFieldLabel(field),
                 _ when PartyTechnicalFieldSemantics.IsTrackedField(field) => PartyTechnicalFieldSemantics.GetFieldLabel(field),
                 _ => null
@@ -3013,6 +3116,8 @@ namespace MMMapEditor
             {
                 byte trackedMask = PartyTechnicalFieldSemantics.IsTrackedField(field)
                     ? PartyTechnicalFieldSemantics.FilterRelevantMask(field, mask)
+                    : PartyPermanentStatSemantics.IsRaiseFlagsField(field)
+                        ? (byte)(mask & PartyPermanentStatSemantics.TrackedRaiseFlagsMask)
                     : mask;
 
                 if (trackedMask == 0)
@@ -11880,6 +11985,22 @@ namespace MMMapEditor
                             AnalysisDebug.WriteLine($"        {mnemonic} AL, 0x{immediateValue:X2}: диапазон {alRange.Min}-{alRange.Max} -> {newMin}-{newMax}");
                     }
                 }
+                else if (registerTracker.TryGetDynamicValueFormula("AL", out var formulaBeforeArithmetic) &&
+                         formulaBeforeArithmetic != null)
+                {
+                    int delta = isAdd
+                        ? immediateValue + carryIn
+                        : -(immediateValue + carryIn);
+                    registerTracker.SetDynamicValueFormula("AL", formulaBeforeArithmetic.WithAdditiveOffset(delta, address));
+                    registerTracker.FlagsKnown = false;
+                    registerTracker.SetFlagsMetadata("AL", RegisterTracker.FlagsOriginKind.Arithmetic, address);
+
+                    if (debugMode)
+                    {
+                        string sign = delta >= 0 ? "+" : string.Empty;
+                        AnalysisDebug.WriteLine($"        {mnemonic} AL, 0x{immediateValue:X2}: формула {formulaBeforeArithmetic.GetFormulaExpression()} {sign}{delta}");
+                    }
+                }
             }
 
             // ADD/ADC r8, r/m8. В AREAC4 усиление боя записано как
@@ -12562,6 +12683,7 @@ namespace MMMapEditor
 
                         if (hasTrackedTechnicalFieldCompare)
                         {
+                            registerTracker.LastComparedPartyField = comparedPartyField?.Clone();
                             if (IsRawTechnicalPartyField(comparedPartyField))
                             {
                                 RegisterRawTechnicalFieldCompareEffect(
@@ -12584,6 +12706,10 @@ namespace MMMapEditor
                                     isBitMask: true,
                                     debugMode);
                             }
+                        }
+                        else
+                        {
+                            registerTracker.LastComparedPartyField = null;
                         }
                     }
                     else
@@ -12622,6 +12748,7 @@ namespace MMMapEditor
                             testedFieldRef != null &&
                             (IsTrackedPartyField(testedFieldRef.Field) || IsRawTechnicalPartyField(testedFieldRef)))
                         {
+                            registerTracker.LastComparedPartyField = testedFieldRef.Clone();
                             if (IsRawTechnicalPartyField(testedFieldRef))
                             {
                                 RegisterRawTechnicalFieldCompareEffect(
@@ -12644,6 +12771,10 @@ namespace MMMapEditor
                                     isBitMask: true,
                                     debugMode);
                             }
+                        }
+                        else
+                        {
+                            registerTracker.LastComparedPartyField = null;
                         }
                     }
                 }

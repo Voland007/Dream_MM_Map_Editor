@@ -34,6 +34,7 @@ namespace MMMapEditor
         private static bool IsTrackedByteField(PartyFieldKind field)
         {
             return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyPermanentStatSemantics.IsTrackedField(field) ||
                    PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
         }
@@ -47,6 +48,47 @@ namespace MMMapEditor
                     effect.Kind == PartyEffectKind.TechnicalFieldCompared);
         }
 
+        public static bool IsUnrecognizedTechnicalFieldEffect(PartyEffect effect)
+        {
+            return IsRawTechnicalByteField(effect) &&
+                   !PartyInventorySemantics.IsInventorySlotOffset(effect.TechnicalFieldOffset);
+        }
+
+        public static bool IsUnrecognizedTechnicalFieldPredicate(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return false;
+
+            if (IsUnrecognizedTechnicalFieldPredicateReference(
+                    predicate.Field,
+                    predicate.FieldOffset,
+                    predicate.FieldOffsetRange))
+            {
+                return true;
+            }
+
+            var sourceField = predicate.ComparedFormula?.SourceField;
+            return sourceField != null &&
+                   IsUnrecognizedTechnicalFieldPredicateReference(
+                       sourceField.Field,
+                       sourceField.FieldOffset,
+                       sourceField.FieldOffsetRange);
+        }
+
+        private static bool IsUnrecognizedTechnicalFieldPredicateReference(
+            PartyFieldKind field,
+            byte? fieldOffset,
+            ValueRange8 fieldOffsetRange)
+        {
+            if (field != PartyFieldKind.Unknown)
+                return false;
+
+            if (!fieldOffset.HasValue && fieldOffsetRange == null)
+                return false;
+
+            return !PartyInventorySemantics.IsInventorySlotReference(fieldOffset, fieldOffsetRange);
+        }
+
         private static string GetTrackedFieldLabel(PartyFieldKind field)
         {
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
@@ -54,6 +96,9 @@ namespace MMMapEditor
 
             if (PartyFoodSemantics.IsFoodField(field))
                 return PartyFoodSemantics.GetFieldLabel(field);
+
+            if (PartyPermanentStatSemantics.IsTrackedField(field))
+                return PartyPermanentStatSemantics.GetFieldLabel(field);
 
             if (PartyTechnicalFieldSemantics.IsTrackedField(field))
                 return PartyTechnicalFieldSemantics.GetFieldLabel(field);
@@ -633,6 +678,7 @@ namespace MMMapEditor
                 predicate.ValueKnowledge,
                 predicate.ImmediateValue?.ToString() ?? "-",
                 range,
+                predicate.ComparedFormula?.GetIdentityKey() ?? "-",
                 BuildPredicateTargetKey(predicate.TargetMember));
         }
 
@@ -646,6 +692,9 @@ namespace MMMapEditor
 
             if (TryBuildMainQuestCompletionPredicateDisplayText(predicate, out string mainQuestCompletionText))
                 return mainQuestCompletionText;
+
+            if (TryBuildPermanentStatRaiseFlagPredicateDisplayText(predicate, out string permanentStatRaiseFlagText))
+                return permanentStatRaiseFlagText;
 
             if (TryBuildLoopPredicateDisplayText(predicate, out string loopPredicateText))
                 return loopPredicateText;
@@ -817,6 +866,48 @@ namespace MMMapEditor
             }
         }
 
+        private static bool TryBuildPermanentStatRaiseFlagPredicateDisplayText(PartyPredicate predicate, out string text)
+        {
+            text = null;
+            if (predicate == null ||
+                predicate.Field != PartyFieldKind.PermanentStatRaiseFlags ||
+                predicate.ValueKnowledge != PartyValueKnowledge.ExactDerived ||
+                !predicate.ImmediateValue.HasValue)
+            {
+                return false;
+            }
+
+            byte mask = (byte)(predicate.ImmediateValue.Value & 0xFF);
+            if (mask == 0 ||
+                (mask & (mask - 1)) != 0 ||
+                !PartyPermanentStatSemantics.TryGetRaiseFlagStatName(mask, out string statName))
+            {
+                return false;
+            }
+
+            bool? alreadyReceived = predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal => false,
+                PartyPredicateComparison.NotEqual => true,
+                _ => (bool?)null
+            };
+
+            if (!alreadyReceived.HasValue)
+                return false;
+
+            string targetText = predicate.TargetMember?.IsPartyLoopMember == true
+                ? BuildLoopPredicateTargetDisplayText(predicate)
+                : BuildPredicateTargetDisplayText(predicate.TargetMember);
+            if (string.IsNullOrWhiteSpace(targetText))
+                targetText = "у персонажа";
+
+            string stateText = alreadyReceived.Value
+                ? $"повышение {statName} уже получено"
+                : $"повышение {statName} ещё не получено";
+            text = $"{targetText} {stateText} ({PartyPermanentStatSemantics.RaiseFlagResetHint})";
+            return true;
+        }
+
         private static bool TryBuildLoopPredicateDisplayText(PartyPredicate predicate, out string text)
         {
             text = null;
@@ -943,12 +1034,18 @@ namespace MMMapEditor
             if (predicate == null)
                 return null;
 
+            if (predicate.ComparedFormula != null)
+                return predicate.ComparedFormula.GetFormulaExpression();
+
             string itemSlotLabel = PartyInventorySemantics.GetSlotFieldLabel(predicate);
             if (!string.IsNullOrWhiteSpace(itemSlotLabel))
                 return itemSlotLabel;
 
             if (predicate.Field == PartyFieldKind.Unknown && predicate.FieldOffset.HasValue)
                 return $"техническое поле +0x{predicate.FieldOffset.Value:X2}";
+
+            if (PartyPermanentStatSemantics.IsTrackedField(predicate.Field))
+                return PartyPermanentStatSemantics.GetFieldLabel(predicate.Field);
 
             return FormatFieldName(predicate.Field);
         }
@@ -1311,10 +1408,155 @@ namespace MMMapEditor
             if (PartyFoodSemantics.IsFoodField(field))
                 return BuildFoodFieldDescription(effect, scope, condition);
 
+            if (PartyPermanentStatSemantics.IsTrackedField(field))
+                return BuildPermanentStatFieldDescription(effect, field, scope, condition);
+
             if (PartyTechnicalFieldSemantics.IsMainQuestCompletionField(field))
                 return BuildMainQuestCompletionFieldDescription(effect, field, scope, condition);
 
             return BuildRanalouQuestLineDescription(effect, field, scope, condition);
+        }
+
+        private static string BuildPermanentStatFieldDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || !PartyPermanentStatSemantics.IsTrackedField(field))
+                return null;
+
+            if (PartyPermanentStatSemantics.IsRaiseFlagsField(field))
+                return BuildPermanentStatRaiseFlagsDescription(effect, scope, condition);
+
+            string fieldLabel = PartyPermanentStatSemantics.GetFieldLabel(field);
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            return operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается значение поля {fieldLabel} (= {effect.ImmediateValue.Value})",
+                        $"читается значение поля {fieldLabel} (= {effect.ImmediateValue.Value})")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается значение поля {fieldLabel}",
+                        $"читается значение поля {fieldLabel}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        knowledge == PartyValueKnowledge.ExactDerived
+                            ? $"Проверяется маска 0x{effect.ImmediateValue.Value:X2} в поле {fieldLabel}"
+                            : $"Проверяется значение поля {fieldLabel} на {effect.ImmediateValue.Value}",
+                        knowledge == PartyValueKnowledge.ExactDerived
+                            ? $"проверяется маска 0x{effect.ImmediateValue.Value:X2} в поле {fieldLabel}"
+                            : $"проверяется значение поля {fieldLabel} на {effect.ImmediateValue.Value}")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Проверяется значение поля {fieldLabel}",
+                        $"проверяется значение поля {fieldLabel}"),
+                PartyEffectOperation.Increment when effect.ImmediateValue.HasValue =>
+                    ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} увеличивается на {effect.ImmediateValue.Value}",
+                        $"{fieldLabel} увеличивается на {effect.ImmediateValue.Value}"),
+                PartyEffectOperation.Decrement when effect.ImmediateValue.HasValue =>
+                    ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} уменьшается на {effect.ImmediateValue.Value}",
+                        $"{fieldLabel} уменьшается на {effect.ImmediateValue.Value}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} становится равным {effect.ImmediateValue.Value}",
+                        $"{fieldLabel} становится равным {effect.ImmediateValue.Value}")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется значение поля {fieldLabel}",
+                        $"изменяется значение поля {fieldLabel}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+        }
+
+        private static string BuildPermanentStatRaiseFlagsDescription(
+            PartyEffect effect,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            string fieldLabel = PartyPermanentStatSemantics.GetFieldLabel(PartyFieldKind.PermanentStatRaiseFlags);
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+
+            if (!effect.ImmediateValue.HasValue)
+            {
+                return ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Изменяется поле {fieldLabel}",
+                    $"изменяется поле {fieldLabel}");
+            }
+
+            byte mask = (byte)(effect.ImmediateValue.Value & 0xFF);
+            string statName = null;
+            bool singleKnownRaiseFlag =
+                (mask & (mask - 1)) == 0 &&
+                PartyPermanentStatSemantics.TryGetRaiseFlagStatName(mask, out statName);
+
+            if (!singleKnownRaiseFlag)
+            {
+                return operation switch
+                {
+                    PartyEffectOperation.Compare => ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Проверяется маска 0x{mask:X2} в поле {fieldLabel}",
+                        $"проверяется маска 0x{mask:X2} в поле {fieldLabel}"),
+                    PartyEffectOperation.BitSet => ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"В поле {fieldLabel} устанавливается маска 0x{mask:X2}",
+                        $"в поле {fieldLabel} устанавливается маска 0x{mask:X2}"),
+                    PartyEffectOperation.BitClear => ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"В поле {fieldLabel} сбрасывается маска 0x{mask:X2}",
+                        $"в поле {fieldLabel} сбрасывается маска 0x{mask:X2}"),
+                    PartyEffectOperation.BitToggle => ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"В поле {fieldLabel} переключается маска 0x{mask:X2}",
+                        $"в поле {fieldLabel} переключается маска 0x{mask:X2}"),
+                    _ => ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется поле {fieldLabel}",
+                        $"изменяется поле {fieldLabel}")
+                };
+            }
+
+            string hint = PartyPermanentStatSemantics.RaiseFlagResetHint;
+            return operation switch
+            {
+                PartyEffectOperation.Compare => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Проверяется, получено ли повышение {statName} ({hint})",
+                    $"проверяется, получено ли повышение {statName} ({hint})"),
+                PartyEffectOperation.BitSet => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Отмечается, что повышение {statName} уже получено ({hint})",
+                    $"отмечается, что повышение {statName} уже получено ({hint})"),
+                PartyEffectOperation.BitClear => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Сбрасывается отметка о получении повышения {statName} ({hint})",
+                    $"сбрасывается отметка о получении повышения {statName} ({hint})"),
+                PartyEffectOperation.BitToggle => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Переключается отметка о получении повышения {statName} ({hint})",
+                    $"переключается отметка о получении повышения {statName} ({hint})"),
+                _ => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Изменяется отметка о получении повышения {statName} ({hint})",
+                    $"изменяется отметка о получении повышения {statName} ({hint})")
+            };
         }
 
         private static string BuildFoodFieldDescription(

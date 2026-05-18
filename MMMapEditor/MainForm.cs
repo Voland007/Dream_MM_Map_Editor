@@ -2646,6 +2646,10 @@ namespace MMMapEditor
                         ApplySubtleMechanicsNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.ConditionalRewardMechanicsNote:
+                        ApplyConditionalRewardMechanicsNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2762,6 +2766,13 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(150, 150, 150);
             rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(170, 185, 190), 0.16);
             rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyConditionalRewardMechanicsNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(164, 176, 185);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(118, 139, 150), 0.28);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.75f, 6.0f), FontStyle.Italic);
         }
 
         private void ApplyWheelRewardExplanationStyle(RichTextBox rt)

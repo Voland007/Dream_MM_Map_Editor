@@ -49,7 +49,15 @@ namespace MMMapEditor
         MaxHp = 25,
         MaxHpLow = 26,
         MaxHpHigh = 27,
-        Technical7D = 28
+        Technical7D = 28,
+        PermanentIntellect = 29,
+        PermanentMight = 30,
+        PermanentPersonality = 31,
+        PermanentEndurance = 32,
+        PermanentSpeed = 33,
+        PermanentAccuracy = 34,
+        PermanentLuck = 35,
+        PermanentStatRaiseFlags = 36
     }
 
     public enum PartyMemberSelectionKind

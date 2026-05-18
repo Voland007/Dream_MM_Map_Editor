@@ -32,7 +32,7 @@ namespace MMMapEditor
         public static bool DisableCacheForTargetCell { get; private set; } = true;
         public static bool Enabled { get; private set; } = true;
         public static byte? TargetX { get; private set; } = 12;
-        public static byte? TargetY { get; private set; } = 12;
+        public static byte? TargetY { get; private set; } = 1;
 
 
         public static void Configure(

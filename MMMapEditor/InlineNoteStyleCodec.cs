@@ -36,6 +36,7 @@ namespace MMMapEditor
         private const string DynamicRandomBoundDependencyTokenPrefix = "[[DYNBOUND:";
         private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
         private const string SubtleMechanicsNoteTokenPrefix = "[[SUBTLEMECH:";
+        private const string ConditionalRewardMechanicsNoteTokenPrefix = "[[CONDREWARD:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
@@ -105,6 +106,11 @@ namespace MMMapEditor
         public static string EncodeSubtleMechanicsNoteText(string visibleText)
         {
             return EncodeTextStyleToken(SubtleMechanicsNoteTokenPrefix, visibleText);
+        }
+
+        public static string EncodeConditionalRewardMechanicsNoteText(string visibleText)
+        {
+            return EncodeTextStyleToken(ConditionalRewardMechanicsNoteTokenPrefix, visibleText);
         }
 
         public static string EncodeWheelRewardExplanationText(string visibleText)
@@ -358,6 +364,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.SubtleMechanicsNote
                     });
                     i += subtleMechanicsConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    ConditionalRewardMechanicsNoteTokenPrefix,
+                    out string conditionalRewardMechanicsText,
+                    out int conditionalRewardMechanicsConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(conditionalRewardMechanicsText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = conditionalRewardMechanicsText.Length,
+                        Kind = NoteInlineStyleKind.ConditionalRewardMechanicsNote
+                    });
+                    i += conditionalRewardMechanicsConsumedLength;
                     continue;
                 }
 
