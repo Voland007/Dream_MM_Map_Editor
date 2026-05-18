@@ -55,7 +55,8 @@ namespace MMMapEditor
             Dictionary<Point, Directions<bool>> seedMessageStates = null,
             bool? useHierarchicalView = null,
             IReadOnlyList<OvrObject> preAnalyzedObjects = null,
-            ISet<Point> cellsToBuild = null)
+            ISet<Point> cellsToBuild = null,
+            bool buildInlineStyleSpans = true)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
@@ -72,7 +73,8 @@ namespace MMMapEditor
                 seedMessageStates,
                 useHierarchicalView,
                 preAnalyzedObjects,
-                cellsToBuild);
+                cellsToBuild,
+                buildInlineStyleSpans);
 
             var result = new OvrOverlayLoadResult
             {

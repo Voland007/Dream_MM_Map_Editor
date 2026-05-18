@@ -398,7 +398,8 @@ namespace MMMapEditor.Tests
                 null,
                 useHierarchical,
                 preAnalyzedObjects,
-                cellsToCheck);
+                cellsToCheck,
+                buildInlineStyleSpans: false);
 
             WriteVerboseTestLog(
                 $"Load({modeName}) завершён. NotesPerCell={loadResult.NotesPerCell.Count}, " +

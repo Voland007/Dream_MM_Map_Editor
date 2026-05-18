@@ -1018,6 +1018,15 @@ namespace MMMapEditor
         public List<string> Texts { get; set; } = new List<string>();
         public List<BranchChoice> BranchChoices { get; set; } = new List<BranchChoice>();
 
+        internal bool OvrNotesPermanentStatRaiseVariantInfoCacheComputed;
+        internal object OvrNotesPermanentStatRaiseVariantInfoCacheEntry;
+        internal bool OvrNotesNarrativeCoveredConditionalStatRewardInfoCacheComputed;
+        internal object OvrNotesNarrativeCoveredConditionalStatRewardInfoCacheEntry;
+        internal bool OvrNotesPartyLoopGuardPredicateKeysComputed;
+        internal HashSet<string> OvrNotesPartyLoopGuardPredicateKeys;
+        internal bool OvrNotesRelevantBranchChoicesComputed;
+        internal List<BranchChoice> OvrNotesRelevantBranchChoices;
+
         public byte? RandomEncounterMonsterPowerCap { get; set; }
         public byte? RandomEncounterMonsterLevelCap { get; set; }
         public byte? RandomEncounterMonsterBatchCountCap { get; set; }

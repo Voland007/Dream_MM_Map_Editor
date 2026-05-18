@@ -149,9 +149,24 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(rawText))
                 return rendered;
 
+            if (rawText.IndexOf("[[", StringComparison.Ordinal) < 0)
+            {
+                rendered.Text = rawText;
+                return rendered;
+            }
+
             var visibleText = new StringBuilder(rawText.Length);
             for (int i = 0; i < rawText.Length;)
             {
+                if (rawText[i] != '[' ||
+                    i + 1 >= rawText.Length ||
+                    rawText[i + 1] != '[')
+                {
+                    visibleText.Append(rawText[i]);
+                    i++;
+                    continue;
+                }
+
                 if (TryConsumeRandomEncounterRubiconWarningToken(
                     rawText,
                     i,
@@ -425,6 +440,16 @@ namespace MMMapEditor
 
             rendered.Text = visibleText.ToString();
             return rendered;
+        }
+
+        public static string RenderVisibleText(string rawText)
+        {
+            if (string.IsNullOrEmpty(rawText))
+                return string.Empty;
+
+            return rawText.IndexOf("[[", StringComparison.Ordinal) < 0
+                ? rawText
+                : RenderTextWithStyles(rawText).Text;
         }
 
         private static string EncodeTextStyleToken(string tokenPrefix, string visibleText)

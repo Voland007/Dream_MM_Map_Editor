@@ -279,7 +279,16 @@ namespace MMMapEditor
                         "AreaD3",
                         CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
                         CreateBorder("\u0413\u043E\u0440\u044B"),
-                        CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E"))
+                        CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E")),
+                [new OvrSideLayoutFamilyKey(
+                    new OvrSideKey(0x02, 0x0D),
+                    new OvrSideKey(0x01, 0x07),
+                    new OvrSideKey(0x09, 0x1A),
+                    0x01)] = CreateLayoutTemplate(
+                        "AreaD4",
+                        CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
+                        CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E"),
+                        CreateBorder("\u0412\u043E\u0434\u0430"))
             };
 
         public static OvrSideLayout ReadLayout(byte[] fileData, OvrFileConfig config, string fileNameOnly)

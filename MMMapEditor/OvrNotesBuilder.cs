@@ -64,7 +64,8 @@ namespace MMMapEditor
             Dictionary<Point, Directions<bool>> existingMessageStates = null,
             bool? useHierarchicalView = null,
             IReadOnlyList<OvrObject> preAnalyzedObjects = null,
-            ISet<Point> cellsToBuild = null)
+            ISet<Point> cellsToBuild = null,
+            bool buildInlineStyleSpans = true)
         {
             var result = new OvrNotesBuildResult
             {
@@ -145,13 +146,16 @@ namespace MMMapEditor
                 string existingCellNotes = result.NotesPerCell.TryGetValue(pos, out var notes)
                     ? notes
                     : "";
-                var existingInlineStyles = result.NoteStyleSpansPerCell.TryGetValue(pos, out var priorInlineStyles)
+                var existingInlineStyles = buildInlineStyleSpans &&
+                    result.NoteStyleSpansPerCell.TryGetValue(pos, out var priorInlineStyles)
                     ? (priorInlineStyles ?? new List<NoteInlineStyleSpan>())
                         .Where(span => span != null && span.Length > 0 && span.Start >= 0)
                         .Select(span => span.Clone())
                         .ToList()
                     : new List<NoteInlineStyleSpan>();
-                var rawOverlayTexts = CollectRawOverlayVisibleTexts(obj);
+                var rawOverlayTexts = buildInlineStyleSpans
+                    ? CollectRawOverlayVisibleTexts(obj)
+                    : new List<string>();
 
                 if (obj.IsFromTable)
                 {
@@ -216,7 +220,9 @@ namespace MMMapEditor
                     : string.Empty;
 
                 StringBuilder newNotes = new StringBuilder();
-                var inlineStyles = new List<NoteInlineStyleSpan>();
+                var inlineStyles = buildInlineStyleSpans
+                    ? new List<NoteInlineStyleSpan>()
+                    : null;
 
                 if (!string.IsNullOrWhiteSpace(specialFullNotes))
                 {
@@ -312,10 +318,13 @@ namespace MMMapEditor
                 AppendRawOverlayTextSpans(finalNoteText, inlineStyles, rawOverlayTexts);
 
                 result.NotesPerCell[pos] = finalNoteText;
-                result.NoteStyleSpansPerCell[pos] = inlineStyles
-                    .Where(span => span != null && span.Length > 0 && span.Start >= 0)
-                    .Select(span => span.Clone())
-                    .ToList();
+                if (buildInlineStyleSpans)
+                {
+                    result.NoteStyleSpansPerCell[pos] = inlineStyles
+                        .Where(span => span != null && span.Length > 0 && span.Start >= 0)
+                        .Select(span => span.Clone())
+                        .ToList();
+                }
             }
 
             return result;
@@ -357,6 +366,12 @@ namespace MMMapEditor
         {
             if (target == null || string.IsNullOrEmpty(rawText))
                 return;
+
+            if (inlineStyles == null)
+            {
+                target.Append(InlineNoteStyleCodec.RenderVisibleText(rawText));
+                return;
+            }
 
             var rendered = InlineNoteStyleCodec.RenderTextWithStyles(rawText);
             int startIndex = target.Length;
@@ -520,7 +535,7 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(decodedText))
                 return false;
 
-            visibleText = InlineNoteStyleCodec.RenderTextWithStyles(decodedText).Text;
+            visibleText = InlineNoteStyleCodec.RenderVisibleText(decodedText);
             return !string.IsNullOrEmpty(visibleText);
         }
 
@@ -889,6 +904,80 @@ namespace MMMapEditor
             if (variant == null)
                 return false;
 
+            if (!MightContainPermanentStatRaiseVariant(variant))
+                return false;
+
+            var cacheEntry = GetPermanentStatRaiseVariantInfoCacheEntry(variant);
+
+            if (cacheEntry?.HasInfo != true)
+                return false;
+
+            info = cacheEntry.Info;
+            return true;
+        }
+
+        private static PermanentStatRaiseVariantInfoCacheEntry GetPermanentStatRaiseVariantInfoCacheEntry(
+            PathVariantInfo variant)
+        {
+            lock (variant)
+            {
+                if (!variant.OvrNotesPermanentStatRaiseVariantInfoCacheComputed)
+                {
+                    variant.OvrNotesPermanentStatRaiseVariantInfoCacheEntry =
+                        BuildPermanentStatRaiseVariantInfoCacheEntry(variant);
+                    variant.OvrNotesPermanentStatRaiseVariantInfoCacheComputed = true;
+                }
+
+                return variant.OvrNotesPermanentStatRaiseVariantInfoCacheEntry
+                    as PermanentStatRaiseVariantInfoCacheEntry;
+            }
+        }
+
+        private static bool MightContainPermanentStatRaiseVariant(PathVariantInfo variant)
+        {
+            var effects = variant?.PartyEffects;
+            if (effects == null || effects.Count == 0)
+                return false;
+
+            bool hasPermanentStatChange = false;
+            bool hasRaiseFlagSet = false;
+            foreach (var effect in effects)
+            {
+                if (effect == null || !PartyEffectSemantics.IsStateChanging(effect))
+                    continue;
+
+                var field = PartyEffectSemantics.GetEffectiveField(effect);
+                if (PartyPermanentStatSemantics.IsPermanentStatField(field))
+                    hasPermanentStatChange = true;
+                else if (field == PartyFieldKind.PermanentStatRaiseFlags &&
+                         PartyEffectSemantics.GetEffectiveOperation(effect) == PartyEffectOperation.BitSet)
+                {
+                    hasRaiseFlagSet = true;
+                }
+
+                if (hasPermanentStatChange && hasRaiseFlagSet)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static PermanentStatRaiseVariantInfoCacheEntry BuildPermanentStatRaiseVariantInfoCacheEntry(
+            PathVariantInfo variant)
+        {
+            return TryComputePermanentStatRaiseVariantInfo(variant, out var info)
+                ? new PermanentStatRaiseVariantInfoCacheEntry { HasInfo = true, Info = info }
+                : new PermanentStatRaiseVariantInfoCacheEntry();
+        }
+
+        private static bool TryComputePermanentStatRaiseVariantInfo(
+            PathVariantInfo variant,
+            out PermanentStatRaiseCollapseInfo info)
+        {
+            info = null;
+            if (variant == null)
+                return false;
+
             var effects = variant.PartyEffects?
                 .Where(effect => effect != null)
                 .ToList() ?? new List<PartyEffect>();
@@ -1015,6 +1104,66 @@ namespace MMMapEditor
         }
 
         private static bool TryBuildNarrativeCoveredConditionalStatRewardInfo(
+            PathVariantInfo variant,
+            out NarrativeCoveredConditionalStatRewardInfo info)
+        {
+            info = null;
+            if (variant == null)
+                return false;
+
+            if (!MightContainNarrativeCoveredConditionalStatRewardVariant(variant))
+                return false;
+
+            var cacheEntry = GetNarrativeCoveredConditionalStatRewardInfoCacheEntry(variant);
+
+            if (cacheEntry?.HasInfo != true)
+                return false;
+
+            info = cacheEntry.Info;
+            return true;
+        }
+
+        private static NarrativeCoveredConditionalStatRewardInfoCacheEntry GetNarrativeCoveredConditionalStatRewardInfoCacheEntry(
+            PathVariantInfo variant)
+        {
+            lock (variant)
+            {
+                if (!variant.OvrNotesNarrativeCoveredConditionalStatRewardInfoCacheComputed)
+                {
+                    variant.OvrNotesNarrativeCoveredConditionalStatRewardInfoCacheEntry =
+                        BuildNarrativeCoveredConditionalStatRewardInfoCacheEntry(variant);
+                    variant.OvrNotesNarrativeCoveredConditionalStatRewardInfoCacheComputed = true;
+                }
+
+                return variant.OvrNotesNarrativeCoveredConditionalStatRewardInfoCacheEntry
+                    as NarrativeCoveredConditionalStatRewardInfoCacheEntry;
+            }
+        }
+
+        private static bool MightContainNarrativeCoveredConditionalStatRewardVariant(
+            PathVariantInfo variant)
+        {
+            if (variant == null ||
+                variant.PartyEffects == null ||
+                variant.PartyEffects.Count == 0 ||
+                variant.Texts == null ||
+                !variant.Texts.Any(text => !string.IsNullOrEmpty(text) && text.IndexOf('+') >= 0))
+            {
+                return false;
+            }
+
+            return variant.PartyEffects.Any(IsNarrativeCoveredConditionalStatRewardEffect);
+        }
+
+        private static NarrativeCoveredConditionalStatRewardInfoCacheEntry BuildNarrativeCoveredConditionalStatRewardInfoCacheEntry(
+            PathVariantInfo variant)
+        {
+            return TryComputeNarrativeCoveredConditionalStatRewardInfo(variant, out var info)
+                ? new NarrativeCoveredConditionalStatRewardInfoCacheEntry { HasInfo = true, Info = info }
+                : new NarrativeCoveredConditionalStatRewardInfoCacheEntry();
+        }
+
+        private static bool TryComputeNarrativeCoveredConditionalStatRewardInfo(
             PathVariantInfo variant,
             out NarrativeCoveredConditionalStatRewardInfo info)
         {
@@ -4355,6 +4504,12 @@ namespace MMMapEditor
             public List<string> NarrativeLines { get; set; } = new List<string>();
         }
 
+        private sealed class PermanentStatRaiseVariantInfoCacheEntry
+        {
+            public bool HasInfo { get; set; }
+            public PermanentStatRaiseCollapseInfo Info { get; set; }
+        }
+
         private sealed class NarrativeCoveredConditionalStatRewardInfo
         {
             public PartyFieldKind StatField { get; set; }
@@ -4364,6 +4519,12 @@ namespace MMMapEditor
             public HashSet<string> EffectKeys { get; set; } =
                 new HashSet<string>(StringComparer.Ordinal);
             public string HeaderAnnotation { get; set; }
+        }
+
+        private sealed class NarrativeCoveredConditionalStatRewardInfoCacheEntry
+        {
+            public bool HasInfo { get; set; }
+            public NarrativeCoveredConditionalStatRewardInfo Info { get; set; }
         }
 
         private static string BuildHierarchicalVariantNotes(
@@ -9033,6 +9194,49 @@ namespace MMMapEditor
             if (variant?.BranchChoices == null)
                 yield break;
 
+            if (!suppressedPermanentStatRaiseGuardMask.HasValue &&
+                (suppressedLoopGuardPredicateKeys == null || suppressedLoopGuardPredicateKeys.Count == 0))
+            {
+                foreach (var choice in GetCachedRelevantBranchChoices(variant))
+                    yield return choice;
+
+                yield break;
+            }
+
+            foreach (var choice in BuildRelevantBranchChoices(
+                variant,
+                suppressedPermanentStatRaiseGuardMask,
+                suppressedLoopGuardPredicateKeys))
+            {
+                yield return choice;
+            }
+        }
+
+        private static List<BranchChoice> GetCachedRelevantBranchChoices(PathVariantInfo variant)
+        {
+            lock (variant)
+            {
+                if (!variant.OvrNotesRelevantBranchChoicesComputed)
+                {
+                    variant.OvrNotesRelevantBranchChoices = BuildRelevantBranchChoices(
+                        variant,
+                        null,
+                        null);
+                    variant.OvrNotesRelevantBranchChoicesComputed = true;
+                }
+
+                return variant.OvrNotesRelevantBranchChoices?.ToList() ?? new List<BranchChoice>();
+            }
+        }
+
+        private static List<BranchChoice> BuildRelevantBranchChoices(
+            PathVariantInfo variant,
+            byte? suppressedPermanentStatRaiseGuardMask,
+            IReadOnlySet<string> suppressedLoopGuardPredicateKeys)
+        {
+            if (variant?.BranchChoices == null)
+                return new List<BranchChoice>();
+
             var candidates = new List<BranchChoiceDisplayCandidate>();
             foreach (var choice in variant.BranchChoices)
             {
@@ -9066,6 +9270,7 @@ namespace MMMapEditor
 
             var seenInventoryPresenceItems = new HashSet<string>(StringComparer.Ordinal);
             var collapsedCandidates = CollapseFlagPropagatedInputChoiceDuplicates(candidates);
+            var result = new List<BranchChoice>();
             foreach (var candidate in SuppressInventorySlotChoicesShadowedByRange(collapsedCandidates))
             {
                 if (candidate?.Normalized == null)
@@ -9077,8 +9282,10 @@ namespace MMMapEditor
                     continue;
                 }
 
-                yield return candidate.Normalized;
+                result.Add(candidate.Normalized);
             }
+
+            return result;
         }
 
         private static bool IsPermanentStatRaiseGuardBranchChoice(
@@ -9121,6 +9328,44 @@ namespace MMMapEditor
                 return false;
             }
 
+            var loopGuardPredicateKeys = GetPartyLoopGuardPredicateKeys(variant);
+            if (loopGuardPredicateKeys.Count == 0)
+                return false;
+
+            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GetGuardPredicateForDisplay());
+            string rawChoicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
+            return (!string.IsNullOrWhiteSpace(choicePredicateKey) &&
+                    loopGuardPredicateKeys.Contains(choicePredicateKey)) ||
+                   (!string.IsNullOrWhiteSpace(rawChoicePredicateKey) &&
+                    loopGuardPredicateKeys.Contains(rawChoicePredicateKey));
+        }
+
+        private static HashSet<string> GetPartyLoopGuardPredicateKeys(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return new HashSet<string>(StringComparer.Ordinal);
+
+            lock (variant)
+            {
+                if (variant.OvrNotesPartyLoopGuardPredicateKeysComputed)
+                {
+                    return variant.OvrNotesPartyLoopGuardPredicateKeys
+                        ?? new HashSet<string>(StringComparer.Ordinal);
+                }
+
+                var keys = BuildPartyLoopGuardPredicateKeys(variant);
+                variant.OvrNotesPartyLoopGuardPredicateKeys = keys;
+                variant.OvrNotesPartyLoopGuardPredicateKeysComputed = true;
+                return keys;
+            }
+        }
+
+        private static HashSet<string> BuildPartyLoopGuardPredicateKeys(PathVariantInfo variant)
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+            if (variant?.PartyEffects == null)
+                return result;
+
             var loopGuardEffects = variant.PartyEffects
                 .Where(IsSexWriteLoopSubsetOutcomeEffect)
                 .ToList();
@@ -9140,23 +9385,17 @@ namespace MMMapEditor
             }
 
             if (loopGuardEffects.Count == 0)
-                return false;
+                return result;
 
-            string choicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GetGuardPredicateForDisplay());
-            string rawChoicePredicateKey = BuildLoopNormalizedPredicateKey(choice.GuardPredicate);
-            if (string.IsNullOrWhiteSpace(choicePredicateKey) &&
-                string.IsNullOrWhiteSpace(rawChoicePredicateKey))
-            {
-                return false;
-            }
-
-            return loopGuardEffects
+            foreach (string key in loopGuardEffects
                 .SelectMany(effect => PartyEffectSemantics.GetEffectiveGuardPredicates(effect))
                 .Select(BuildLoopNormalizedPredicateKey)
-                .Where(key => !string.IsNullOrWhiteSpace(key))
-                .Any(key =>
-                    string.Equals(key, choicePredicateKey, StringComparison.Ordinal) ||
-                    string.Equals(key, rawChoicePredicateKey, StringComparison.Ordinal));
+                .Where(key => !string.IsNullOrWhiteSpace(key)))
+            {
+                result.Add(key);
+            }
+
+            return result;
         }
 
         private static bool IsPermanentStatRaiseLoopSubsetOutcomeEffect(
