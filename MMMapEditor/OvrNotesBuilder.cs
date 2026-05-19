@@ -2984,24 +2984,9 @@ namespace MMMapEditor
                 .Select(kvp => kvp.Value)
                 .ToList();
 
-            var dynamicDependencies = battleVariants
-                .SelectMany(variant => variant.DynamicRandomBoundDependencies ?? new List<DynamicRandomBoundDependencyInfo>())
-                .Where(dependency => dependency?.UpperBoundFormula != null)
-                .ToList();
-
-            if (dynamicDependencies.Count == 0)
-                return false;
-
-            var dynamicDependency = dynamicDependencies[0];
-            string dynamicDependencyKey = dynamicDependency.GetIdentityKey();
-            if (dynamicDependencies.Any(dependency =>
-                !string.Equals(dependency.GetIdentityKey(), dynamicDependencyKey, StringComparison.Ordinal)))
-            {
-                return false;
-            }
-
-            if (!IsLevelPlusOffsetFormula(dynamicDependency?.UpperBoundFormula))
-                return false;
+            bool hasDynamicVariantCountFormula = TryGetSharedCollapsedPartialBattleDynamicDependency(
+                battleVariants,
+                out var dynamicDependency);
 
             var battleOptions = BuildCollapsedPartialBattleOptions(battleVariants);
             if (battleOptions.Count < 2)
@@ -3016,16 +3001,29 @@ namespace MMMapEditor
                 return false;
             }
 
+            if (!hasDynamicVariantCountFormula &&
+                !CanCollapseProbabilityPartitionedPartialBattleSlices(
+                    battleVariants,
+                    encounterNumerator,
+                    encounterDenominator))
+            {
+                return false;
+            }
+
             string encounterProbability = BuildProbabilityHeaderAnnotation(
                 BuildStandaloneProbabilityLine(encounterNumerator, encounterDenominator));
             if (string.IsNullOrWhiteSpace(encounterProbability))
                 return false;
 
-            string formulaText = BuildDiceFormulaExpression(dynamicDependency.UpperBoundFormula);
-            string dynamicVariantCountText =
-                $"Количество доступных вариантов рассчитывается по формуле: {formulaText}, но не более {battleOptions.Count}";
-            string dynamicVariantCountLine = InlineNoteStyleCodec.EncodeMutedParentheticalNoteText(
-                $"({dynamicVariantCountText})");
+            string dynamicVariantCountLine = null;
+            if (hasDynamicVariantCountFormula)
+            {
+                string formulaText = BuildDiceFormulaExpression(dynamicDependency.UpperBoundFormula);
+                string dynamicVariantCountText =
+                    $"Количество доступных вариантов рассчитывается по формуле: {formulaText}, но не более {battleOptions.Count}";
+                dynamicVariantCountLine = InlineNoteStyleCodec.EncodeMutedParentheticalNoteText(
+                    $"({dynamicVariantCountText})");
+            }
 
             var sb = new StringBuilder();
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
@@ -3048,7 +3046,8 @@ namespace MMMapEditor
             sb.AppendLine();
             sb.AppendLine($"Вариант {displayVariantNumber} ({encounterProbability}):");
             sb.AppendLine($"Частично определённая битва. {battleOptions.Count} вариант(ов):");
-            sb.AppendLine(dynamicVariantCountLine);
+            if (!string.IsNullOrWhiteSpace(dynamicVariantCountLine))
+                sb.AppendLine(dynamicVariantCountLine);
 
             for (int i = 0; i < battleOptions.Count; i++)
             {
@@ -3075,6 +3074,104 @@ namespace MMMapEditor
                 obj,
                 variantContents,
                 out _);
+        }
+
+        private static bool TryGetSharedCollapsedPartialBattleDynamicDependency(
+            List<PathVariantInfo> battleVariants,
+            out DynamicRandomBoundDependencyInfo dynamicDependency)
+        {
+            dynamicDependency = null;
+
+            var dynamicDependencies = (battleVariants ?? new List<PathVariantInfo>())
+                .SelectMany(variant => variant?.DynamicRandomBoundDependencies ?? new List<DynamicRandomBoundDependencyInfo>())
+                .Where(dependency => dependency?.UpperBoundFormula != null)
+                .ToList();
+
+            if (dynamicDependencies.Count == 0)
+                return false;
+
+            dynamicDependency = dynamicDependencies[0];
+            string dynamicDependencyKey = dynamicDependency.GetIdentityKey();
+            if (dynamicDependencies.Any(dependency =>
+                !string.Equals(dependency.GetIdentityKey(), dynamicDependencyKey, StringComparison.Ordinal)))
+            {
+                dynamicDependency = null;
+                return false;
+            }
+
+            if (!IsLevelPlusOffsetFormula(dynamicDependency.UpperBoundFormula))
+            {
+                dynamicDependency = null;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool CanCollapseProbabilityPartitionedPartialBattleSlices(
+            List<PathVariantInfo> battleVariants,
+            int encounterNumerator,
+            int encounterDenominator)
+        {
+            if (!CanCollapseContiguousPartialBattleSlices(battleVariants))
+                return false;
+
+            if (!TrySumVariantProbabilities(
+                    battleVariants,
+                    out int battleNumerator,
+                    out int battleDenominator))
+            {
+                return false;
+            }
+
+            return AreEqualFractions(
+                battleNumerator,
+                battleDenominator,
+                encounterNumerator,
+                encounterDenominator);
+        }
+
+        private static bool CanCollapseContiguousPartialBattleSlices(List<PathVariantInfo> battleVariants)
+        {
+            var partials = (battleVariants ?? new List<PathVariantInfo>())
+                .SelectMany(variant => variant?.PartiallyDefinedBattles ?? new List<PartiallyDefinedBattle>())
+                .Where(partial => partial != null)
+                .ToList();
+
+            if (partials.Count < 2)
+                return false;
+
+            int bxIndex = partials[0].BxIndex;
+            if (partials.Any(partial => partial.BxIndex != bxIndex))
+                return false;
+
+            var monsterIdsWithDuplicates = partials
+                .SelectMany(partial => partial.GetPossibleMonsters())
+                .Where(monster => monster != null)
+                .Select(monster => monster.MonsterId)
+                .ToList();
+
+            var monsterIds = monsterIdsWithDuplicates
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+
+            if (monsterIds.Count < 2)
+                return false;
+
+            if (monsterIdsWithDuplicates.Count != monsterIds.Count)
+                return false;
+
+            int expected = monsterIds[0];
+            foreach (int monsterId in monsterIds)
+            {
+                if (monsterId != expected)
+                    return false;
+
+                expected++;
+            }
+
+            return true;
         }
 
         private static bool CanRenderBesideCollapsedPartialBattle(PathVariantInfo variant, List<string> lines)
@@ -3169,6 +3266,72 @@ namespace MMMapEditor
             return true;
         }
 
+        private static bool TrySumVariantProbabilities(
+            IEnumerable<PathVariantInfo> variants,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 0;
+            denominator = 1;
+
+            foreach (var variant in variants ?? Enumerable.Empty<PathVariantInfo>())
+            {
+                if (!TryGetVariantProbabilityFraction(
+                        variant,
+                        out int variantNumerator,
+                        out int variantDenominator))
+                {
+                    return false;
+                }
+
+                if (!TryAddProbability(
+                        numerator,
+                        denominator,
+                        variantNumerator,
+                        variantDenominator,
+                        out numerator,
+                        out denominator))
+                {
+                    return false;
+                }
+            }
+
+            ReduceFraction(ref numerator, ref denominator);
+            return true;
+        }
+
+        private static bool TryAddProbability(
+            int leftNumerator,
+            int leftDenominator,
+            int rightNumerator,
+            int rightDenominator,
+            out int numerator,
+            out int denominator)
+        {
+            numerator = 0;
+            denominator = 1;
+
+            if (leftDenominator <= 0 || rightDenominator <= 0)
+                return false;
+
+            long gcd = GreatestCommonDivisor(Math.Abs(leftDenominator), Math.Abs(rightDenominator));
+            long lcm = (long)leftDenominator / gcd * rightDenominator;
+            if (lcm <= 0 || lcm > int.MaxValue)
+                return false;
+
+            long adjustedNumerator =
+                (long)leftNumerator * (lcm / leftDenominator) +
+                (long)rightNumerator * (lcm / rightDenominator);
+
+            if (adjustedNumerator < int.MinValue || adjustedNumerator > int.MaxValue)
+                return false;
+
+            numerator = (int)adjustedNumerator;
+            denominator = (int)lcm;
+            ReduceFraction(ref numerator, ref denominator);
+            return true;
+        }
+
         private static bool TrySubtractProbability(
             int leftNumerator,
             int leftDenominator,
@@ -3199,6 +3362,22 @@ namespace MMMapEditor
             denominator = (int)lcm;
             ReduceFraction(ref numerator, ref denominator);
             return true;
+        }
+
+        private static bool AreEqualFractions(
+            int leftNumerator,
+            int leftDenominator,
+            int rightNumerator,
+            int rightDenominator)
+        {
+            if (leftDenominator <= 0 || rightDenominator <= 0)
+                return false;
+
+            ReduceFraction(ref leftNumerator, ref leftDenominator);
+            ReduceFraction(ref rightNumerator, ref rightDenominator);
+
+            return leftNumerator == rightNumerator &&
+                   leftDenominator == rightDenominator;
         }
 
         private static bool IsDisplayedNoOpVariant(PathVariantInfo variant, List<string> lines)
