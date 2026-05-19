@@ -3573,11 +3573,18 @@ namespace MMMapEditor
 
             var existingEquivalentOverlayText = result.OrderedTexts.FirstOrDefault(entry =>
                 entry != null &&
-                IsEquivalentOverlayTextEntry(entry.Text, text));
+                (IsEquivalentOverlayTextEntry(entry.Text, text) ||
+                 IsRelatedOverlayTextWithPrintedSuffix(entry.Text, text)));
 
             if (existingEquivalentOverlayText != null)
             {
                 bool updated = PromoteOrderedTextMetadata(existingEquivalentOverlayText, candidate);
+                if (TryPreferCandidateOverlayText(existingEquivalentOverlayText.Text, text))
+                {
+                    ReplaceOrderedTextEntry(result, existingEquivalentOverlayText, candidate, foundTextsInThisPath);
+                    updated = true;
+                }
+
                 AddLegacyText(result, text, isContextual);
                 foundTextsInThisPath?.Add(text);
                 return updated ? OrderedTextMergeOutcome.UpdatedExisting : OrderedTextMergeOutcome.UnchangedExisting;
@@ -3942,7 +3949,8 @@ namespace MMMapEditor
 
             return result.OrderedTexts.Any(entry =>
                 entry != null &&
-                IsEquivalentOverlayTextEntry(entry.Text, candidateText));
+                (IsEquivalentOverlayTextEntry(entry.Text, candidateText) ||
+                 ExistingOverlayTextCoversCandidate(entry.Text, candidateText)));
         }
 
         private static bool HasOverlayTextEntryWithSameVisibleText(PathAnalysisResult result, string text)
@@ -3968,6 +3976,77 @@ namespace MMMapEditor
                    TrySplitOverlayTextEntry(right, out ushort rightAddress, out string rightText) &&
                    leftAddress == rightAddress &&
                    string.Equals(leftText, rightText, StringComparison.Ordinal);
+        }
+
+        private static bool IsRelatedOverlayTextWithPrintedSuffix(string left, string right)
+        {
+            return TrySplitOverlayTextEntry(left, out ushort leftAddress, out string leftText) &&
+                   TrySplitOverlayTextEntry(right, out ushort rightAddress, out string rightText) &&
+                   leftAddress == rightAddress &&
+                   IsSameOverlayTextWithPrintedSuffix(leftText, rightText);
+        }
+
+        private static bool ExistingOverlayTextCoversCandidate(string existingText, string candidateText)
+        {
+            if (!TrySplitOverlayTextEntry(existingText, out ushort existingAddress, out string existingVisibleText) ||
+                !TrySplitOverlayTextEntry(candidateText, out ushort candidateAddress, out string candidateVisibleText) ||
+                existingAddress != candidateAddress ||
+                string.IsNullOrEmpty(existingVisibleText) ||
+                string.IsNullOrEmpty(candidateVisibleText) ||
+                existingVisibleText.Length <= candidateVisibleText.Length ||
+                !existingVisibleText.StartsWith(candidateVisibleText, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return IsPrintedOverlaySuffix(existingVisibleText.Substring(candidateVisibleText.Length));
+        }
+
+        private static bool IsSameOverlayTextWithPrintedSuffix(string leftText, string rightText)
+        {
+            if (string.IsNullOrEmpty(leftText) || string.IsNullOrEmpty(rightText))
+                return false;
+
+            string suffix;
+            if (leftText.Length > rightText.Length &&
+                leftText.StartsWith(rightText, StringComparison.Ordinal))
+            {
+                suffix = leftText.Substring(rightText.Length);
+            }
+            else if (rightText.Length > leftText.Length &&
+                     rightText.StartsWith(leftText, StringComparison.Ordinal))
+            {
+                suffix = rightText.Substring(leftText.Length);
+            }
+            else
+            {
+                return false;
+            }
+
+            return IsPrintedOverlaySuffix(suffix);
+        }
+
+        private static bool IsPrintedOverlaySuffix(string suffix)
+        {
+            return !string.IsNullOrEmpty(suffix) &&
+                   suffix.All(ch => ch == ' ' || ch == '.');
+        }
+
+        private static bool TryPreferCandidateOverlayText(string existingText, string candidateText)
+        {
+            if (!TrySplitOverlayTextEntry(existingText, out ushort existingAddress, out string existingVisibleText) ||
+                !TrySplitOverlayTextEntry(candidateText, out ushort candidateAddress, out string candidateVisibleText) ||
+                existingAddress != candidateAddress ||
+                string.IsNullOrEmpty(existingVisibleText) ||
+                string.IsNullOrEmpty(candidateVisibleText) ||
+                candidateVisibleText.Length <= existingVisibleText.Length ||
+                !candidateVisibleText.StartsWith(existingVisibleText, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string suffix = candidateVisibleText.Substring(existingVisibleText.Length);
+            return IsPrintedOverlaySuffix(suffix);
         }
 
         private static bool TrySplitOverlayTextEntry(string rawText, out ushort textAddress, out string visibleText)
