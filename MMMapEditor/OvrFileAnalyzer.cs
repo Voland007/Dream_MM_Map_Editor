@@ -2187,6 +2187,7 @@ namespace MMMapEditor
                 BuildRawLeafTeleportKey(variant),
                 $"random:{variant.RandomEncounterMonsterPowerCap}-{variant.RandomEncounterMonsterLevelCap}-{variant.RandomEncounterMonsterBatchCountCap}-{variant.DarkeningLevel}-{variant.RandomEncounterChance}-{variant.RandomEncounterRubicon}-{variant.BattleMonsterStrengthAdjustment}",
                 $"calls:{variant.CallsRandomEncounter}/{variant.IsOnlyRandomEncounterJump}",
+                $"external:{BuildExternalJumpTargetsKey(variant)}",
                 $"table:{variant.HasAnyTableLoad}",
                 $"loaded:{variant.LoadedValues?.Count ?? 0}",
                 $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
@@ -4199,6 +4200,7 @@ namespace MMMapEditor
                    !variant.RandomEncounterRubicon.HasValue &&
                    variant.BattleMonsterStrengthAdjustment == 0 &&
                    !variant.CallsRandomEncounter &&
+                   !HasSemanticExternalJumpTargets(variant) &&
                    !variant.TeleportTargetX.HasValue &&
                    !variant.TeleportTargetY.HasValue &&
                    variant.TeleportTargetXRange == null &&
@@ -4263,7 +4265,7 @@ namespace MMMapEditor
                     .Select(info => info.GetIdentityKey())
                     .OrderBy(key => key))
                 : "<NO_DYNAMIC_RANDOM_BOUNDS>";
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{progressionKey}|{dynamicBoundKey}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{progressionKey}|{dynamicBoundKey}|{BuildExternalJumpTargetsKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -5133,6 +5135,43 @@ namespace MMMapEditor
             return string.Join("|", ordered.Select(address => address.ToString("X4")));
         }
 
+        private static List<uint> CloneExternalJumpTargets(IEnumerable<uint> source)
+        {
+            return source == null
+                ? new List<uint>()
+                : source
+                    .Where(target => target <= ushort.MaxValue)
+                    .Distinct()
+                    .OrderBy(target => target)
+                    .ToList();
+        }
+
+        private static string BuildExternalJumpTargetsKey(PathVariantInfo variant)
+        {
+            var targets = GetSemanticExternalJumpTargets(variant).ToList();
+            return targets.Count > 0
+                ? string.Join(",", targets.Select(target => target.ToString("X4")))
+                : "<NO_EXTERNAL_JUMPS>";
+        }
+
+        private static IEnumerable<uint> GetSemanticExternalJumpTargets(PathVariantInfo variant)
+        {
+            return (variant?.ExternalJumpTargets ?? Enumerable.Empty<uint>())
+                .Where(target => target <= ushort.MaxValue && !IsRenderTemplateExternalJumpTarget(target))
+                .Distinct()
+                .OrderBy(target => target);
+        }
+
+        private static bool HasSemanticExternalJumpTargets(PathVariantInfo variant)
+        {
+            return GetSemanticExternalJumpTargets(variant).Any();
+        }
+
+        private static bool IsRenderTemplateExternalJumpTarget(uint target)
+        {
+            return target == 0x5855 || target == 0x585B;
+        }
+
         private PathVariantInfo CloneVariantInfo(PathVariantInfo source)
         {
             if (source == null)
@@ -5159,6 +5198,7 @@ namespace MMMapEditor
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
+                ExternalJumpTargets = CloneExternalJumpTargets(source.ExternalJumpTargets),
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -5366,6 +5406,7 @@ namespace MMMapEditor
                 variant.RandomEncounterRubicon.HasValue ||
                 variant.BattleMonsterStrengthAdjustment != 0 ||
                 variant.CallsRandomEncounter ||
+                (variant.ExternalJumpTargets?.Count ?? 0) > 0 ||
                 variant.BattleMonsterCount.HasValue ||
                 variant.BattleMonsterCountRange != null ||
                 variant.IsBattleMonsterCountIndeterminate ||
@@ -5698,6 +5739,7 @@ namespace MMMapEditor
                 IsOnlyRandomEncounterJump = source.IsOnlyRandomEncounterJump,
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
+                ExternalJumpTargets = CloneExternalJumpTargets(source.ExternalJumpTargets),
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -5917,6 +5959,7 @@ namespace MMMapEditor
             target.CallsRandomEncounter = false;
             target.RandomEncounterInstructionAddress = 0;
             target.RandomEncounterExecutionOrder = 0;
+            target.ExternalJumpTargets = new List<uint>();
             target.BattleMonsterCount = null;
             target.BattleMonsterCountRange = null;
             target.IsBattleMonsterCountIndeterminate = false;
@@ -5941,6 +5984,7 @@ namespace MMMapEditor
             target.CallsRandomEncounter = variant.CallsRandomEncounter;
             target.RandomEncounterInstructionAddress = variant.RandomEncounterInstructionAddress;
             target.RandomEncounterExecutionOrder = variant.RandomEncounterExecutionOrder;
+            target.ExternalJumpTargets = CloneExternalJumpTargets(variant.ExternalJumpTargets);
             target.BattleMonsterCount = variant.BattleMonsterCount;
             target.BattleMonsterCountRange = variant.BattleMonsterCountRange == null ? null : new ValueRange8(variant.BattleMonsterCountRange.Min, variant.BattleMonsterCountRange.Max);
             target.IsBattleMonsterCountIndeterminate = variant.IsBattleMonsterCountIndeterminate;
@@ -6243,6 +6287,7 @@ namespace MMMapEditor
                 CallsRandomEncounter = result.CallsRandomEncounter,
                 RandomEncounterInstructionAddress = result.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = result.RandomEncounterExecutionOrder,
+                ExternalJumpTargets = CloneExternalJumpTargets(result.ExternalJumpTargets),
                 TeleportTargetX = result.TeleportTargetX,
                 TeleportTargetY = result.TeleportTargetY,
                 TeleportTargetXRange = result.TeleportTargetXRange == null ? null : new ValueRange8(result.TeleportTargetXRange.Min, result.TeleportTargetXRange.Max),

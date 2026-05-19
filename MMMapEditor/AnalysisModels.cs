@@ -309,7 +309,8 @@ namespace MMMapEditor
         HpRestoredToMaximum = 18,
         AlignmentRestoreKeyword = 19,
         SubtleMechanicsNote = 20,
-        ConditionalRewardMechanicsNote = 21
+        ConditionalRewardMechanicsNote = 21,
+        TechnicalRenderPatchNote = 22
     }
 
     public sealed class NoteInlineStyleSpan
@@ -421,6 +422,7 @@ namespace MMMapEditor
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
+        public List<uint> ExternalJumpTargets { get; set; } = new List<uint>();
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }

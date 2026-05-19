@@ -37,6 +37,7 @@ namespace MMMapEditor
         private const string MutedParentheticalNoteTokenPrefix = "[[MUTED:";
         private const string SubtleMechanicsNoteTokenPrefix = "[[SUBTLEMECH:";
         private const string ConditionalRewardMechanicsNoteTokenPrefix = "[[CONDREWARD:";
+        private const string TechnicalRenderPatchNoteTokenPrefix = "[[TECHPATCH:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
@@ -111,6 +112,11 @@ namespace MMMapEditor
         public static string EncodeConditionalRewardMechanicsNoteText(string visibleText)
         {
             return EncodeTextStyleToken(ConditionalRewardMechanicsNoteTokenPrefix, visibleText);
+        }
+
+        public static string EncodeTechnicalRenderPatchNoteText(string visibleText)
+        {
+            return EncodeTextStyleToken(TechnicalRenderPatchNoteTokenPrefix, visibleText);
         }
 
         public static string EncodeWheelRewardExplanationText(string visibleText)
@@ -398,6 +404,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.ConditionalRewardMechanicsNote
                     });
                     i += conditionalRewardMechanicsConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    TechnicalRenderPatchNoteTokenPrefix,
+                    out string technicalRenderPatchText,
+                    out int technicalRenderPatchConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(technicalRenderPatchText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = technicalRenderPatchText.Length,
+                        Kind = NoteInlineStyleKind.TechnicalRenderPatchNote
+                    });
+                    i += technicalRenderPatchConsumedLength;
                     continue;
                 }
 

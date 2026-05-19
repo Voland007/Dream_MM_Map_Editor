@@ -43,6 +43,7 @@ namespace MMMapEditor
         private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
         private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
         private const string BorderTypeSwamp = "\u0411\u043E\u043B\u043E\u0442\u043E";
+        private const string TechObjectOption = "TechObject";
         private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
             new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
@@ -309,6 +310,15 @@ namespace MMMapEditor
 
             _objectsData["Не исследовано"] = new JObject(
                 new JProperty("Name", "Не исследовано"),
+                new JProperty("LeftMargin", 0),
+                new JProperty("RightMargin", 0),
+                new JProperty("FilterLevel", 0),
+                new JProperty("IconBase64", ""),
+                new JProperty("BodyPixels", new JArray())
+            );
+
+            _objectsData[TechObjectOption] = new JObject(
+                new JProperty("Name", TechObjectOption),
                 new JProperty("LeftMargin", 0),
                 new JProperty("RightMargin", 0),
                 new JProperty("FilterLevel", 0),
@@ -2412,6 +2422,9 @@ namespace MMMapEditor
                 // Форматирование для временных технических заметок
                 FormatTemporaryTechnicalNotes(notesTextBox, noteText);
 
+                // Форматирование для служебных рендер-патчей
+                FormatTechnicalRenderPatchNotes(notesTextBox, noteText);
+
                 // Форматирование для агрегированной временной характеристики
                 FormatAggregateTemporaryStatNotes(notesTextBox, noteText);
 
@@ -2650,6 +2663,10 @@ namespace MMMapEditor
                         ApplyConditionalRewardMechanicsNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.TechnicalRenderPatchNote:
+                        ApplyTechnicalRenderPatchNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2773,6 +2790,13 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(164, 176, 185);
             rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(118, 139, 150), 0.28);
             rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.75f, 6.0f), FontStyle.Italic);
+        }
+
+        private void ApplyTechnicalRenderPatchNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(150, 150, 150);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(170, 185, 190), 0.16);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
         }
 
         private void ApplyWheelRewardExplanationStyle(RichTextBox rt)
@@ -3430,6 +3454,26 @@ namespace MMMapEditor
                     rt.SelectionBackColor = technicalBackColor;
                     rt.SelectionFont = new Font("Segoe UI", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
                 }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatTechnicalRenderPatchNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"^=\*\*\* Техническая клетка без игрового эффекта:[^\r\n]* \*\*\*=$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyTechnicalRenderPatchNoteStyle(rt);
             }
 
             rt.Select(0, 0);
@@ -6218,9 +6262,6 @@ namespace MMMapEditor
         // Вспомогательная функция для правильного выбора метода рисования ROUGH
         private void DrawCorrectRough(Graphics g, Rectangle bounds, string wallType, Direction direction)
         {
-            if (!showSecretPassages)
-                return;
-
             Color roughWordColor = wallType == "Кирпичная стена"
                 ? Color.FromArgb(0, 0, 255)
                 : string.Equals(wallType, BorderTypeDesert, StringComparison.Ordinal)
@@ -6848,6 +6889,8 @@ namespace MMMapEditor
                     if (centralOption == "Пустота") { }
                     else if (centralOption == "Не исследовано")
                         DrawUnexplored(g, bounds, pos);
+                    else if (centralOption == TechObjectOption)
+                        DrawTechObject(g, bounds);
                     else
                     {
                         // Если изображение доступно, создаем массив пикселей
@@ -6864,22 +6907,29 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    // Если центральный объект не найден, рисуем вопросительный знак
-                    Font questionFont = new Font("Arial", 24, FontStyle.Bold);
-                    Brush questionBrush = centralOption == "AnyObjectSpec"
-                        ? Brushes.LightSkyBlue
-                        : centralOption == "AnyObject"
-                            ? Brushes.White
-                            : Brushes.Yellow;
+                    if (centralOption == TechObjectOption)
+                    {
+                        DrawTechObject(g, bounds);
+                    }
+                    else
+                    {
+                        // Если центральный объект не найден, рисуем вопросительный знак
+                        Font questionFont = new Font("Arial", 24, FontStyle.Bold);
+                        Brush questionBrush = centralOption == "AnyObjectSpec"
+                            ? Brushes.LightSkyBlue
+                            : centralOption == "AnyObject"
+                                ? Brushes.White
+                                : Brushes.Yellow;
 
-                    g.DrawString("?", questionFont, questionBrush, new PointF(
-            bounds.X + bounds.Width / 2, // центр по горизонтали
-            bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
-                                           ), new StringFormat()
-                                           {
-                                               Alignment = StringAlignment.Center,
-                                               LineAlignment = StringAlignment.Center
-                                           });
+                        g.DrawString("?", questionFont, questionBrush, new PointF(
+                bounds.X + bounds.Width / 2, // центр по горизонтали
+                bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
+                                               ), new StringFormat()
+                                               {
+                                                   Alignment = StringAlignment.Center,
+                                                   LineAlignment = StringAlignment.Center
+                                               });
+                    }
                 }
             }
 
@@ -6904,6 +6954,24 @@ namespace MMMapEditor
                 }
             }
 
+        }
+
+        private void DrawTechObject(Graphics g, Rectangle bounds)
+        {
+            float fontSize = Math.Max(8f, Math.Min(bounds.Width, bounds.Height) * 0.72f);
+
+            using (Font questionFont = new Font("Arial", fontSize, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (Brush questionBrush = new SolidBrush(Color.FromArgb(164, 0x17, 0x78, 0x33)))
+            {
+                g.DrawString("?", questionFont, questionBrush, new PointF(
+                    bounds.X + bounds.Width / 2,
+                    bounds.Y + bounds.Height / 2 + 1
+                ), new StringFormat()
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                });
+            }
         }
 
         private bool ShouldPaintDangerArea(Point pos)

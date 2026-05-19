@@ -4518,6 +4518,25 @@ namespace MMMapEditor
             }
         }
 
+        private void MarkExternalJump(PathAnalysisResult result, uint instructionAddress, uint jumpTarget, bool debugMode, string jumpKind)
+        {
+            if (result == null)
+                return;
+
+            result.IsTerminated = true;
+            result.HasSignificantCode = true;
+
+            if (jumpTarget <= ushort.MaxValue)
+            {
+                result.ExternalJumpTargets ??= new List<uint>();
+                if (!result.ExternalJumpTargets.Contains(jumpTarget))
+                    result.ExternalJumpTargets.Add(jumpTarget);
+            }
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"      {jumpKind} за пределы оверлея (0x{jumpTarget:X4}) - внешний обработчик игры");
+        }
+
         /// <summary>
         /// Обрабатывает инструкцию JMP
         /// </summary>
@@ -4536,10 +4555,7 @@ namespace MMMapEditor
 
             if (jumpTarget >= fileLength)
             {
-                if (debugMode)
-                    AnalysisDebug.WriteLine($"      JMP за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
-                result.IsTerminated = true;
-                result.HasSignificantCode = true;
+                MarkExternalJump(result, currentAddress, jumpTarget, debugMode, "JMP");
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
 
@@ -4592,10 +4608,7 @@ namespace MMMapEditor
 
                 if (jumpTarget >= fileLength)
                 {
-                    if (debugMode)
-                        AnalysisDebug.WriteLine($"      JMP (по опкоду 0xE9) за пределы оверлея (0x{jumpTarget:X4}) - конец пути");
-                    result.IsTerminated = true;
-                    result.HasSignificantCode = true;
+                    MarkExternalJump(result, currentAddress, jumpTarget, debugMode, "JMP (по опкоду 0xE9)");
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
 
@@ -4663,6 +4676,9 @@ namespace MMMapEditor
                         AnalysisDebug.WriteLine($"      SHORT JMP к 0x{jumpTarget:X4}");
                     return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
                 }
+
+                MarkExternalJump(result, currentAddress, jumpTarget, debugMode, "SHORT JMP");
+                return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
 
             return new ControlFlowResult { ShouldReturn = false, NextAddress = currentAddress + (uint)insn.Bytes.Length };
@@ -5200,6 +5216,19 @@ namespace MMMapEditor
             return completedOrPending;
         }
 
+        private static void MergeExternalJumpTargets(PathAnalysisResult target, PathAnalysisResult source)
+        {
+            if (target == null || source?.ExternalJumpTargets == null || source.ExternalJumpTargets.Count == 0)
+                return;
+
+            target.ExternalJumpTargets ??= new List<uint>();
+            foreach (uint jumpTarget in source.ExternalJumpTargets.Where(t => t <= ushort.MaxValue).Distinct())
+            {
+                if (!target.ExternalJumpTargets.Contains(jumpTarget))
+                    target.ExternalJumpTargets.Add(jumpTarget);
+            }
+        }
+
         private void MergeSubroutineAnalysisState(
             PathAnalysisResult target,
             PathAnalysisResult source,
@@ -5223,6 +5252,7 @@ namespace MMMapEditor
             target.BattleMonsterStrengthAdjustment += source.BattleMonsterStrengthAdjustment;
             target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
             target.DisablesCurrentMapEvent = target.DisablesCurrentMapEvent || source.DisablesCurrentMapEvent;
+            MergeExternalJumpTargets(target, source);
             MultiplyInlineProbability(target, source.InlineProbabilityNumerator, source.InlineProbabilityDenominator);
 
             if (source.RandomEncounterInstructionAddress != 0 &&

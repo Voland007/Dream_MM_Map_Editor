@@ -39,6 +39,9 @@ namespace MMMapEditor
         private const ushort PartyCountAddress = 0x3BC0;
         private const ushort AssumedUserVisibleFoodUpperBoundExclusive = 40;
         private const ushort AssumedUserVisibleStatusUpperBoundExclusive = 0x80;
+        private const string TechObjectCentralOption = "TechObject";
+        private const uint RenderTemplateDefaultByteEntry = 0x5855;
+        private const uint RenderTemplateCallerByteEntry = 0x585B;
         private const decimal VariantOutcomeOrderStride = 10000000000000000000000000m;
         private const int FlatSemanticVariantKeyBase = int.MinValue / 2;
         private const int FlatSemanticVariantKeyStride = 10000;
@@ -156,10 +159,15 @@ namespace MMMapEditor
                 var rawOverlayTexts = buildInlineStyleSpans
                     ? CollectRawOverlayVisibleTexts(obj)
                     : new List<string>();
+                string technicalRenderPatchLine = TryBuildTechnicalRenderPatchGameplayNote(fileNameOnly, config, obj);
 
                 if (obj.IsFromTable)
                 {
                     result.CentralOptions[pos] = "AnyObject";
+                }
+                else if (!string.IsNullOrWhiteSpace(technicalRenderPatchLine))
+                {
+                    result.CentralOptions[pos] = TechObjectCentralOption;
                 }
                 else if (!obj.ShouldKeepOriginalCentralOption)
                 {
@@ -224,7 +232,11 @@ namespace MMMapEditor
                     ? new List<NoteInlineStyleSpan>()
                     : null;
 
-                if (!string.IsNullOrWhiteSpace(specialFullNotes))
+                if (!string.IsNullOrWhiteSpace(technicalRenderPatchLine))
+                {
+                    AppendRenderedText(newNotes, inlineStyles, technicalRenderPatchLine);
+                }
+                else if (!string.IsNullOrWhiteSpace(specialFullNotes))
                 {
                     AppendRenderedText(newNotes, inlineStyles, specialFullNotes);
                 }
@@ -326,6 +338,13 @@ namespace MMMapEditor
                         .ToList();
                 }
             }
+
+            ApplyAreaD4TechnicalRenderPatchFallback(
+                fileNameOnly,
+                config,
+                result,
+                cellsToBuild,
+                buildInlineStyleSpans);
 
             return result;
         }
@@ -5391,6 +5410,98 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static void ApplyAreaD4TechnicalRenderPatchFallback(
+            string fileNameOnly,
+            OvrFileConfig config,
+            OvrNotesBuildResult result,
+            ISet<Point> cellsToBuild,
+            bool buildInlineStyleSpans)
+        {
+            if (!string.Equals(fileNameOnly, "AREAD4.OVR", StringComparison.OrdinalIgnoreCase) ||
+                config?.First16Lines == null ||
+                result == null)
+            {
+                return;
+            }
+
+            string technicalLine = BuildTechnicalRenderPatchLine(new[]
+            {
+                RenderTemplateDefaultByteEntry,
+                RenderTemplateCallerByteEntry
+            });
+
+            for (int y = 0; y < Math.Min(16, config.First16Lines.Length); y++)
+            {
+                for (int x = 0; x < 16; x++)
+                {
+                    if (!TryReadFirstLayerCell(config, x, y, out byte firstLayerCell) ||
+                        firstLayerCell != 0xAA)
+                    {
+                        continue;
+                    }
+
+                    var pos = new Point(x, y);
+                    if (cellsToBuild != null && !cellsToBuild.Contains(pos))
+                        continue;
+
+                    string existingNote = result.NotesPerCell.TryGetValue(pos, out string note)
+                        ? note
+                        : string.Empty;
+
+                    if (result.CentralOptions.TryGetValue(pos, out string centralOption))
+                    {
+                        if (centralOption == "AnyObject" ||
+                            (centralOption == "AnyObjectSpec" && !IsEmptyOrNoOpNote(existingNote)))
+                        {
+                            continue;
+                        }
+                    }
+
+                    result.CentralOptions[pos] = TechObjectCentralOption;
+                    if (!string.IsNullOrWhiteSpace(existingNote) &&
+                        existingNote.Contains("Техническая клетка без игрового эффекта", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var newNotes = new StringBuilder();
+                    var inlineStyles = buildInlineStyleSpans
+                        ? new List<NoteInlineStyleSpan>()
+                        : null;
+
+                    if (!IsEmptyOrNoOpNote(existingNote))
+                    {
+                        var existingStyles = buildInlineStyleSpans &&
+                            result.NoteStyleSpansPerCell.TryGetValue(pos, out var styles)
+                            ? styles
+                            : null;
+
+                        AppendExistingRenderedText(newNotes, inlineStyles, existingNote, existingStyles);
+                        AppendRenderedText(newNotes, inlineStyles, "\n\n");
+                    }
+
+                    AppendRenderedText(newNotes, inlineStyles, technicalLine);
+                    result.NotesPerCell[pos] = NormalizeNoteLineEndings(newNotes.ToString().TrimEnd('\r', '\n'));
+
+                    if (buildInlineStyleSpans)
+                    {
+                        result.NoteStyleSpansPerCell[pos] = inlineStyles
+                            .Where(span => span != null && span.Length > 0 && span.Start >= 0)
+                            .Select(span => span.Clone())
+                            .ToList();
+                    }
+                }
+            }
+        }
+
+        private static bool IsEmptyOrNoOpNote(string note)
+        {
+            string normalized = NormalizeNoteLineEndings(note ?? string.Empty).Trim();
+            return string.IsNullOrWhiteSpace(normalized) ||
+                   string.Equals(normalized, NoOpLine, StringComparison.Ordinal) ||
+                   string.Equals(normalized, NoOpBecauseNoConditionsLine, StringComparison.Ordinal);
         }
 
         private static List<FlatVariantRenderItem> BuildFlatTerminalVariantsFromTreeNode(
@@ -15116,7 +15227,223 @@ namespace MMMapEditor
 
             lines.AddRange(BuildOrderedSpecialEffectLines(obj));
 
+            if (ShouldDisplayExternalJumpLines(obj))
+                lines.AddRange(BuildExternalJumpLines(obj));
+
             return lines;
+        }
+
+        private static bool ShouldDisplayExternalJumpLines(OvrObject obj)
+        {
+            var targets = GetObjectExternalJumpTargets(obj).ToList();
+            if (obj == null || targets.Count == 0)
+                return false;
+
+            if (targets.All(IsTechnicalRenderPatchTarget))
+                return false;
+
+            if (HasVisibleTextInfo(obj))
+                return false;
+
+            if (HasGameplayInfo(obj))
+                return false;
+
+            return true;
+        }
+
+        private static bool HasVisibleTextInfo(OvrObject obj)
+        {
+            return
+                (obj.PathTexts != null && obj.PathTexts.Any(kvp => kvp.Value != null && kvp.Value.Any(text => !string.IsNullOrWhiteSpace(text)))) ||
+                (obj.PathTextsOrdered != null && obj.PathTextsOrdered.Any(kvp => kvp.Value != null && kvp.Value.Any(text => !string.IsNullOrWhiteSpace(text)))) ||
+                (obj.PathVariants != null && obj.PathVariants.Values.Any(variant =>
+                    variant?.Texts != null && variant.Texts.Any(text => !string.IsNullOrWhiteSpace(text))));
+        }
+
+        private static bool HasGameplayInfo(OvrObject obj)
+        {
+            if (obj.HasTeleportTarget ||
+                obj.CallsRandomEncounter ||
+                obj.RandomEncounterMonsterPowerCap.HasValue ||
+                obj.RandomEncounterMonsterLevelCap.HasValue ||
+                obj.RandomEncounterMonsterBatchCountCap.HasValue ||
+                obj.DarkeningLevel.HasValue ||
+                obj.RandomEncounterChance.HasValue ||
+                obj.RandomEncounterRubicon.HasValue ||
+                obj.BattleMonsterStrengthAdjustment != 0 ||
+                obj.BattleMonsterCount.HasValue ||
+                obj.BattleMonsterCountRange != null ||
+                obj.IsBattleMonsterCountIndeterminate ||
+                obj.HasBattleLikeInfo ||
+                (obj.PersistentCounterProgressions != null && obj.PersistentCounterProgressions.Count > 0) ||
+                (obj.DynamicRandomBoundDependencies != null && obj.DynamicRandomBoundDependencies.Count > 0) ||
+                (obj.PartyEffects != null && obj.PartyEffects.Count > 0))
+            {
+                return true;
+            }
+
+            return obj.PathVariants != null &&
+                obj.PathVariants.Values.Any(HasGameplayInfo);
+        }
+
+        private static bool HasGameplayInfo(PathVariantInfo variant)
+        {
+            return variant != null &&
+                (variant.HasTeleportTarget ||
+                 variant.CallsRandomEncounter ||
+                 variant.RandomEncounterMonsterPowerCap.HasValue ||
+                 variant.RandomEncounterMonsterLevelCap.HasValue ||
+                 variant.RandomEncounterMonsterBatchCountCap.HasValue ||
+                 variant.DarkeningLevel.HasValue ||
+                 variant.RandomEncounterChance.HasValue ||
+                 variant.RandomEncounterRubicon.HasValue ||
+                 variant.BattleMonsterStrengthAdjustment != 0 ||
+                 variant.BattleMonsterCount.HasValue ||
+                 variant.BattleMonsterCountRange != null ||
+                 variant.IsBattleMonsterCountIndeterminate ||
+                 variant.HasAnyTableLoad ||
+                 (variant.LoadedValues != null && variant.LoadedValues.Count > 0) ||
+                 (variant.PersistentCounterProgressions != null && variant.PersistentCounterProgressions.Count > 0) ||
+                 (variant.DynamicRandomBoundDependencies != null && variant.DynamicRandomBoundDependencies.Count > 0) ||
+                 (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0) ||
+                 (variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0) ||
+                 (variant.PartyEffects != null && variant.PartyEffects.Count > 0));
+        }
+
+        private static List<string> BuildExternalJumpLines(OvrObject obj)
+        {
+            var targetValues = GetObjectExternalJumpTargets(obj)
+                .Where(target => !IsTechnicalRenderPatchTarget(target))
+                .ToList();
+            var targets = targetValues
+                .Select(target => $"0x{target:X4}")
+                .ToList();
+
+            if (targets.Count == 0)
+                return new List<string>();
+
+            return new List<string>
+            {
+                $"Передача управления внешней игровой процедуре: {string.Join(", ", targets.Select(DescribeExternalJumpTarget))}"
+            };
+        }
+
+        private static IEnumerable<uint> GetObjectExternalJumpTargets(OvrObject obj)
+        {
+            if (obj == null)
+                return Enumerable.Empty<uint>();
+
+            return (obj.ExternalJumpTargets ?? new List<uint>())
+                .Where(target => target <= ushort.MaxValue)
+                .Distinct()
+                .OrderBy(target => target);
+        }
+
+        private static IEnumerable<uint> GetAllExternalJumpTargets(OvrObject obj)
+        {
+            if (obj == null)
+                return Enumerable.Empty<uint>();
+
+            var targets = GetObjectExternalJumpTargets(obj).ToList();
+
+            if (obj.PathVariants != null)
+            {
+                foreach (var variant in obj.PathVariants.Values)
+                {
+                    if (variant?.ExternalJumpTargets != null)
+                        targets.AddRange(variant.ExternalJumpTargets);
+                }
+            }
+
+            return targets
+                .Where(target => target <= ushort.MaxValue)
+                .Distinct()
+                .OrderBy(target => target);
+        }
+
+        private static string TryBuildTechnicalRenderPatchGameplayNote(string fileNameOnly, OvrFileConfig config, OvrObject obj)
+        {
+            if (!IsTechnicalRenderPatchObject(fileNameOnly, config, obj))
+                return null;
+
+            return BuildTechnicalRenderPatchLine(GetAllExternalJumpTargets(obj).ToList());
+        }
+
+        private static bool IsTechnicalRenderPatchObject(string fileNameOnly, OvrFileConfig config, OvrObject obj)
+        {
+            if (obj == null ||
+                !string.Equals(fileNameOnly, "AREAD4.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!TryReadFirstLayerCell(config, obj.X, obj.Y, out byte firstLayerCell) ||
+                firstLayerCell != 0xAA)
+            {
+                return false;
+            }
+
+            var targets = GetAllExternalJumpTargets(obj).ToList();
+            return targets.Count > 0 &&
+                targets.All(IsTechnicalRenderPatchTarget) &&
+                targets.Contains(RenderTemplateDefaultByteEntry) &&
+                targets.Contains(RenderTemplateCallerByteEntry) &&
+                !HasVisibleTextInfo(obj) &&
+                !HasGameplayInfo(obj);
+        }
+
+        private static bool TryReadFirstLayerCell(OvrFileConfig config, int x, int y, out byte value)
+        {
+            value = 0;
+
+            if (config?.First16Lines == null ||
+                y < 0 || y >= config.First16Lines.Length ||
+                x < 0 || x >= 16)
+            {
+                return false;
+            }
+
+            string line = config.First16Lines[y];
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            var tokens = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length <= x)
+                return false;
+
+            return byte.TryParse(tokens[x], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static bool IsTechnicalRenderPatchTarget(uint target)
+        {
+            return target == RenderTemplateDefaultByteEntry ||
+                   target == RenderTemplateCallerByteEntry;
+        }
+
+        private static string BuildTechnicalRenderPatchLine(IReadOnlyCollection<uint> targets)
+        {
+            if (targets.Contains(RenderTemplateDefaultByteEntry) && targets.Contains(RenderTemplateCallerByteEntry))
+            {
+                return InlineNoteStyleCodec.EncodeTechnicalRenderPatchNoteText(
+                    "=*** Техническая клетка без игрового эффекта: для west используется 0x5855/[0x239F]=0x80, для остальных направлений 0x585B/AL=0x95 ***=");
+            }
+
+            if (targets.Contains(RenderTemplateCallerByteEntry))
+                return InlineNoteStyleCodec.EncodeTechnicalRenderPatchNoteText(
+                    "=*** Техническая клетка без игрового эффекта: внешний вход 0x585B использует AL=0x95 ***=");
+
+            return InlineNoteStyleCodec.EncodeTechnicalRenderPatchNoteText(
+                "=*** Техническая клетка без игрового эффекта: внешний вход 0x5855 использует [0x239F]=0x80 ***=");
+        }
+
+        private static string DescribeExternalJumpTarget(string formattedTarget)
+        {
+            return formattedTarget switch
+            {
+                "0x5855" => "0x5855 (шаблон рендера: AL берётся из [0x239F])",
+                "0x585B" => "0x585B (шаблон рендера: AL задан вызывающим кодом)",
+                _ => formattedTarget
+            };
         }
 
         private static List<string> BuildOrderedSpecialEffectLines(OvrObject obj)

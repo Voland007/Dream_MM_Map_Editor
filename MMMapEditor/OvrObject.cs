@@ -58,6 +58,7 @@ namespace MMMapEditor
         public bool CallsRandomEncounter { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
+        public List<uint> ExternalJumpTargets { get; set; } = new List<uint>();
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -844,7 +845,8 @@ namespace MMMapEditor
             HasBattleLikeInfo ||
             (DynamicRandomBoundDependencies != null && DynamicRandomBoundDependencies.Count > 0) ||
             HasAnyTableLoad ||
-            CallsRandomEncounter;
+            CallsRandomEncounter ||
+            (ExternalJumpTargets != null && ExternalJumpTargets.Count > 0);
 
         public bool ShouldKeepOriginalCentralOption
         {
@@ -1038,6 +1040,7 @@ namespace MMMapEditor
         public bool IsOnlyRandomEncounterJump { get; set; } = false;
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
+        public List<uint> ExternalJumpTargets { get; set; } = new List<uint>();
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -1094,6 +1097,7 @@ namespace MMMapEditor
             !RandomEncounterChance.HasValue &&
             !RandomEncounterRubicon.HasValue &&
             BattleMonsterStrengthAdjustment == 0 &&
+            (ExternalJumpTargets == null || ExternalJumpTargets.Count == 0) &&
             !HasTeleportTarget &&
             !BattleMonsterCount.HasValue &&
             BattleMonsterCountRange == null &&
@@ -1131,6 +1135,7 @@ namespace MMMapEditor
                 CallsRandomEncounter = CallsRandomEncounter,
                 RandomEncounterInstructionAddress = RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = RandomEncounterExecutionOrder,
+                ExternalJumpTargets = ExternalJumpTargets?.Distinct().OrderBy(target => target).ToList() ?? new List<uint>(),
                 TeleportTargetX = TeleportTargetX,
                 TeleportTargetY = TeleportTargetY,
                 TeleportTargetXRange = TeleportTargetXRange == null ? null : new ValueRange8(TeleportTargetXRange.Min, TeleportTargetXRange.Max),
@@ -1227,6 +1232,7 @@ namespace MMMapEditor
             HasBattleLikeInfo ||
             HasAnyTableLoad ||
             CallsRandomEncounter ||
+            (ExternalJumpTargets != null && ExternalJumpTargets.Count > 0) ||
             HasProbabilityInfo ||
             HasOccurrenceInfo ||
             HasStateGuardInfo ||
