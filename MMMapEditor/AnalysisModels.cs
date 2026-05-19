@@ -140,6 +140,33 @@ namespace MMMapEditor
         PartyMemberScan = 2
     }
 
+    public class EmulatedMemory8RangeSourceInfo
+    {
+        public ushort SourceAddr { get; set; }
+        public bool FromTable { get; set; }
+        public ushort OriginalIndex { get; set; }
+        public string SourceTable { get; set; }
+        public bool SourceIndexExternallyDerived { get; set; }
+        public ushort? SourceIndexProviderAddr { get; set; }
+        public ValueRange8 SourceIndexRange { get; set; }
+        public List<byte> SourceIndexValues { get; set; } = new List<byte>();
+
+        public EmulatedMemory8RangeSourceInfo Clone()
+        {
+            return new EmulatedMemory8RangeSourceInfo
+            {
+                SourceAddr = SourceAddr,
+                FromTable = FromTable,
+                OriginalIndex = OriginalIndex,
+                SourceTable = SourceTable,
+                SourceIndexExternallyDerived = SourceIndexExternallyDerived,
+                SourceIndexProviderAddr = SourceIndexProviderAddr,
+                SourceIndexRange = SourceIndexRange == null ? null : new ValueRange8(SourceIndexRange.Min, SourceIndexRange.Max),
+                SourceIndexValues = SourceIndexValues == null ? new List<byte>() : new List<byte>(SourceIndexValues)
+            };
+        }
+    }
+
     public class JumpCondition
     {
         public string Type { get; set; }
@@ -167,6 +194,8 @@ namespace MMMapEditor
         public Dictionary<ushort, byte> EmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<ushort, ValueRange8> EmulatedMemory8Ranges { get; set; } = new Dictionary<ushort, ValueRange8>();
         public Dictionary<ushort, RegisterValueDistribution> EmulatedMemory8RangeDistributions { get; set; } = new Dictionary<ushort, RegisterValueDistribution>();
+        public Dictionary<ushort, List<byte>> EmulatedMemory8DiscreteValues { get; set; } = new Dictionary<ushort, List<byte>>();
+        public Dictionary<ushort, EmulatedMemory8RangeSourceInfo> EmulatedMemory8RangeSources { get; set; } = new Dictionary<ushort, EmulatedMemory8RangeSourceInfo>();
         public Dictionary<ushort, PartyMemberReference> EmulatedPartyPointers { get; set; } = new Dictionary<ushort, PartyMemberReference>();
         public Dictionary<ushort, PartyPointerByteReference> EmulatedPartyPointerBytes { get; set; } = new Dictionary<ushort, PartyPointerByteReference>();
         public Dictionary<ushort, PersistentCounterProgressionInfo> PendingPersistentCounterProgressions { get; set; }
@@ -376,6 +405,8 @@ namespace MMMapEditor
         public Dictionary<ushort, byte> ExitEmulatedMemory8 { get; set; } = new Dictionary<ushort, byte>();
         public Dictionary<ushort, ValueRange8> ExitEmulatedMemory8Ranges { get; set; } = new Dictionary<ushort, ValueRange8>();
         public Dictionary<ushort, RegisterValueDistribution> ExitEmulatedMemory8RangeDistributions { get; set; } = new Dictionary<ushort, RegisterValueDistribution>();
+        public Dictionary<ushort, List<byte>> ExitEmulatedMemory8DiscreteValues { get; set; } = new Dictionary<ushort, List<byte>>();
+        public Dictionary<ushort, EmulatedMemory8RangeSourceInfo> ExitEmulatedMemory8RangeSources { get; set; } = new Dictionary<ushort, EmulatedMemory8RangeSourceInfo>();
         public Dictionary<int, PathAnalysisResult> NestedPaths { get; set; } = new Dictionary<int, PathAnalysisResult>();
         public byte? RandomEncounterMonsterPowerCap { get; set; }
         public byte? RandomEncounterMonsterLevelCap { get; set; }
@@ -1058,9 +1089,13 @@ namespace MMMapEditor
         public string SourceTable { get; set; }    // Тип таблицы ("CDA9", "CDB1", "CDBD", "CDB5", "CA7F", "CA84")
         public ushort? OriginalSourceIndex { get; set; } // Значение индексного BX в момент чтения из таблицы
         public ushort? SourceIndexProviderAddr { get; set; } // Адрес памяти, из которого был загружен индекс источника (если известен)
+        public byte? SourceIndexMin { get; set; }  // Нижняя граница диапазонного индекса таблицы
+        public byte? SourceIndexMax { get; set; }  // Верхняя граница диапазонного индекса таблицы
+        public List<byte> SourceIndexValues { get; set; } = new List<byte>(); // Точные варианты индекса таблицы, если они известны
         public BattleSourceIndexBehavior SourceIndexBehavior { get; set; } = BattleSourceIndexBehavior.Unknown;
         public bool SourceIndexExternallyDerived { get; set; } // Индекс таблицы зависит от внешнего случайного вызова
         public bool HasExactValue => ValueMin == ValueMax;
         public bool HasRangeValue => ValueMin != ValueMax;
+        public bool HasSourceIndexOptions => SourceIndexValues?.Count > 0 || (SourceIndexMin.HasValue && SourceIndexMax.HasValue);
     }
 }

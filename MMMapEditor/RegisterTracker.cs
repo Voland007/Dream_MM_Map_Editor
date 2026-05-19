@@ -89,6 +89,8 @@ namespace MMMapEditor
         private Dictionary<string, ValueRange8> registerRanges = new Dictionary<string, ValueRange8>();
         private Dictionary<string, RegisterValueDistribution> registerRangeDistributions = new Dictionary<string, RegisterValueDistribution>();
         private Dictionary<string, SortedSet<byte>> registerDiscreteValues = new Dictionary<string, SortedSet<byte>>();
+        private Dictionary<string, ValueRange8> registerSourceIndexRanges = new Dictionary<string, ValueRange8>();
+        private Dictionary<string, SortedSet<byte>> registerSourceIndexValues = new Dictionary<string, SortedSet<byte>>();
         private Dictionary<string, byte> registerRandomUpperBounds = new Dictionary<string, byte>();
         private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
@@ -575,6 +577,175 @@ namespace MMMapEditor
             return false;
         }
 
+        private void ClearExactRegisterValuesForRangeTarget(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            registers.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            if (regUpper == fullReg)
+            {
+                registers.Remove(lowReg);
+                registers.Remove(highReg);
+            }
+            else
+            {
+                registers.Remove(fullReg);
+            }
+        }
+
+        private void SetSourceIndexMetadataForName(string regUpper, ValueRange8 range, IEnumerable<byte> values)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (range == null)
+                registerSourceIndexRanges.Remove(regUpper);
+            else
+                registerSourceIndexRanges[regUpper] = new ValueRange8(range.Min, range.Max);
+
+            var normalized = NormalizeDiscreteValues(values);
+            if (normalized.Count == 0)
+                registerSourceIndexValues.Remove(regUpper);
+            else
+                registerSourceIndexValues[regUpper] = normalized;
+        }
+
+        private void SetSourceIndexMetadataForRangeTargets(string regUpper, ValueRange8 range, IEnumerable<byte> values)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                SetSourceIndexMetadataForName(regUpper, range, values);
+                return;
+            }
+
+            if (regUpper == fullReg || regUpper == lowReg)
+            {
+                SetSourceIndexMetadataForName(fullReg, range, values);
+                SetSourceIndexMetadataForName(lowReg, range, values);
+                registerSourceIndexRanges.Remove(highReg);
+                registerSourceIndexValues.Remove(highReg);
+            }
+            else
+            {
+                SetSourceIndexMetadataForName(highReg, range, values);
+                registerSourceIndexRanges.Remove(fullReg);
+                registerSourceIndexValues.Remove(fullReg);
+            }
+        }
+
+        private void ClearSourceIndexMetadata(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            registerSourceIndexRanges.Remove(regUpper);
+            registerSourceIndexValues.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            registerSourceIndexRanges.Remove(fullReg);
+            registerSourceIndexValues.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                registerSourceIndexRanges.Remove(lowReg);
+                registerSourceIndexRanges.Remove(highReg);
+                registerSourceIndexValues.Remove(lowReg);
+                registerSourceIndexValues.Remove(highReg);
+            }
+            else if (regUpper == lowReg)
+            {
+                registerSourceIndexRanges.Remove(lowReg);
+                registerSourceIndexValues.Remove(lowReg);
+            }
+            else
+            {
+                registerSourceIndexRanges.Remove(highReg);
+                registerSourceIndexValues.Remove(highReg);
+            }
+        }
+
+        private void SetRegisterSourceIndexMetadata(string regUpper, ValueRange8 sourceIndexRange, IEnumerable<byte> sourceIndexValues)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            ValueRange8 range = sourceIndexRange == null
+                ? null
+                : new ValueRange8(sourceIndexRange.Min, sourceIndexRange.Max);
+            var normalized = NormalizeDiscreteValues(sourceIndexValues);
+
+            if (range == null && normalized.Count == 0)
+            {
+                ClearSourceIndexMetadata(regUpper);
+                return;
+            }
+
+            SetSourceIndexMetadataForRangeTargets(regUpper, range, normalized);
+        }
+
+        public bool TryGetSourceIndexRange(string reg, out ValueRange8 range)
+        {
+            range = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (registerSourceIndexRanges.TryGetValue(regUpper, out var existing) && existing != null)
+            {
+                range = new ValueRange8(existing.Min, existing.Max);
+                return true;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                regUpper != fullReg &&
+                registerSourceIndexRanges.TryGetValue(fullReg, out existing) &&
+                existing != null)
+            {
+                range = new ValueRange8(existing.Min, existing.Max);
+                return true;
+            }
+
+            return false;
+        }
+
+        public bool TryGetSourceIndexValues(string reg, out List<byte> values)
+        {
+            values = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (registerSourceIndexValues.TryGetValue(regUpper, out var existing) &&
+                existing != null &&
+                existing.Count > 0)
+            {
+                values = existing.ToList();
+                return true;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                regUpper != fullReg &&
+                registerSourceIndexValues.TryGetValue(fullReg, out existing) &&
+                existing != null &&
+                existing.Count > 0)
+            {
+                values = existing.ToList();
+                return true;
+            }
+
+            return false;
+        }
+
         public void SetRegisterDiscreteValues(
             string reg,
             IEnumerable<byte> values,
@@ -606,7 +777,9 @@ namespace MMMapEditor
             ushort originalBx = 0,
             string sourceTable = null,
             bool sourceIndexExternallyDerived = false,
-            ushort? sourceIndexProviderAddr = null)
+            ushort? sourceIndexProviderAddr = null,
+            ValueRange8 sourceIndexRange = null,
+            IEnumerable<byte> sourceIndexValues = null)
         {
             SetRegisterDiscreteValues(reg, values, distribution);
 
@@ -625,6 +798,7 @@ namespace MMMapEditor
             var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
             registerSources2[regUpper] = srcInfo;
             registerSources[regUpper] = $"0x{normalized.Min:X2}..0x{normalized.Max:X2} loaded at 0x{address:X4} via {instruction}";
+            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
             {
@@ -727,12 +901,14 @@ namespace MMMapEditor
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
+            ClearSourceIndexMetadata(regUpper);
 
             if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
                 return;
 
             registerSources.Remove(fullReg);
             registerSources2.Remove(fullReg);
+            ClearSourceIndexMetadata(fullReg);
 
             if (regUpper == fullReg)
             {
@@ -740,6 +916,8 @@ namespace MMMapEditor
                 registerSources.Remove(highReg);
                 registerSources2.Remove(lowReg);
                 registerSources2.Remove(highReg);
+                ClearSourceIndexMetadata(lowReg);
+                ClearSourceIndexMetadata(highReg);
             }
         }
 
@@ -871,12 +1049,14 @@ namespace MMMapEditor
             ClearPartyMemberBase(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearSourceIndexMetadata(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
             {
                 registerSources.Remove(fullReg);
                 registerSources2.Remove(fullReg);
+                ClearSourceIndexMetadata(fullReg);
                 ClearMemoryByteDeltaSource(fullReg);
                 ClearPartyFieldValue(fullReg);
                 ClearPartyMemberBase(fullReg);
@@ -887,6 +1067,8 @@ namespace MMMapEditor
                     registerSources.Remove(highReg);
                     registerSources2.Remove(lowReg);
                     registerSources2.Remove(highReg);
+                    ClearSourceIndexMetadata(lowReg);
+                    ClearSourceIndexMetadata(highReg);
                     ClearMemoryByteDeltaSource(lowReg);
                     ClearMemoryByteDeltaSource(highReg);
                     ClearFullRegisterByteSemantics(fullReg);
@@ -895,6 +1077,7 @@ namespace MMMapEditor
                 {
                     registerSources.Remove(regUpper);
                     registerSources2.Remove(regUpper);
+                    ClearSourceIndexMetadata(regUpper);
                     ClearFullRegisterByteSemantics(fullReg);
                 }
             }
@@ -902,7 +1085,7 @@ namespace MMMapEditor
             registerRanges[regUpper] = new ValueRange8(min, max);
             registerRangeDistributions[regUpper] = distribution;
 
-            registers.Remove(regUpper);
+            ClearExactRegisterValuesForRangeTarget(regUpper);
 
             if (regUpper == "AX")
             {
@@ -974,7 +1157,9 @@ namespace MMMapEditor
             ushort originalBx = 0,
             string sourceTable = null,
             bool sourceIndexExternallyDerived = false,
-            ushort? sourceIndexProviderAddr = null)
+            ushort? sourceIndexProviderAddr = null,
+            ValueRange8 sourceIndexRange = null,
+            IEnumerable<byte> sourceIndexValues = null)
         {
             SetRegisterRange(reg, min, max, distribution);
 
@@ -989,6 +1174,40 @@ namespace MMMapEditor
             var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
             registerSources2[regUpper] = srcInfo;
             registerSources[regUpper] = $"0x{min:X2}..0x{max:X2} loaded at 0x{address:X4} via {instruction}";
+            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues);
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
+            {
+                registerSources2[fullReg] = srcInfo;
+                registerSources[fullReg] = registerSources[regUpper];
+            }
+        }
+
+        public void SetRegisterSourceMetadataForExistingValue(
+            string reg,
+            ushort sourceAddr,
+            uint address,
+            string instruction,
+            bool fromTable = false,
+            ushort originalBx = 0,
+            string sourceTable = null,
+            bool sourceIndexExternallyDerived = false,
+            ushort? sourceIndexProviderAddr = null,
+            ValueRange8 sourceIndexRange = null,
+            IEnumerable<byte> sourceIndexValues = null)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            string tableType = sourceTable;
+            if (tableType == null && fromTable)
+                tableType = ResolveKnownTableType(sourceAddr);
+
+            var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
+            registerSources2[regUpper] = srcInfo;
+            registerSources[regUpper] = $"source 0x{sourceAddr:X4} associated at 0x{address:X4} via {instruction}";
+            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
             {
@@ -1002,6 +1221,7 @@ namespace MMMapEditor
             string regUpper = reg.ToUpperInvariant();
             ClearRegisterDiscreteValues(regUpper);
             ClearRegisterRandomUpperBound(regUpper);
+            ClearSourceIndexMetadata(regUpper);
             registerRanges.Remove(regUpper);
             registerRangeDistributions.Remove(regUpper);
 
@@ -1674,6 +1894,7 @@ namespace MMMapEditor
             registers.Remove(regUpper);
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
+            ClearSourceIndexMetadata(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
             ClearByteRegisterSemantics(regUpper);
 
@@ -1685,6 +1906,7 @@ namespace MMMapEditor
                 registerSources.Remove("AH");
                 registerSources2.Remove("AL");
                 registerSources2.Remove("AH");
+                ClearSourceIndexMetadata("AX");
                 ClearMemoryByteDeltaSource("AX");
                 partyFieldValues.Remove("AL");
                 partyFieldValues.Remove("AH");
@@ -1701,6 +1923,7 @@ namespace MMMapEditor
                 registerSources.Remove("BH");
                 registerSources2.Remove("BL");
                 registerSources2.Remove("BH");
+                ClearSourceIndexMetadata("BX");
                 ClearMemoryByteDeltaSource("BX");
                 partyFieldValues.Remove("BL");
                 partyFieldValues.Remove("BH");
@@ -1717,6 +1940,7 @@ namespace MMMapEditor
                 registerSources.Remove("CH");
                 registerSources2.Remove("CL");
                 registerSources2.Remove("CH");
+                ClearSourceIndexMetadata("CX");
                 ClearMemoryByteDeltaSource("CX");
                 partyFieldValues.Remove("CL");
                 partyFieldValues.Remove("CH");
@@ -1733,6 +1957,7 @@ namespace MMMapEditor
                 registerSources.Remove("DH");
                 registerSources2.Remove("DL");
                 registerSources2.Remove("DH");
+                ClearSourceIndexMetadata("DX");
                 ClearMemoryByteDeltaSource("DX");
                 partyFieldValues.Remove("DL");
                 partyFieldValues.Remove("DH");
@@ -1754,6 +1979,8 @@ namespace MMMapEditor
             registerRanges.Clear();
             registerRangeDistributions.Clear();
             registerDiscreteValues.Clear();
+            registerSourceIndexRanges.Clear();
+            registerSourceIndexValues.Clear();
             registerRandomUpperBounds.Clear();
             partyMemberBases.Clear();
             partyFieldValues.Clear();
@@ -2014,6 +2241,14 @@ namespace MMMapEditor
             foreach (var kvp in registerDiscreteValues)
             {
                 clone.registerDiscreteValues[kvp.Key] = CloneDiscreteValues(kvp.Value);
+            }
+            foreach (var kvp in registerSourceIndexRanges)
+            {
+                clone.registerSourceIndexRanges[kvp.Key] = kvp.Value == null ? null : new ValueRange8(kvp.Value.Min, kvp.Value.Max);
+            }
+            foreach (var kvp in registerSourceIndexValues)
+            {
+                clone.registerSourceIndexValues[kvp.Key] = CloneDiscreteValues(kvp.Value);
             }
             foreach (var kvp in registerRandomUpperBounds)
             {

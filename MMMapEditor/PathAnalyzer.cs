@@ -92,7 +92,9 @@ namespace MMMapEditor
                     path.EmulatedMemory8RangeDistributions == null
                         ? null
                         : new Dictionary<ushort, RegisterValueDistribution>(path.EmulatedMemory8RangeDistributions),
-                    initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(path.PendingPersistentCounterProgressions));
+                    initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(path.PendingPersistentCounterProgressions),
+                    initialEmulatedMemory8DiscreteValues: CloneDiscreteMemoryDictionary(path.EmulatedMemory8DiscreteValues),
+                    initialEmulatedMemory8RangeSources: CloneRangeSourceDictionary(path.EmulatedMemory8RangeSources));
                 var effectivePathResult = MergeAnalysisStates(inheritedState, pathResult);
                 MergeStateValueConstraints(effectivePathResult.StateValueConstraints, path.BranchStateValueConstraints);
                 effectivePathResult.LocallyMaterializedStateValueConstraintAddresses.UnionWith(
@@ -303,6 +305,27 @@ namespace MMMapEditor
             return source.ToDictionary(
                 kvp => kvp.Key,
                 kvp => kvp.Value == null ? null : new ValueRange8(kvp.Value.Min, kvp.Value.Max));
+        }
+
+        private static Dictionary<ushort, List<byte>> CloneDiscreteMemoryDictionary(Dictionary<ushort, List<byte>> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, List<byte>>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value == null ? null : new List<byte>(kvp.Value));
+        }
+
+        private static Dictionary<ushort, EmulatedMemory8RangeSourceInfo> CloneRangeSourceDictionary(
+            Dictionary<ushort, EmulatedMemory8RangeSourceInfo> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, EmulatedMemory8RangeSourceInfo>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value?.Clone());
         }
 
         private static Dictionary<ushort, byte> CloneStaticMapDataReads(Dictionary<ushort, byte> source)
@@ -689,6 +712,8 @@ namespace MMMapEditor
             merged.ExitEmulatedMemory8RangeDistributions = currentState.ExitEmulatedMemory8RangeDistributions == null
                 ? new Dictionary<ushort, RegisterValueDistribution>()
                 : new Dictionary<ushort, RegisterValueDistribution>(currentState.ExitEmulatedMemory8RangeDistributions);
+            merged.ExitEmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(currentState.ExitEmulatedMemory8DiscreteValues);
+            merged.ExitEmulatedMemory8RangeSources = CloneRangeSourceDictionary(currentState.ExitEmulatedMemory8RangeSources);
 
             if (currentState.RandomEncounterMonsterPowerCap.HasValue)
                 merged.RandomEncounterMonsterPowerCap = currentState.RandomEncounterMonsterPowerCap;
@@ -796,6 +821,9 @@ namespace MMMapEditor
                     i.SourceTable == info.SourceTable &&
                     i.OriginalSourceIndex == info.OriginalSourceIndex &&
                     i.SourceIndexProviderAddr == info.SourceIndexProviderAddr &&
+                    i.SourceIndexMin == info.SourceIndexMin &&
+                    i.SourceIndexMax == info.SourceIndexMax &&
+                    Enumerable.SequenceEqual(i.SourceIndexValues ?? Enumerable.Empty<byte>(), info.SourceIndexValues ?? Enumerable.Empty<byte>()) &&
                     i.SourceIndexBehavior == info.SourceIndexBehavior &&
                     i.SourceIndexExternallyDerived == info.SourceIndexExternallyDerived))
                 {
@@ -813,6 +841,9 @@ namespace MMMapEditor
                         SourceTable = info.SourceTable,
                         OriginalSourceIndex = info.OriginalSourceIndex,
                         SourceIndexProviderAddr = info.SourceIndexProviderAddr,
+                        SourceIndexMin = info.SourceIndexMin,
+                        SourceIndexMax = info.SourceIndexMax,
+                        SourceIndexValues = info.SourceIndexValues == null ? new List<byte>() : new List<byte>(info.SourceIndexValues),
                         SourceIndexBehavior = info.SourceIndexBehavior,
                         SourceIndexExternallyDerived = info.SourceIndexExternallyDerived
                     });
@@ -927,6 +958,10 @@ namespace MMMapEditor
                 merged.ExitEmulatedMemory8Ranges = CloneRangeDictionary(currentState.ExitEmulatedMemory8Ranges);
             if (currentState.ExitEmulatedMemory8RangeDistributions != null && currentState.ExitEmulatedMemory8RangeDistributions.Count > 0)
                 merged.ExitEmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(currentState.ExitEmulatedMemory8RangeDistributions);
+            if (currentState.ExitEmulatedMemory8DiscreteValues != null && currentState.ExitEmulatedMemory8DiscreteValues.Count > 0)
+                merged.ExitEmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(currentState.ExitEmulatedMemory8DiscreteValues);
+            if (currentState.ExitEmulatedMemory8RangeSources != null && currentState.ExitEmulatedMemory8RangeSources.Count > 0)
+                merged.ExitEmulatedMemory8RangeSources = CloneRangeSourceDictionary(currentState.ExitEmulatedMemory8RangeSources);
 
             return merged;
         }
@@ -1284,6 +1319,9 @@ namespace MMMapEditor
                     SourceTable = info.SourceTable,
                     OriginalSourceIndex = info.OriginalSourceIndex,
                     SourceIndexProviderAddr = info.SourceIndexProviderAddr,
+                    SourceIndexMin = info.SourceIndexMin,
+                    SourceIndexMax = info.SourceIndexMax,
+                    SourceIndexValues = info.SourceIndexValues == null ? new List<byte>() : new List<byte>(info.SourceIndexValues),
                     SourceIndexBehavior = info.SourceIndexBehavior,
                     SourceIndexExternallyDerived = info.SourceIndexExternallyDerived
                 });
@@ -1309,6 +1347,8 @@ namespace MMMapEditor
             clone.ExitEmulatedMemory8RangeDistributions = source.ExitEmulatedMemory8RangeDistributions == null
                 ? new Dictionary<ushort, RegisterValueDistribution>()
                 : new Dictionary<ushort, RegisterValueDistribution>(source.ExitEmulatedMemory8RangeDistributions);
+            clone.ExitEmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(source.ExitEmulatedMemory8DiscreteValues);
+            clone.ExitEmulatedMemory8RangeSources = CloneRangeSourceDictionary(source.ExitEmulatedMemory8RangeSources);
             clone.VisitedAddresses = new HashSet<uint>(source.VisitedAddresses);
             clone.FirstLocalTextAddress = source.FirstLocalTextAddress;
             clone.NextSpecialEventOrder = source.NextSpecialEventOrder;
@@ -1356,6 +1396,8 @@ namespace MMMapEditor
                     EmulatedMemory8RangeDistributions = alt.EmulatedMemory8RangeDistributions == null
                         ? new Dictionary<ushort, RegisterValueDistribution>()
                         : new Dictionary<ushort, RegisterValueDistribution>(alt.EmulatedMemory8RangeDistributions),
+                    EmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(alt.EmulatedMemory8DiscreteValues),
+                    EmulatedMemory8RangeSources = CloneRangeSourceDictionary(alt.EmulatedMemory8RangeSources),
                     EmulatedPartyPointers = alt.EmulatedPartyPointers == null
                         ? new Dictionary<ushort, PartyMemberReference>()
                         : alt.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),

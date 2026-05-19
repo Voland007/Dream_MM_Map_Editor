@@ -2013,7 +2013,9 @@ namespace MMMapEditor
             bool sourceIndexExternallyDerived,
             ushort? sourceIndexProviderAddr = null,
             byte? rangeEnd = null,
-            bool isFromTable = true)
+            bool isFromTable = true,
+            ValueRange8 sourceIndexRange = null,
+            IReadOnlyList<byte> sourceIndexValues = null)
         {
             result.PartialBattleInfo.Add(new PartialBattleInfo
             {
@@ -2029,6 +2031,9 @@ namespace MMMapEditor
                 SourceTable = sourceTable,
                 OriginalSourceIndex = originalBx,
                 SourceIndexProviderAddr = sourceIndexProviderAddr,
+                SourceIndexMin = sourceIndexRange?.Min,
+                SourceIndexMax = sourceIndexRange?.Max,
+                SourceIndexValues = sourceIndexValues == null ? new List<byte>() : sourceIndexValues.Distinct().OrderBy(v => v).ToList(),
                 SourceIndexBehavior = ResolveInitialBattleSourceIndexBehavior(originalBx, sourceIndexProviderAddr, sourceIndexExternallyDerived),
                 SourceIndexExternallyDerived = sourceIndexExternallyDerived
             });
@@ -2084,6 +2089,21 @@ namespace MMMapEditor
                 (!string.IsNullOrWhiteSpace(srcReg) && tracker.IsFromTable(srcReg)) ||
                 (!string.IsNullOrWhiteSpace(secondaryRangeReg) && tracker.IsFromTable(secondaryRangeReg));
 
+            ValueRange8 sourceIndexRange = null;
+            if (!string.IsNullOrWhiteSpace(srcReg))
+                tracker.TryGetSourceIndexRange(srcReg, out sourceIndexRange);
+            if (sourceIndexRange == null && !string.IsNullOrWhiteSpace(secondaryRangeReg))
+                tracker.TryGetSourceIndexRange(secondaryRangeReg, out sourceIndexRange);
+
+            List<byte> sourceIndexValues = null;
+            if (!string.IsNullOrWhiteSpace(srcReg))
+                tracker.TryGetSourceIndexValues(srcReg, out sourceIndexValues);
+            if ((sourceIndexValues == null || sourceIndexValues.Count == 0) &&
+                !string.IsNullOrWhiteSpace(secondaryRangeReg))
+            {
+                tracker.TryGetSourceIndexValues(secondaryRangeReg, out sourceIndexValues);
+            }
+
             RecordPartialBattleSave(
                 result,
                 saveIndex,
@@ -2096,7 +2116,9 @@ namespace MMMapEditor
                 sourceIndexExternallyDerived,
                 sourceIndexProviderAddr,
                 range.Max,
-                isFromTable);
+                isFromTable,
+                sourceIndexRange,
+                sourceIndexValues);
 
             string valueText = range.IsExact
                 ? $"0x{range.Min:X2}"

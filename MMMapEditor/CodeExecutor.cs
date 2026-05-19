@@ -41,6 +41,8 @@ namespace MMMapEditor
         private readonly Dictionary<ushort, byte> _emulatedMemory8 = new Dictionary<ushort, byte>();
         private readonly Dictionary<ushort, ValueRange8> _emulatedMemory8Ranges = new Dictionary<ushort, ValueRange8>();
         private readonly Dictionary<ushort, RegisterValueDistribution> _emulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>();
+        private readonly Dictionary<ushort, List<byte>> _emulatedMemory8DiscreteValues = new Dictionary<ushort, List<byte>>();
+        private readonly Dictionary<ushort, EmulatedMemory8RangeSourceInfo> _emulatedMemory8RangeSources = new Dictionary<ushort, EmulatedMemory8RangeSourceInfo>();
         private readonly Dictionary<ushort, PartyMemberReference> _emulatedPartyPointers = new Dictionary<ushort, PartyMemberReference>();
         private readonly Dictionary<ushort, PartyPointerByteReference> _emulatedPartyPointerBytes = new Dictionary<ushort, PartyPointerByteReference>();
         private readonly HashSet<ushort> _persistentEventStateAddresses = new HashSet<ushort>();
@@ -166,7 +168,9 @@ namespace MMMapEditor
             HashSet<ushort> persistentStateAddresses = null,
             Dictionary<ushort, ValueRange8> initialEmulatedMemory8Ranges = null,
             Dictionary<ushort, RegisterValueDistribution> initialEmulatedMemory8RangeDistributions = null,
-            Dictionary<ushort, PersistentCounterProgressionInfo> initialPendingPersistentCounterProgressions = null)
+            Dictionary<ushort, PersistentCounterProgressionInfo> initialPendingPersistentCounterProgressions = null,
+            Dictionary<ushort, List<byte>> initialEmulatedMemory8DiscreteValues = null,
+            Dictionary<ushort, EmulatedMemory8RangeSourceInfo> initialEmulatedMemory8RangeSources = null)
         {
             processedBackEdges ??= new HashSet<(uint From, uint To)>();
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
@@ -181,12 +185,16 @@ namespace MMMapEditor
             var savedEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
             var savedEmulatedMemory8Ranges = CloneRangeDictionary(_emulatedMemory8Ranges);
             var savedEmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions);
+            var savedEmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(_emulatedMemory8DiscreteValues);
+            var savedEmulatedMemory8RangeSources = CloneRangeSourceDictionary(_emulatedMemory8RangeSources);
             var savedEmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone());
             var savedEmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone());
             var savedPersistentEventStateAddresses = new HashSet<ushort>(_persistentEventStateAddresses);
             _emulatedMemory8.Clear();
             _emulatedMemory8Ranges.Clear();
             _emulatedMemory8RangeDistributions.Clear();
+            _emulatedMemory8DiscreteValues.Clear();
+            _emulatedMemory8RangeSources.Clear();
             _emulatedPartyPointers.Clear();
             _emulatedPartyPointerBytes.Clear();
             if (persistentStateAddresses != null)
@@ -209,6 +217,16 @@ namespace MMMapEditor
             {
                 foreach (var kv in initialEmulatedMemory8RangeDistributions)
                     _emulatedMemory8RangeDistributions[kv.Key] = kv.Value;
+            }
+            if (initialEmulatedMemory8DiscreteValues != null)
+            {
+                foreach (var kv in initialEmulatedMemory8DiscreteValues)
+                    _emulatedMemory8DiscreteValues[kv.Key] = kv.Value == null ? null : new List<byte>(kv.Value);
+            }
+            if (initialEmulatedMemory8RangeSources != null)
+            {
+                foreach (var kv in initialEmulatedMemory8RangeSources)
+                    _emulatedMemory8RangeSources[kv.Key] = kv.Value?.Clone();
             }
             if (initialEmulatedPartyPointers != null)
             {
@@ -420,6 +438,12 @@ namespace MMMapEditor
                 _emulatedMemory8RangeDistributions.Clear();
                 foreach (var kv in savedEmulatedMemory8RangeDistributions)
                     _emulatedMemory8RangeDistributions[kv.Key] = kv.Value;
+                _emulatedMemory8DiscreteValues.Clear();
+                foreach (var kv in savedEmulatedMemory8DiscreteValues)
+                    _emulatedMemory8DiscreteValues[kv.Key] = kv.Value == null ? null : new List<byte>(kv.Value);
+                _emulatedMemory8RangeSources.Clear();
+                foreach (var kv in savedEmulatedMemory8RangeSources)
+                    _emulatedMemory8RangeSources[kv.Key] = kv.Value?.Clone();
                 _emulatedPartyPointers.Clear();
                 foreach (var kv in savedEmulatedPartyPointers)
                     _emulatedPartyPointers[kv.Key] = kv.Value?.Clone();
@@ -449,6 +473,26 @@ namespace MMMapEditor
                 kvp => kvp.Value == null ? null : new ValueRange8(kvp.Value.Min, kvp.Value.Max));
         }
 
+        private static Dictionary<ushort, List<byte>> CloneDiscreteMemoryDictionary(Dictionary<ushort, List<byte>> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, List<byte>>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value == null ? null : new List<byte>(kvp.Value));
+        }
+
+        private static Dictionary<ushort, EmulatedMemory8RangeSourceInfo> CloneRangeSourceDictionary(Dictionary<ushort, EmulatedMemory8RangeSourceInfo> source)
+        {
+            if (source == null || source.Count == 0)
+                return new Dictionary<ushort, EmulatedMemory8RangeSourceInfo>();
+
+            return source.ToDictionary(
+                kvp => kvp.Key,
+                kvp => kvp.Value?.Clone());
+        }
+
         private bool TryGetEmulatedMemory8Range(ushort address, out ValueRange8 range, out RegisterValueDistribution distribution)
         {
             distribution = RegisterValueDistribution.Unknown;
@@ -463,6 +507,71 @@ namespace MMMapEditor
 
             range = null;
             return false;
+        }
+
+        private void SetRegisterFromEmulatedMemoryRange(
+            RegisterTracker registerTracker,
+            string registerName,
+            ushort memAddr,
+            ValueRange8 range,
+            RegisterValueDistribution distribution,
+            uint address,
+            string instruction)
+        {
+            if (registerTracker == null || range == null || string.IsNullOrWhiteSpace(registerName))
+                return;
+
+            _emulatedMemory8RangeSources.TryGetValue(memAddr, out var source);
+            _emulatedMemory8DiscreteValues.TryGetValue(memAddr, out var discreteValues);
+
+            ushort sourceAddr = source?.SourceAddr ?? memAddr;
+            bool fromTable = source?.FromTable ?? false;
+            ushort originalIndex = source?.OriginalIndex ?? 0;
+            string sourceTable = source?.SourceTable;
+            bool sourceIndexExternallyDerived = source?.SourceIndexExternallyDerived ?? false;
+            ushort? sourceIndexProviderAddr = source?.SourceIndexProviderAddr ?? memAddr;
+            ValueRange8 sourceIndexRange = source?.SourceIndexRange == null
+                ? null
+                : new ValueRange8(source.SourceIndexRange.Min, source.SourceIndexRange.Max);
+            List<byte> sourceIndexValues = source?.SourceIndexValues == null
+                ? null
+                : new List<byte>(source.SourceIndexValues);
+
+            if (discreteValues != null && discreteValues.Count > 0)
+            {
+                registerTracker.SetRegisterDiscreteValuesWithSource(
+                    registerName,
+                    discreteValues,
+                    distribution,
+                    sourceAddr,
+                    address,
+                    instruction,
+                    fromTable,
+                    originalIndex,
+                    sourceTable,
+                    sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr,
+                    sourceIndexRange,
+                    sourceIndexValues);
+            }
+            else
+            {
+                registerTracker.SetRegisterRangeWithSource(
+                    registerName,
+                    range.Min,
+                    range.Max,
+                    distribution,
+                    sourceAddr,
+                    address,
+                    instruction,
+                    fromTable,
+                    originalIndex,
+                    sourceTable,
+                    sourceIndexExternallyDerived,
+                    sourceIndexProviderAddr,
+                    sourceIndexRange,
+                    sourceIndexValues);
+            }
         }
 
         private byte? TryGetCurrentMemory8Value(BinaryReader br, ushort address)
@@ -486,6 +595,8 @@ namespace MMMapEditor
             result.ExitEmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8);
             result.ExitEmulatedMemory8Ranges = CloneRangeDictionary(_emulatedMemory8Ranges);
             result.ExitEmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions);
+            result.ExitEmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(_emulatedMemory8DiscreteValues);
+            result.ExitEmulatedMemory8RangeSources = CloneRangeSourceDictionary(_emulatedMemory8RangeSources);
         }
 
         private PathAnalysisResult CaptureExitStateAndFinalizeResult(PathAnalysisResult result,
@@ -553,6 +664,79 @@ namespace MMMapEditor
 
             if (debugMode)
                 AnalysisDebug.WriteLine($"        Копирование зависимости от внешнего CALL: {dstReg} <- {srcReg}");
+        }
+
+        private void CopyRegisterRangeWithSource(
+            RegisterTracker registerTracker,
+            string dstReg,
+            string srcReg,
+            ValueRange8 range,
+            RegisterValueDistribution distribution,
+            uint address,
+            string instruction)
+        {
+            if (registerTracker == null || range == null || string.IsNullOrWhiteSpace(dstReg))
+                return;
+
+            List<byte> discreteValues = null;
+            bool hasDiscreteValues =
+                !string.IsNullOrWhiteSpace(srcReg) &&
+                registerTracker.TryGetRegisterDiscreteValues(srcReg, out discreteValues) &&
+                discreteValues != null &&
+                discreteValues.Count > 0;
+
+            ushort? sourceAddr = !string.IsNullOrWhiteSpace(srcReg)
+                ? registerTracker.GetSourceAddress(srcReg)
+                : null;
+
+            if (sourceAddr.HasValue)
+            {
+                registerTracker.TryGetSourceIndexRange(srcReg, out var sourceIndexRange);
+                registerTracker.TryGetSourceIndexValues(srcReg, out var sourceIndexValues);
+
+                if (hasDiscreteValues)
+                {
+                    registerTracker.SetRegisterDiscreteValuesWithSource(
+                        dstReg,
+                        discreteValues,
+                        distribution,
+                        sourceAddr.Value,
+                        address,
+                        instruction,
+                        registerTracker.IsFromTable(srcReg),
+                        registerTracker.GetOriginalBx(srcReg) ?? 0,
+                        registerTracker.GetSourceTable(srcReg),
+                        registerTracker.GetSourceIndexExternallyDerived(srcReg),
+                        registerTracker.GetSourceIndexProviderAddress(srcReg),
+                        sourceIndexRange,
+                        sourceIndexValues);
+                }
+                else
+                {
+                    registerTracker.SetRegisterRangeWithSource(
+                        dstReg,
+                        range.Min,
+                        range.Max,
+                        distribution,
+                        sourceAddr.Value,
+                        address,
+                        instruction,
+                        registerTracker.IsFromTable(srcReg),
+                        registerTracker.GetOriginalBx(srcReg) ?? 0,
+                        registerTracker.GetSourceTable(srcReg),
+                        registerTracker.GetSourceIndexExternallyDerived(srcReg),
+                        registerTracker.GetSourceIndexProviderAddress(srcReg),
+                        sourceIndexRange,
+                        sourceIndexValues);
+                }
+
+                return;
+            }
+
+            if (hasDiscreteValues)
+                registerTracker.SetRegisterDiscreteValues(dstReg, discreteValues, distribution);
+            else
+                registerTracker.SetRegisterRange(dstReg, range.Min, range.Max, distribution);
         }
 
         private bool TryGetEmulatedPartyPointer(ushort address, out PartyMemberReference member)
@@ -720,6 +904,7 @@ namespace MMMapEditor
             int baseContribution = signedDisp;
             ValueRange8 rangedOffset = null;
             RegisterValueDistribution rangedDistribution = RegisterValueDistribution.Unknown;
+            string rangedRegisterCandidate = null;
 
             bool AccumulateComponent(string regName)
             {
@@ -830,6 +1015,7 @@ namespace MMMapEditor
             int baseContribution = signedDisp;
             ValueRange8 rangedOffset = null;
             RegisterValueDistribution rangedDistribution = RegisterValueDistribution.Unknown;
+            string rangedRegisterCandidate = null;
 
             bool AccumulateComponent(string regName)
             {
@@ -5064,7 +5250,9 @@ namespace MMMapEditor
                     _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     initialEmulatedMemory8Ranges: CloneRangeDictionary(_emulatedMemory8Ranges),
                     initialEmulatedMemory8RangeDistributions: new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
-                    initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions));
+                    initialPendingPersistentCounterProgressions: ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
+                    initialEmulatedMemory8DiscreteValues: CloneDiscreteMemoryDictionary(_emulatedMemory8DiscreteValues),
+                    initialEmulatedMemory8RangeSources: CloneRangeSourceDictionary(_emulatedMemory8RangeSources));
 
                 // Добавляем результаты из подпрограммы
                 foreach (var visitedAddress in subroutineResult.VisitedAddresses)
@@ -5181,6 +5369,8 @@ namespace MMMapEditor
                             EmulatedMemory8RangeDistributions = altPath.EmulatedMemory8RangeDistributions == null
                                 ? new Dictionary<ushort, RegisterValueDistribution>()
                                 : new Dictionary<ushort, RegisterValueDistribution>(altPath.EmulatedMemory8RangeDistributions),
+                            EmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(altPath.EmulatedMemory8DiscreteValues),
+                            EmulatedMemory8RangeSources = CloneRangeSourceDictionary(altPath.EmulatedMemory8RangeSources),
                             EmulatedPartyPointers = altPath.EmulatedPartyPointers == null
                                 ? new Dictionary<ushort, PartyMemberReference>()
                                 : altPath.EmulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
@@ -5483,6 +5673,10 @@ namespace MMMapEditor
                 target.ExitEmulatedMemory8Ranges = CloneRangeDictionary(source.ExitEmulatedMemory8Ranges);
             if (source.ExitEmulatedMemory8RangeDistributions != null && source.ExitEmulatedMemory8RangeDistributions.Count > 0)
                 target.ExitEmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(source.ExitEmulatedMemory8RangeDistributions);
+            if (source.ExitEmulatedMemory8DiscreteValues != null && source.ExitEmulatedMemory8DiscreteValues.Count > 0)
+                target.ExitEmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(source.ExitEmulatedMemory8DiscreteValues);
+            if (source.ExitEmulatedMemory8RangeSources != null && source.ExitEmulatedMemory8RangeSources.Count > 0)
+                target.ExitEmulatedMemory8RangeSources = CloneRangeSourceDictionary(source.ExitEmulatedMemory8RangeSources);
         }
 
         private PendingPartyStatOperation MergePendingPartyStatOperation(
@@ -6027,6 +6221,8 @@ namespace MMMapEditor
                         EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                         EmulatedMemory8Ranges = CloneEmulatedMemoryRangesForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
                         EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                        EmulatedMemory8DiscreteValues = CloneEmulatedMemoryDiscreteValuesForBranch(registerTracker, insn.Mnemonic, branchTaken: true),
+                        EmulatedMemory8RangeSources = CloneRangeSourceDictionary(_emulatedMemory8RangeSources),
                         EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                         EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                         PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
@@ -6079,6 +6275,8 @@ namespace MMMapEditor
                         EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                         EmulatedMemory8Ranges = CloneEmulatedMemoryRangesForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
                         EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                        EmulatedMemory8DiscreteValues = CloneEmulatedMemoryDiscreteValuesForBranch(registerTracker, insn.Mnemonic, branchTaken: false),
+                        EmulatedMemory8RangeSources = CloneRangeSourceDictionary(_emulatedMemory8RangeSources),
                         EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                         EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                         PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
@@ -7516,7 +7714,7 @@ namespace MMMapEditor
                     registerTracker.SetRegisterDiscreteValuesWithSource(reg, discreteValues, distribution,
                         sourceAddress.Value, instructionAddress, $"branch constraint after {mnemonic}",
                         sourceIndexProviderAddr: sourceAddress.Value);
-                    ConstrainEmulatedMemoryRange(sourceAddress.Value, minValue, maxValue);
+                    ConstrainEmulatedMemoryForRegister(registerTracker, reg, minValue, maxValue);
                 }
                 else
                 {
@@ -7543,7 +7741,7 @@ namespace MMMapEditor
                     registerTracker.SetRegisterRangeWithSource(reg, (byte)min, (byte)max, distribution,
                         sourceAddress.Value, instructionAddress, $"branch constraint after {mnemonic}",
                         sourceIndexProviderAddr: sourceAddress.Value);
-                    ConstrainEmulatedMemoryRange(sourceAddress.Value, min, max);
+                    ConstrainEmulatedMemoryForRegister(registerTracker, reg, min, max);
                 }
                 else
                 {
@@ -7658,31 +7856,137 @@ namespace MMMapEditor
                 return ranges;
             }
 
-            ushort? sourceAddress = registerTracker.GetSourceAddress(reg);
-            if (!sourceAddress.HasValue ||
-                !ranges.TryGetValue(sourceAddress.Value, out var existingRange) ||
-                existingRange == null)
+            foreach (ushort memAddr in GetEmulatedMemoryConstraintAddressesForBranch(
+                         registerTracker,
+                         reg,
+                         ranges,
+                         _emulatedMemory8DiscreteValues))
             {
-                return ranges;
+                ConstrainEmulatedMemoryRange(ranges, memAddr, min, max);
             }
-
-            int constrainedMin = Math.Max(existingRange.Min, min);
-            int constrainedMax = Math.Min(existingRange.Max, max);
-            if (constrainedMin <= constrainedMax)
-                ranges[sourceAddress.Value] = new ValueRange8((byte)constrainedMin, (byte)constrainedMax);
 
             return ranges;
         }
 
-        private void ConstrainEmulatedMemoryRange(ushort memAddr, int min, int max)
+        private Dictionary<ushort, List<byte>> CloneEmulatedMemoryDiscreteValuesForBranch(
+            RegisterTracker registerTracker,
+            string mnemonic,
+            bool branchTaken)
         {
-            if (!_emulatedMemory8Ranges.TryGetValue(memAddr, out var existingRange) || existingRange == null)
+            var discreteValues = CloneDiscreteMemoryDictionary(_emulatedMemory8DiscreteValues);
+
+            string reg;
+            int min;
+            int max;
+
+            if (registerTracker == null)
+                return discreteValues;
+
+            if (TryCalculateBranchDiscreteValues(registerTracker, mnemonic, branchTaken, out reg, out var branchDiscreteValues))
+            {
+                min = branchDiscreteValues.Min();
+                max = branchDiscreteValues.Max();
+            }
+            else if (!TryCalculateBranchConstraint(registerTracker, mnemonic, branchTaken, out reg, out min, out max))
+            {
+                return discreteValues;
+            }
+
+            foreach (ushort memAddr in GetEmulatedMemoryConstraintAddressesForBranch(
+                         registerTracker,
+                         reg,
+                         _emulatedMemory8Ranges,
+                         discreteValues))
+            {
+                ConstrainEmulatedMemoryDiscreteValues(discreteValues, memAddr, min, max);
+            }
+
+            return discreteValues;
+        }
+
+        private HashSet<ushort> GetEmulatedMemoryConstraintAddressesForBranch(
+            RegisterTracker registerTracker,
+            string reg,
+            Dictionary<ushort, ValueRange8> ranges,
+            Dictionary<ushort, List<byte>> discreteValues)
+        {
+            var result = new HashSet<ushort>();
+            ushort? sourceAddress = registerTracker?.GetSourceAddress(reg);
+            if (!sourceAddress.HasValue)
+                return result;
+
+            bool HasTrackedValue(ushort address)
+            {
+                return (ranges != null && ranges.ContainsKey(address)) ||
+                       (discreteValues != null && discreteValues.ContainsKey(address));
+            }
+
+            if (HasTrackedValue(sourceAddress.Value))
+                result.Add(sourceAddress.Value);
+
+            foreach (var kvp in _emulatedMemory8RangeSources)
+            {
+                var source = kvp.Value;
+                if (source == null || source.SourceAddr != sourceAddress.Value)
+                    continue;
+
+                if (HasTrackedValue(kvp.Key))
+                    result.Add(kvp.Key);
+            }
+
+            return result;
+        }
+
+        private void ConstrainEmulatedMemoryForRegister(RegisterTracker registerTracker, string reg, int min, int max)
+        {
+            foreach (ushort memAddr in GetEmulatedMemoryConstraintAddressesForBranch(
+                         registerTracker,
+                         reg,
+                         _emulatedMemory8Ranges,
+                         _emulatedMemory8DiscreteValues))
+            {
+                ConstrainEmulatedMemoryRange(_emulatedMemory8Ranges, memAddr, min, max);
+                ConstrainEmulatedMemoryDiscreteValues(_emulatedMemory8DiscreteValues, memAddr, min, max);
+            }
+        }
+
+        private static void ConstrainEmulatedMemoryRange(Dictionary<ushort, ValueRange8> ranges, ushort memAddr, int min, int max)
+        {
+            if (ranges == null ||
+                !ranges.TryGetValue(memAddr, out var existingRange) ||
+                existingRange == null)
                 return;
 
             int constrainedMin = Math.Max(existingRange.Min, min);
             int constrainedMax = Math.Min(existingRange.Max, max);
             if (constrainedMin <= constrainedMax)
-                _emulatedMemory8Ranges[memAddr] = new ValueRange8((byte)constrainedMin, (byte)constrainedMax);
+                ranges[memAddr] = new ValueRange8((byte)constrainedMin, (byte)constrainedMax);
+        }
+
+        private static void ConstrainEmulatedMemoryDiscreteValues(Dictionary<ushort, List<byte>> discreteValues, ushort memAddr, int min, int max)
+        {
+            if (discreteValues == null ||
+                !discreteValues.TryGetValue(memAddr, out var existingValues) ||
+                existingValues == null ||
+                existingValues.Count == 0)
+            {
+                return;
+            }
+
+            var constrained = existingValues
+                .Where(value => value >= min && value <= max)
+                .Distinct()
+                .OrderBy(value => value)
+                .ToList();
+
+            if (constrained.Count > 0)
+            {
+                discreteValues[memAddr] = constrained;
+            }
+            else
+            {
+                discreteValues.Remove(memAddr);
+            }
         }
 
         private void ApplyKnownFlagsForResolvedBranch(RegisterTracker registerTracker, string mnemonic, bool branchTaken)
@@ -8619,6 +8923,8 @@ namespace MMMapEditor
                     EmulatedMemory8 = new Dictionary<ushort, byte>(_emulatedMemory8),
                     EmulatedMemory8Ranges = CloneRangeDictionary(_emulatedMemory8Ranges),
                     EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                    EmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(_emulatedMemory8DiscreteValues),
+                    EmulatedMemory8RangeSources = CloneRangeSourceDictionary(_emulatedMemory8RangeSources),
                     EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                     PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
@@ -10796,6 +11102,8 @@ namespace MMMapEditor
                             EmulatedMemory8 = splitMemory,
                             EmulatedMemory8Ranges = CloneRangeDictionary(_emulatedMemory8Ranges),
                             EmulatedMemory8RangeDistributions = new Dictionary<ushort, RegisterValueDistribution>(_emulatedMemory8RangeDistributions),
+                            EmulatedMemory8DiscreteValues = CloneDiscreteMemoryDictionary(_emulatedMemory8DiscreteValues),
+                            EmulatedMemory8RangeSources = CloneRangeSourceDictionary(_emulatedMemory8RangeSources),
                             EmulatedPartyPointers = _emulatedPartyPointers.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                             EmulatedPartyPointerBytes = _emulatedPartyPointerBytes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value?.Clone()),
                             PendingPersistentCounterProgressions = ClonePendingPersistentCounterProgressions(result.PendingPersistentCounterProgressions),
@@ -10834,6 +11142,8 @@ namespace MMMapEditor
                     _emulatedMemory8.Remove(memAddr);
                     _emulatedMemory8Ranges.Remove(memAddr);
                     _emulatedMemory8RangeDistributions.Remove(memAddr);
+                    _emulatedMemory8DiscreteValues.Remove(memAddr);
+                    _emulatedMemory8RangeSources.Remove(memAddr);
                     _emulatedPartyPointers.Remove(memAddr);
                     _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
                     ApplyTrackedPartyPointerByteWrite(memAddr, alPointerByteSemanticOnly);
@@ -10897,6 +11207,8 @@ namespace MMMapEditor
                     _emulatedMemory8.Remove(memAddr);
                     _emulatedMemory8Ranges.Remove(memAddr);
                     _emulatedMemory8RangeDistributions.Remove(memAddr);
+                    _emulatedMemory8DiscreteValues.Remove(memAddr);
+                    _emulatedMemory8RangeSources.Remove(memAddr);
                 }
                 else if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
@@ -11206,6 +11518,8 @@ namespace MMMapEditor
                         _emulatedMemory8.Remove(memAddr);
                         _emulatedMemory8Ranges.Remove(memAddr);
                         _emulatedMemory8RangeDistributions.Remove(memAddr);
+                        _emulatedMemory8DiscreteValues.Remove(memAddr);
+                        _emulatedMemory8RangeSources.Remove(memAddr);
                     }
                     else if (hasExactMemAddr &&
                              TryGetReg8ValueFromModRmRegField(modRm, registerTracker, out _, out string regNameWithoutValue) &&
@@ -11264,6 +11578,22 @@ namespace MMMapEditor
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {(isInc ? "Увеличили" : "Уменьшили")} {regName} -> 0x{newValue:X4}");
+                    }
+                    else if (registerTracker.TryGetRegisterRange(regName, out var regRange) && regRange != null)
+                    {
+                        bool wasExternallyDerived =
+                            registerTracker.HasPendingExternalCallResult(regName) ||
+                            registerTracker.IsRegisterExternallyDerived(regName);
+                        registerTracker.TryGetRegisterDistribution(regName, out var rangeDistribution);
+                        int delta = isInc ? 1 : -1;
+                        int newMin = Math.Max(0, regRange.Min + delta);
+                        int newMax = Math.Min(0xFF, regRange.Max + delta);
+                        registerTracker.SetRegisterRange(regName, (byte)newMin, (byte)newMax, rangeDistribution);
+                        if (wasExternallyDerived)
+                            registerTracker.MarkRegisterAsExternallyDerived(regName);
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        {(isInc ? "Увеличили" : "Уменьшили")} диапазон {regName}: {regRange.Min}-{regRange.Max} -> {newMin}-{newMax}");
                     }
                 }
             }
@@ -11334,8 +11664,14 @@ namespace MMMapEditor
                 else if (TryGetEmulatedMemory8Range(memAddr, out var memRange, out var memDistribution))
                 {
                     RegisterMemoryRead(result, memAddr, _persistentEventStateAddresses.Contains(memAddr));
-                    registerTracker.SetRegisterRangeWithSource("AL", memRange.Min, memRange.Max, memDistribution,
-                        memAddr, address, $"MOV AL, [0x{memAddr:X4}]", sourceIndexProviderAddr: memAddr);
+                    SetRegisterFromEmulatedMemoryRange(
+                        registerTracker,
+                        "AL",
+                        memAddr,
+                        memRange,
+                        memDistribution,
+                        address,
+                        $"MOV AL, [0x{memAddr:X4}]");
 
                     if (debugMode)
                     {
@@ -11446,7 +11782,14 @@ namespace MMMapEditor
                             registerTracker.ClearPartyPointerByteValue(dstReg);
                             if (!string.IsNullOrEmpty(fullReg))
                                 registerTracker.ClearPartyMemberBase(fullReg);
-                            registerTracker.SetRegisterRange(dstReg, copiedRange8A.Min, copiedRange8A.Max, copiedDistribution8A);
+                            CopyRegisterRangeWithSource(
+                                registerTracker,
+                                dstReg,
+                                srcReg,
+                                copiedRange8A,
+                                copiedDistribution8A,
+                                address,
+                                $"MOV {dstReg}, {srcReg}");
                             PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, srcReg, dstReg, debugMode);
 
                             if (debugMode)
@@ -11568,8 +11911,14 @@ namespace MMMapEditor
                         if (reg < regNames8.Length)
                         {
                             string regName = regNames8[reg];
-                            registerTracker.SetRegisterRangeWithSource(regName, memRange8A.Min, memRange8A.Max, memDistribution8A,
-                                memAddr, address, $"MOV {regName}, byte ptr {eaText}", sourceIndexProviderAddr: memAddr);
+                            SetRegisterFromEmulatedMemoryRange(
+                                registerTracker,
+                                regName,
+                                memAddr,
+                                memRange8A,
+                                memDistribution8A,
+                                address,
+                                $"MOV {regName}, byte ptr {eaText}");
 
                             if (debugMode)
                             {
@@ -11578,6 +11927,47 @@ namespace MMMapEditor
                                     : $"0x{memRange8A.Min:X2}-0x{memRange8A.Max:X2}";
                                 AnalysisDebug.WriteLine($"        Загрузили {regName} из диапазона эмулируемой памяти {eaText} -> [0x{memAddr:X4}] = {valueText}");
                             }
+                        }
+                    }
+                    else if (!hasExactMemAddr &&
+                             reg < regNames8.Length &&
+                             TryLoadRangedOverlayByteOperand(
+                                 br,
+                                 instructionBytes,
+                                 registerTracker,
+                                 out ushort sourceBaseAddress,
+                                 out ValueRange8 sourceIndexRange,
+                                 out List<byte> sourceIndexValues,
+                                 out List<byte> loadedValues,
+                                 out RegisterValueDistribution loadedDistribution,
+                                 out bool sourceIndexExternallyDerived,
+                                 out ushort? sourceIndexProviderAddr,
+                                 out string rangedEaText))
+                    {
+                        string regName = regNames8[reg];
+                        ushort firstSourceAddr = unchecked((ushort)(sourceBaseAddress + sourceIndexValues.Min()));
+                        registerTracker.SetRegisterDiscreteValuesWithSource(
+                            regName,
+                            loadedValues,
+                            loadedDistribution,
+                            firstSourceAddr,
+                            address,
+                            $"MOV {regName}, byte ptr {rangedEaText}",
+                            fromTable: true,
+                            originalBx: sourceIndexValues.Min(),
+                            sourceIndexExternallyDerived: sourceIndexExternallyDerived,
+                            sourceIndexProviderAddr: sourceIndexProviderAddr,
+                            sourceIndexRange: sourceIndexRange,
+                            sourceIndexValues: sourceIndexValues);
+
+                        if (debugMode)
+                        {
+                            string indexText = sourceIndexRange.IsExact
+                                ? $"0x{sourceIndexRange.Min:X2}"
+                                : $"0x{sourceIndexRange.Min:X2}-0x{sourceIndexRange.Max:X2}";
+                            string valuesText = string.Join(",", loadedValues.Select(value => value.ToString("X2")));
+                            AnalysisDebug.WriteLine(
+                                $"        Загрузили {regName} из диапазонной таблицы {rangedEaText} -> base [0x{sourceBaseAddress:X4}], index={indexText}, values={valuesText}");
                         }
                     }
                     else if (hasPartyFieldRef && reg < regNames8.Length)
@@ -11694,12 +12084,20 @@ namespace MMMapEditor
                         registerTracker.TryGetRegisterRange(regNames16[rm], out var copiedRange16))
                     {
                         string dstReg = regNames16[reg];
-                        registerTracker.TryGetRegisterDistribution(regNames16[rm], out var copiedDistribution16);
-                        registerTracker.SetRegisterRange(dstReg, copiedRange16.Min, copiedRange16.Max, copiedDistribution16);
-                        PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, regNames16[rm], dstReg, debugMode);
+                        string srcReg = regNames16[rm];
+                        registerTracker.TryGetRegisterDistribution(srcReg, out var copiedDistribution16);
+                        CopyRegisterRangeWithSource(
+                            registerTracker,
+                            dstReg,
+                            srcReg,
+                            copiedRange16,
+                            copiedDistribution16,
+                            address,
+                            $"MOV {dstReg}, {srcReg}");
+                        PropagateExternalCallInfluenceOnRegisterCopy(registerTracker, srcReg, dstReg, debugMode);
 
                         if (debugMode)
-                            AnalysisDebug.WriteLine($"        Копирование диапазона {dstReg} <- {regNames16[rm]} = {copiedRange16.Min:X2}..{copiedRange16.Max:X2}");
+                            AnalysisDebug.WriteLine($"        Копирование диапазона {dstReg} <- {srcReg} = {copiedRange16.Min:X2}..{copiedRange16.Max:X2}");
                     }
                     else if (reg < regNames16.Length && rm < regNames16.Length &&
                         registerTracker.TryGetPartyMemberBase(regNames16[rm], out var copiedPartyMember))
@@ -11719,6 +12117,7 @@ namespace MMMapEditor
                         TryDecode16BitMemoryOperandSyntax(instructionBytes, out _, out _, out _, out _, out eaText);
 
                     bool loadedAnySemantic = false;
+                    bool loadedWordValue = false;
                     if (reg < regNames16.Length)
                     {
                         string regName = regNames16[reg];
@@ -11726,6 +12125,7 @@ namespace MMMapEditor
                         if (hasExactMemAddr &&
                             TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out ushort value))
                         {
+                            loadedWordValue = true;
                             bool isIndexedTableLoad = TryGetOverlayTableSourceFromBxIndexedOperand(
                                 instructionBytes,
                                 registerTracker,
@@ -11757,6 +12157,68 @@ namespace MMMapEditor
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Загрузили {regName} из {(IsTrackedWordInEmulatedMemory(memAddr) ? "эмулируемой памяти" : "файла")} {eaText} -> [0x{memAddr:X4}] = 0x{value:X4}");
+                        }
+                        else if (hasExactMemAddr &&
+                                 TryGetEmulatedMemory8Range(memAddr, out var lowByteRange, out var lowByteDistribution))
+                        {
+                            RegisterMemoryRead(result, memAddr, _persistentEventStateAddresses.Contains(memAddr));
+                            SetRegisterFromEmulatedMemoryRange(
+                                registerTracker,
+                                regName,
+                                memAddr,
+                                lowByteRange,
+                                lowByteDistribution,
+                                address,
+                                $"MOV {regName}, word ptr {eaText} (low byte)");
+                            loadedWordValue = true;
+
+                            if (debugMode)
+                            {
+                                string valueText = lowByteRange.IsExact
+                                    ? $"0x{lowByteRange.Min:X2}"
+                                    : $"0x{lowByteRange.Min:X2}-0x{lowByteRange.Max:X2}";
+                                AnalysisDebug.WriteLine($"        Загрузили младший байт {regName} из диапазона эмулируемой памяти {eaText} -> [0x{memAddr:X4}] = {valueText}");
+                            }
+                        }
+                        else if (!hasExactMemAddr &&
+                                 TryLoadRangedOverlayWordLowByteOperand(
+                                     br,
+                                     instructionBytes,
+                                     registerTracker,
+                                     out ushort wordSourceBaseAddress,
+                                     out ValueRange8 wordSourceIndexRange,
+                                     out List<byte> wordSourceIndexValues,
+                                     out List<byte> lowByteValues,
+                                     out RegisterValueDistribution wordLowByteDistribution,
+                                     out bool wordSourceIndexExternallyDerived,
+                                     out ushort? wordSourceIndexProviderAddr,
+                                     out string rangedWordEaText))
+                        {
+                            ushort firstSourceAddr = unchecked((ushort)(wordSourceBaseAddress + wordSourceIndexValues.Min()));
+                            registerTracker.SetRegisterDiscreteValuesWithSource(
+                                regName,
+                                lowByteValues,
+                                wordLowByteDistribution,
+                                firstSourceAddr,
+                                address,
+                                $"MOV {regName}, word ptr {rangedWordEaText} (low byte)",
+                                fromTable: true,
+                                originalBx: wordSourceIndexValues.Min(),
+                                sourceIndexExternallyDerived: wordSourceIndexExternallyDerived,
+                                sourceIndexProviderAddr: wordSourceIndexProviderAddr,
+                                sourceIndexRange: wordSourceIndexRange,
+                                sourceIndexValues: wordSourceIndexValues);
+                            loadedWordValue = true;
+
+                            if (debugMode)
+                            {
+                                string indexText = wordSourceIndexRange.IsExact
+                                    ? $"0x{wordSourceIndexRange.Min:X2}"
+                                    : $"0x{wordSourceIndexRange.Min:X2}-0x{wordSourceIndexRange.Max:X2}";
+                                string valuesText = string.Join(",", lowByteValues.Select(value => value.ToString("X2")));
+                                AnalysisDebug.WriteLine(
+                                    $"        Загрузили младший байт {regName} из диапазонной word-таблицы {rangedWordEaText} -> base [0x{wordSourceBaseAddress:X4}], index={indexText}, values={valuesText}");
+                            }
                         }
 
                         if (hasExactMemAddr && TryResolveTrackedPartyPointer(memAddr, out var partyPtr))
@@ -11793,6 +12255,7 @@ namespace MMMapEditor
                     }
 
                     if (!loadedAnySemantic &&
+                        !loadedWordValue &&
                         (!hasExactMemAddr || !TryResolveTrackedWordValue(br, memAddr, result, targetX, targetY, out _ )) &&
                         debugMode)
                     {
@@ -12297,8 +12760,15 @@ namespace MMMapEditor
                     registerTracker.SetRegisterValue("BP", axValue, address, "MOV BP, AX");
                 else if (registerTracker.TryGetRegisterRange("AL", out var alRange) && alRange != null)
                 {
+                    bool wasExternallyDerived =
+                        registerTracker.HasPendingExternalCallResult("AX") ||
+                        registerTracker.HasPendingExternalCallResult("AL") ||
+                        registerTracker.IsRegisterExternallyDerived("AX") ||
+                        registerTracker.IsRegisterExternallyDerived("AL");
                     registerTracker.TryGetRegisterDistribution("AL", out var alDistribution);
                     registerTracker.SetRegisterRange("BP", alRange.Min, alRange.Max, alDistribution);
+                    if (wasExternallyDerived)
+                        registerTracker.MarkRegisterAsExternallyDerived("BP");
                 }
             }
 
@@ -12330,6 +12800,9 @@ namespace MMMapEditor
                 }
                 else if (registerTracker.TryGetRegisterRange("BP", out var bpRange) && bpRange != null)
                 {
+                    bool wasExternallyDerived =
+                        registerTracker.HasPendingExternalCallResult("BP") ||
+                        registerTracker.IsRegisterExternallyDerived("BP");
                     registerTracker.TryGetRegisterDistribution("BP", out var bpDistribution);
                     byte maskedMin = (byte)(bpRange.Min & 0xFF);
                     byte maskedMax = (byte)(bpRange.Max & 0xFF);
@@ -12355,6 +12828,8 @@ namespace MMMapEditor
                     {
                         registerTracker.SetRegisterRange("BP", maskedMin, maskedMax, bpDistribution);
                     }
+                    if (wasExternallyDerived)
+                        registerTracker.MarkRegisterAsExternallyDerived("BP");
                 }
             }
 
@@ -13223,6 +13698,7 @@ namespace MMMapEditor
             public ushort SecondBaseAddr { get; set; }
             public int FirstOffset { get; set; }
             public int SecondOffset { get; set; }
+            public List<int> SourceOptionOffsets { get; set; } = new List<int>();
         }
 
         private PartialBattleTemplateObservation? CreatePartialBattleTemplateObservation(IGrouping<int, PartialBattleInfo> group)
@@ -13247,8 +13723,48 @@ namespace MMMapEditor
                 FirstBaseAddr = entry58.SourceTableBaseAddr.Value,
                 SecondBaseAddr = entry29.SourceTableBaseAddr.Value,
                 FirstOffset = entry58.SourceTableAddr.HasValue ? entry58.SourceTableAddr.Value - entry58.SourceTableBaseAddr.Value : 0,
-                SecondOffset = entry29.SourceTableAddr.HasValue ? entry29.SourceTableAddr.Value - entry29.SourceTableBaseAddr.Value : 0
+                SecondOffset = entry29.SourceTableAddr.HasValue ? entry29.SourceTableAddr.Value - entry29.SourceTableBaseAddr.Value : 0,
+                SourceOptionOffsets = GetSharedSourceOptionOffsets(entry58, entry29)
             };
+        }
+
+        private static List<int> GetSharedSourceOptionOffsets(PartialBattleInfo entry58, PartialBattleInfo entry29)
+        {
+            List<int> firstOffsets = GetSourceOptionOffsets(entry58);
+            List<int> secondOffsets = GetSourceOptionOffsets(entry29);
+
+            if (firstOffsets.Count > 0 && secondOffsets.Count > 0)
+            {
+                var shared = firstOffsets.Intersect(secondOffsets).OrderBy(value => value).ToList();
+                if (shared.Count > 0)
+                    return shared;
+            }
+
+            return firstOffsets.Count > 0 ? firstOffsets : secondOffsets;
+        }
+
+        private static List<int> GetSourceOptionOffsets(PartialBattleInfo info)
+        {
+            if (info == null)
+                return new List<int>();
+
+            if (info.SourceIndexValues != null && info.SourceIndexValues.Count > 0)
+            {
+                return info.SourceIndexValues
+                    .Select(value => (int)value)
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToList();
+            }
+
+            if (info.SourceIndexMin.HasValue && info.SourceIndexMax.HasValue && info.SourceIndexMax.Value >= info.SourceIndexMin.Value)
+            {
+                int optionCount = info.SourceIndexMax.Value - info.SourceIndexMin.Value + 1;
+                if (optionCount > 0 && optionCount <= 64)
+                    return Enumerable.Range(info.SourceIndexMin.Value, optionCount).ToList();
+            }
+
+            return new List<int>();
         }
 
         private static bool IsKnownPartialBattleTemplateSource(string? sourceTable)
@@ -13361,6 +13877,9 @@ namespace MMMapEditor
             {
                 return true;
             }
+
+            if (observation.SourceOptionOffsets != null && observation.SourceOptionOffsets.Count > 0)
+                return HasAlignedSourceOffsets(observation);
 
             return false;
         }
@@ -13611,6 +14130,9 @@ namespace MMMapEditor
             if (IsTemplateSelectionExternallyDerived(sample))
                 return false;
 
+            if (sample.SourceOptionOffsets != null && sample.SourceOptionOffsets.Count > 0)
+                return false;
+
             return HasAlignedSourceOffsets(sample);
         }
 
@@ -13658,10 +14180,15 @@ namespace MMMapEditor
 
                 handledAny = true;
 
-                int optionCount = DeterminePartialBattleOptionCount(result, templateObservations, groupedByBx);
+                var optionOffsets = DeterminePartialBattleOptionOffsets(result, templateObservations, groupedByBx);
+                int optionCount = optionOffsets.Count > 0
+                    ? optionOffsets.Count
+                    : DeterminePartialBattleOptionCount(result, templateObservations, groupedByBx);
                 int startOffset = 0;
 
-                var exactOptions = ReadPartialBattleExactOptions(br, firstBaseAddr, secondBaseAddr, startOffset, optionCount);
+                var exactOptions = optionOffsets.Count > 0
+                    ? ReadPartialBattleExactOptions(br, firstBaseAddr, secondBaseAddr, optionOffsets)
+                    : ReadPartialBattleExactOptions(br, firstBaseAddr, secondBaseAddr, startOffset, optionCount);
                 if (exactOptions.Count == 0)
                 {
                     exactOptions = templateObservations
@@ -13767,6 +14294,37 @@ namespace MMMapEditor
             return maxSaveBx > 0 ? maxSaveBx + 1 : 1;
         }
 
+        private List<int> DeterminePartialBattleOptionOffsets(
+            PathAnalysisResult result,
+            List<PartialBattleTemplateObservation> observations,
+            List<IGrouping<int, PartialBattleInfo>> groupedByBx)
+        {
+            if (observations == null || observations.Count == 0)
+                return new List<int>();
+
+            var explicitOffsets = observations
+                .SelectMany(observation => observation.SourceOptionOffsets ?? Enumerable.Empty<int>())
+                .Where(offset => offset >= 0 && offset <= byte.MaxValue)
+                .Distinct()
+                .OrderBy(offset => offset)
+                .ToList();
+
+            if (explicitOffsets.Count > 0)
+                return explicitOffsets;
+
+            var observedOffsets = observations
+                .Select(observation => observation.FirstOffset)
+                .Where(offset => offset >= 0)
+                .Distinct()
+                .OrderBy(offset => offset)
+                .ToList();
+
+            if (observedOffsets.Count > 1)
+                return observedOffsets;
+
+            return new List<int>();
+        }
+
         private int DeterminePartialBattleOptionCount(
             PathAnalysisResult result,
             List<PartialBattleTemplateObservation> observations,
@@ -13849,6 +14407,44 @@ namespace MMMapEditor
             return exactOptions;
         }
 
+        private List<DiscreteBattleOption> ReadPartialBattleExactOptions(
+            BinaryReader br,
+            ushort firstBaseAddr,
+            ushort secondBaseAddr,
+            IReadOnlyList<int> optionOffsets)
+        {
+            var exactOptions = new List<DiscreteBattleOption>();
+
+            if (br == null || optionOffsets == null || optionOffsets.Count == 0)
+                return exactOptions;
+
+            int optionNumber = 0;
+            foreach (int optionOffset in optionOffsets.Where(offset => offset >= 0).Distinct().OrderBy(offset => offset))
+            {
+                optionNumber++;
+                ushort firstAddr = (ushort)(firstBaseAddr + optionOffset);
+                ushort secondAddr = (ushort)(secondBaseAddr + optionOffset);
+
+                bool readSuccess1 = TryReadOverlayByte(br, firstAddr, out byte val1);
+                bool readSuccess2 = TryReadOverlayByte(br, secondAddr, out byte val2);
+
+                AnalysisDebug.WriteLine(readSuccess1 && readSuccess2
+                    ? $"        ШАБЛОН [{firstBaseAddr:X4}/{secondBaseAddr:X4}] option {optionNumber} (offset {optionOffset}) -> [{firstAddr:X4}] = 0x{val1:X2}, [{secondAddr:X4}] = 0x{val2:X2}"
+                    : $"        ШАБЛОН [{firstBaseAddr:X4}/{secondBaseAddr:X4}] option {optionNumber} (offset {optionOffset}) -> read failed");
+
+                if (!readSuccess1 || !readSuccess2)
+                    continue;
+
+                exactOptions.Add(new DiscreteBattleOption
+                {
+                    Val1 = val1,
+                    Val2 = val2
+                });
+            }
+
+            return exactOptions;
+        }
+
 
         private string GetFullRegisterNameForByteRegister(string regName)
         {
@@ -13860,6 +14456,20 @@ namespace MMMapEditor
                 "DL" or "DH" => "DX",
                 _ => string.Empty
             };
+        }
+
+        private static bool TryGetByteRegistersForFullRegister(string fullRegister, out string lowRegister, out string highRegister)
+        {
+            (lowRegister, highRegister) = fullRegister?.ToUpperInvariant() switch
+            {
+                "AX" => ("AL", "AH"),
+                "BX" => ("BL", "BH"),
+                "CX" => ("CL", "CH"),
+                "DX" => ("DL", "DH"),
+                _ => (null, null)
+            };
+
+            return lowRegister != null && highRegister != null;
         }
 
         private bool TryGetOverlayTableSourceFromBxIndexedOperand(
@@ -13975,12 +14585,14 @@ namespace MMMapEditor
             out ushort baseAddress,
             out ValueRange8 offsetRange,
             out RegisterValueDistribution distribution,
+            out string rangedRegisterName,
             out int decodedLength,
             out string eaText)
         {
             baseAddress = 0;
             offsetRange = null;
             distribution = RegisterValueDistribution.Unknown;
+            rangedRegisterName = null;
             decodedLength = 0;
             eaText = null;
 
@@ -14002,6 +14614,7 @@ namespace MMMapEditor
             int baseContribution = signedDisp;
             ValueRange8 rangedOffset = null;
             RegisterValueDistribution rangedDistribution = RegisterValueDistribution.Unknown;
+            string rangedRegisterCandidate = null;
 
             bool AccumulateComponent(string regName)
             {
@@ -14018,7 +14631,32 @@ namespace MMMapEditor
 
                     rangedOffset = new ValueRange8(rangeValue.Min, rangeValue.Max);
                     registerTracker.TryGetRegisterDistribution(regName, out rangedDistribution);
+                    rangedRegisterCandidate = regName;
                     return true;
+                }
+
+                if (TryGetByteRegistersForFullRegister(regName, out string lowReg, out string highReg))
+                {
+                    if (registerTracker.TryGetByteRegisterValue(highReg, out byte highValue) &&
+                        registerTracker.TryGetRegisterRange(lowReg, out var lowRangeValue) &&
+                        lowRangeValue != null)
+                    {
+                        if (rangedOffset != null)
+                            return false;
+
+                        baseContribution += highValue << 8;
+                        rangedOffset = new ValueRange8(lowRangeValue.Min, lowRangeValue.Max);
+                        registerTracker.TryGetRegisterDistribution(lowReg, out rangedDistribution);
+                        rangedRegisterCandidate = lowReg;
+                        return true;
+                    }
+
+                    if (registerTracker.TryGetByteRegisterValue(highReg, out highValue) &&
+                        registerTracker.TryGetByteRegisterValue(lowReg, out byte lowValue))
+                    {
+                        baseContribution += (highValue << 8) | lowValue;
+                        return true;
+                    }
                 }
 
                 return false;
@@ -14067,18 +14705,243 @@ namespace MMMapEditor
 
             int minAddress = baseContribution + rangedOffset.Min;
             int maxAddress = baseContribution + rangedOffset.Max;
-            if (baseContribution < 0 ||
-                baseContribution > ushort.MaxValue ||
-                minAddress < 0 ||
-                maxAddress > ushort.MaxValue)
+            if (maxAddress - minAddress > ushort.MaxValue)
             {
                 return false;
             }
 
-            baseAddress = (ushort)baseContribution;
+            baseAddress = unchecked((ushort)baseContribution);
             offsetRange = rangedOffset;
             distribution = rangedDistribution;
+            rangedRegisterName = rangedRegisterCandidate;
             return true;
+        }
+
+        private static List<byte> EnumerateRangeValues(ValueRange8 range, RegisterValueDistribution distribution, int maxCount = 64)
+        {
+            var values = new List<byte>();
+            if (range == null || range.Max < range.Min)
+                return values;
+
+            int step = distribution == RegisterValueDistribution.EvenDiscreteRange ? 2 : 1;
+            for (int value = range.Min; value <= range.Max; value += step)
+            {
+                if (values.Count >= maxCount)
+                    return new List<byte>();
+
+                if (distribution == RegisterValueDistribution.EvenDiscreteRange && (value & 1) != 0)
+                    continue;
+
+                values.Add((byte)value);
+            }
+
+            return values;
+        }
+
+        private bool TryLoadRangedOverlayByteOperand(
+            BinaryReader br,
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            out ushort sourceBaseAddress,
+            out ValueRange8 sourceIndexRange,
+            out List<byte> sourceIndexValues,
+            out List<byte> loadedValues,
+            out RegisterValueDistribution loadedDistribution,
+            out bool sourceIndexExternallyDerived,
+            out ushort? sourceIndexProviderAddr,
+            out string eaText)
+        {
+            sourceBaseAddress = 0;
+            sourceIndexRange = null;
+            sourceIndexValues = null;
+            loadedValues = null;
+            loadedDistribution = RegisterValueDistribution.Unknown;
+            sourceIndexExternallyDerived = false;
+            sourceIndexProviderAddr = null;
+            eaText = null;
+
+            if (!TryDecode16BitEffectiveAddressRange(
+                    instructionBytes,
+                    registerTracker,
+                    out sourceBaseAddress,
+                    out sourceIndexRange,
+                    out var indexDistribution,
+                    out string rangedRegisterName,
+                    out _,
+                    out eaText) ||
+                sourceIndexRange == null ||
+                string.IsNullOrWhiteSpace(rangedRegisterName))
+            {
+                return false;
+            }
+
+            if (!registerTracker.TryGetRegisterDiscreteValues(rangedRegisterName, out sourceIndexValues) ||
+                sourceIndexValues == null ||
+                sourceIndexValues.Count == 0)
+            {
+                sourceIndexValues = EnumerateRangeValues(sourceIndexRange, indexDistribution);
+            }
+
+            if (sourceIndexValues == null || sourceIndexValues.Count == 0)
+                return false;
+
+            sourceIndexValues = sourceIndexValues
+                .Distinct()
+                .OrderBy(value => value)
+                .ToList();
+
+            var values = new List<byte>();
+            foreach (byte indexValue in sourceIndexValues)
+            {
+                ushort candidateAddress = unchecked((ushort)(sourceBaseAddress + indexValue));
+                if (!TryReadOverlayByte(br, candidateAddress, out byte loadedValue))
+                    return false;
+
+                values.Add(loadedValue);
+            }
+
+            if (values.Count == 0)
+                return false;
+
+            loadedValues = values
+                .Distinct()
+                .OrderBy(value => value)
+                .ToList();
+            loadedDistribution = RegisterValueDistribution.Unknown;
+            sourceIndexExternallyDerived =
+                registerTracker.HasPendingExternalCallResult(rangedRegisterName) ||
+                registerTracker.IsRegisterExternallyDerived(rangedRegisterName) ||
+                registerTracker.GetSourceIndexExternallyDerived(rangedRegisterName);
+            sourceIndexProviderAddr =
+                registerTracker.GetSourceIndexProviderAddress(rangedRegisterName) ??
+                registerTracker.GetSourceAddress(rangedRegisterName);
+
+            return true;
+        }
+
+        private bool TryLoadRangedOverlayOperandCore(
+            BinaryReader br,
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            bool requireReadableHighByte,
+            out ushort sourceBaseAddress,
+            out ValueRange8 sourceIndexRange,
+            out List<byte> sourceIndexValues,
+            out List<byte> loadedValues,
+            out RegisterValueDistribution loadedDistribution,
+            out bool sourceIndexExternallyDerived,
+            out ushort? sourceIndexProviderAddr,
+            out string eaText)
+        {
+            sourceBaseAddress = 0;
+            sourceIndexRange = null;
+            sourceIndexValues = null;
+            loadedValues = null;
+            loadedDistribution = RegisterValueDistribution.Unknown;
+            sourceIndexExternallyDerived = false;
+            sourceIndexProviderAddr = null;
+            eaText = null;
+
+            if (!TryDecode16BitEffectiveAddressRange(
+                    instructionBytes,
+                    registerTracker,
+                    out sourceBaseAddress,
+                    out sourceIndexRange,
+                    out var indexDistribution,
+                    out string rangedRegisterName,
+                    out _,
+                    out eaText) ||
+                sourceIndexRange == null ||
+                string.IsNullOrWhiteSpace(rangedRegisterName))
+            {
+                return false;
+            }
+
+            if (!registerTracker.TryGetRegisterDiscreteValues(rangedRegisterName, out sourceIndexValues) ||
+                sourceIndexValues == null ||
+                sourceIndexValues.Count == 0)
+            {
+                sourceIndexValues = EnumerateRangeValues(sourceIndexRange, indexDistribution);
+            }
+
+            if (sourceIndexValues == null || sourceIndexValues.Count == 0)
+                return false;
+
+            sourceIndexValues = sourceIndexValues
+                .Distinct()
+                .OrderBy(value => value)
+                .ToList();
+
+            var values = new List<byte>();
+            foreach (byte indexValue in sourceIndexValues)
+            {
+                ushort candidateAddress = unchecked((ushort)(sourceBaseAddress + indexValue));
+                if (!TryReadOverlayByte(br, candidateAddress, out byte loadedValue))
+                    return false;
+
+                if (requireReadableHighByte)
+                {
+                    if (candidateAddress == ushort.MaxValue ||
+                        !TryReadOverlayByte(br, unchecked((ushort)(candidateAddress + 1)), out _))
+                    {
+                        return false;
+                    }
+                }
+
+                values.Add(loadedValue);
+            }
+
+            if (values.Count == 0)
+                return false;
+
+            loadedValues = values
+                .Distinct()
+                .OrderBy(value => value)
+                .ToList();
+            loadedDistribution = RegisterValueDistribution.Unknown;
+            sourceIndexExternallyDerived =
+                registerTracker.HasPendingExternalCallResult(rangedRegisterName) ||
+                registerTracker.IsRegisterExternallyDerived(rangedRegisterName) ||
+                registerTracker.GetSourceIndexExternallyDerived(rangedRegisterName);
+            sourceIndexProviderAddr =
+                registerTracker.GetSourceIndexProviderAddress(rangedRegisterName) ??
+                registerTracker.GetSourceAddress(rangedRegisterName);
+
+            return true;
+        }
+
+        private bool TryLoadRangedOverlayWordLowByteOperand(
+            BinaryReader br,
+            byte[] instructionBytes,
+            RegisterTracker registerTracker,
+            out ushort sourceBaseAddress,
+            out ValueRange8 sourceIndexRange,
+            out List<byte> sourceIndexValues,
+            out List<byte> lowByteValues,
+            out RegisterValueDistribution lowByteDistribution,
+            out bool sourceIndexExternallyDerived,
+            out ushort? sourceIndexProviderAddr,
+            out string eaText)
+        {
+            lowByteValues = null;
+            if (!TryLoadRangedOverlayOperandCore(
+                    br,
+                    instructionBytes,
+                    registerTracker,
+                    requireReadableHighByte: true,
+                    out sourceBaseAddress,
+                    out sourceIndexRange,
+                    out sourceIndexValues,
+                    out lowByteValues,
+                    out lowByteDistribution,
+                    out sourceIndexExternallyDerived,
+                    out sourceIndexProviderAddr,
+                    out eaText))
+            {
+                return false;
+            }
+
+            return lowByteValues != null && lowByteValues.Count > 0;
         }
 
         private bool TryGet16BitAddressBase(RegisterTracker registerTracker, byte rm, out ushort baseValue, out string baseText)
@@ -14425,6 +15288,7 @@ namespace MMMapEditor
                     out ValueRange8 offsetRange,
                     out _,
                     out _,
+                    out _,
                     out string eaText))
             {
                 return false;
@@ -14549,6 +15413,8 @@ namespace MMMapEditor
                 _emulatedMemory8.Remove(possibleAddress);
                 _emulatedMemory8Ranges.Remove(possibleAddress);
                 _emulatedMemory8RangeDistributions.Remove(possibleAddress);
+                _emulatedMemory8DiscreteValues.Remove(possibleAddress);
+                _emulatedMemory8RangeSources.Remove(possibleAddress);
                 _emulatedPartyPointerBytes.Remove(possibleAddress);
                 _emulatedPartyPointers.Remove(possibleAddress);
                 _emulatedPartyPointers.Remove(unchecked((ushort)(possibleAddress - 1)));
@@ -14582,6 +15448,8 @@ namespace MMMapEditor
             _emulatedMemory8[memAddr] = value;
             _emulatedMemory8Ranges.Remove(memAddr);
             _emulatedMemory8RangeDistributions.Remove(memAddr);
+            _emulatedMemory8DiscreteValues.Remove(memAddr);
+            _emulatedMemory8RangeSources.Remove(memAddr);
             _emulatedPartyPointerBytes.Remove(memAddr);
             _emulatedPartyPointers.Remove(memAddr);
             _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
@@ -14665,6 +15533,8 @@ namespace MMMapEditor
             _emulatedMemory8.Remove(memAddr);
             _emulatedMemory8Ranges[memAddr] = new ValueRange8(range.Min, range.Max);
             _emulatedMemory8RangeDistributions[memAddr] = distribution;
+            _emulatedMemory8DiscreteValues.Remove(memAddr);
+            _emulatedMemory8RangeSources.Remove(memAddr);
             _emulatedPartyPointerBytes.Remove(memAddr);
             _emulatedPartyPointers.Remove(memAddr);
             _emulatedPartyPointers.Remove(unchecked((ushort)(memAddr - 1)));
@@ -14706,7 +15576,7 @@ namespace MMMapEditor
             }
         }
 
-        private static void MirrorRangeRegisterToMemorySource(
+        private void MirrorRangeRegisterToMemorySource(
             RegisterTracker registerTracker,
             string registerName,
             ushort memAddr,
@@ -14718,15 +15588,52 @@ namespace MMMapEditor
             if (registerTracker == null || range == null || string.IsNullOrWhiteSpace(registerName))
                 return;
 
-            registerTracker.SetRegisterRangeWithSource(
-                registerName,
-                range.Min,
-                range.Max,
-                distribution,
-                memAddr,
-                address,
-                instruction,
-                sourceIndexProviderAddr: memAddr);
+            if (registerTracker.TryGetRegisterDiscreteValues(registerName, out var discreteValues) &&
+                discreteValues != null &&
+                discreteValues.Count > 0)
+            {
+                _emulatedMemory8DiscreteValues[memAddr] = discreteValues
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToList();
+            }
+            else
+            {
+                _emulatedMemory8DiscreteValues.Remove(memAddr);
+            }
+
+            ushort? sourceAddr = registerTracker.GetSourceAddress(registerName);
+            registerTracker.TryGetSourceIndexRange(registerName, out var sourceIndexRange);
+            registerTracker.TryGetSourceIndexValues(registerName, out var sourceIndexValues);
+            ushort effectiveSourceAddr = sourceAddr ?? memAddr;
+            ushort? effectiveSourceIndexProviderAddr =
+                registerTracker.GetSourceIndexProviderAddress(registerName) ??
+                (sourceAddr.HasValue ? (ushort?)null : memAddr);
+
+            _emulatedMemory8RangeSources[memAddr] = new EmulatedMemory8RangeSourceInfo
+            {
+                SourceAddr = effectiveSourceAddr,
+                FromTable = registerTracker.IsFromTable(registerName),
+                OriginalIndex = registerTracker.GetOriginalBx(registerName) ?? 0,
+                SourceTable = registerTracker.GetSourceTable(registerName),
+                SourceIndexExternallyDerived = registerTracker.GetSourceIndexExternallyDerived(registerName),
+                SourceIndexProviderAddr = effectiveSourceIndexProviderAddr,
+                SourceIndexRange = sourceIndexRange == null ? null : new ValueRange8(sourceIndexRange.Min, sourceIndexRange.Max),
+                SourceIndexValues = sourceIndexValues == null ? new List<byte>() : sourceIndexValues
+                    .Distinct()
+                    .OrderBy(value => value)
+                    .ToList()
+            };
+
+            if (!sourceAddr.HasValue)
+            {
+                registerTracker.SetRegisterSourceMetadataForExistingValue(
+                    registerName,
+                    memAddr,
+                    address,
+                    instruction,
+                    sourceIndexProviderAddr: memAddr);
+            }
         }
 
         private void ApplyTrackedWordWrite(ushort memAddr, ushort value, PathAnalysisResult result,
