@@ -1828,9 +1828,10 @@ namespace MMMapEditor
             var collapsedVariants = AddMixedPartyScanSubsetOutcomeVariants(
                 CollapseConditionalLoopSubsetOutcomeVariants(
                     CollapseShadowedConditionalLoopSubsetCoverageVariants(
-                        CollapsePromptOnlyVariantsShadowedByLoopEffects(
-                            CollapseGuardOnlyPartyLoopVariants(
-                                CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values))))))
+                        CollapsePromptOnlyVariantsShadowedByInputOutcomes(
+                            CollapsePromptOnlyVariantsShadowedByLoopEffects(
+                                CollapseGuardOnlyPartyLoopVariants(
+                                    CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))))))
                 .ToList();
 
             bool preferPromptOnlyBeforeMixedPartyScan = collapsedVariants.Any(IsMixedPartyScanSubsetSummaryVariant);
@@ -2102,6 +2103,87 @@ namespace MMMapEditor
                 IsBranchHistoryCoveredBy(
                     promptBranchKeys,
                     BuildPromptShadowBranchChoiceKeySet(other)));
+        }
+
+        private IEnumerable<PathVariantInfo> CollapsePromptOnlyVariantsShadowedByInputOutcomes(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var variantList = variants
+                .Where(variant => variant != null)
+                .OrderBy(GetPathOrderKey)
+                .ToList();
+
+            if (variantList.Count < 2)
+                return variantList;
+
+            var survivors = variantList
+                .Where(variant => !IsPromptOnlyVariantShadowedByInputOutcome(variant, variantList))
+                .ToList();
+
+            return survivors.Count > 0 ? survivors : variantList;
+        }
+
+        private bool IsPromptOnlyVariantShadowedByInputOutcome(
+            PathVariantInfo promptOnlyVariant,
+            IEnumerable<PathVariantInfo> allVariants)
+        {
+            if (!IsPromptOnlyLeaf(promptOnlyVariant) ||
+                HasInputChoiceBranch(promptOnlyVariant) ||
+                promptOnlyVariant.Texts == null ||
+                promptOnlyVariant.Texts.Count == 0 ||
+                allVariants == null)
+            {
+                return false;
+            }
+
+            var promptBranchKeys = BuildPromptShadowBranchChoiceKeySet(promptOnlyVariant);
+
+            return allVariants.Any(other =>
+                !ReferenceEquals(other, promptOnlyVariant) &&
+                HasInputChoiceBranch(other) &&
+                HasPromptTextPrefix(promptOnlyVariant, other) &&
+                IsBranchHistoryCoveredBy(promptBranchKeys, BuildPromptShadowBranchChoiceKeySet(other)) &&
+                (HasAnyOutcome(other) || (other.Texts?.Count ?? 0) > promptOnlyVariant.Texts.Count));
+        }
+
+        private static bool HasPromptTextPrefix(PathVariantInfo promptOnlyVariant, PathVariantInfo candidate)
+        {
+            if (promptOnlyVariant?.Texts == null ||
+                candidate?.Texts == null ||
+                promptOnlyVariant.Texts.Count == 0 ||
+                candidate.Texts.Count <= promptOnlyVariant.Texts.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < promptOnlyVariant.Texts.Count; i++)
+            {
+                if (!string.Equals(promptOnlyVariant.Texts[i], candidate.Texts[i], StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool HasInputChoiceBranch(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices != null &&
+                   variant.BranchChoices.Any(choice => IsInputChoiceBranchLabel(choice?.Label));
+        }
+
+        private static bool IsInputChoiceBranchLabel(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return false;
+
+            string normalized = label.Trim();
+            if (normalized.EndsWith(")", StringComparison.Ordinal))
+                normalized = normalized.Substring(0, normalized.Length - 1).TrimEnd();
+
+            return string.Equals(normalized, "InputChoiceBranch", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(normalized, "InputChoiceLinear", StringComparison.OrdinalIgnoreCase);
         }
 
         private bool HasNonLocalGuardedBranchChoice(PathVariantInfo variant)

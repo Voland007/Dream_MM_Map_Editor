@@ -5716,10 +5716,22 @@ namespace MMMapEditor
                 }
 
                 bool isInputChoiceBranch = IsInputChoiceBranch(registerTracker);
+                bool hasFiniteInputValidationSuccessContinuation =
+                    TryResolveFiniteInputValidationSuccessContinuation(
+                        insn,
+                        br,
+                        fileLength,
+                        currentAddress,
+                        nextAddress,
+                        out uint finiteInputValidationSuccessContinuation);
                 if (branchTaken.HasValue)
                 {
                     TrackStateValueConstraintForCurrentFlags(registerTracker, insn.Mnemonic, branchTaken.Value, result);
-                    uint resolvedTarget = branchTaken.Value ? condJumpTarget : nextAddress;
+                    uint resolvedTarget = branchTaken.Value
+                        ? condJumpTarget
+                        : (hasFiniteInputValidationSuccessContinuation
+                            ? finiteInputValidationSuccessContinuation
+                            : nextAddress);
 
                     bool isResolvedLoopBackEdge = IsStructuralLoopBackEdge(br, condJumpTarget, currentAddress);
                     if (isResolvedLoopBackEdge && branchTaken.Value)
@@ -6041,11 +6053,15 @@ namespace MMMapEditor
 
                 if (notTakenProbability.numerator > 0)
                 {
+                    uint linearTargetAddress = hasFiniteInputValidationSuccessContinuation
+                        ? finiteInputValidationSuccessContinuation
+                        : nextAddress;
+
                     // Добавляем линейное продолжение как отдельный путь
                     var linearPath = new AlternativePath
                     {
                         Address = (uint)insn.Address,
-                        TargetAddress = nextAddress,
+                        TargetAddress = linearTargetAddress,
                         Condition = $"LINEAR after {insn.Mnemonic}",
                         Analyzed = false,
                         PathNumber = result.AlternativePaths.Count + 1,
@@ -6083,7 +6099,17 @@ namespace MMMapEditor
                     {
                         result.AlternativePaths.Add(linearPath);
                         if (debugMode)
-                            AnalysisDebug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
+                        {
+                            if (hasFiniteInputValidationSuccessContinuation)
+                            {
+                                AnalysisDebug.WriteLine(
+                                    $"      Добавлен свернутый success-путь проверки ввода: 0x{insn.Address:X4} -> 0x{linearTargetAddress:X4}");
+                            }
+                            else
+                            {
+                                AnalysisDebug.WriteLine($"      Добавлен линейный путь: 0x{insn.Address:X4} -> 0x{nextAddress:X4}");
+                            }
+                        }
                     }
                 }
 
@@ -6186,6 +6212,96 @@ namespace MMMapEditor
                 return false;
 
             return BranchTargetLooksLikeInputFailureText(br, fileLength, condJumpTarget);
+        }
+
+        private bool TryResolveFiniteInputValidationSuccessContinuation(
+            X86Instruction insn,
+            BinaryReader br,
+            long fileLength,
+            uint currentAddress,
+            uint nextAddress,
+            out uint successContinuation)
+        {
+            successContinuation = 0;
+
+            if (insn == null ||
+                br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                nextAddress + 7 >= fileLength)
+            {
+                return false;
+            }
+
+            string jump = insn.Mnemonic?.ToUpperInvariant();
+            if (jump != "JNE" && jump != "JNZ")
+                return false;
+
+            if (!IsCmpAlAgainstBxIndexedMemoryImmediatelyBefore(br, fileLength, currentAddress))
+                return false;
+
+            byte[] suffixBytes = ReadBytesAt(br, nextAddress, 5);
+            if (suffixBytes.Length != 5 ||
+                suffixBytes[0] != 0xFE ||
+                suffixBytes[1] != 0xC3 ||
+                suffixBytes[2] != 0x80 ||
+                suffixBytes[3] != 0xFB)
+            {
+                return false;
+            }
+
+            byte loopLimit = suffixBytes[4];
+            if (loopLimit == 0 || loopLimit > 0x40)
+                return false;
+
+            uint backJumpAddress = nextAddress + 5;
+            if (!TryDisassembleNext(br, backJumpAddress, out var backJumpInsn) ||
+                !IsCarrySetJump(backJumpInsn.Mnemonic) ||
+                !IsConditionalJump(backJumpInsn, out uint loopStartAddress) ||
+                loopStartAddress > currentAddress ||
+                !InputValidationLoopStartLooksRecognizable(br, fileLength, loopStartAddress))
+            {
+                return false;
+            }
+
+            uint backJumpEnd = (uint)(backJumpInsn.Address + backJumpInsn.Bytes.Length);
+            if (backJumpEnd <= backJumpAddress || backJumpEnd >= fileLength)
+                return false;
+
+            successContinuation = backJumpEnd;
+            return true;
+        }
+
+        private bool InputValidationLoopStartLooksRecognizable(BinaryReader br, long fileLength, uint loopStartAddress)
+        {
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                loopStartAddress + 4 >= fileLength)
+            {
+                return false;
+            }
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Seek(loopStartAddress, SeekOrigin.Begin);
+                if (br.ReadByte() != 0x8A)
+                    return false;
+
+                byte modRm = br.ReadByte();
+                byte mod = (byte)((modRm >> 6) & 0x03);
+                byte reg = (byte)((modRm >> 3) & 0x07);
+                byte rm = (byte)(modRm & 0x07);
+
+                return mod == 0x02 && reg == 0x00 && rm == 0x07;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Seek(originalPosition, SeekOrigin.Begin);
+            }
         }
 
         private bool TryResolveFiniteInputValidationTerminatorBranch(X86Instruction insn, BinaryReader br, long fileLength,
