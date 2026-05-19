@@ -1286,6 +1286,48 @@ namespace MMMapEditor
                 "00 00 00 2A 2A 2A 2A 00 00 00 00 00 00 00 00 00"
             },
             },
+            ["AREAE1.OVR"] = new OvrFileConfig
+            {
+                StartAddress = 0x52C,
+                First16Lines = new[]
+                    {
+                "0F 8C 8C 8C 8C 8C 3C FF FF FF FF CF 3C FF FF FF",
+                "23 0A 48 68 4A 28 32 FF FF FF FF FF 33 FF FF FF",
+                "23 92 05 44 14 21 32 FF FF FF FF FF 33 FF FF FF",
+                "23 1A 11 55 11 A1 32 FF FF FF FF FF 33 FF FF FF",
+                "23 12 41 44 50 29 32 FF FF FF FF FF 33 FF FF FF",
+                "23 82 A4 86 84 A0 32 FF FF FF FF FF 33 FF FF FF",
+                "C3 C8 C8 C8 C8 C8 F0 FF FF FF FF FF 33 FF FF FF",
+                "FF FF FF FF FF FF FF FF FF FF FF FF F3 FF FF FF",
+                "CF CC CC CC CC FC 0F 4C 4C 4C 0C 4C 4C 3C FF FF",
+                "FF FF FF FF FF FF 13 A5 A6 96 11 A5 A6 32 FF FF",
+                "FF FF FF FF FF FF 13 69 0A 88 80 88 28 32 FF FF",
+                "FF FF FF FF FF FF 03 44 20 8A 88 08 A0 32 FF FF",
+                "FF FF FF FF FF FF 13 A5 82 88 28 22 2A 32 FF FF",
+                "FF FF FF FF FF FF 13 89 88 A8 82 A0 22 32 FF FF",
+                "FF FF FF FF FF FF 03 48 48 48 48 48 40 30 FF FF",
+                "FF FF FF FF FF FF C3 C4 C4 C4 C4 C4 C4 F0 FF FF"
+            },
+                Second16Lines = new[]
+                   {
+                "20 60 60 60 60 60 20 88 88 88 88 00 00 88 88 98",
+                "30 0D 0C 9C 0D 1C 21 88 88 88 88 88 00 88 88 98",
+                "30 49 88 88 88 18 21 88 88 88 88 88 00 88 88 98",
+                "30 8D 88 88 88 D8 21 88 88 88 88 88 00 88 88 98",
+                "30 09 88 88 88 1C 21 88 88 88 88 88 00 88 88 98",
+                "30 49 58 C9 48 58 21 88 88 88 88 88 00 88 88 98",
+                "20 24 24 24 24 24 20 88 88 88 88 88 00 88 88 98",
+                "88 88 88 88 88 88 88 88 88 88 88 88 00 88 88 98",
+                "00 00 00 00 00 00 00 00 00 00 00 00 00 00 88 98",
+                "88 88 88 88 88 88 00 50 51 41 00 50 51 01 88 98",
+                "88 88 88 88 88 88 00 14 05 44 40 44 14 01 88 98",
+                "88 88 88 88 88 88 00 00 10 C5 44 04 50 01 88 98",
+                "88 88 88 88 88 88 00 50 41 44 14 11 95 01 88 98",
+                "88 88 88 88 88 88 00 44 44 D4 41 50 11 01 88 98",
+                "88 88 88 88 88 88 00 04 04 04 04 04 00 00 88 98",
+                "C8 C8 C8 C8 C8 C8 40 40 40 40 40 40 40 40 C8 D8"
+            },
+            },
 
             // Другие файлы
         };

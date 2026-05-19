@@ -28,6 +28,7 @@ namespace MMMapEditor
             new ConditionalWeakTable<OvrObject, VariantRenderPreparationCache>();
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
+        private const string ResponseAnswerPrompt = "RESPONSE:";
         private const string GuardHeaderAnnotationPrefix = "при условии:";
         private const string LoopInternalEradicatedExclusionAnnotation =
             "за исключением персонажей, у которых CONDITION == ERADICATED";
@@ -14938,6 +14939,23 @@ namespace MMMapEditor
                 return BuildSpoilerAnswerLine(areaB4Answer);
             }
 
+            if (string.Equals(fileNameOnly, "AREAD4.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (obj == null ||
+                    obj.X != 7 ||
+                    obj.Y != 1 ||
+                    obj.PatchAddress != 0x0217)
+                {
+                    return null;
+                }
+
+                string areaD4Answer = TryReadFiniteInputValidationAnswer(filename, config, obj.PatchAddress.Value);
+                if (string.IsNullOrWhiteSpace(areaD4Answer))
+                    return null;
+
+                return BuildSpoilerAnswerLine(areaD4Answer);
+            }
+
             return null;
         }
 
@@ -15259,6 +15277,196 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private static string TryReadFiniteInputValidationAnswer(string filename, OvrFileConfig config, uint startAddress)
+        {
+            if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
+                return null;
+
+            try
+            {
+                using var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                uint scanEnd = (uint)Math.Min(br.BaseStream.Length, startAddress + 0x200);
+                for (uint address = startAddress; address + 16 < scanEnd; address++)
+                {
+                    if (!TryReadFiniteInputValidationAnswerPattern(
+                            br,
+                            address,
+                            scanEnd,
+                            out ushort answerAddress,
+                            out int answerLength,
+                            out byte storedToAnswerAddValue))
+                    {
+                        continue;
+                    }
+
+                    return TryReadShiftedOverlayText(
+                        filename,
+                        config,
+                        answerAddress,
+                        answerLength,
+                        storedToAnswerAddValue);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            return null;
+        }
+
+        private static bool TryReadFiniteInputValidationAnswerPattern(
+            BinaryReader br,
+            uint loopStartAddress,
+            uint scanEnd,
+            out ushort answerAddress,
+            out int answerLength,
+            out byte storedToAnswerAddValue)
+        {
+            const ushort inputBufferAddress = 0x3CB8;
+
+            answerAddress = 0;
+            answerLength = 0;
+            storedToAnswerAddValue = 0;
+
+            if (!TryReadFileByte(br, loopStartAddress, out byte movOpcode) ||
+                movOpcode != 0x8A ||
+                !TryReadFileByte(br, loopStartAddress + 1, out byte movModRm) ||
+                movModRm != 0x87 ||
+                !TryReadFileWord(br, loopStartAddress + 2, out ushort inputAddress) ||
+                inputAddress != inputBufferAddress)
+            {
+                return false;
+            }
+
+            uint cursor = loopStartAddress + 4;
+            if (!TryReadFileByte(br, cursor, out byte transformOpcode) ||
+                !TryReadFileByte(br, cursor + 1, out byte transformValue))
+            {
+                return false;
+            }
+
+            if (transformOpcode == 0x04)
+            {
+                storedToAnswerAddValue = unchecked((byte)-transformValue);
+            }
+            else if (transformOpcode == 0x2C)
+            {
+                storedToAnswerAddValue = transformValue;
+            }
+            else
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (TryReadFileByte(br, cursor, out byte maybeClc) && maybeClc == 0xF8)
+                cursor++;
+
+            if (!TryReadFileByte(br, cursor, out byte cmpOpcode) ||
+                cmpOpcode != 0x3A ||
+                !TryReadFileByte(br, cursor + 1, out byte cmpModRm) ||
+                cmpModRm != 0x87 ||
+                !TryReadFileWord(br, cursor + 2, out answerAddress) ||
+                answerAddress < OvrFileConfig.OverlayTextStartAddress)
+            {
+                return false;
+            }
+
+            cursor += 4;
+            if (!TryReadFileByte(br, cursor, out byte failureJumpOpcode) ||
+                failureJumpOpcode != 0x75)
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (!TryReadFileByte(br, cursor, out byte incOpcode) ||
+                incOpcode != 0xFE ||
+                !TryReadFileByte(br, cursor + 1, out byte incModRm) ||
+                incModRm != 0xC3 ||
+                !TryReadFileByte(br, cursor + 2, out byte cmpBlOpcode) ||
+                cmpBlOpcode != 0x80 ||
+                !TryReadFileByte(br, cursor + 3, out byte cmpBlModRm) ||
+                cmpBlModRm != 0xFB ||
+                !TryReadFileByte(br, cursor + 4, out byte loopLength) ||
+                loopLength == 0 ||
+                loopLength > 0x40)
+            {
+                return false;
+            }
+
+            answerLength = loopLength;
+            cursor += 5;
+
+            if (!TryReadFileByte(br, cursor, out byte loopJumpOpcode) ||
+                loopJumpOpcode != 0x72 ||
+                !TryReadFileByte(br, cursor + 1, out byte relativeTarget))
+            {
+                return false;
+            }
+
+            uint nextAddress = cursor + 2;
+            uint branchTarget = unchecked((uint)((int)nextAddress + (sbyte)relativeTarget));
+            return branchTarget == loopStartAddress && nextAddress <= scanEnd;
+        }
+
+        private static bool TryReadFileByte(BinaryReader br, uint address, out byte value)
+        {
+            value = 0;
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                address >= br.BaseStream.Length)
+            {
+                return false;
+            }
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Seek(address, SeekOrigin.Begin);
+                value = br.ReadByte();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Seek(originalPosition, SeekOrigin.Begin);
+            }
+        }
+
+        private static bool TryReadFileWord(BinaryReader br, uint address, out ushort value)
+        {
+            value = 0;
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                address + 1 >= br.BaseStream.Length)
+            {
+                return false;
+            }
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Seek(address, SeekOrigin.Begin);
+                value = br.ReadUInt16();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Seek(originalPosition, SeekOrigin.Begin);
+            }
         }
 
         private static ushort TryReadOverlayWord(string filename, OvrFileConfig config, ushort address)
@@ -15937,12 +16145,18 @@ namespace MMMapEditor
             for (int i = 0; i < narrativeLines.Count; i++)
             {
                 string line = narrativeLines[i];
-                if (line?.IndexOf(RiddleAnswerPrompt, StringComparison.OrdinalIgnoreCase) < 0)
+                if (!IsAnswerPromptLine(line))
                     continue;
 
                 narrativeLines.Insert(i + 1, spoilerLine);
                 return;
             }
+        }
+
+        private static bool IsAnswerPromptLine(string line)
+        {
+            return line?.IndexOf(RiddleAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   line?.IndexOf(ResponseAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static void AppendBlankLineAfterLootBlockIfNeeded(
