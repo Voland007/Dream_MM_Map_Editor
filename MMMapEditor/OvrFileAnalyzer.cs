@@ -41,6 +41,12 @@ namespace MMMapEditor
             = new Dictionary<string, List<ObjectVariantAnalysisCacheEntry>>(StringComparer.Ordinal);
         private readonly Dictionary<string, SingleOccurrenceAnalysisCacheEntry> _singleOccurrenceAnalysisCache
             = new Dictionary<string, SingleOccurrenceAnalysisCacheEntry>(StringComparer.Ordinal);
+        private readonly Dictionary<PathVariantInfo, bool> _inputChoiceBranchCache
+            = new Dictionary<PathVariantInfo, bool>();
+        private readonly Dictionary<PathVariantInfo, HashSet<ushort>> _repeatedEventRelevantAddressCache
+            = new Dictionary<PathVariantInfo, HashSet<ushort>>();
+        private readonly Dictionary<ushort, byte?> _overlayByteCache
+            = new Dictionary<ushort, byte?>();
 
         public OvrFileAnalyzer(OvrFileConfig config)
         {
@@ -1329,6 +1335,17 @@ namespace MMMapEditor
             public StateValueConstraintInfo ConstraintInfo { get; set; } = new StateValueConstraintInfo();
         }
 
+        private sealed class RepeatedLeafTransitionInfo
+        {
+            public PathVariantInfo RawLeaf { get; set; }
+            public HashSet<ushort> RelevantAddresses { get; set; } = new HashSet<ushort>();
+            public Dictionary<ushort, byte> CarryOverState { get; set; } = new Dictionary<ushort, byte>();
+            public Dictionary<ushort, StateValueConstraintInfo> NextConstraints { get; set; }
+                = new Dictionary<ushort, StateValueConstraintInfo>();
+            public PathVariantInfo CanonicalVariant { get; set; }
+            public bool CanRemainAtInitialOverlay { get; set; }
+        }
+
         private Dictionary<int, PathVariantInfo> AnalyzeObjectVariants(BinaryReader br, uint startAddress,
             byte targetX, byte targetY, List<AlternativePath> predefinedAlternativePaths,
             HashSet<uint> reachableAddresses, Action<RegisterTracker> initializeRegisters = null,
@@ -1445,6 +1462,7 @@ namespace MMMapEditor
                         currentState,
                         new HashSet<ushort>(currentState.Keys),
                         occurrence);
+
                     var locallyMaterializedStateAddresses = BuildLocallyMaterializedStateAddresses(passResult.RawLeafVariants);
                     var compatibleCanonicalVariants = passResult.CanonicalVariants.Values
                         .Where(variant => IsVariantCompatibleWithCurrentRepeatedState(
@@ -1467,6 +1485,20 @@ namespace MMMapEditor
                             lockedCanonicalVariants)
                         : compatibleCanonicalVariants;
 
+                    List<RepeatedLeafTransitionInfo> repeatedLeafTransitionInfos = null;
+                    if (analyzeRepeatedEventOccurrences)
+                    {
+                        repeatedLeafTransitionInfos = BuildRepeatedLeafTransitionInfos(
+                            br,
+                            currentStateInfo,
+                            currentState,
+                            compatibleRawLeafVariants,
+                            lightOccurrenceTracking
+                                ? lockedCanonicalVariants
+                                : compatibleCanonicalVariants);
+
+                    }
+
                     if (debugMode)
                     {
                         int filteredCanonicalCount = passResult.CanonicalVariants.Count - compatibleCanonicalVariants.Count;
@@ -1483,8 +1515,7 @@ namespace MMMapEditor
                         bool hasInputDependentRepeatedStateDivergence;
                         foreach (var variant in FindInputDependentRepeatedStateOccurrenceVariants(
                             br,
-                            currentStateInfo,
-                            compatibleRawLeafVariants,
+                            repeatedLeafTransitionInfos,
                             occurrenceCanonicalTargets,
                             out hasInputDependentRepeatedStateDivergence))
                         {
@@ -1513,23 +1544,14 @@ namespace MMMapEditor
                         continue;
 
                     var processedRepeatedTransitionKeys = new HashSet<string>(StringComparer.Ordinal);
-                    foreach (var rawLeaf in compatibleRawLeafVariants)
+                    bool initialOverlayCoverageApplied = false;
+                    foreach (var transitionInfo in repeatedLeafTransitionInfos ?? Enumerable.Empty<RepeatedLeafTransitionInfo>())
                     {
-                        var repeatedEventRelevantAddresses = BuildRepeatedEventRelevantAddresses(rawLeaf);
-                        var carryOverState = BuildCarryOverState(
-                            br,
-                            currentState,
-                            rawLeaf,
-                            repeatedEventRelevantAddresses);
-                        var nextConstraints = FilterStateValueConstraintsForRepeatedEvent(
-                            MergeStateValueConstraints(
-                                currentStateInfo.StateValueConstraints,
-                                rawLeaf.StateValueConstraints),
-                            repeatedEventRelevantAddresses);
-                        RemoveConstraintsOverwrittenByExitState(
-                            nextConstraints,
-                            rawLeaf,
-                            repeatedEventRelevantAddresses);
+                        var rawLeaf = transitionInfo.RawLeaf;
+                        var repeatedEventRelevantAddresses = transitionInfo.RelevantAddresses;
+                        var carryOverState = transitionInfo.CarryOverState;
+                        var nextConstraints = transitionInfo.NextConstraints;
+                        var canonicalVariant = transitionInfo.CanonicalVariant;
 
                         if (debugMode &&
                             rawLeaf.AdjustedMemoryAddresses != null &&
@@ -1540,12 +1562,6 @@ namespace MMMapEditor
                                 $"relevant={BuildDebugAddressSet(repeatedEventRelevantAddresses)}, " +
                                 $"carry={BuildMemoryStateKey(carryOverState)}, constraints={BuildMemoryStateKey(null, nextConstraints)}");
                         }
-
-                        var canonicalVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(
-                            rawLeaf,
-                            lightOccurrenceTracking
-                                ? lockedCanonicalVariants
-                                : compatibleCanonicalVariants);
 
                         if (ShouldTerminateRepeatedEventOnSelfDisable(rawLeaf))
                         {
@@ -1566,26 +1582,12 @@ namespace MMMapEditor
                         {
                             AnalysisDebug.WriteLine(
                                 $"  Repeated self-disable path={rawLeaf.PathId}: SUB_4FC8 встречена в небоевой ветке; " +
-                                "повторные наступления продолжают анализироваться");
+                            "повторные наступления продолжают анализироваться");
                         }
 
-                        string repeatedTransitionKey = BuildRepeatedEventTransitionProcessingKey(
-                            rawLeaf,
-                            canonicalVariant,
-                            carryOverState,
-                            nextConstraints,
-                            repeatedEventRelevantAddresses);
-                        if (!processedRepeatedTransitionKeys.Add(repeatedTransitionKey))
-                            continue;
-
-                        if (IsInitialRepeatedEventState(currentStateInfo) &&
-                            RepeatedStateCanRemainAtInitialOverlay(
-                                br,
-                                carryOverState,
-                                nextConstraints,
-                                repeatedEventRelevantAddresses))
+                        if (transitionInfo.CanRemainAtInitialOverlay)
                         {
-                            if (canonicalVariant != null)
+                            if (!initialOverlayCoverageApplied && canonicalVariant != null)
                             {
                                 foreach (var coverageTarget in occurrenceCanonicalTargets
                                     .Where(variant => variant != null)
@@ -1599,10 +1601,20 @@ namespace MMMapEditor
                                 }
 
                                 usedRepeatedEventAcceleration = true;
+                                initialOverlayCoverageApplied = true;
                             }
 
                             continue;
                         }
+
+                        string repeatedTransitionKey = BuildRepeatedEventTransitionProcessingKey(
+                            rawLeaf,
+                            canonicalVariant,
+                            carryOverState,
+                            nextConstraints,
+                            repeatedEventRelevantAddresses);
+                        if (!processedRepeatedTransitionKeys.Add(repeatedTransitionKey))
+                            continue;
 
                         if (canonicalVariant != null &&
                             rawLeaf.StateValueConstraints != null &&
@@ -1613,6 +1625,17 @@ namespace MMMapEditor
                                 !kvp.Value.IsEmpty))
                         {
                             canonicalVariant.HasRepeatedEventOccurrenceSensitivity = true;
+                        }
+
+                        if (TryApplyInvisibleRepeatedCarryStateOptimization(
+                            occurrence,
+                            rawLeaf,
+                            canonicalVariant,
+                            carryOverState,
+                            nextConstraints))
+                        {
+                            usedRepeatedEventAcceleration = true;
+                            continue;
                         }
 
                         RegisterRepeatedEventProgressionPattern(
@@ -1875,6 +1898,9 @@ namespace MMMapEditor
         {
             bool debugMode = AnalysisDebug.IsEnabledFor(targetX, targetY);
             bool summarizeRepeatedEventPass = debugMode && repeatedEventOccurrence > 1;
+            string perfKey = string.IsNullOrWhiteSpace(analysisCacheScopeKey)
+                ? $"<NO_SCOPE>|{startAddress:X4}"
+                : $"{analysisCacheScopeKey}|{startAddress:X4}";
 
             if (TryGetCachedSingleOccurrenceAnalysis(
                     analysisCacheScopeKey,
@@ -1990,9 +2016,11 @@ namespace MMMapEditor
                 WriteRawLeafVariantDebugSummary(rawLeafVariants);
             }
 
+            var canonicalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults);
+
             var result = new SingleOccurrenceAnalysisResult
             {
-                CanonicalVariants = _pathAnalyzer.BuildFinalPathVariants(allResults),
+                CanonicalVariants = canonicalVariants,
                 RawLeafVariants = rawLeafVariants,
                 VisitedAddresses = localVisitedAddresses,
                 UsesInitialCoordinates =
@@ -2679,6 +2707,87 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private bool TryApplyInvisibleRepeatedCarryStateOptimization(
+            int occurrence,
+            PathVariantInfo rawLeaf,
+            PathVariantInfo canonicalVariant,
+            Dictionary<ushort, byte> carryOverState,
+            Dictionary<ushort, StateValueConstraintInfo> nextConstraints)
+        {
+            if (occurrence <= 0 ||
+                rawLeaf == null ||
+                canonicalVariant == null ||
+                carryOverState == null ||
+                carryOverState.Count == 0)
+            {
+                return false;
+            }
+
+            if (!IsStateInsensitiveRepeatedEventTarget(
+                canonicalVariant,
+                allowSuppressedOccurrenceDescription: true))
+            {
+                return false;
+            }
+
+            if (nextConstraints != null &&
+                nextConstraints.Any(kvp => kvp.Value != null && !kvp.Value.IsEmpty))
+            {
+                return false;
+            }
+
+            if ((rawLeaf.PersistentCounterProgressions?.Count ?? 0) > 0 ||
+                (rawLeaf.DynamicRandomBoundDependencies?.Count ?? 0) > 0)
+            {
+                return false;
+            }
+
+            var transitionAddresses = carryOverState.Keys
+                .Where(address => !IsRuntimeCoordinateAddress(address))
+                .ToHashSet();
+            if (transitionAddresses.Count == 0)
+                return false;
+
+            foreach (ushort address in transitionAddresses)
+            {
+                PersistentCounterProgressionInfo pending = null;
+                bool hasPendingCounter =
+                    rawLeaf.PendingPersistentCounterProgressions != null &&
+                    rawLeaf.PendingPersistentCounterProgressions.TryGetValue(address, out pending) &&
+                    pending != null;
+
+                if (hasPendingCounter)
+                {
+                    if (pending.CapValue.HasValue ||
+                        pending.TargetAddress.HasValue ||
+                        pending.TargetKind != PersistentCounterProgressionTargetKind.Unknown ||
+                        pending.CapInstructionAddress != 0 ||
+                        pending.TargetWriteInstructionAddress != 0)
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                if (!(rawLeaf.AdjustedMemoryAddresses?.Contains(address) ?? false) &&
+                    !(rawLeaf.ExitEmulatedMemory8?.ContainsKey(address) ?? false))
+                {
+                    return false;
+                }
+            }
+
+            if (VariantDependsOnRepeatedTransitionAddresses(rawLeaf, transitionAddresses))
+                return false;
+
+            AddOccurrenceCoverage(
+                canonicalVariant,
+                occurrence + 1,
+                occurrence + 1,
+                isOpenEnded: true);
+            return true;
         }
 
         private void MarkVariantOccurrenceRange(PathVariantInfo variant, int startOccurrence, int endOccurrence)
@@ -3438,39 +3547,25 @@ namespace MMMapEditor
             return true;
         }
 
-        private HashSet<PathVariantInfo> FindInputDependentRepeatedStateOccurrenceVariants(
+        private List<RepeatedLeafTransitionInfo> BuildRepeatedLeafTransitionInfos(
             BinaryReader br,
             RepeatedEventStateInfo currentStateInfo,
+            Dictionary<ushort, byte> currentState,
             IEnumerable<PathVariantInfo> compatibleRawLeafVariants,
-            IEnumerable<PathVariantInfo> compatibleCanonicalVariants,
-            out bool hasInputDependentRepeatedStateDivergence)
+            IEnumerable<PathVariantInfo> canonicalCandidates)
         {
-            hasInputDependentRepeatedStateDivergence = false;
-            var result = new HashSet<PathVariantInfo>();
-            var canonicalVariants = (compatibleCanonicalVariants ?? Enumerable.Empty<PathVariantInfo>())
+            var result = new List<RepeatedLeafTransitionInfo>();
+            var currentConstraints = currentStateInfo?.StateValueConstraints;
+            var canonicalList = (canonicalCandidates ?? Enumerable.Empty<PathVariantInfo>())
                 .Where(variant => variant != null)
                 .ToList();
-
-            if (canonicalVariants.Count == 0)
-                return result;
-
-            var currentState = currentStateInfo?.Memory ?? new Dictionary<ushort, byte>();
-            var currentConstraints = currentStateInfo?.StateValueConstraints;
-            var inputChoiceInitialCompatibilityKeys = new HashSet<bool>();
-            var candidatesByCanonicalVariant = new Dictionary<PathVariantInfo, InputDependentRepeatedStateCandidate>();
 
             foreach (var rawLeaf in compatibleRawLeafVariants ?? Enumerable.Empty<PathVariantInfo>())
             {
                 if (rawLeaf == null)
                     continue;
 
-                if (!HasInputChoiceBranch(rawLeaf))
-                    continue;
-
                 var repeatedEventRelevantAddresses = BuildRepeatedEventRelevantAddresses(rawLeaf);
-                if (repeatedEventRelevantAddresses.Count == 0)
-                    continue;
-
                 var carryOverState = BuildCarryOverState(
                     br,
                     currentState,
@@ -3486,12 +3581,60 @@ namespace MMMapEditor
                     rawLeaf,
                     repeatedEventRelevantAddresses);
 
-                if (IsInitialRepeatedEventState(currentStateInfo) &&
-                    RepeatedStateCanRemainAtInitialOverlay(
-                        br,
-                        carryOverState,
-                        nextConstraints,
-                        repeatedEventRelevantAddresses))
+                result.Add(new RepeatedLeafTransitionInfo
+                {
+                    RawLeaf = rawLeaf,
+                    RelevantAddresses = repeatedEventRelevantAddresses,
+                    CarryOverState = carryOverState,
+                    NextConstraints = nextConstraints,
+                    CanonicalVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(rawLeaf, canonicalList),
+                    CanRemainAtInitialOverlay =
+                        IsInitialRepeatedEventState(currentStateInfo) &&
+                        RepeatedStateCanRemainAtInitialOverlay(
+                            br,
+                            carryOverState,
+                            nextConstraints,
+                            repeatedEventRelevantAddresses)
+                });
+            }
+
+            return result;
+        }
+
+        private HashSet<PathVariantInfo> FindInputDependentRepeatedStateOccurrenceVariants(
+            BinaryReader br,
+            IEnumerable<RepeatedLeafTransitionInfo> repeatedLeafTransitionInfos,
+            IEnumerable<PathVariantInfo> compatibleCanonicalVariants,
+            out bool hasInputDependentRepeatedStateDivergence)
+        {
+            hasInputDependentRepeatedStateDivergence = false;
+            var result = new HashSet<PathVariantInfo>();
+            var canonicalVariants = (compatibleCanonicalVariants ?? Enumerable.Empty<PathVariantInfo>())
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (canonicalVariants.Count == 0)
+                return result;
+
+            var inputChoiceInitialCompatibilityKeys = new HashSet<bool>();
+            var candidatesByCanonicalVariant = new Dictionary<PathVariantInfo, InputDependentRepeatedStateCandidate>();
+
+            foreach (var transitionInfo in repeatedLeafTransitionInfos ?? Enumerable.Empty<RepeatedLeafTransitionInfo>())
+            {
+                var rawLeaf = transitionInfo?.RawLeaf;
+                if (rawLeaf == null)
+                    continue;
+
+                if (!HasInputChoiceBranch(rawLeaf))
+                    continue;
+
+                var repeatedEventRelevantAddresses = transitionInfo.RelevantAddresses;
+                if (repeatedEventRelevantAddresses.Count == 0)
+                    continue;
+
+                var carryOverState = transitionInfo.CarryOverState;
+                var nextConstraints = transitionInfo.NextConstraints;
+                if (transitionInfo.CanRemainAtInitialOverlay)
                 {
                     continue;
                 }
@@ -3499,7 +3642,7 @@ namespace MMMapEditor
                 if (carryOverState.Count == 0 && nextConstraints.Count == 0)
                     continue;
 
-                var canonicalVariant = _pathAnalyzer.FindCanonicalVariantForLeaf(rawLeaf, canonicalVariants);
+                var canonicalVariant = transitionInfo.CanonicalVariant;
                 if (canonicalVariant == null)
                     continue;
 
@@ -3592,10 +3735,18 @@ namespace MMMapEditor
             public HashSet<string> InputChoiceStateKeys { get; } = new HashSet<string>(StringComparer.Ordinal);
         }
 
-        private static bool HasInputChoiceBranch(PathVariantInfo variant)
+        private bool HasInputChoiceBranch(PathVariantInfo variant)
         {
-            return variant?.BranchChoices != null &&
-                   variant.BranchChoices.Any(choice => IsInputChoiceBranchLabel(choice?.Label));
+            if (variant == null)
+                return false;
+
+            if (_inputChoiceBranchCache.TryGetValue(variant, out bool cachedResult))
+                return cachedResult;
+
+            bool result = variant.BranchChoices != null &&
+                          variant.BranchChoices.Any(choice => IsInputChoiceBranchLabel(choice?.Label));
+            _inputChoiceBranchCache[variant] = result;
+            return result;
         }
 
         private static bool IsInputChoiceBranchLabel(string label)
@@ -3656,7 +3807,12 @@ namespace MMMapEditor
             if (rawLeafVariant == null)
                 return new HashSet<ushort>();
 
-            return BuildRepeatedEventRelevantAddresses(new[] { rawLeafVariant });
+            if (_repeatedEventRelevantAddressCache.TryGetValue(rawLeafVariant, out var cachedAddresses))
+                return cachedAddresses;
+
+            var addresses = BuildRepeatedEventRelevantAddresses(new[] { rawLeafVariant });
+            _repeatedEventRelevantAddressCache[rawLeafVariant] = addresses;
+            return addresses;
         }
 
         private HashSet<ushort> BuildRepeatedEventRelevantAddresses(IEnumerable<PathVariantInfo> rawLeafVariants)
@@ -4329,6 +4485,48 @@ namespace MMMapEditor
             return $"{textKey}||{BuildOccurrenceInsensitiveLoopFallbackKey(variant)}||{partyKey}||{branchKey}";
         }
 
+        private bool IsStateInsensitiveRepeatedEventTarget(
+            PathVariantInfo variant,
+            bool allowSuppressedOccurrenceDescription = false)
+        {
+            if (variant == null ||
+                variant.HasRepeatedEventOccurrenceSensitivity ||
+                (!allowSuppressedOccurrenceDescription &&
+                 variant.SuppressRepeatedEventOccurrenceDescription))
+            {
+                return false;
+            }
+
+            if (variant.StateValueConstraints != null &&
+                variant.StateValueConstraints.Any(kvp => kvp.Value != null && !kvp.Value.IsEmpty))
+            {
+                return false;
+            }
+
+            return (variant.LocallyMaterializedStateValueConstraintAddresses == null ||
+                    variant.LocallyMaterializedStateValueConstraintAddresses.Count == 0) &&
+                   PendingPersistentCounterProgressionsAreInvisible(variant.PendingPersistentCounterProgressions) &&
+                   (variant.PersistentCounterProgressions == null ||
+                    variant.PersistentCounterProgressions.Count == 0) &&
+                   (variant.DynamicRandomBoundDependencies == null ||
+                    variant.DynamicRandomBoundDependencies.Count == 0);
+        }
+
+        private static bool PendingPersistentCounterProgressionsAreInvisible(
+            Dictionary<ushort, PersistentCounterProgressionInfo> progressions)
+        {
+            if (progressions == null || progressions.Count == 0)
+                return true;
+
+            return progressions.Values.All(progression =>
+                progression != null &&
+                !progression.CapValue.HasValue &&
+                !progression.TargetAddress.HasValue &&
+                progression.TargetKind == PersistentCounterProgressionTargetKind.Unknown &&
+                progression.CapInstructionAddress == 0 &&
+                progression.TargetWriteInstructionAddress == 0);
+        }
+
         private bool TryGetCachedObjectVariants(
             string analysisCacheScopeKey,
             uint startAddress,
@@ -4365,7 +4563,7 @@ namespace MMMapEditor
 
                 AnalysisDebug.WriteLine(
                     $"    CACHE HIT object-variants для клетки ({targetX},{targetY}): {cacheKey}");
-                cachedVariants = CloneFinalVariants(entry.ReusableVariants);
+                cachedVariants = CopyFinalVariantReferences(entry.ReusableVariants);
                 return true;
             }
 
@@ -4964,6 +5162,13 @@ namespace MMMapEditor
             return source.ToDictionary(kvp => kvp.Key, kvp => CloneVariantInfo(kvp.Value));
         }
 
+        private static Dictionary<int, PathVariantInfo> CopyFinalVariantReferences(Dictionary<int, PathVariantInfo> source)
+        {
+            return source == null
+                ? new Dictionary<int, PathVariantInfo>()
+                : new Dictionary<int, PathVariantInfo>(source);
+        }
+
         private static Dictionary<ushort, byte> CloneStaticMapDataReads(Dictionary<ushort, byte> source)
         {
             return source == null || source.Count == 0
@@ -5357,19 +5562,33 @@ namespace MMMapEditor
             if (br == null)
                 return false;
 
+            if (_overlayByteCache.TryGetValue(memAddr, out byte? cachedValue))
+            {
+                if (!cachedValue.HasValue)
+                    return false;
+
+                value = cachedValue.Value;
+                return true;
+            }
+
             if (!OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, memAddr, out long fileOffset))
+            {
+                _overlayByteCache[memAddr] = null;
                 return false;
+            }
 
             long originalPosition = br.BaseStream.Position;
             try
             {
                 br.BaseStream.Position = fileOffset;
                 value = br.ReadByte();
+                _overlayByteCache[memAddr] = value;
                 return true;
             }
             catch
             {
                 value = 0;
+                _overlayByteCache[memAddr] = null;
                 return false;
             }
             finally
@@ -5537,21 +5756,24 @@ namespace MMMapEditor
                         PopulateObjectPathData(obj, finalVariants);
                         ApplyResolvedVariantInfoToObject(obj);
 
-                        AnalysisDebug.WriteLine($"    Создан объект default-path для клетки ({obj.X},{obj.Y})");
-                        AnalysisDebug.WriteLine($"    Канонических outcomes: {obj.PathVariants.Count}");
-
-                        foreach (var kvp in obj.PathVariants.OrderBy(k => k.Key))
+                        if (AnalysisDebug.IsEnabledFor(x, y))
                         {
-                            var variant = kvp.Value;
-                            var texts = variant?.Texts ?? new List<string>();
+                            AnalysisDebug.WriteLine($"    Создан объект default-path для клетки ({obj.X},{obj.Y})");
+                            AnalysisDebug.WriteLine($"    Канонических outcomes: {obj.PathVariants.Count}");
 
-                            AnalysisDebug.WriteLine($"      Outcome {kvp.Key}: {texts.Count} текстов");
-                            foreach (var text in texts)
+                            foreach (var kvp in obj.PathVariants.OrderBy(k => k.Key))
                             {
-                                AnalysisDebug.WriteLine($"        {text}");
-                            }
+                                var variant = kvp.Value;
+                                var texts = variant?.Texts ?? new List<string>();
 
-                            WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
+                                AnalysisDebug.WriteLine($"      Outcome {kvp.Key}: {texts.Count} текстов");
+                                foreach (var text in texts)
+                                {
+                                    AnalysisDebug.WriteLine($"        {text}");
+                                }
+
+                                WriteVariantDebugSummary(variant, obj.X, obj.Y, obj.DirectionByte);
+                            }
                         }
 
                         objects.Add(obj);
@@ -5828,6 +6050,9 @@ namespace MMMapEditor
 
         private void WriteVariantDebugSummary(PathVariantInfo variant, byte x, byte y, byte directionByte)
         {
+            if (!AnalysisDebug.IsEnabledFor(x, y))
+                return;
+
             if (variant == null)
             {
                 AnalysisDebug.WriteLine("        <variant is null>");
