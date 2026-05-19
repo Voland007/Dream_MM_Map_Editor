@@ -135,6 +135,7 @@ namespace MMMapEditor
         private const int PARTY_MAX_HP_LOW_OFFSET = 0x35;
         private const int PARTY_MAX_HP_HIGH_OFFSET = 0x36;
         private const int PARTY_FOOD_OFFSET = PartyFoodSemantics.FieldOffset;
+        private const int PARTY_AGE_OFFSET = PartyAgeSemantics.FieldOffset;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
         private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
         private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
@@ -1178,6 +1179,7 @@ namespace MMMapEditor
                 PARTY_MAX_HP_LOW_OFFSET => PartyFieldKind.MaxHpLow,
                 PARTY_MAX_HP_HIGH_OFFSET => PartyFieldKind.MaxHpHigh,
                 PARTY_FOOD_OFFSET => PartyFieldKind.Food,
+                PARTY_AGE_OFFSET => PartyFieldKind.Age,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
                 PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
@@ -2638,11 +2640,17 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    effects.Add(PartyEffectFactory.CreateTrackedTechnicalFieldWriteEffect(
-                        fieldRef.Member,
-                        fieldRef.Field,
-                        instructionAddress,
-                        exactValue));
+                    effects.Add(
+                        CreateTrackedPartyFieldAdjustmentEffectFromSourceFormula(
+                            fieldRef,
+                            registerTracker,
+                            sourceRegisterName,
+                            instructionAddress) ??
+                        PartyEffectFactory.CreateTrackedTechnicalFieldWriteEffect(
+                            fieldRef.Member,
+                            fieldRef.Field,
+                            instructionAddress,
+                            exactValue));
                 }
             }
             else if (IsRawTechnicalPartyField(fieldRef) && !HasNonExactFieldOffsetRange(fieldRef))
@@ -2712,6 +2720,44 @@ namespace MMMapEditor
                 instructionAddress,
                 sourceRegisterName,
                 exactValue);
+        }
+
+        private PartyEffect CreateTrackedPartyFieldAdjustmentEffectFromSourceFormula(
+            PartyFieldReference fieldRef,
+            RegisterTracker registerTracker,
+            string sourceRegisterName,
+            uint instructionAddress)
+        {
+            if (fieldRef == null ||
+                registerTracker == null ||
+                string.IsNullOrWhiteSpace(sourceRegisterName) ||
+                !PartyAgeSemantics.IsAgeField(fieldRef.Field))
+            {
+                return null;
+            }
+
+            if (!registerTracker.TryGetDynamicValueFormula(sourceRegisterName, out var formula) ||
+                formula == null ||
+                formula.SourceField == null ||
+                formula.Multiplier != 1 ||
+                formula.AdditiveOffset == 0 ||
+                formula.SourceField.Field != fieldRef.Field ||
+                !MatchesPendingPartyTarget(formula.SourceField.Member, fieldRef.Member))
+            {
+                return null;
+            }
+
+            int delta = formula.AdditiveOffset;
+            int amount = Math.Abs(delta);
+            if (amount == 0 || amount > ushort.MaxValue)
+                return null;
+
+            return PartyEffectFactory.CreateTrackedTechnicalFieldAdjustmentEffect(
+                fieldRef.Member,
+                fieldRef.Field,
+                delta > 0 ? PartyEffectOperation.Increment : PartyEffectOperation.Decrement,
+                (ushort)amount,
+                instructionAddress);
         }
 
         private void AddResolvedPartyEffect(PathAnalysisResult result, PartyEffect effect,
@@ -3160,6 +3206,7 @@ namespace MMMapEditor
         private static bool IsTrackedPartyField(PartyFieldKind field)
         {
             return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyAgeSemantics.IsAgeField(field) ||
                    PartyPermanentStatSemantics.IsTrackedField(field) ||
                    PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
@@ -3214,6 +3261,9 @@ namespace MMMapEditor
             if (PartyFoodSemantics.IsFoodField(field))
                 return PartyFoodSemantics.GetRelevantMask(operation, immediateValue);
 
+            if (PartyAgeSemantics.IsAgeField(field))
+                return PartyAgeSemantics.GetRelevantMask(operation, immediateValue);
+
             if (PartyTemporaryStatSemantics.IsTrackedField(field))
                 return PartyTemporaryStatSemantics.GetRelevantMask(operation, immediateValue);
 
@@ -3236,6 +3286,7 @@ namespace MMMapEditor
             return field switch
             {
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                PartyFieldKind.Age => PartyAgeSemantics.FieldLabel,
                 PartyFieldKind.MaxHp => "максимальный HP",
                 PartyFieldKind.MaxHpLow => "младший байт максимального HP",
                 PartyFieldKind.MaxHpHigh => "старший байт максимального HP",
@@ -3252,6 +3303,8 @@ namespace MMMapEditor
         {
             return field == PartyFieldKind.Food
                 ? PartyFoodSemantics.DebugFieldLabel
+                : field == PartyFieldKind.Age
+                    ? PartyAgeSemantics.DebugFieldLabel
                 : GetPartyFieldLabel(field);
         }
 
@@ -12749,6 +12802,25 @@ namespace MMMapEditor
                         {
                             AnalysisDebug.WriteLine(
                                 $"        {opText} {destReg}, byte ptr {eaText}: запомнили [0x{memAddr:X4}] {(delta > 0 ? "+" : string.Empty)}{delta}");
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(fullReg) &&
+                             registerTracker.TryGetDynamicValueFormula(destReg, out var formulaBeforeMemoryAdd) &&
+                             formulaBeforeMemoryAdd != null &&
+                             TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte memValue))
+                    {
+                        int delta = memValue + carryIn;
+                        registerTracker.SetDynamicValueFormula(
+                            destReg,
+                            formulaBeforeMemoryAdd.WithAdditiveOffset(delta, address));
+                        registerTracker.FlagsKnown = false;
+                        registerTracker.SetFlagsMetadata(destReg, RegisterTracker.FlagsOriginKind.Arithmetic, address);
+
+                        if (debugMode)
+                        {
+                            string sign = delta >= 0 ? "+" : string.Empty;
+                            AnalysisDebug.WriteLine(
+                                $"        {opText} {destReg}, byte ptr {eaText}: формула {formulaBeforeMemoryAdd.GetFormulaExpression()} {sign}{delta}");
                         }
                     }
                 }

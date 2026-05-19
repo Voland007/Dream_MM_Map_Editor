@@ -779,6 +779,451 @@ namespace MMMapEditor
             return builder.ToString().TrimEnd('\r', '\n');
         }
 
+        private static bool TryBuildPerMemberAgeAdjustmentCollapsedNote(OvrObject obj, out string note)
+        {
+            note = null;
+
+            if (!TryBuildPerMemberAgeAdjustmentCollapseInfo(obj, out var info))
+                return false;
+
+            var builder = new StringBuilder();
+            builder.AppendLine("Эта ячейка содержит различные варианты текста:");
+            builder.AppendLine($"Вариант 1 (выбор {info.EffectChoiceLabel}):");
+            foreach (string line in info.NarrativeLines)
+                builder.AppendLine(line ?? string.Empty);
+
+            string ageBlock = BuildPerMemberAgeAdjustmentSummaryBlock(info.Outcomes);
+            if (string.IsNullOrWhiteSpace(ageBlock))
+                return false;
+
+            builder.AppendLine(ageBlock);
+
+            if (!string.IsNullOrWhiteSpace(info.NoEffectChoiceLabel))
+            {
+                builder.AppendLine();
+                builder.AppendLine($"Вариант 2 (выбор {info.NoEffectChoiceLabel}):");
+                foreach (string line in info.NarrativeLines)
+                    builder.AppendLine(line ?? string.Empty);
+            }
+
+            note = builder.ToString().TrimEnd('\r', '\n');
+            return true;
+        }
+
+        private static string BuildPerMemberAgeAdjustmentSummaryBlock(
+            IEnumerable<PerMemberAgeAdjustmentOutcome> outcomes)
+        {
+            var orderedOutcomes = (outcomes ?? Enumerable.Empty<PerMemberAgeAdjustmentOutcome>())
+                .OrderBy(GetPerMemberAgeAdjustmentOutcomeOrder)
+                .ToList();
+            if (orderedOutcomes.Count == 0)
+                return null;
+
+            var builder = new StringBuilder();
+            builder.AppendLine($"У каждого персонажа партии меняется {PartyAgeSemantics.FieldLabel}: если");
+
+            for (int i = 0; i < orderedOutcomes.Count; i++)
+            {
+                var outcome = orderedOutcomes[i];
+                string predicateText = BuildPerMemberAgeConditionText(outcome.Predicate);
+                string effectText = BuildPerMemberAgeCompactEffectText(outcome.Effect, outcome.Predicate);
+                if (string.IsNullOrWhiteSpace(predicateText) || string.IsNullOrWhiteSpace(effectText))
+                    return null;
+
+                builder.AppendLine($"{i + 1}) {predicateText}: {effectText}");
+            }
+
+            return InlineNoteStyleCodec.EncodeAgeChangeNoteText(
+                builder.ToString().TrimEnd('\r', '\n'));
+        }
+
+        private static bool TryBuildPerMemberAgeAdjustmentCollapseInfo(
+            OvrObject obj,
+            out PerMemberAgeAdjustmentCollapseInfo info)
+        {
+            info = null;
+
+            var variants = obj?.PathVariants?.Values
+                .Where(variant => variant != null)
+                .OrderBy(GetPathOrderKey)
+                .ToList();
+            if (variants == null || variants.Count < 2)
+                return false;
+
+            var outcomes = new List<PerMemberAgeAdjustmentOutcome>();
+            foreach (var variant in variants)
+            {
+                var effect = GetSinglePerMemberAgeAdjustmentEffect(variant);
+                if (effect == null)
+                    continue;
+
+                var predicate = GetSingleAgeBranchPredicate(variant);
+                string choiceLabel = GetPrimaryPromptChoiceToken(variant);
+                if (predicate == null || string.IsNullOrWhiteSpace(choiceLabel))
+                    return false;
+
+                outcomes.Add(new PerMemberAgeAdjustmentOutcome
+                {
+                    Variant = variant,
+                    Predicate = predicate,
+                    Effect = effect,
+                    ChoiceLabel = choiceLabel
+                });
+            }
+
+            if (outcomes.Count != 2)
+                return false;
+
+            string effectChoiceLabel = outcomes[0].ChoiceLabel;
+            if (outcomes.Any(outcome => !string.Equals(outcome.ChoiceLabel, effectChoiceLabel, StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            if (!AreComplementaryAgePredicates(outcomes[0].Predicate, outcomes[1].Predicate))
+                return false;
+
+            string narrativeKey = BuildDecodedTextKey(outcomes[0].Variant.Texts);
+            if (string.IsNullOrWhiteSpace(narrativeKey) ||
+                outcomes.Any(outcome => BuildDecodedTextKey(outcome.Variant.Texts) != narrativeKey))
+            {
+                return false;
+            }
+
+            var outcomeVariants = outcomes
+                .Select(outcome => outcome.Variant)
+                .ToHashSet();
+            var nonOutcomeVariants = variants
+                .Where(variant => !outcomeVariants.Contains(variant))
+                .ToList();
+
+            if (nonOutcomeVariants.Any(HasNonTextOutcome) ||
+                nonOutcomeVariants.Any(variant => BuildDecodedTextKey(variant.Texts) != narrativeKey))
+            {
+                return false;
+            }
+
+            string noEffectChoiceLabel = nonOutcomeVariants
+                .Select(GetPrimaryPromptChoiceToken)
+                .Where(label => !string.IsNullOrWhiteSpace(label))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .SingleOrDefault();
+
+            info = new PerMemberAgeAdjustmentCollapseInfo
+            {
+                EffectChoiceLabel = effectChoiceLabel.ToUpperInvariant(),
+                NoEffectChoiceLabel = noEffectChoiceLabel?.ToUpperInvariant(),
+                NarrativeLines = DecodeNoteTexts(outcomes[0].Variant.Texts)
+                    .Select(line => line ?? string.Empty)
+                    .ToList(),
+                Outcomes = outcomes
+            };
+
+            return true;
+        }
+
+        private static PartyEffect GetSinglePerMemberAgeAdjustmentEffect(PathVariantInfo variant)
+        {
+            var effects = variant?.PartyEffects?
+                .Where(effect => effect != null)
+                .ToList() ?? new List<PartyEffect>();
+            if (effects.Count != 1)
+                return null;
+
+            var effect = effects[0];
+            if (!PartyAgeSemantics.IsAgeField(PartyEffectSemantics.GetEffectiveField(effect)) ||
+                !PartyEffectSemantics.IsLoopDerived(effect) ||
+                PartyEffectSemantics.GetEffectiveScope(effect) != PartyEffectScope.WholeParty ||
+                !effect.ImmediateValue.HasValue)
+            {
+                return null;
+            }
+
+            var operation = PartyEffectSemantics.GetEffectiveOperation(effect);
+            return operation == PartyEffectOperation.Write ||
+                   operation == PartyEffectOperation.Increment ||
+                   operation == PartyEffectOperation.Decrement
+                ? effect
+                : null;
+        }
+
+        private static PartyPredicate GetSingleAgeBranchPredicate(PathVariantInfo variant)
+        {
+            var predicates = variant?.BranchChoices?
+                .Select(choice => choice?.GuardPredicate)
+                .Where(IsAgeBranchPredicate)
+                .ToList() ?? new List<PartyPredicate>();
+
+            return predicates.Count == 1
+                ? predicates[0]
+                : null;
+        }
+
+        private static bool IsAgeBranchPredicate(PartyPredicate predicate)
+        {
+            return predicate != null &&
+                   PartyAgeSemantics.IsAgeField(predicate.Field) &&
+                   TryGetExactPredicateValue(predicate, out _);
+        }
+
+        private static bool AreComplementaryAgePredicates(PartyPredicate left, PartyPredicate right)
+        {
+            if (!TryGetExactPredicateValue(left, out ushort leftValue) ||
+                !TryGetExactPredicateValue(right, out ushort rightValue) ||
+                leftValue != rightValue)
+            {
+                return false;
+            }
+
+            return IsComplementaryComparisonPair(left.Comparison, right.Comparison);
+        }
+
+        private static bool IsComplementaryComparisonPair(
+            PartyPredicateComparison left,
+            PartyPredicateComparison right)
+        {
+            return (left == PartyPredicateComparison.LessThan && right == PartyPredicateComparison.GreaterOrEqual) ||
+                   (left == PartyPredicateComparison.GreaterOrEqual && right == PartyPredicateComparison.LessThan) ||
+                   (left == PartyPredicateComparison.LessOrEqual && right == PartyPredicateComparison.GreaterThan) ||
+                   (left == PartyPredicateComparison.GreaterThan && right == PartyPredicateComparison.LessOrEqual) ||
+                   (left == PartyPredicateComparison.Equal && right == PartyPredicateComparison.NotEqual) ||
+                   (left == PartyPredicateComparison.NotEqual && right == PartyPredicateComparison.Equal);
+        }
+
+        private static bool TryGetExactPredicateValue(PartyPredicate predicate, out ushort value)
+        {
+            value = 0;
+            if (predicate == null)
+                return false;
+
+            if (predicate.ImmediateValue.HasValue)
+            {
+                value = predicate.ImmediateValue.Value;
+                return true;
+            }
+
+            if (predicate.ImmediateRange?.IsExact == true)
+            {
+                value = predicate.ImmediateRange.Min;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static int GetPerMemberAgeAdjustmentOutcomeOrder(PerMemberAgeAdjustmentOutcome outcome)
+        {
+            return outcome?.Predicate?.Comparison switch
+            {
+                PartyPredicateComparison.LessThan => 0,
+                PartyPredicateComparison.LessOrEqual => 0,
+                PartyPredicateComparison.Equal => 1,
+                PartyPredicateComparison.NotEqual => 2,
+                PartyPredicateComparison.GreaterOrEqual => 3,
+                PartyPredicateComparison.GreaterThan => 3,
+                _ => 4
+            };
+        }
+
+        private static string BuildPerMemberAgePredicateText(PartyPredicate predicate)
+        {
+            if (!TryGetExactPredicateValue(predicate, out ushort value))
+                return null;
+
+            string comparison = predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal => "=",
+                PartyPredicateComparison.NotEqual => "!=",
+                PartyPredicateComparison.LessThan => "<",
+                PartyPredicateComparison.LessOrEqual => "<=",
+                PartyPredicateComparison.GreaterThan => ">",
+                PartyPredicateComparison.GreaterOrEqual => ">=",
+                _ => null
+            };
+
+            return string.IsNullOrWhiteSpace(comparison)
+                ? null
+                : $"{PartyAgeSemantics.FieldLabel} {comparison} {PartyAgeSemantics.FormatYears(value)}";
+        }
+
+        private static string BuildPerMemberAgeConditionText(PartyPredicate predicate)
+        {
+            if (!TryGetExactPredicateValue(predicate, out ushort value))
+                return null;
+
+            string comparison = predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal => "=",
+                PartyPredicateComparison.NotEqual => "!=",
+                PartyPredicateComparison.LessThan => "<",
+                PartyPredicateComparison.LessOrEqual => "<=",
+                PartyPredicateComparison.GreaterThan => ">",
+                PartyPredicateComparison.GreaterOrEqual => ">=",
+                _ => null
+            };
+
+            return string.IsNullOrWhiteSpace(comparison)
+                ? null
+                : $"{comparison} {PartyAgeSemantics.FormatYears(value)}";
+        }
+
+        private static string BuildPerMemberAgeCompactEffectText(PartyEffect effect, PartyPredicate predicate)
+        {
+            if (effect == null || !effect.ImmediateValue.HasValue)
+                return null;
+
+            ushort value = effect.ImmediateValue.Value;
+            var operation = PartyEffectSemantics.GetEffectiveOperation(effect);
+            string adjustmentSummary = PartyAgeSemantics.FormatAdjustmentSummary(operation, value);
+            if (!string.IsNullOrWhiteSpace(adjustmentSummary))
+                return adjustmentSummary;
+
+            if (operation == PartyEffectOperation.Write)
+            {
+                string directionHint = BuildAgeAssignmentDirectionHint(predicate, value);
+                string assignmentText = $"становится {PartyAgeSemantics.FormatAssignmentSummary(value)}";
+                return string.IsNullOrWhiteSpace(directionHint)
+                    ? assignmentText
+                    : $"{assignmentText}  ({directionHint})";
+            }
+
+            return null;
+        }
+
+        private static string BuildPerMemberAgeEffectText(PartyEffect effect, PartyPredicate predicate)
+        {
+            if (effect == null || !effect.ImmediateValue.HasValue)
+                return null;
+
+            ushort value = effect.ImmediateValue.Value;
+            var operation = PartyEffectSemantics.GetEffectiveOperation(effect);
+            string adjustmentSummary = PartyAgeSemantics.FormatAdjustmentSummary(operation, value);
+            if (!string.IsNullOrWhiteSpace(adjustmentSummary))
+                return InlineNoteStyleCodec.EncodeAgeChangeNoteText(
+                    $"изменился {PartyAgeSemantics.FieldLabel}: {adjustmentSummary}");
+
+            if (operation == PartyEffectOperation.Write)
+            {
+                string deltaHint = BuildAgeAssignmentDeltaHint(predicate, value);
+                string baseText = $"изменился {PartyAgeSemantics.FieldLabel}: {PartyAgeSemantics.FormatAssignmentSummary(value)}";
+                string visibleText = string.IsNullOrWhiteSpace(deltaHint)
+                    ? baseText
+                    : $"{baseText} ({deltaHint})";
+                return InlineNoteStyleCodec.EncodeAgeChangeNoteText(visibleText);
+            }
+
+            return null;
+        }
+
+        private static string BuildAgeAssignmentDirectionHint(PartyPredicate predicate, ushort targetValue)
+        {
+            if (!TryBuildAgePredicateValueRange(predicate, out int minValue, out int maxValue))
+                return null;
+
+            if (maxValue > targetValue)
+                return "молодеют";
+
+            if (minValue < targetValue)
+                return "стареют";
+
+            return "без изменения";
+        }
+
+        private static string BuildAgeAssignmentDeltaHint(PartyPredicate predicate, ushort targetValue)
+        {
+            if (!TryBuildAgePredicateValueRange(predicate, out int minValue, out int maxValue))
+                return "точная разница зависит от текущего возраста";
+
+            var parts = new List<string>();
+            if (minValue < targetValue)
+            {
+                int olderRangeMaxValue = Math.Min(maxValue, targetValue - 1);
+                int olderMinDelta = targetValue - olderRangeMaxValue;
+                int olderMaxDelta = targetValue - minValue;
+                parts.Add($"{BuildAgeValueRangeText(minValue, olderRangeMaxValue)}: стареют на {PartyAgeSemantics.FormatYearRange(olderMinDelta, olderMaxDelta)}");
+            }
+
+            if (minValue <= targetValue && targetValue <= maxValue)
+                parts.Add($"{BuildAgeValueRangeText(targetValue, targetValue)}: без изменения");
+
+            if (maxValue > targetValue)
+            {
+                int youngerRangeMinValue = Math.Max(minValue, targetValue + 1);
+                int youngerMinDelta = youngerRangeMinValue - targetValue;
+                int youngerMaxDelta = maxValue - targetValue;
+                parts.Add($"{BuildAgeValueRangeText(youngerRangeMinValue, maxValue)}: молодеют на {PartyAgeSemantics.FormatYearRange(youngerMinDelta, youngerMaxDelta)}");
+            }
+
+            return parts.Count == 0
+                ? "без изменения"
+                : string.Join("; ", parts);
+        }
+
+        private static bool TryBuildAgePredicateValueRange(PartyPredicate predicate, out int minValue, out int maxValue)
+        {
+            minValue = 0;
+            maxValue = 255;
+            if (!TryGetExactPredicateValue(predicate, out ushort value))
+                return false;
+
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.Equal:
+                    minValue = value;
+                    maxValue = value;
+                    return true;
+                case PartyPredicateComparison.LessThan when value > 0:
+                    maxValue = value - 1;
+                    return true;
+                case PartyPredicateComparison.LessOrEqual:
+                    maxValue = value;
+                    return true;
+                case PartyPredicateComparison.GreaterThan when value < 255:
+                    minValue = value + 1;
+                    return true;
+                case PartyPredicateComparison.GreaterOrEqual:
+                    minValue = value;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string BuildAgeValueRangeText(int minValue, int maxValue)
+        {
+            if (minValue == maxValue)
+                return $"при текущем возрасте {PartyAgeSemantics.FormatYears((ushort)minValue)}";
+
+            return $"при текущем возрасте {minValue.ToString(System.Globalization.CultureInfo.InvariantCulture)}-{PartyAgeSemantics.FormatYears((ushort)maxValue)}";
+        }
+
+        private static string GetPrimaryPromptChoiceToken(PathVariantInfo variant)
+        {
+            foreach (var choice in variant?.BranchChoices ?? new List<BranchChoice>())
+            {
+                var normalized = NormalizeBranchChoiceForDisplay(choice);
+                string label = NormalizeUserVisibleChoiceLabel(normalized?.Label);
+                string token = ExtractPromptChoiceToken(label);
+                if (!string.IsNullOrWhiteSpace(token))
+                    return token;
+            }
+
+            return null;
+        }
+
+        private static string ExtractPromptChoiceToken(string label)
+        {
+            if (string.IsNullOrWhiteSpace(label))
+                return null;
+
+            string token = label.Trim();
+            if (token.EndsWith(")", StringComparison.Ordinal))
+                token = token.Substring(0, token.Length - 1).TrimEnd();
+
+            return string.Equals(token, "ESC", StringComparison.OrdinalIgnoreCase) ||
+                   Regex.IsMatch(token, @"^[A-Za-z0-9]$", RegexOptions.CultureInvariant)
+                ? token.ToUpperInvariant()
+                : null;
+        }
+
         private static bool TryBuildPermanentStatRaiseCollapsedNote(OvrObject obj, out string note)
         {
             note = null;
@@ -4726,6 +5171,23 @@ namespace MMMapEditor
             public NarrativeCoveredConditionalStatRewardInfo Info { get; set; }
         }
 
+        private sealed class PerMemberAgeAdjustmentCollapseInfo
+        {
+            public string EffectChoiceLabel { get; set; }
+            public string NoEffectChoiceLabel { get; set; }
+            public List<string> NarrativeLines { get; set; } = new List<string>();
+            public List<PerMemberAgeAdjustmentOutcome> Outcomes { get; set; } =
+                new List<PerMemberAgeAdjustmentOutcome>();
+        }
+
+        private sealed class PerMemberAgeAdjustmentOutcome
+        {
+            public PathVariantInfo Variant { get; set; }
+            public PartyPredicate Predicate { get; set; }
+            public PartyEffect Effect { get; set; }
+            public string ChoiceLabel { get; set; }
+        }
+
         private static string BuildHierarchicalVariantNotes(
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
@@ -4751,6 +5213,9 @@ namespace MMMapEditor
             {
                 return BuildLoopInternalStatusGuardCollapsedNote(collapsedLines);
             }
+
+            if (TryBuildPerMemberAgeAdjustmentCollapsedNote(obj, out string perMemberAgeAdjustmentCollapsedNote))
+                return perMemberAgeAdjustmentCollapsedNote;
 
             if (TryBuildPermanentStatRaiseCollapsedNote(obj, out string permanentStatRaiseCollapsedNote))
                 return permanentStatRaiseCollapsedNote;
@@ -4836,6 +5301,9 @@ namespace MMMapEditor
             {
                 return BuildLoopInternalStatusGuardCollapsedNote(collapsedLines);
             }
+
+            if (TryBuildPerMemberAgeAdjustmentCollapsedNote(obj, out string perMemberAgeAdjustmentCollapsedNote))
+                return perMemberAgeAdjustmentCollapsedNote;
 
             if (TryBuildPermanentStatRaiseCollapsedNote(obj, out string permanentStatRaiseCollapsedNote))
                 return permanentStatRaiseCollapsedNote;
@@ -12319,6 +12787,7 @@ namespace MMMapEditor
                 return true;
 
             return (PartyFoodSemantics.IsFoodField(PartyEffectSemantics.GetEffectiveField(effect)) ||
+                    PartyAgeSemantics.IsAgeField(PartyEffectSemantics.GetEffectiveField(effect)) ||
                     PartyTechnicalFieldSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect)) ||
                     PartyTemporaryStatSemantics.IsTrackedField(PartyEffectSemantics.GetEffectiveField(effect))) &&
                    PartyEffectSemantics.IsStateChanging(effect);

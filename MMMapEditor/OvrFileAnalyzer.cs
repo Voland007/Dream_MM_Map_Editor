@@ -4381,6 +4381,7 @@ namespace MMMapEditor
             {
                 var field = PartyEffectSemantics.GetEffectiveField(effect);
                 return PartyFoodSemantics.IsFoodField(field) ||
+                       PartyAgeSemantics.IsAgeField(field) ||
                        PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                        PartyTemporaryStatSemantics.IsTrackedField(field);
             }

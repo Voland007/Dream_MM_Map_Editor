@@ -57,7 +57,8 @@ namespace MMMapEditor
         PermanentSpeed = 33,
         PermanentAccuracy = 34,
         PermanentLuck = 35,
-        PermanentStatRaiseFlags = 36
+        PermanentStatRaiseFlags = 36,
+        Age = 37
     }
 
     public enum PartyMemberSelectionKind

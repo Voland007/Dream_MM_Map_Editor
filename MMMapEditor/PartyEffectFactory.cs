@@ -24,6 +24,7 @@ namespace MMMapEditor
         private static bool IsTrackedByteField(PartyFieldKind field)
         {
             return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyAgeSemantics.IsAgeField(field) ||
                    PartyPermanentStatSemantics.IsTrackedField(field) ||
                    PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
@@ -426,6 +427,33 @@ namespace MMMapEditor
                 IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
                 ValueKnowledge = exactValue.HasValue ? PartyValueKnowledge.ExactImmediate : PartyValueKnowledge.Unknown,
                 ImmediateValue = exactValue.HasValue ? exactValue.Value : (ushort?)null,
+                InstructionAddress = instructionAddress
+            };
+
+            effect.Description = PartyEffectSemantics.BuildHumanDescription(effect);
+            return effect;
+        }
+
+        public static PartyEffect CreateTrackedTechnicalFieldAdjustmentEffect(PartyMemberReference member,
+            PartyFieldKind field, PartyEffectOperation operation, ushort amount, uint instructionAddress)
+        {
+            if (!IsTrackedByteField(field) ||
+                (operation != PartyEffectOperation.Increment && operation != PartyEffectOperation.Decrement) ||
+                amount == 0)
+            {
+                return null;
+            }
+
+            var effect = new PartyEffect
+            {
+                Kind = PartyEffectKind.TechnicalFieldWritten,
+                Field = field,
+                Operation = operation,
+                Scope = ResolveScope(member, LoopSemanticKind.None, PartyConditionKind.None),
+                MemberIndex = IsLoopTarget(member, LoopSemanticKind.None) ? null : member?.MemberIndex,
+                IsLoopDerived = IsLoopTarget(member, LoopSemanticKind.None),
+                ValueKnowledge = PartyValueKnowledge.ExactImmediate,
+                ImmediateValue = amount,
                 InstructionAddress = instructionAddress
             };
 

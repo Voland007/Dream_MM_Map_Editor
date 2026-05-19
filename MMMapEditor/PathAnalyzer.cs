@@ -2048,8 +2048,13 @@ namespace MMMapEditor
                 var survivors = keyedItems
                     .Where(current => !keyedItems.Any(other =>
                         !ReferenceEquals(other, current) &&
-                        string.Equals(other.ShadowBranchHistoryKey, current.ShadowBranchHistoryKey, StringComparison.Ordinal) &&
-                        StrictlyContainsConditionalLoopSubsetEffects(other.EffectKeys, current.EffectKeys)))
+                        CanShadowConditionalLoopSubsetCoverageVariant(
+                            other.Variant,
+                            other.EffectKeys,
+                            other.ShadowBranchHistoryKey,
+                            current.Variant,
+                            current.EffectKeys,
+                            current.ShadowBranchHistoryKey)))
                     .Select(item => item.Variant)
                     .ToList();
 
@@ -2123,7 +2128,9 @@ namespace MMMapEditor
             IEnumerable<PathVariantInfo> groupItems)
         {
             if (!IsPromptOnlyLeaf(promptOnlyVariant) || groupItems == null)
+            {
                 return false;
+            }
 
             var stateChangingSiblings = groupItems
                 .Where(other => !ReferenceEquals(other, promptOnlyVariant) &&
@@ -2136,10 +2143,18 @@ namespace MMMapEditor
             if (HasNonLocalGuardedBranchChoice(promptOnlyVariant))
                 return false;
 
-            if (stateChangingSiblings.Any(HasConditionalLoopSubsetOutcomeEffects))
-                return true;
-
             var promptBranchKeys = BuildPromptShadowBranchChoiceKeySet(promptOnlyVariant);
+
+            if (stateChangingSiblings.Any(HasConditionalLoopSubsetOutcomeEffects))
+            {
+                if (!HasInputChoiceBranch(promptOnlyVariant))
+                    return true;
+
+                return stateChangingSiblings.Any(other =>
+                    IsBranchHistoryCoveredBy(
+                        promptBranchKeys,
+                        BuildPromptShadowBranchChoiceKeySet(other)));
+            }
 
             return stateChangingSiblings.Any(other =>
                 IsBranchHistoryCoveredBy(
@@ -2604,12 +2619,33 @@ namespace MMMapEditor
 
         private bool IsConditionalLoopSubsetOutcomeEffect(PartyEffect effect)
         {
+            if (effect == null ||
+                !PartyEffectSemantics.IsStateChanging(effect) ||
+                !PartyEffectSemantics.IsLoopDerived(effect))
+            {
+                return false;
+            }
+
+            var scope = PartyEffectSemantics.GetEffectiveScope(effect);
+            if (scope == PartyEffectScope.PartySubset &&
+                (PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None ||
+                 PartyEffectSemantics.HasEffectiveGuardPredicates(effect)))
+            {
+                return true;
+            }
+
+            return IsLoopDerivedWholePartyAgeOutcomeEffect(effect);
+        }
+
+        private bool IsLoopDerivedWholePartyAgeOutcomeEffect(PartyEffect effect)
+        {
             return effect != null &&
+                   PartyAgeSemantics.IsAgeField(PartyEffectSemantics.GetEffectiveField(effect)) &&
                    PartyEffectSemantics.IsStateChanging(effect) &&
                    PartyEffectSemantics.IsLoopDerived(effect) &&
-                   PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.PartySubset &&
-                   (PartyEffectSemantics.GetEffectiveCondition(effect) != PartyConditionKind.None ||
-                    PartyEffectSemantics.HasEffectiveGuardPredicates(effect));
+                   PartyEffectSemantics.GetEffectiveScope(effect) == PartyEffectScope.WholeParty &&
+                   PartyEffectSemantics.GetEffectiveCondition(effect) == PartyConditionKind.None &&
+                   !PartyEffectSemantics.HasEffectiveGuardPredicates(effect);
         }
 
         private bool ShouldCollapseConditionalLoopSubsetGroup(List<PathVariantInfo> variants)
@@ -2855,6 +2891,39 @@ namespace MMMapEditor
                 return false;
 
             return right.All(left.Contains);
+        }
+
+        private bool CanShadowConditionalLoopSubsetCoverageVariant(
+            PathVariantInfo candidate,
+            HashSet<string> candidateEffectKeys,
+            string candidateShadowBranchHistoryKey,
+            PathVariantInfo current,
+            HashSet<string> currentEffectKeys,
+            string currentShadowBranchHistoryKey)
+        {
+            if (!StrictlyContainsConditionalLoopSubsetEffects(candidateEffectKeys, currentEffectKeys))
+                return false;
+
+            if (string.Equals(candidateShadowBranchHistoryKey, currentShadowBranchHistoryKey, StringComparison.Ordinal))
+                return true;
+
+            return IsLoopDerivedWholePartyAgeOnlySuperset(candidate, current);
+        }
+
+        private bool IsLoopDerivedWholePartyAgeOnlySuperset(PathVariantInfo candidate, PathVariantInfo current)
+        {
+            string candidateAgeKey = BuildPartyEffectsKey(candidate, IsLoopDerivedWholePartyAgeOutcomeEffect);
+            if (string.IsNullOrWhiteSpace(candidateAgeKey))
+                return false;
+
+            string currentAgeKey = BuildPartyEffectsKey(current, IsLoopDerivedWholePartyAgeOutcomeEffect);
+            if (!string.IsNullOrWhiteSpace(currentAgeKey))
+                return false;
+
+            string candidateBaseKey = BuildPartyEffectsKey(candidate, effect => !IsLoopDerivedWholePartyAgeOutcomeEffect(effect));
+            string currentBaseKey = BuildPartyEffectsKey(current, effect => !IsLoopDerivedWholePartyAgeOutcomeEffect(effect));
+
+            return string.Equals(candidateBaseKey, currentBaseKey, StringComparison.Ordinal);
         }
 
         private bool CanBuildMixedPartyScanSubsetOutcome(List<PartyEffect> conditionalEffects)

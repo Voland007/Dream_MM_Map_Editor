@@ -2667,6 +2667,10 @@ namespace MMMapEditor
                         ApplyTechnicalRenderPatchNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.AgeChangeNote:
+                        ApplyAgeChangeNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2797,6 +2801,13 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(150, 150, 150);
             rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(170, 185, 190), 0.16);
             rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyAgeChangeNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 230, 165);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(112, 70, 18), 0.34);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
         }
 
         private void ApplyWheelRewardExplanationStyle(RichTextBox rt)

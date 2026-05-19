@@ -34,6 +34,7 @@ namespace MMMapEditor
         private static bool IsTrackedByteField(PartyFieldKind field)
         {
             return PartyFoodSemantics.IsFoodField(field) ||
+                   PartyAgeSemantics.IsAgeField(field) ||
                    PartyPermanentStatSemantics.IsTrackedField(field) ||
                    PartyTechnicalFieldSemantics.IsTrackedField(field) ||
                    PartyTemporaryStatSemantics.IsTrackedField(field);
@@ -96,6 +97,9 @@ namespace MMMapEditor
 
             if (PartyFoodSemantics.IsFoodField(field))
                 return PartyFoodSemantics.GetFieldLabel(field);
+
+            if (PartyAgeSemantics.IsAgeField(field))
+                return PartyAgeSemantics.GetFieldLabel(field);
 
             if (PartyPermanentStatSemantics.IsTrackedField(field))
                 return PartyPermanentStatSemantics.GetFieldLabel(field);
@@ -1408,6 +1412,9 @@ namespace MMMapEditor
             if (PartyFoodSemantics.IsFoodField(field))
                 return BuildFoodFieldDescription(effect, scope, condition);
 
+            if (PartyAgeSemantics.IsAgeField(field))
+                return BuildAgeFieldDescription(effect, scope, condition);
+
             if (PartyPermanentStatSemantics.IsTrackedField(field))
                 return BuildPermanentStatFieldDescription(effect, field, scope, condition);
 
@@ -1627,6 +1634,96 @@ namespace MMMapEditor
             };
 
             return body;
+        }
+
+        private static string BuildAgeFieldDescription(
+            PartyEffect effect,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null)
+                return null;
+
+            const string fieldLabel = PartyAgeSemantics.FieldLabel;
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            var knowledge = GetEffectiveValueKnowledge(effect);
+
+            return operation switch
+            {
+                PartyEffectOperation.Read => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Читается {fieldLabel} (= {PartyAgeSemantics.FormatYears(effect.ImmediateValue.Value)})",
+                        $"читается {fieldLabel} (= {PartyAgeSemantics.FormatYears(effect.ImmediateValue.Value)})")
+                    : ComposeQuestLordSentence(targetPrefix, $"Читается {fieldLabel}", $"читается {fieldLabel}"),
+                PartyEffectOperation.Compare => effect.ImmediateValue.HasValue
+                    ? knowledge == PartyValueKnowledge.ExactDerived
+                        ? BuildRawTechnicalBitCompareDescription(
+                            targetPrefix,
+                            fieldLabel,
+                            (byte)effect.ImmediateValue.Value)
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Проверяется {fieldLabel} на {PartyAgeSemantics.FormatYears(effect.ImmediateValue.Value)}",
+                            $"проверяется {fieldLabel} на {PartyAgeSemantics.FormatYears(effect.ImmediateValue.Value)}")
+                    : ComposeQuestLordSentence(targetPrefix, $"Проверяется {fieldLabel}", $"проверяется {fieldLabel}"),
+                PartyEffectOperation.Increment when effect.ImmediateValue.HasValue =>
+                    BuildAgeChangeFieldDescription(
+                        targetPrefix,
+                        $"Изменился {fieldLabel}: {PartyAgeSemantics.FormatAdjustmentSummary(operation, effect.ImmediateValue.Value)}",
+                        $"изменился {fieldLabel}: {PartyAgeSemantics.FormatAdjustmentSummary(operation, effect.ImmediateValue.Value)}"),
+                PartyEffectOperation.Decrement when effect.ImmediateValue.HasValue =>
+                    BuildAgeChangeFieldDescription(
+                        targetPrefix,
+                        $"Изменился {fieldLabel}: {PartyAgeSemantics.FormatAdjustmentSummary(operation, effect.ImmediateValue.Value)}",
+                        $"изменился {fieldLabel}: {PartyAgeSemantics.FormatAdjustmentSummary(operation, effect.ImmediateValue.Value)}"),
+                PartyEffectOperation.BitSet => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "устанавливается",
+                        "устанавливаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitClear => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "сбрасывается",
+                        "сбрасываются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.BitToggle => effect.ImmediateValue.HasValue
+                    ? BuildRawTechnicalBitOperationDescription(
+                        targetPrefix,
+                        fieldLabel,
+                        "переключается",
+                        "переключаются",
+                        (byte)effect.ImmediateValue.Value)
+                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? BuildAgeChangeFieldDescription(
+                        targetPrefix,
+                        $"Изменился {fieldLabel}: {PartyAgeSemantics.FormatAssignmentSummary(effect.ImmediateValue.Value)}",
+                        $"изменился {fieldLabel}: {PartyAgeSemantics.FormatAssignmentSummary(effect.ImmediateValue.Value)}")
+                    : BuildAgeChangeFieldDescription(
+                        targetPrefix,
+                        $"Изменился {fieldLabel} (направление и величина не определены)",
+                        $"изменился {fieldLabel} (направление и величина не определены)"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+        }
+
+        private static string BuildAgeChangeFieldDescription(
+            string targetPrefix,
+            string standaloneText,
+            string prefixedText)
+        {
+            return InlineNoteStyleCodec.EncodeAgeChangeNoteText(
+                ComposeQuestLordSentence(targetPrefix, standaloneText, prefixedText));
         }
 
         private static string BuildRawTechnicalFieldDescription(
@@ -2639,6 +2736,7 @@ namespace MMMapEditor
                 PartyFieldKind.SpHigh => "старший байт SP",
                 PartyFieldKind.SpLow => "младший байт SP",
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                PartyFieldKind.Age => PartyAgeSemantics.FieldLabel,
                 PartyFieldKind.sex => "пол",
                 PartyFieldKind.InnateAlignment => PartyAlignmentSemantics.InnateFieldLabel,
                 PartyFieldKind.CurrentAlignment => PartyAlignmentSemantics.CurrentFieldLabel,

@@ -339,7 +339,8 @@ namespace MMMapEditor
         AlignmentRestoreKeyword = 19,
         SubtleMechanicsNote = 20,
         ConditionalRewardMechanicsNote = 21,
-        TechnicalRenderPatchNote = 22
+        TechnicalRenderPatchNote = 22,
+        AgeChangeNote = 23
     }
 
     public sealed class NoteInlineStyleSpan
@@ -677,6 +678,7 @@ namespace MMMapEditor
                 PartyFieldKind.TempAccuracy => "временный ACCURANCY",
                 PartyFieldKind.TempLuck => "временный LUCK",
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                PartyFieldKind.Age => PartyAgeSemantics.FieldLabel,
                 _ when field.HasValue && PartyPermanentStatSemantics.IsTrackedField(field.Value) =>
                     PartyPermanentStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
@@ -693,6 +695,7 @@ namespace MMMapEditor
             {
                 PartyFieldKind.TempLevel => "временного уровня",
                 PartyFieldKind.Food => PartyFoodSemantics.FieldLabel,
+                PartyFieldKind.Age => PartyAgeSemantics.FieldLabel,
                 _ when field.HasValue && PartyPermanentStatSemantics.IsTrackedField(field.Value) =>
                     PartyPermanentStatSemantics.GetFieldLabel(field.Value),
                 _ when field.HasValue && PartyTemporaryStatSemantics.IsTrackedField(field.Value) =>
