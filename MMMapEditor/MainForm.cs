@@ -1151,14 +1151,11 @@ namespace MMMapEditor
             string[] lines = new string[33];
 
             // Проверяем наличие конфигурации для данного файла
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-
-            // Получаем конфигурационные данные
-            var config = OvrFileConfigs.Configs[fileNameOnly];
 
             // Копируем первую половину данных из конфигурации
             Array.Copy(config.First16Lines, 0, lines, 0, 16);
@@ -1277,13 +1274,12 @@ namespace MMMapEditor
         private byte ReadRandomEncounterMonsterPowerCap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return 0;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int randomEncounterMonsterPowerCapAddress = config.RandomEncounterMonsterPowerCap;
 
             byte[] fileData = File.ReadAllBytes(filename);
@@ -1302,13 +1298,12 @@ namespace MMMapEditor
         private byte ReadRandomEncounterMonsterLevelCap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return 0;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int randomEncounterMonsterLevelCapAddress = config.RandomEncounterMonsterLevelCap;
 
             byte[] fileData = File.ReadAllBytes(filename);
@@ -1327,13 +1322,12 @@ namespace MMMapEditor
         private byte ReadRandomEncounterMonsterBatchCountCap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return 0;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int batchCountAddress = config.RandomEncounterMonsterBatchCountCap;
 
             byte[] fileData = File.ReadAllBytes(filename);
@@ -1352,13 +1346,12 @@ namespace MMMapEditor
         private Tuple<byte, byte> ReadSurfaceCoordinates(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return null;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int surfaceXAddress = config.SurfaceX;
             int surfaceYAddress = config.SurfaceY;
 
@@ -1382,13 +1375,12 @@ namespace MMMapEditor
         private string ReadSectorMap(string filename)
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return null;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int sectorMapHighAddress = config.SectorMapLetter;
             int sectorMapLowAddress = config.SectorMapDigit;
 
@@ -1418,13 +1410,12 @@ namespace MMMapEditor
         {
             // Получаем конфигурацию для файла
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return null;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int mostPeacefulCellAddress = config.MostPeacefulCell;
 
             // Читаем файл
@@ -1470,13 +1461,12 @@ namespace MMMapEditor
         {
             // Получаем конфигурацию для файла
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
             {
                 Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
                 return null;
             }
 
-            var config = OvrFileConfigs.Configs[fileNameOnly];
             int mostDangerousCellAddress = config.MostDangerousCell;
 
             // Читаем файл

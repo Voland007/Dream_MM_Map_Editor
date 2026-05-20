@@ -331,9 +331,10 @@ namespace MMMapEditor.Tests
                             }
                         }
 
+                        var config = OvrFileConfigs.ResolveConfig(testCase.OvrFilePath, _configs[configKey]);
                         var analyzedObjects = OvrFileAnalyzer.AnalyzeOvrFile(
                             testCase.OvrFilePath,
-                            _configs[configKey],
+                            config,
                             new Dictionary<Point, string>(centralOptions));
 
                         RunChecksForMode(
@@ -459,8 +460,10 @@ namespace MMMapEditor.Tests
 
             string resolvedConfigKey = configKey ?? Path.GetFileName(filename).ToUpper();
 
-            if (!_configs.TryGetValue(resolvedConfigKey, out var config))
+            if (!_configs.TryGetValue(resolvedConfigKey, out var baseConfig))
                 throw new InvalidOperationException($"Конфигурация {resolvedConfigKey} не найдена");
+
+            var config = OvrFileConfigs.ResolveConfig(filename, baseConfig);
 
             string[] lines = new string[33];
 

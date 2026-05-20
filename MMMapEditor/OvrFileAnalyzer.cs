@@ -26,11 +26,20 @@ namespace MMMapEditor
     public class OvrFileAnalyzer
     {
         private const uint DefaultPathStartAddress = 0x34;
+        private const int OverlayHeaderSize = 0x0E;
 
         private enum RepeatedEventAnalysisMode
         {
             IncludeRepeatedOccurrences,
             SingleOccurrenceOnly
+        }
+
+        private sealed class ObjectTableLayout
+        {
+            public long CountOffset { get; set; }
+            public long CoordinatesOffset { get; set; }
+            public long DirectionsOffset { get; set; }
+            public long PatchKeysOffset { get; set; }
         }
 
         private readonly OvrFileConfig _config;
@@ -59,7 +68,7 @@ namespace MMMapEditor
         public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config,
             Dictionary<Point, string> existingCentralOptions)
         {
-            var analyzer = new OvrFileAnalyzer(config);
+            var analyzer = new OvrFileAnalyzer(OvrFileConfigs.ResolveConfig(filename, config));
             return analyzer.InternalAnalyze(filename, existingCentralOptions);
         }
 
@@ -108,9 +117,13 @@ namespace MMMapEditor
 
             try
             {
-                br.BaseStream.Seek(_config.StartAddress, SeekOrigin.Begin);
+                ObjectTableLayout layout = ResolveObjectTableLayout(br);
+
+                br.BaseStream.Seek(layout.CountOffset, SeekOrigin.Begin);
                 byte numObjects = br.ReadByte();
-                long requiredLength = _config.StartAddress + 1L + numObjects + numObjects + (numObjects * 2L);
+                long requiredLength = Math.Max(
+                    Math.Max(layout.CoordinatesOffset + numObjects, layout.DirectionsOffset + numObjects),
+                    layout.PatchKeysOffset + (numObjects * 2L));
 
                 if (fileLength < requiredLength)
                 {
@@ -206,12 +219,13 @@ namespace MMMapEditor
         {
             var objects = new List<OvrObject>();
 
-            br.BaseStream.Seek(_config.StartAddress, SeekOrigin.Begin);
+            ObjectTableLayout layout = ResolveObjectTableLayout(br);
+            br.BaseStream.Seek(layout.CountOffset, SeekOrigin.Begin);
             byte numObjects = br.ReadByte();
 
-            var coordinates = ReadCoordinates(br, numObjects);
-            var directions = ReadDirections(br, numObjects);
-            var patchKeys = ReadPatchKeys(br, numObjects);
+            var coordinates = ReadCoordinates(br, layout.CoordinatesOffset, numObjects);
+            var directions = ReadDirections(br, layout.DirectionsOffset, numObjects);
+            var patchKeys = ReadPatchKeys(br, layout.PatchKeysOffset, numObjects);
 
             for (int i = 0; i < numObjects; i++)
             {
@@ -524,6 +538,217 @@ namespace MMMapEditor
             }
 
             return objects;
+        }
+
+        private ObjectTableLayout ResolveObjectTableLayout(BinaryReader br)
+        {
+            byte numObjects = ReadByteAt(br, _config.StartAddress);
+
+            if (TryDetectObjectTableLayoutFromOverlayCode(br, numObjects, out ObjectTableLayout detectedLayout))
+                return detectedLayout;
+
+            long coordinatesOffset = _config.StartAddress + 1L;
+            long directionsOffset = coordinatesOffset + numObjects;
+            long patchKeysOffset = directionsOffset + numObjects;
+
+            return new ObjectTableLayout
+            {
+                CountOffset = _config.StartAddress,
+                CoordinatesOffset = coordinatesOffset,
+                DirectionsOffset = directionsOffset,
+                PatchKeysOffset = patchKeysOffset
+            };
+        }
+
+        private bool TryDetectObjectTableLayoutFromOverlayCode(
+            BinaryReader br,
+            byte numObjects,
+            out ObjectTableLayout layout)
+        {
+            layout = null;
+
+            long originalPosition = br.BaseStream.Position;
+
+            try
+            {
+                long fileLength = br.BaseStream.Length;
+                if (fileLength < OverlayHeaderSize)
+                    return false;
+
+                ushort firstBlockLength = ReadUInt16At(br, 0x04);
+                ushort secondBlockLoadAddress = ReadUInt16At(br, 0x06);
+                long firstBlockStart = OverlayHeaderSize;
+                long firstBlockEnd = firstBlockStart + firstBlockLength;
+
+                if (firstBlockEnd <= firstBlockStart || firstBlockEnd > fileLength)
+                    return false;
+
+                ushort countMemoryAddress = (ushort)(secondBlockLoadAddress + (_config.StartAddress - firstBlockEnd));
+                byte countLow = (byte)(countMemoryAddress & 0xFF);
+                byte countHigh = (byte)(countMemoryAddress >> 8);
+                byte[] firstBlock = ReadBytesAt(br, firstBlockStart, (int)(firstBlockEnd - firstBlockStart));
+                byte[] countPattern = { 0x3A, 0x1E, countLow, countHigh };
+
+                foreach (int countPatternOffset in FindPatternOffsets(firstBlock, countPattern))
+                {
+                    int coordinatePatternOffset = FindLastPatternBefore(
+                        firstBlock,
+                        new byte[] { 0x3A, 0x87 },
+                        countPatternOffset,
+                        0x20);
+                    if (coordinatePatternOffset < 0)
+                        continue;
+
+                    int directionPatternOffset = FindPatternOffset(
+                        firstBlock,
+                        new byte[] { 0x22, 0x87 },
+                        countPatternOffset + countPattern.Length,
+                        Math.Min(firstBlock.Length, countPatternOffset + 0x80));
+                    if (directionPatternOffset < 0)
+                        continue;
+
+                    int patchPatternOffset = FindPatternOffset(
+                        firstBlock,
+                        new byte[] { 0x8B, 0xBF },
+                        countPatternOffset + countPattern.Length,
+                        Math.Min(firstBlock.Length, countPatternOffset + 0xA0));
+                    if (patchPatternOffset < 0)
+                        continue;
+
+                    ushort coordinateMemoryAddress = ReadUInt16(firstBlock, coordinatePatternOffset + 2);
+                    ushort directionMemoryAddress = ReadUInt16(firstBlock, directionPatternOffset + 2);
+                    ushort patchKeyMemoryAddress = ReadUInt16(firstBlock, patchPatternOffset + 2);
+
+                    if (!TryMapLoadedAddressToFileOffset(
+                            firstBlockEnd,
+                            secondBlockLoadAddress,
+                            coordinateMemoryAddress,
+                            fileLength,
+                            out long coordinatesOffset) ||
+                        !TryMapLoadedAddressToFileOffset(
+                            firstBlockEnd,
+                            secondBlockLoadAddress,
+                            directionMemoryAddress,
+                            fileLength,
+                            out long directionsOffset) ||
+                        !TryMapLoadedAddressToFileOffset(
+                            firstBlockEnd,
+                            secondBlockLoadAddress,
+                            patchKeyMemoryAddress,
+                            fileLength,
+                            out long patchKeysOffset))
+                    {
+                        continue;
+                    }
+
+                    long countOffset = firstBlockEnd + (countMemoryAddress - secondBlockLoadAddress);
+                    if (countOffset != _config.StartAddress)
+                        continue;
+
+                    if (coordinatesOffset < 0 ||
+                        directionsOffset < coordinatesOffset + numObjects ||
+                        patchKeysOffset < directionsOffset + numObjects ||
+                        patchKeysOffset + (numObjects * 2L) > fileLength)
+                    {
+                        continue;
+                    }
+
+                    layout = new ObjectTableLayout
+                    {
+                        CountOffset = countOffset,
+                        CoordinatesOffset = coordinatesOffset,
+                        DirectionsOffset = directionsOffset,
+                        PatchKeysOffset = patchKeysOffset
+                    };
+                    return true;
+                }
+            }
+            catch
+            {
+                layout = null;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPosition;
+            }
+
+            return false;
+        }
+
+        private static bool TryMapLoadedAddressToFileOffset(
+            long secondBlockFileOffset,
+            ushort secondBlockLoadAddress,
+            ushort loadedAddress,
+            long fileLength,
+            out long fileOffset)
+        {
+            fileOffset = secondBlockFileOffset + (loadedAddress - secondBlockLoadAddress);
+            return fileOffset >= 0 && fileOffset < fileLength;
+        }
+
+        private static IEnumerable<int> FindPatternOffsets(byte[] data, byte[] pattern)
+        {
+            int offset = 0;
+            while (offset < data.Length)
+            {
+                int match = FindPatternOffset(data, pattern, offset, data.Length);
+                if (match < 0)
+                    yield break;
+
+                yield return match;
+                offset = match + 1;
+            }
+        }
+
+        private static int FindPatternOffset(byte[] data, byte[] pattern, int start, int end)
+        {
+            if (data == null || pattern == null || pattern.Length == 0)
+                return -1;
+
+            start = Math.Max(0, start);
+            end = Math.Min(data.Length, end);
+
+            for (int i = start; i <= end - pattern.Length; i++)
+            {
+                bool matched = true;
+                for (int j = 0; j < pattern.Length; j++)
+                {
+                    if (data[i + j] != pattern[j])
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                    return i;
+            }
+
+            return -1;
+        }
+
+        private static int FindLastPatternBefore(byte[] data, byte[] pattern, int beforeOffset, int maxDistance)
+        {
+            int start = Math.Max(0, beforeOffset - maxDistance);
+            int end = Math.Min(data.Length, beforeOffset);
+
+            for (int i = end - pattern.Length; i >= start; i--)
+            {
+                bool matched = true;
+                for (int j = 0; j < pattern.Length; j++)
+                {
+                    if (data[i + j] != pattern[j])
+                    {
+                        matched = false;
+                        break;
+                    }
+                }
+
+                if (matched)
+                    return i;
+            }
+
+            return -1;
         }
 
         private const ushort StaticMapFirstLayerBaseAddress = 0x3CFA;
@@ -5806,8 +6031,9 @@ namespace MMMapEditor
         /// <summary>
         /// Читает координаты объектов из таблицы
         /// </summary>
-        private Tuple<byte, byte>[] ReadCoordinates(BinaryReader br, int count)
+        private Tuple<byte, byte>[] ReadCoordinates(BinaryReader br, long offset, int count)
         {
+            br.BaseStream.Seek(offset, SeekOrigin.Begin);
             var coords = new Tuple<byte, byte>[count];
             for (int i = 0; i < count; i++)
             {
@@ -5822,8 +6048,9 @@ namespace MMMapEditor
         /// <summary>
         /// Читает направления объектов из таблицы
         /// </summary>
-        private byte[] ReadDirections(BinaryReader br, int count)
+        private byte[] ReadDirections(BinaryReader br, long offset, int count)
         {
+            br.BaseStream.Seek(offset, SeekOrigin.Begin);
             var directions = new byte[count];
             for (int i = 0; i < count; i++)
             {
@@ -5835,8 +6062,9 @@ namespace MMMapEditor
         /// <summary>
         /// Читает ключи патчей из таблицы
         /// </summary>
-        private ushort[] ReadPatchKeys(BinaryReader br, int count)
+        private ushort[] ReadPatchKeys(BinaryReader br, long offset, int count)
         {
+            br.BaseStream.Seek(offset, SeekOrigin.Begin);
             var keys = new ushort[count];
             for (int i = 0; i < count; i++)
             {
@@ -5894,6 +6122,29 @@ namespace MMMapEditor
             byte[] data = br.ReadBytes(count);
             br.BaseStream.Position = originalPos;
             return data;
+        }
+
+        private byte ReadByteAt(BinaryReader br, long position)
+        {
+            long originalPos = br.BaseStream.Position;
+            br.BaseStream.Position = position;
+            byte value = br.ReadByte();
+            br.BaseStream.Position = originalPos;
+            return value;
+        }
+
+        private ushort ReadUInt16At(BinaryReader br, long position)
+        {
+            long originalPos = br.BaseStream.Position;
+            br.BaseStream.Position = position;
+            ushort value = br.ReadUInt16();
+            br.BaseStream.Position = originalPos;
+            return value;
+        }
+
+        private static ushort ReadUInt16(byte[] data, int offset)
+        {
+            return (ushort)(data[offset] | (data[offset + 1] << 8));
         }
 
         private void SetInitialRegistersFromCoordinates(RegisterTracker tracker, byte x, byte y, uint patchStartAddress)

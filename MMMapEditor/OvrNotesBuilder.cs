@@ -88,10 +88,8 @@ namespace MMMapEditor
 
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
-            if (!OvrFileConfigs.Configs.ContainsKey(fileNameOnly))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
                 throw new InvalidOperationException($"Конфигурация для файла {fileNameOnly} не найдена.");
-
-            var config = OvrFileConfigs.Configs[fileNameOnly];
 
             byte defaultRandomEncounterMonsterPowerCap = 0;
             byte defaultRandomEncounterMonsterLevelCap = 0;

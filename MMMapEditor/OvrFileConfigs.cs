@@ -13,8 +13,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+﻿// Copyright (c) Voland007 2026. All rights reserved.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-﻿using System.Collections.Generic;
+
+using System;
+using System.Collections.Generic;
+using System.IO;
 
 namespace MMMapEditor
 {
@@ -25,7 +42,6 @@ namespace MMMapEditor
         {
             ["SORPIGAL.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x386,
                 First16Lines = new[]
                     {
                 "65 06 4C 44 8C 44 4C 04 0C 44 34 15 15 15 45 34",
@@ -68,7 +84,6 @@ namespace MMMapEditor
 
             ["PORTSMIT.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x412,
                 First16Lines = new[]
                    {
 "55 15 55 15 55 15 55 15 55 15 55 15 55 15 55 15",
@@ -111,7 +126,6 @@ namespace MMMapEditor
 
             ["ERLIQUIN.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x489,
                 First16Lines = new[]
                     {
                 "05 0C 04 1C 45 54 07 04 0C 34 45 44 54 05 0C 14",
@@ -154,7 +168,6 @@ namespace MMMapEditor
 
             ["ALGARY.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x41D,
                 First16Lines = new[]
                     {
                 "05 44 04 04 04 04 14 15 05 14 45 44 44 44 44 54",
@@ -196,7 +209,6 @@ namespace MMMapEditor
             },
             ["DUSK.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x3D8,
                 First16Lines = new[]
                     {
                 "05 44 04 14 45 04 44 14 15 0D 44 44 1C 15 4D 14",
@@ -238,7 +250,6 @@ namespace MMMapEditor
             },
             ["CAVE1.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x41D,
                 First16Lines = new[]
                     {
                 "45 64 16 05 44 44 44 44 14 05 44 44 74 07 14 15",
@@ -280,7 +291,6 @@ namespace MMMapEditor
             },
             ["CAVE2.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x30E,
                 First16Lines = new[]
                     {
                 "05 44 44 04 44 44 14 45 14 15 05 14 15 25 06 14",
@@ -322,7 +332,6 @@ namespace MMMapEditor
             },
             ["CAVE3.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x3B4,
                 First16Lines = new[]
                     {
                 "15 05 24 26 06 14 05 44 04 44 44 14 05 14 05 14",
@@ -364,7 +373,6 @@ namespace MMMapEditor
             },
             ["CAVE4.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x319,
                 First16Lines = new[]
                     {
                 "45 54 15 45 44 54 25 46 64 16 45 44 54 15 45 54",
@@ -406,7 +414,6 @@ namespace MMMapEditor
             },
             ["CAVE5.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x421,
                 First16Lines = new[]
                     {
                 "05 44 14 05 04 64 06 44 04 84 C4 84 C4 84 14 15",
@@ -448,7 +455,6 @@ namespace MMMapEditor
             },
             ["CAVE6.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2E4,
                 First16Lines = new[]
                     {
                 "05 44 44 44 44 44 44 44 44 44 44 44 44 14 15 15",
@@ -490,7 +496,6 @@ namespace MMMapEditor
             },
             ["CAVE7.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x33D,
                 First16Lines = new[]
                     {
                 "45 44 04 44 14 D5 D5 D5 D5 D5 45 14 05 44 44 54",
@@ -532,7 +537,6 @@ namespace MMMapEditor
             },
             ["CAVE8.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2E1,
                 First16Lines = new[]
                     {
                 "05 84 44 44 04 84 44 44 04 84 44 44 04 84 44 54",
@@ -574,7 +578,6 @@ namespace MMMapEditor
             },
             ["CAVE9.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2E1,
                 First16Lines = new[]
                     {
                 "45 44 04 44 44 44 44 44 14 29 0A 88 28 AA 0A A8",
@@ -616,7 +619,6 @@ namespace MMMapEditor
       },
             ["AREAA1.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x293,
                 First16Lines = new[]
                     {
                 "05 44 44 44 44 44 44 44 44 14 35 07 C4 C4 C4 D4",
@@ -658,7 +660,6 @@ namespace MMMapEditor
             },
             ["AREAA2.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x387,
                 First16Lines = new[]
                     {
                 "FF FF FF FF FF FF FF FF FF 87 24 06 A4 26 26 96",
@@ -700,7 +701,6 @@ namespace MMMapEditor
             },
             ["AREAA3.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x401,
                 First16Lines = new[]
                     {
                 "FF FF FF FF FF FF FF FF FF FF FF FF FF EF 8A 28",
@@ -742,7 +742,6 @@ namespace MMMapEditor
             },
             ["AREAA4.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2A7,
                 First16Lines = new[]
                     {
                 "FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF",
@@ -784,7 +783,6 @@ namespace MMMapEditor
             },
             ["AREAB1.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2C7,
                 First16Lines = new[]
                     {
                 "89 88 88 88 28 8E 0C CC 2C 02 88 88 28 86 04 24",
@@ -826,7 +824,6 @@ namespace MMMapEditor
             },
             ["AREAB2.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2CB,
                 First16Lines = new[]
                     {
                 "25 06 A0 16 05 14 05 24 26 06 84 84 04 24 8A 28",
@@ -868,7 +865,6 @@ namespace MMMapEditor
             },
             ["AREAB3.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x338,
                 First16Lines = new[]
                     {
                 "0A 08 A8 FE FF FF FF FF FF FF FF 57 55 55 55 55",
@@ -910,7 +906,6 @@ namespace MMMapEditor
             },
             ["AREAB4.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x368,
                 First16Lines = new[]
                     {
                 "FF FF FF 1B 29 1A 59 59 59 59 09 88 A8 1A 39 FF",
@@ -952,7 +947,6 @@ namespace MMMapEditor
             },
             ["AREAC1.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x337,
                 First16Lines = new[]
                     {
                 "2A 2A 2A 2A 2A 8A B8 0B 28 2A 3A 3F 0F AC 0E AC",
@@ -994,7 +988,6 @@ namespace MMMapEditor
             },
             ["AREAC2.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x397,
                 First16Lines = new[]
                     {
                 "0A 08 28 0E 2C 0A A8 8A 08 88 28 3A 2F AA 0A 38",
@@ -1036,7 +1029,6 @@ namespace MMMapEditor
             },
             ["AREAC3.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x2C5,
                 First16Lines = new[]
                     {
                 "0F 0C 8C 8C AC 8A 88 88 A8 0E CC 0C CC 0C CC FC",
@@ -1078,7 +1070,6 @@ namespace MMMapEditor
             },
             ["AREAC4.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x378,
                 First16Lines = new[]
                     {
                 "FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF FF",
@@ -1120,7 +1111,6 @@ namespace MMMapEditor
             },
             ["AREAD1.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x3E7,
                 First16Lines = new[]
                     {
                 "2A 2A BA FF FF FF FF FF FF FF FB FF FF FF FF FF",
@@ -1162,7 +1152,6 @@ namespace MMMapEditor
             },
             ["AREAD2.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x3FC,
                 First16Lines = new[]
                     {
                 "05 04 44 54 05 04 24 0A 08 08 08 A0 06 84 84 14",
@@ -1204,7 +1193,6 @@ namespace MMMapEditor
             },
             ["AREAD3.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x363,
                 First16Lines = new[]
                     {
                 "05 44 44 4C 4C 4C 4C 3C 0F CC 3C FF 3F FF 5F 15",
@@ -1246,7 +1234,6 @@ namespace MMMapEditor
             },
             ["AREAD4.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x3F8,
                 First16Lines = new[]
                     {
                 "FF FF FF FF 0F 4C 4C 4C 3C FF FF 2B 8A 88 88 A8",
@@ -1288,7 +1275,6 @@ namespace MMMapEditor
             },
             ["AREAE1.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x52C,
                 First16Lines = new[]
                     {
                 "0F 8C 8C 8C 8C 8C 3C FF FF FF FF CF 3C FF FF FF",
@@ -1330,7 +1316,6 @@ namespace MMMapEditor
             },
             ["AREAE2.OVR"] = new OvrFileConfig
             {
-                StartAddress = 0x37D,
                 First16Lines = new[]
                     {
                 "05 04 04 04 04 04 04 04 24 86 14 11 09 08 08 28",
@@ -1373,6 +1358,98 @@ namespace MMMapEditor
 
             // Другие файлы
         };
+
+        private const int OverlayHeaderSize = 0x0E;
+        private const int ObjectCountInstructionOffset = 0x2E;
+
+        public static bool TryGetConfigForFile(string filename, out OvrFileConfig config)
+        {
+            config = null;
+
+            if (string.IsNullOrWhiteSpace(filename))
+                return false;
+
+            string fileNameOnly = Path.GetFileName(filename).ToUpperInvariant();
+            if (!Configs.TryGetValue(fileNameOnly, out var baseConfig))
+                return false;
+
+            config = ResolveConfig(filename, baseConfig);
+            return true;
+        }
+
+        public static OvrFileConfig GetConfigForFile(string filename)
+        {
+            if (TryGetConfigForFile(filename, out var config))
+                return config;
+
+            string fileNameOnly = Path.GetFileName(filename).ToUpperInvariant();
+            throw new InvalidOperationException($"Конфигурация для файла {fileNameOnly} не найдена.");
+        }
+
+        public static OvrFileConfig ResolveConfig(string filename, OvrFileConfig baseConfig)
+        {
+            if (baseConfig == null)
+                throw new ArgumentNullException(nameof(baseConfig));
+
+            return baseConfig.WithStartAddress(ResolveStartAddress(filename));
+        }
+
+        public static int ResolveStartAddress(string filename)
+        {
+            byte[] fileData = File.ReadAllBytes(filename);
+            return ResolveStartAddress(fileData, Path.GetFileName(filename));
+        }
+
+        public static int ResolveStartAddress(byte[] fileData, string? displayName = null)
+        {
+            if (fileData == null)
+                throw new ArgumentNullException(nameof(fileData));
+
+            string label = string.IsNullOrWhiteSpace(displayName)
+                ? "overlay"
+                : displayName;
+
+            if (fileData.Length < ObjectCountInstructionOffset + 4)
+                throw new InvalidOperationException(
+                    $"{label}: file is too small to read object-count instruction at 0x{ObjectCountInstructionOffset:X2}.");
+
+            if (fileData.Length < OverlayHeaderSize)
+                throw new InvalidOperationException($"{label}: file is too small to read overlay header.");
+
+            byte opcode = fileData[ObjectCountInstructionOffset];
+            byte modRm = fileData[ObjectCountInstructionOffset + 1];
+            if (opcode != 0x3A || modRm != 0x1E)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: expected 'cmp bl, byte ptr [imm16]' at 0x{ObjectCountInstructionOffset:X2}, " +
+                    $"found {opcode:X2} {modRm:X2}.");
+            }
+
+            ushort countMemoryAddress = ReadUInt16(fileData, ObjectCountInstructionOffset + 2);
+            ushort firstBlockLength = ReadUInt16(fileData, 0x04);
+            ushort secondBlockLoadAddress = ReadUInt16(fileData, 0x06);
+            int secondBlockFileOffset = OverlayHeaderSize + firstBlockLength;
+            int startAddress = secondBlockFileOffset + (countMemoryAddress - secondBlockLoadAddress);
+
+            if (secondBlockFileOffset < OverlayHeaderSize || secondBlockFileOffset >= fileData.Length)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: invalid second block file offset 0x{secondBlockFileOffset:X}.");
+            }
+
+            if (startAddress < 0 || startAddress >= fileData.Length)
+            {
+                throw new InvalidOperationException(
+                    $"{label}: resolved object-table start address 0x{startAddress:X} is outside the overlay.");
+            }
+
+            return startAddress;
+        }
+
+        private static ushort ReadUInt16(byte[] data, int offset)
+        {
+            return (ushort)(data[offset] | (data[offset + 1] << 8));
+        }
     }
 
     public class OvrFileConfig
@@ -1380,7 +1457,21 @@ namespace MMMapEditor
         public const int OverlayTextStartAddress = 0xC972;
         public const int PatchBase = 0x0B7F;
 
-        public int StartAddress { get; set; }
+        private int? _startAddress;
+
+        public int StartAddress
+        {
+            get
+            {
+                if (!_startAddress.HasValue)
+                    throw new InvalidOperationException("StartAddress must be resolved from the overlay before use.");
+
+                return _startAddress.Value;
+            }
+            private set => _startAddress = value;
+        }
+
+        public bool HasResolvedStartAddress => _startAddress.HasValue;
         public string[] First16Lines { get; set; }
         public string[] Second16Lines { get; set; }
         public int TextBaseAddr => OverlayTextStartAddress - StartAddress;
@@ -1395,6 +1486,16 @@ namespace MMMapEditor
         public int SurfaceY => StartAddress - 7;
         public int SectorMapLetter => StartAddress - 15;
         public int SectorMapDigit => StartAddress - 14;
+
+        public OvrFileConfig WithStartAddress(int startAddress)
+        {
+            return new OvrFileConfig
+            {
+                StartAddress = startAddress,
+                First16Lines = First16Lines,
+                Second16Lines = Second16Lines
+            };
+        }
     }
 
 }
