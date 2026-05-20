@@ -2355,7 +2355,7 @@ namespace MMMapEditor
                     normalizedLines.Add(BuildNoOpLine(flatVariant.Variant?.Variant));
                 else
                     NormalizeNoOpOnlyLine(normalizedLines, flatVariant.Variant?.Variant);
-                RemoveRedundantFlatNoOpLines(normalizedLines);
+                RemoveRedundantNoOpLines(normalizedLines);
 
                 int key = BuildFlatSemanticVariantKey(displayIndex++, flatVariant.SourceVariantKey);
                 if (ShouldUseFlatDisplayPathVariant(obj, flatVariant.Variant?.Variant))
@@ -3336,15 +3336,12 @@ namespace MMMapEditor
             lines[entry.Index] = BuildNoOpLine(variant);
         }
 
-        private static void RemoveRedundantFlatNoOpLines(List<string> lines)
+        private static void RemoveRedundantNoOpLines(List<string> lines)
         {
             if (lines == null || lines.Count == 0)
                 return;
 
-            bool hasNonNoOpLine = lines.Any(line =>
-                !string.IsNullOrWhiteSpace(line) &&
-                !IsNoOpDisplayLine(line));
-            if (!hasNonNoOpLine)
+            if (!HasNonNoOpDisplayLine(lines))
                 return;
 
             for (int i = lines.Count - 1; i >= 0; i--)
@@ -3359,6 +3356,13 @@ namespace MMMapEditor
             string normalized = line?.Trim();
             return string.Equals(normalized, NoOpLine, StringComparison.Ordinal) ||
                    string.Equals(normalized, NoOpBecauseNoConditionsLine, StringComparison.Ordinal);
+        }
+
+        private static bool HasNonNoOpDisplayLine(IEnumerable<string> lines)
+        {
+            return lines?.Any(line =>
+                !string.IsNullOrWhiteSpace(line) &&
+                !IsNoOpDisplayLine(line)) == true;
         }
 
         private static bool ShouldExplainNoOpAsUnmetConditions(PathVariantInfo variant)
@@ -5529,7 +5533,7 @@ namespace MMMapEditor
                     lines.Add(BuildNoOpLine(flatVariant.Variant));
                 else
                     NormalizeNoOpOnlyLine(lines, flatVariant.Variant);
-                RemoveRedundantFlatNoOpLines(lines);
+                RemoveRedundantNoOpLines(lines);
 
                 foreach (var line in lines)
                 {
@@ -8294,10 +8298,7 @@ namespace MMMapEditor
                         lines.AddRange(rootLines);
                         lines.AddRange(groupOnlyNarrativeLines);
                         lines.AddRange(resourceLines);
-                        lines.AddRange(BuildInventoryResourceOutcomeDisplayLines(
-                            outcomeGroup,
-                            printedBeforeOutcome,
-                            includeNoOpWhenEmpty: !lines.Any(line => !string.IsNullOrWhiteSpace(line))));
+                        lines.AddRange(BuildInventoryResourceOutcomeDisplayLines(outcomeGroup, printedBeforeOutcome));
 
                         AppendIndentedDisplayLines(sb, string.Empty, lines, headerContainsProbability);
 
@@ -8672,8 +8673,7 @@ namespace MMMapEditor
 
         private static List<string> BuildInventoryResourceOutcomeDisplayLines(
             ResourceRandomOutcomeGroup outcomeGroup,
-            List<string> printedBeforeOutcome,
-            bool includeNoOpWhenEmpty = true)
+            List<string> printedBeforeOutcome)
         {
             var result = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -8690,8 +8690,10 @@ namespace MMMapEditor
                 }
             }
 
-            if (result.Count == 0 && includeNoOpWhenEmpty)
+            if (result.Count == 0 && !HasNonNoOpDisplayLine(printedBeforeOutcome))
                 result.Add(NoOpLine);
+            else
+                RemoveRedundantNoOpLines(result);
 
             return result;
         }
