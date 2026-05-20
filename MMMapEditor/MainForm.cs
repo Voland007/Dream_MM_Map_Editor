@@ -2665,6 +2665,10 @@ namespace MMMapEditor
                         ApplyGeneratedOverlaySubstitutionStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.LostDirectionEffectNote:
+                        ApplyLostDirectionEffectNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2809,6 +2813,13 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(186, 225, 255);
             rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(32, 78, 116), 0.42);
             rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyLostDirectionEffectNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(206, 224, 214);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(48, 80, 68), 0.34);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
         }
 
         private void ApplyWheelRewardExplanationStyle(RichTextBox rt)

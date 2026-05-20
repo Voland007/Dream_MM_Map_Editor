@@ -34,6 +34,9 @@ namespace MMMapEditor
             "за исключением персонажей, у которых CONDITION == ERADICATED";
         private const string NoOpLine = "Ничего не происходит";
         private const string NoOpBecauseNoConditionsLine = "Ничего не происходит (не выполнены условия для наступления ни одного варианта)";
+        private const string LostTextLine = "YOU'RE LOST!!!";
+        private const string LostDirectionEffectLine =
+            "Направление партии случайно поворачивается налево или направо (50%/50%)";
         private const string WholePartyConditionChangePrefix = "CONDITION персонажа(ей) в партии изменяется на ";
         private const string LegacyWholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
@@ -2352,6 +2355,7 @@ namespace MMMapEditor
                     normalizedLines.Add(BuildNoOpLine(flatVariant.Variant?.Variant));
                 else
                     NormalizeNoOpOnlyLine(normalizedLines, flatVariant.Variant?.Variant);
+                RemoveRedundantFlatNoOpLines(normalizedLines);
 
                 int key = BuildFlatSemanticVariantKey(displayIndex++, flatVariant.SourceVariantKey);
                 if (ShouldUseFlatDisplayPathVariant(obj, flatVariant.Variant?.Variant))
@@ -3330,6 +3334,31 @@ namespace MMMapEditor
                 return;
 
             lines[entry.Index] = BuildNoOpLine(variant);
+        }
+
+        private static void RemoveRedundantFlatNoOpLines(List<string> lines)
+        {
+            if (lines == null || lines.Count == 0)
+                return;
+
+            bool hasNonNoOpLine = lines.Any(line =>
+                !string.IsNullOrWhiteSpace(line) &&
+                !IsNoOpDisplayLine(line));
+            if (!hasNonNoOpLine)
+                return;
+
+            for (int i = lines.Count - 1; i >= 0; i--)
+            {
+                if (IsNoOpDisplayLine(lines[i]))
+                    lines.RemoveAt(i);
+            }
+        }
+
+        private static bool IsNoOpDisplayLine(string line)
+        {
+            string normalized = line?.Trim();
+            return string.Equals(normalized, NoOpLine, StringComparison.Ordinal) ||
+                   string.Equals(normalized, NoOpBecauseNoConditionsLine, StringComparison.Ordinal);
         }
 
         private static bool ShouldExplainNoOpAsUnmetConditions(PathVariantInfo variant)
@@ -5498,6 +5527,9 @@ namespace MMMapEditor
                     .ToList() ?? new List<string>();
                 if (!lines.Any(line => !string.IsNullOrWhiteSpace(line)))
                     lines.Add(BuildNoOpLine(flatVariant.Variant));
+                else
+                    NormalizeNoOpOnlyLine(lines, flatVariant.Variant);
+                RemoveRedundantFlatNoOpLines(lines);
 
                 foreach (var line in lines)
                 {
@@ -8262,7 +8294,10 @@ namespace MMMapEditor
                         lines.AddRange(rootLines);
                         lines.AddRange(groupOnlyNarrativeLines);
                         lines.AddRange(resourceLines);
-                        lines.AddRange(BuildInventoryResourceOutcomeDisplayLines(outcomeGroup, printedBeforeOutcome));
+                        lines.AddRange(BuildInventoryResourceOutcomeDisplayLines(
+                            outcomeGroup,
+                            printedBeforeOutcome,
+                            includeNoOpWhenEmpty: !lines.Any(line => !string.IsNullOrWhiteSpace(line))));
 
                         AppendIndentedDisplayLines(sb, string.Empty, lines, headerContainsProbability);
 
@@ -8637,7 +8672,8 @@ namespace MMMapEditor
 
         private static List<string> BuildInventoryResourceOutcomeDisplayLines(
             ResourceRandomOutcomeGroup outcomeGroup,
-            List<string> printedBeforeOutcome)
+            List<string> printedBeforeOutcome,
+            bool includeNoOpWhenEmpty = true)
         {
             var result = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -8654,8 +8690,8 @@ namespace MMMapEditor
                 }
             }
 
-            if (result.Count == 0)
-                result.Add("Ничего не происходит");
+            if (result.Count == 0 && includeNoOpWhenEmpty)
+                result.Add(NoOpLine);
 
             return result;
         }
@@ -16238,7 +16274,46 @@ namespace MMMapEditor
                     result.Add(decodedText);
             }
 
+            InsertLostDirectionEffectNoteAfterLostText(result);
             return result;
+        }
+
+        private static void InsertLostDirectionEffectNoteAfterLostText(List<string> narrativeLines)
+        {
+            if (narrativeLines == null || narrativeLines.Count == 0)
+                return;
+
+            string encodedEffectLine = InlineNoteStyleCodec.EncodeLostDirectionEffectNoteText(LostDirectionEffectLine);
+            for (int i = 0; i < narrativeLines.Count; i++)
+            {
+                string line = narrativeLines[i];
+                if (string.IsNullOrEmpty(line) ||
+                    line.IndexOf(LostTextLine, StringComparison.Ordinal) < 0 ||
+                    line.IndexOf(LostDirectionEffectLine, StringComparison.Ordinal) >= 0)
+                {
+                    continue;
+                }
+
+                var parts = SplitDisplayLines(line).ToList();
+                if (parts.Count == 0)
+                    continue;
+
+                var rebuilt = new List<string>();
+                bool inserted = false;
+                foreach (string part in parts)
+                {
+                    rebuilt.Add(part);
+                    if (!inserted &&
+                        string.Equals(part.Trim(), LostTextLine, StringComparison.Ordinal))
+                    {
+                        rebuilt.Add(encodedEffectLine);
+                        inserted = true;
+                    }
+                }
+
+                if (inserted)
+                    narrativeLines[i] = string.Join("\n", rebuilt);
+            }
         }
 
         private static List<string> GetMonsterStatLines(

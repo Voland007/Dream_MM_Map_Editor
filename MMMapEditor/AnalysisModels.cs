@@ -341,7 +341,8 @@ namespace MMMapEditor
         ConditionalRewardMechanicsNote = 21,
         TechnicalRenderPatchNote = 22,
         AgeChangeNote = 23,
-        GeneratedOverlaySubstitution = 24
+        GeneratedOverlaySubstitution = 24,
+        LostDirectionEffectNote = 25
     }
 
     public sealed class NoteInlineStyleSpan

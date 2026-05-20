@@ -40,6 +40,7 @@ namespace MMMapEditor
         private const string TechnicalRenderPatchNoteTokenPrefix = "[[TECHPATCH:";
         private const string AgeChangeNoteTokenPrefix = "[[AGECHANGE:";
         private const string GeneratedOverlaySubstitutionTokenPrefix = "[[GENOVR:";
+        private const string LostDirectionEffectNoteTokenPrefix = "[[LOSTDIR:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
@@ -129,6 +130,11 @@ namespace MMMapEditor
         public static string EncodeGeneratedOverlaySubstitutionText(string visibleText)
         {
             return EncodeTextStyleToken(GeneratedOverlaySubstitutionTokenPrefix, visibleText);
+        }
+
+        public static string EncodeLostDirectionEffectNoteText(string visibleText)
+        {
+            return EncodeTextStyleToken(LostDirectionEffectNoteTokenPrefix, visibleText);
         }
 
         public static string EncodeWheelRewardExplanationText(string visibleText)
@@ -473,6 +479,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.GeneratedOverlaySubstitution
                     });
                     i += generatedOverlayConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    LostDirectionEffectNoteTokenPrefix,
+                    out string lostDirectionEffectText,
+                    out int lostDirectionEffectConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(lostDirectionEffectText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = lostDirectionEffectText.Length,
+                        Kind = NoteInlineStyleKind.LostDirectionEffectNote
+                    });
+                    i += lostDirectionEffectConsumedLength;
                     continue;
                 }
 
