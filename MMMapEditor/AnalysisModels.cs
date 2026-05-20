@@ -340,7 +340,8 @@ namespace MMMapEditor
         SubtleMechanicsNote = 20,
         ConditionalRewardMechanicsNote = 21,
         TechnicalRenderPatchNote = 22,
-        AgeChangeNote = 23
+        AgeChangeNote = 23,
+        GeneratedOverlaySubstitution = 24
     }
 
     public sealed class NoteInlineStyleSpan
@@ -395,6 +396,8 @@ namespace MMMapEditor
         public HashSet<string> FoundTexts { get; set; } = new HashSet<string>();
         public HashSet<string> ContextTexts { get; set; } = new HashSet<string>(); // legacy-коллекции для дедупликации и совместимости
         public List<TextEntry> OrderedTexts { get; set; } = new List<TextEntry>();
+        public string PendingPrintedTextPrefix { get; set; } = string.Empty;
+        public uint PendingPrintedTextAddress { get; set; } = 0;
         public HashSet<ushort> MemoryReadAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> MemoryWrittenAddresses { get; set; } = new HashSet<ushort>();
         public HashSet<ushort> AdjustedMemoryAddresses { get; set; } = new HashSet<ushort>();

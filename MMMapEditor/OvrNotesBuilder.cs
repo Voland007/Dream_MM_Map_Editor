@@ -324,6 +324,12 @@ namespace MMMapEditor
                     ? newNotes.ToString().TrimEnd('\r', '\n')
                     : existingCellNotes;
 
+                finalNoteText = NormalizeAreaE1JudgementStatueTechnicalNoteText(
+                    fileNameOnly,
+                    obj,
+                    finalNoteText,
+                    inlineStyles);
+
                 string normalizedFinalNoteText = NormalizeNoteLineEndings(finalNoteText);
                 NormalizeInlineStyleSpansForLineEndings(finalNoteText, normalizedFinalNoteText, inlineStyles);
                 finalNoteText = normalizedFinalNoteText;
@@ -573,6 +579,12 @@ namespace MMMapEditor
             }
 
             var seenSpans = new HashSet<string>(StringComparer.Ordinal);
+            var protectedRanges = inlineStyles
+                .Where(span => span != null &&
+                               span.Kind == NoteInlineStyleKind.WheelRewardExplanation &&
+                               span.Length > 0)
+                .Select(span => (Start: span.Start, End: span.Start + span.Length))
+                .ToList();
             foreach (string rawOverlayText in rawOverlayTexts
                 .Where(text => !string.IsNullOrEmpty(text))
                 .OrderByDescending(text => text.Length))
@@ -583,6 +595,13 @@ namespace MMMapEditor
                     int matchIndex = noteText.IndexOf(rawOverlayText, searchStart, StringComparison.Ordinal);
                     if (matchIndex < 0)
                         break;
+
+                    int matchEnd = matchIndex + rawOverlayText.Length;
+                    if (protectedRanges.Any(range => matchIndex < range.End && matchEnd > range.Start))
+                    {
+                        searchStart = matchEnd;
+                        continue;
+                    }
 
                     string key = $"{matchIndex}:{rawOverlayText.Length}";
                     if (seenSpans.Add(key))
@@ -15430,19 +15449,35 @@ namespace MMMapEditor
 
         private static string TryBuildSpecialPlayerExplanation(string fileNameOnly, OvrObject obj)
         {
-            if (!string.Equals(fileNameOnly, "AREAA3.OVR", StringComparison.OrdinalIgnoreCase))
-                return null;
-
-            if (obj == null ||
-                obj.X != 3 ||
-                obj.Y != 6 ||
-                obj.PatchAddress != 0x011C)
+            if (string.Equals(fileNameOnly, "AREAA3.OVR", StringComparison.OrdinalIgnoreCase))
             {
-                return null;
+                if (obj == null ||
+                    obj.X != 3 ||
+                    obj.Y != 6 ||
+                    obj.PatchAddress != 0x011C)
+                {
+                    return null;
+                }
+
+                return InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
+                    BuildAreaA3MountainWheelExplanation());
             }
 
-            return InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
-                BuildAreaA3MountainWheelExplanation());
+            if (string.Equals(fileNameOnly, "AREAE1.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (obj == null ||
+                    obj.X != 9 ||
+                    obj.Y != 13 ||
+                    obj.PatchAddress != 0x0322)
+                {
+                    return null;
+                }
+
+                return InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
+                    BuildAreaE1JudgementStatueExplanation());
+            }
+
+            return null;
         }
 
         private static string TryBuildSpecialFullNotes(string fileNameOnly, OvrObject obj, bool useHierarchical)
@@ -15632,6 +15667,194 @@ namespace MMMapEditor
             };
 
             return BuildAsciiFrame(lines, 60);
+        }
+
+        private static string BuildAreaE1JudgementStatueExplanation()
+        {
+            return string.Join("\n", new[]
+            {
+                "===================================================================",
+                "|| ПОЯСНЕНИЕ К СТАТУЕ ПРАВОСУДИЯ                                  ||",
+                "||                                                                ||",
+                "|| Статуя просит выбрать персонажа 1-6.                           ||",
+                "|| Если выбранный персонаж ещё не достоин, ответ будет:           ||",
+                "|| NOT WORTHY!                                                    ||",
+                "||                                                                ||",
+                "|| Персонаж становится достойным после того как  были  найдены    ||",
+                "|| все 6 узников. В этом случае он получает награду за то,        ||",
+                "|| сколько узников было осуждено в соответствии с мирровозрением  ||",
+                "|| (ALIGNMENT) персонажа (в этом случае узник считается зачтённым)||",
+                "||                                                                ||",
+                "|| Зачтено | EXP | Дополнительная награда                         ||",
+                "|| 0/6     | 0   | нет                                            ||",
+                "|| 1/6     | 16  | нет                                            ||",
+                "|| 2/6     | 32  | нет                                            ||",
+                "|| 3/6     | 48  | нет                                            ||",
+                "|| 4/6     | 64  | случайная характеристика +4                    ||",
+                "|| 5/6     | 80  | случайная характеристика +4                    ||",
+                "|| 6/6     | 96  | случайная характеристика +4                    ||",
+                "||                                                                ||",
+                "|| При 4/6 и выше дополнительно выбирается одна характеристика:   ||",
+                "|| INTELLECT, MIGHT, PERSONALITY, ENDURANCE, SPEED,               ||",
+                "|| ACCURACY или LUCK, и повышается на +4 (Игровой баг - написано  ||",
+                "|| +3, а по факту на +4)                                          ||",
+                "||                                                                ||",
+                "|| Бонус даётся только если выбранная характеристика ниже 43.     ||",
+                "|| Если уже 43 или выше, он не растёт.                            ||",
+                "==================================================================="
+            });
+        }
+
+        private static string NormalizeAreaE1JudgementStatueTechnicalNoteText(
+            string fileNameOnly,
+            OvrObject obj,
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles)
+        {
+            if (!IsAreaE1JudgementStatueObject(fileNameOnly, obj) ||
+                string.IsNullOrEmpty(noteText))
+            {
+                return noteText;
+            }
+
+            const string oldNotWorthyCondition =
+                "хотя бы у одного персонажа партии поле прогресса линейки квестов волшебника RANALOU (+0x71) != 127";
+            const string oldWorthyCondition =
+                "ни у одного персонажа партии поле прогресса линейки квестов волшебника RANALOU (+0x71) != 127";
+            const string notWorthyCondition =
+                "Условия квеста RANALOU не выполнены";
+            const string worthyCondition =
+                "Все условия квеста RANALOU выполнены";
+            const string sourceRanalouRewardEffect =
+                "-=*У выбранного персонажа партии прогресс линейки квестов волшебника RANALOU (+0x71) становится равным 0x80*=-";
+            const string displayRanalouRewardEffect =
+                "-=*У выбранного персонажа партии прогресс линейки квестов волшебника RANALOU становится равным 0x80 (сбрасывается)*=-";
+            const string questProgressRange = "0/1/2/3/4/5/6";
+            const string experienceRange = "0/16/32/48/64/80/96";
+            const string statOptions =
+                ",+3 INTELLECT\n,+3 MIGHT\n,+3 PERSONALITY\n,+3 ENDURANCE\n,+3 SPEED\n,+3 ACCURACY\n,+3 LUCK";
+
+            noteText = noteText
+                .Replace(oldNotWorthyCondition, notWorthyCondition)
+                .Replace(oldWorthyCondition, worthyCondition);
+
+            noteText = noteText.Replace(
+                "YOUR ACTIONS REFLECT YOUR VIEWS   OF 6",
+                "YOUR ACTIONS REFLECT YOUR VIEWS " + questProgressRange + " OF 6");
+
+            noteText = Regex.Replace(
+                noteText,
+                @"(?m)^(\s*)\+\s*$\r?\n(\s*)EXPERIENCE\s*$",
+                match => $"{match.Groups[1].Value}+{experienceRange}\n{match.Groups[2].Value}EXPERIENCE",
+                RegexOptions.CultureInvariant);
+
+            noteText = Regex.Replace(
+                noteText,
+                Regex.Escape(sourceRanalouRewardEffect) + @"\r?\n(?:,\+3)?EXPERIENCE(?=\r?\n(?:\r?\n|Вариант|=)|$)",
+                displayRanalouRewardEffect + "\n" + statOptions,
+                RegexOptions.CultureInvariant);
+
+            noteText = noteText.Replace(sourceRanalouRewardEffect, displayRanalouRewardEffect);
+
+            noteText = Regex.Replace(
+                noteText,
+                @"(?m)^(\s*Вариант\s+\d+(?:\.\d+)*:\r?\n)(\s*)(?:,\+3)?EXPERIENCE\s*$",
+                match =>
+                {
+                    string indent = match.Groups[2].Value;
+                    string indentedStatOptions = string.Join(
+                        "\n",
+                        statOptions.Split('\n').Select(line => indent + line));
+                    return match.Groups[1].Value + indentedStatOptions + "\n";
+                },
+                RegexOptions.CultureInvariant);
+
+            AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, questProgressRange);
+            AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, experienceRange);
+            RefreshAreaE1JudgementExplanationStyleSpan(noteText, inlineStyles);
+
+            return noteText;
+        }
+
+        private static void AddGeneratedOverlaySubstitutionSpans(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles,
+            string visibleText)
+        {
+            if (string.IsNullOrEmpty(noteText) ||
+                string.IsNullOrEmpty(visibleText) ||
+                inlineStyles == null)
+            {
+                return;
+            }
+
+            int searchStart = 0;
+            while (searchStart < noteText.Length)
+            {
+                int index = noteText.IndexOf(visibleText, searchStart, StringComparison.Ordinal);
+                if (index < 0)
+                    break;
+
+                inlineStyles.Add(new NoteInlineStyleSpan
+                {
+                    Start = index,
+                    Length = visibleText.Length,
+                    Kind = NoteInlineStyleKind.GeneratedOverlaySubstitution
+                });
+                searchStart = index + visibleText.Length;
+            }
+        }
+
+        private static void RefreshAreaE1JudgementExplanationStyleSpan(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles)
+        {
+            if (string.IsNullOrEmpty(noteText) || inlineStyles == null)
+                return;
+
+            const string title = "ПОЯСНЕНИЕ К СТАТУЕ ПРАВОСУДИЯ";
+            int titleIndex = noteText.IndexOf(title, StringComparison.Ordinal);
+            if (titleIndex < 0)
+                return;
+
+            int titleLineStart = noteText.LastIndexOf('\n', titleIndex);
+            titleLineStart = titleLineStart < 0 ? 0 : titleLineStart + 1;
+            int previousLineStart = titleLineStart > 1
+                ? noteText.LastIndexOf('\n', titleLineStart - 2)
+                : -1;
+            int start = previousLineStart < 0 ? titleLineStart : previousLineStart + 1;
+
+            int end = noteText.Length;
+            Match closingBorder = Regex.Match(
+                noteText.Substring(titleIndex),
+                @"(?m)^={10,}\s*$",
+                RegexOptions.CultureInvariant);
+            if (closingBorder.Success)
+                end = titleIndex + closingBorder.Index + closingBorder.Length;
+
+            if (end <= start)
+                return;
+
+            inlineStyles.RemoveAll(span =>
+                span != null &&
+                (span.Kind == NoteInlineStyleKind.WheelRewardExplanation ||
+                 (span.Start < end && span.Start + span.Length > start)));
+
+            inlineStyles.Add(new NoteInlineStyleSpan
+            {
+                Start = start,
+                Length = end - start,
+                Kind = NoteInlineStyleKind.WheelRewardExplanation
+            });
+        }
+
+        private static bool IsAreaE1JudgementStatueObject(string fileNameOnly, OvrObject obj)
+        {
+            return string.Equals(fileNameOnly, "AREAE1.OVR", StringComparison.OrdinalIgnoreCase) &&
+                   obj != null &&
+                   obj.X == 9 &&
+                   obj.Y == 13 &&
+                   obj.PatchAddress == 0x0322;
         }
 
         private static string BuildAsciiFrame(IEnumerable<string> lines, int contentWidth)

@@ -963,6 +963,13 @@ namespace MMMapEditor
             if (currentState.ExitEmulatedMemory8RangeSources != null && currentState.ExitEmulatedMemory8RangeSources.Count > 0)
                 merged.ExitEmulatedMemory8RangeSources = CloneRangeSourceDictionary(currentState.ExitEmulatedMemory8RangeSources);
 
+            if (!string.IsNullOrEmpty(currentState.PendingPrintedTextPrefix))
+            {
+                merged.PendingPrintedTextPrefix += currentState.PendingPrintedTextPrefix;
+                if (currentState.PendingPrintedTextAddress != 0)
+                    merged.PendingPrintedTextAddress = currentState.PendingPrintedTextAddress;
+            }
+
             return merged;
         }
 
@@ -1330,6 +1337,8 @@ namespace MMMapEditor
             clone.FoundTexts = new HashSet<string>(source.FoundTexts);
             clone.ContextTexts = new HashSet<string>(source.ContextTexts);
             clone.OrderedTexts = source.OrderedTexts.Select(t => t.Clone()).ToList();
+            clone.PendingPrintedTextPrefix = source.PendingPrintedTextPrefix;
+            clone.PendingPrintedTextAddress = source.PendingPrintedTextAddress;
             clone.MemoryReadAddresses = new HashSet<ushort>(source.MemoryReadAddresses ?? Enumerable.Empty<ushort>());
             clone.MemoryWrittenAddresses = new HashSet<ushort>(source.MemoryWrittenAddresses ?? Enumerable.Empty<ushort>());
             clone.AdjustedMemoryAddresses = new HashSet<ushort>(source.AdjustedMemoryAddresses ?? Enumerable.Empty<ushort>());
@@ -1612,7 +1621,18 @@ namespace MMMapEditor
             if (HasAnyOutcome(variant))
                 return false;
 
+            if (HasTerminalPromptLoopOutcomeText(variant))
+                return false;
+
             return variant.Texts != null && variant.Texts.Count > 0;
+        }
+
+        private static bool HasTerminalPromptLoopOutcomeText(PathVariantInfo variant)
+        {
+            return variant?.Texts != null &&
+                   variant.Texts.Any(text =>
+                       !string.IsNullOrWhiteSpace(text) &&
+                       text.IndexOf("NOT WORTHY!", StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private bool IsMeaningfulLeaf(PathVariantInfo variant)
@@ -1623,7 +1643,7 @@ namespace MMMapEditor
             if (variant.TerminatedByRepeatedBackEdge)
             {
                 if (variant.TerminatedByPromptLoopBackEdge)
-                    return HasAnyOutcome(variant);
+                    return HasAnyOutcome(variant) || HasTerminalPromptLoopOutcomeText(variant);
 
                 if (HasAnyOutcome(variant))
                     return true;

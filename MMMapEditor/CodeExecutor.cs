@@ -3788,6 +3788,8 @@ namespace MMMapEditor
             if (result == null || string.IsNullOrEmpty(text))
                 return OrderedTextMergeOutcome.UnchangedExisting;
 
+            text = ConsumePendingPrintedTextPrefix(result, text, instructionAddress, debugMode);
+
             var candidate = new TextEntry
             {
                 Text = text,
@@ -4650,53 +4652,244 @@ namespace MMMapEditor
             return char.IsLetter(previousText[lastVisibleIndex]);
         }
 
-        private void AppendPrintedCharToLastText(PathAnalysisResult result, RegisterTracker registerTracker,
-            uint instructionAddress, bool debugMode)
+        private static bool TryReadImmediateAlBeforeCall(BinaryReader br, uint callInstructionAddress, out byte charValue)
         {
-            if (result == null || registerTracker == null)
-                return;
+            charValue = 0;
+            if (br == null || callInstructionAddress < 2)
+                return false;
 
-            if (!registerTracker.TryGetByteRegisterValue("AL", out byte charValue))
-                return;
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Seek(callInstructionAddress - 2, SeekOrigin.Begin);
+                if (br.BaseStream.Position + 2 > br.BaseStream.Length)
+                    return false;
+
+                byte opcode = br.ReadByte();
+                byte immediate = br.ReadByte();
+                if (opcode != 0xB0)
+                    return false;
+
+                charValue = immediate;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Seek(originalPosition, SeekOrigin.Begin);
+            }
+        }
+
+        private static bool TryBuildPrintedText(byte charValue, out string printedText, out string debugText)
+        {
+            printedText = string.Empty;
+            debugText = string.Empty;
 
             if (!InlineNoteStyleCodec.TryDecodePrintableOverlayChar(charValue, out char visibleChar, out bool isInverse))
-                return;
+                return false;
 
-            var lastText = result.OrderedTexts
+            printedText = InlineNoteStyleCodec.EncodePrintableChar(visibleChar, isInverse);
+            debugText = isInverse ? $"{visibleChar} [inverse]" : visibleChar.ToString();
+            return true;
+        }
+
+        private static string ConsumePendingPrintedTextPrefix(PathAnalysisResult result, string text,
+            uint instructionAddress, bool debugMode)
+        {
+            if (result == null ||
+                string.IsNullOrEmpty(result.PendingPrintedTextPrefix) ||
+                string.IsNullOrEmpty(text) ||
+                !TrySplitOverlayTextEntry(text, out _, out _))
+            {
+                return text;
+            }
+
+            int separatorIndex = text.IndexOf(": ", StringComparison.Ordinal);
+            if (separatorIndex < 0)
+                return text;
+
+            string pendingText = result.PendingPrintedTextPrefix;
+            string updatedText = text.Insert(separatorIndex + 2, pendingText);
+            result.PendingPrintedTextPrefix = string.Empty;
+            result.PendingPrintedTextAddress = 0;
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        Добавили ранее напечатанные символы перед следующим текстом -> {updatedText}");
+
+            return updatedText;
+        }
+
+        private static char? GetFirstVisiblePrintedChar(string printedText)
+        {
+            string visibleText = InlineNoteStyleCodec.RenderVisibleText(printedText);
+            return string.IsNullOrEmpty(visibleText) ? (char?)null : visibleText[0];
+        }
+
+        private static bool ShouldInsertSpaceBeforePrintedText(string previousText, string printedText, int insertionIndex)
+        {
+            char? firstVisibleChar = GetFirstVisiblePrintedChar(printedText);
+            return firstVisibleChar.HasValue &&
+                   ShouldInsertSpaceBeforePrintedChar(previousText, firstVisibleChar.Value, insertionIndex);
+        }
+
+        private static bool ShouldAppendPrintedTextToLastOverlayText(string previousText, string printedText)
+        {
+            string previousVisibleText = InlineNoteStyleCodec.RenderVisibleText(previousText);
+            if (string.IsNullOrEmpty(previousVisibleText))
+                return false;
+
+            char? firstVisibleChar = GetFirstVisiblePrintedChar(printedText);
+            if (!firstVisibleChar.HasValue)
+                return false;
+
+            if (char.IsWhiteSpace(previousVisibleText[previousVisibleText.Length - 1]))
+                return true;
+
+            if (IsTerminalPrintedSuffixPunctuation(firstVisibleChar.Value))
+                return true;
+
+            if (!char.IsDigit(firstVisibleChar.Value))
+                return false;
+
+            for (int i = previousVisibleText.Length - 1; i >= 0; i--)
+            {
+                char ch = previousVisibleText[i];
+                if (char.IsWhiteSpace(ch) || char.IsDigit(ch))
+                    continue;
+
+                return ch == '=' || ch == ':' || ch == '-';
+            }
+
+            return false;
+        }
+
+        private static bool IsTerminalPrintedSuffixPunctuation(char ch)
+        {
+            return ch == '.' ||
+                   ch == '!' ||
+                   ch == '?' ||
+                   ch == ';' ||
+                   ch == ':';
+        }
+
+        private static TextEntry FindLastOverlayTextEntry(PathAnalysisResult result)
+        {
+            return result?.OrderedTexts?
                 .Where(t => t != null &&
                             !string.IsNullOrEmpty(t.Text) &&
                             TrySplitOverlayTextEntry(t.Text, out _, out _))
                 .OrderBy(t => t.Order)
                 .LastOrDefault();
+        }
 
-            if (lastText == null)
+        private static void ReplaceOverlayTextEntry(PathAnalysisResult result, TextEntry entry, string updatedText,
+            uint instructionAddress)
+        {
+            if (result == null || entry == null || string.IsNullOrEmpty(updatedText))
                 return;
 
-            string previousText = lastText.Text;
-            int insertionIndex = GetPrintedCharTemplateInsertionIndex(previousText);
-            string encodedChar = InlineNoteStyleCodec.EncodePrintableChar(visibleChar, isInverse);
-            string prefix = ShouldInsertSpaceBeforePrintedChar(previousText, visibleChar, insertionIndex) ? " " : string.Empty;
-            string updatedText = insertionIndex >= 0
-                ? previousText.Insert(insertionIndex, encodedChar)
-                : previousText + prefix + encodedChar;
+            string previousText = entry.Text;
+            entry.Text = updatedText;
+            entry.Address = instructionAddress;
 
-            lastText.Text = updatedText;
-            lastText.Address = instructionAddress;
+            RemoveLegacyText(result, previousText, entry.IsContextual);
+            AddLegacyText(result, updatedText, entry.IsContextual);
+        }
 
-            RemoveLegacyText(result, previousText, lastText.IsContextual);
-            AddLegacyText(result, updatedText, lastText.IsContextual);
+        private void RecordPrintedImmediateChar(PathAnalysisResult result, byte charValue,
+            uint instructionAddress, bool debugMode)
+        {
+            if (result == null)
+                return;
+
+            if (!TryBuildPrintedText(charValue, out string printedText, out string debugText))
+                return;
+
+            result.HasSignificantCode = true;
+
+            var lastText = FindLastOverlayTextEntry(result);
+            if (lastText != null)
+            {
+                string previousText = lastText.Text;
+                int insertionIndex = GetPrintedCharTemplateInsertionIndex(previousText);
+                if (insertionIndex >= 0)
+                {
+                    string prefix = ShouldInsertSpaceBeforePrintedText(previousText, printedText, insertionIndex)
+                        ? " "
+                        : string.Empty;
+                    string updatedText = previousText.Insert(insertionIndex, prefix + printedText);
+                    ReplaceOverlayTextEntry(result, lastText, updatedText, instructionAddress);
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        Вставили символ '{debugText}' в шаблон последнего текста -> {updatedText}");
+
+                    return;
+                }
+
+                if (ShouldAppendPrintedTextToLastOverlayText(previousText, printedText))
+                {
+                    string updatedText = previousText + printedText;
+                    ReplaceOverlayTextEntry(result, lastText, updatedText, instructionAddress);
+
+                    if (debugMode)
+                        AnalysisDebug.WriteLine($"        Дополнили последний текст печатаемым символом '{debugText}' -> {updatedText}");
+
+                    return;
+                }
+            }
+
+            result.PendingPrintedTextPrefix += printedText;
+            result.PendingPrintedTextAddress = instructionAddress;
 
             if (debugMode)
+                AnalysisDebug.WriteLine($"        Запомнили печатаемый символ '{debugText}' перед следующим текстом");
+        }
+
+        private void FlushPendingPrintedText(PathAnalysisResult result, uint instructionAddress, bool debugMode)
+        {
+            if (result == null || string.IsNullOrEmpty(result.PendingPrintedTextPrefix))
+                return;
+
+            string pendingText = result.PendingPrintedTextPrefix;
+            var lastText = FindLastOverlayTextEntry(result);
+            if (lastText != null)
             {
-                string action = insertionIndex >= 0
-                    ? "Вставили символ"
-                    : "Дописали символ";
-                string target = insertionIndex >= 0
-                    ? "в шаблон последнего текста"
-                    : "к последнему тексту";
-                string inverseSuffix = isInverse ? " [inverse]" : string.Empty;
-                AnalysisDebug.WriteLine($"        {action} '{visibleChar}'{inverseSuffix} {target} -> {updatedText}");
+                string previousText = lastText.Text;
+                int insertionIndex = GetPrintedCharTemplateInsertionIndex(previousText);
+                string prefix = ShouldInsertSpaceBeforePrintedText(previousText, pendingText, insertionIndex)
+                    ? " "
+                    : string.Empty;
+                string updatedText = insertionIndex >= 0
+                    ? previousText.Insert(insertionIndex, prefix + pendingText)
+                    : previousText + prefix + pendingText;
+
+                ReplaceOverlayTextEntry(result, lastText, updatedText,
+                    result.PendingPrintedTextAddress != 0 ? result.PendingPrintedTextAddress : instructionAddress);
+
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Дописали отложенные печатаемые символы к последнему тексту -> {updatedText}");
             }
+            else
+            {
+                int nextOrder = result.OrderedTexts.Count == 0 ? 0 : result.OrderedTexts.Max(t => t.Order) + 1;
+                result.OrderedTexts.Add(new TextEntry
+                {
+                    Text = pendingText,
+                    IsContextual = false,
+                    Address = result.PendingPrintedTextAddress != 0 ? result.PendingPrintedTextAddress : instructionAddress,
+                    Order = nextOrder
+                });
+                AddLegacyText(result, pendingText, isContextual: false);
+
+                if (debugMode)
+                    AnalysisDebug.WriteLine($"        Добавили отложенные печатаемые символы отдельным текстом -> {pendingText}");
+            }
+
+            result.PendingPrintedTextPrefix = string.Empty;
+            result.PendingPrintedTextAddress = 0;
         }
 
         /// <summary>
@@ -5027,10 +5220,13 @@ namespace MMMapEditor
                 returnsToPromptOrEarlier &&
                 !returnsToVisitedAddress &&
                 IsLikelyTextLoadInstructionAt(br, fileLength, jumpTarget);
+            bool returnsToKnownPromptLoop =
+                IsKnownOverlayPromptLoopBackJump(jumpTarget, currentAddress);
 
             bool shouldTerminateAsRepeatedBackEdge =
                 returnsToVisitedAddress ||
-                returnsToPromptLoop;
+                returnsToPromptLoop ||
+                returnsToKnownPromptLoop;
 
             if (jumpTarget >= currentAddress ||
                 !shouldTerminateAsRepeatedBackEdge)
@@ -5079,7 +5275,7 @@ namespace MMMapEditor
                 result.IsTerminated = true;
                 result.HasSignificantCode = true;
                 result.TerminatedByRepeatedBackEdge = true;
-                result.TerminatedByPromptLoopBackEdge = returnsToPromptLoop;
+                result.TerminatedByPromptLoopBackEdge = returnsToPromptLoop || returnsToKnownPromptLoop;
             }
 
             controlFlowResult = new ControlFlowResult
@@ -5088,6 +5284,14 @@ namespace MMMapEditor
                 Result = result
             };
             return true;
+        }
+
+        private bool IsKnownOverlayPromptLoopBackJump(uint jumpTarget, uint currentAddress)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x52C &&
+                   jumpTarget == 0x0322 &&
+                   currentAddress == 0x0461;
         }
 
         private bool IsFiniteInputValidationTableBackJump(BinaryReader br, long fileLength,
@@ -5269,7 +5473,11 @@ namespace MMMapEditor
 
             if (callTarget == 0x4C55)
             {
-                AppendPrintedCharToLastText(result, registerTracker, (uint)insn.Address, debugMode);
+                if (TryReadImmediateAlBeforeCall(br, (uint)insn.Address, out byte printedChar))
+                    RecordPrintedImmediateChar(result, printedChar, (uint)insn.Address, debugMode);
+                else if (registerTracker.TryGetByteRegisterValue("AL", out printedChar))
+                    RecordPrintedImmediateChar(result, printedChar, (uint)insn.Address, debugMode);
+
                 return new ControlFlowResult { ShouldReturn = false, NextAddress = nextAddress };
             }
 
@@ -15741,6 +15949,7 @@ namespace MMMapEditor
             // per-instruction стадии, если старший байт явно не записывается.
             // К моменту выхода из leaf-пути финальное значение уже определено.
             MaterializePendingExactLootTexts(result, currentAddress, exitCallDepth, debugMode);
+            FlushPendingPrintedText(result, currentAddress, debugMode);
 
             result.UsesInitialCoordinates =
                 result.UsesInitialCoordinates ||

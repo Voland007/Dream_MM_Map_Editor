@@ -2671,6 +2671,10 @@ namespace MMMapEditor
                         ApplyAgeChangeNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.GeneratedOverlaySubstitution:
+                        ApplyGeneratedOverlaySubstitutionStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2808,6 +2812,13 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(255, 230, 165);
             rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(112, 70, 18), 0.34);
             rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyGeneratedOverlaySubstitutionStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(186, 225, 255);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(32, 78, 116), 0.42);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
         }
 
         private void ApplyWheelRewardExplanationStyle(RichTextBox rt)
@@ -3004,7 +3015,7 @@ namespace MMMapEditor
             if (rt == null || string.IsNullOrEmpty(noteText))
                 return;
 
-            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К КОЛЕСУ)[\s\S]*?^={10,}$";
+            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К (?:КОЛЕСУ|СТАТУЕ СУДА))[\s\S]*?^={10,}$";
 
             foreach (Match match in Regex.Matches(
                 noteText,

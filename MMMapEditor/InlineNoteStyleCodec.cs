@@ -39,6 +39,7 @@ namespace MMMapEditor
         private const string ConditionalRewardMechanicsNoteTokenPrefix = "[[CONDREWARD:";
         private const string TechnicalRenderPatchNoteTokenPrefix = "[[TECHPATCH:";
         private const string AgeChangeNoteTokenPrefix = "[[AGECHANGE:";
+        private const string GeneratedOverlaySubstitutionTokenPrefix = "[[GENOVR:";
         private const string WheelRewardExplanationTokenPrefix = "[[WHEELREWARD:";
         private const string RepeatedBattleWarningTokenPrefix = "[[REPEATBATTLE:";
         private const string BattleMonsterStrengthIncreaseTokenPrefix = "[[BATTLEPOWERUP:";
@@ -123,6 +124,11 @@ namespace MMMapEditor
         public static string EncodeAgeChangeNoteText(string visibleText)
         {
             return EncodeTextStyleToken(AgeChangeNoteTokenPrefix, visibleText);
+        }
+
+        public static string EncodeGeneratedOverlaySubstitutionText(string visibleText)
+        {
+            return EncodeTextStyleToken(GeneratedOverlaySubstitutionTokenPrefix, visibleText);
         }
 
         public static string EncodeWheelRewardExplanationText(string visibleText)
@@ -448,6 +454,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.AgeChangeNote
                     });
                     i += ageChangeConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    GeneratedOverlaySubstitutionTokenPrefix,
+                    out string generatedOverlayText,
+                    out int generatedOverlayConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(generatedOverlayText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = generatedOverlayText.Length,
+                        Kind = NoteInlineStyleKind.GeneratedOverlaySubstitution
+                    });
+                    i += generatedOverlayConsumedLength;
                     continue;
                 }
 

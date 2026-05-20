@@ -245,6 +245,11 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"PatchAddress: 0x{patchAddress:X4}");
                 }
 
+                RepeatedEventAnalysisMode repeatedEventAnalysisMode =
+                    ShouldAnalyzeTableObjectAsSingleOccurrence(ovrObject)
+                        ? RepeatedEventAnalysisMode.SingleOccurrenceOnly
+                        : RepeatedEventAnalysisMode.IncludeRepeatedOccurrences;
+
                 var finalVariants = AnalyzeObjectVariants(
                     br,
                     patchAddress,
@@ -253,7 +258,8 @@ namespace MMMapEditor
                     predefinedAlternativePaths: null,
                     reachableAddresses: tableReachableAddresses,
                     initializeRegisters: tracker => SetInitialRegistersFromCoordinates(tracker, ovrObject.X, ovrObject.Y, patchAddress),
-                    analysisCacheScopeKey: "table");
+                    analysisCacheScopeKey: "table",
+                    repeatedEventAnalysisMode: repeatedEventAnalysisMode);
 
                 PopulateObjectPathData(ovrObject, finalVariants);
                 ApplyResolvedVariantInfoToObject(ovrObject);
@@ -285,6 +291,16 @@ namespace MMMapEditor
 
                 return ovrObject;
             }
+        }
+
+        private bool ShouldAnalyzeTableObjectAsSingleOccurrence(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x52C &&
+                   obj != null &&
+                   obj.X == 9 &&
+                   obj.Y == 13 &&
+                   obj.PatchAddress == 0x0322;
         }
 
         private List<OvrObject> ProcessMacros(BinaryReader br, List<X86Instruction> allInstructions, List<CoordinateComparison> comparisons,
