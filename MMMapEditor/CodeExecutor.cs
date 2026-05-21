@@ -14080,6 +14080,12 @@ namespace MMMapEditor
             return observation.FirstOffset == observation.SecondOffset;
         }
 
+        private static bool HasMultipleSourceOptionOffsets(PartialBattleTemplateObservation? observation)
+        {
+            return observation?.SourceOptionOffsets != null &&
+                   observation.SourceOptionOffsets.Distinct().Take(2).Count() > 1;
+        }
+
         private static ushort? GetSharedSourceIndexProviderAddress(PartialBattleTemplateObservation? observation)
         {
             if (observation == null)
@@ -14370,6 +14376,14 @@ namespace MMMapEditor
                 {
                     promoted.Add(observation.SaveBxIndex);
                     AnalysisDebug.WriteLine($"        -> BX={observation.SaveBxIndex} уже определён как полная битва, частичный анализ пропускаем");
+                    continue;
+                }
+
+                if (HasMultipleSourceOptionOffsets(observation))
+                {
+                    AnalysisDebug.WriteLine(
+                        $"        -> ИСТОЧНИК ИМЕЕТ {observation.SourceOptionOffsets.Count} ВАРИАНТОВ; " +
+                        "оставляем paired-template как частично определённую битву");
                     continue;
                 }
 
