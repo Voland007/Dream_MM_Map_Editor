@@ -32,6 +32,9 @@ namespace MMMapEditor
     {
         private const ushort StaticMapFirstLayerBaseAddress = 0x3CFA;
         private const ushort StaticMapSecondLayerBaseAddress = 0x3DFA;
+        private const ushort RuntimeCoordinateXAddress = 0x3C38;
+        private const ushort RuntimeCoordinateYAddress = 0x3C39;
+        private const ushort RuntimePackedCoordinateAddress = 0x3C3A;
         private const int StaticMapLayerWidth = 16;
         private const int StaticMapLayerHeight = 16;
         private const int StaticMapLayerByteCount = StaticMapLayerWidth * StaticMapLayerHeight;
@@ -8969,6 +8972,9 @@ namespace MMMapEditor
             if (sourceAddress.HasValue && IsStaticMapDataAddress(sourceAddress.Value))
                 return true;
 
+            if (sourceAddress.HasValue && IsRuntimeCoordinateAddress(sourceAddress.Value))
+                return true;
+
             return false;
         }
 
@@ -8985,7 +8991,15 @@ namespace MMMapEditor
             ushort memAddr = registerTracker.LastComparedMemoryAddress.Value;
             return _emulatedMemory8.ContainsKey(memAddr) ||
                    IsStaticMapDataAddress(memAddr) ||
+                   IsRuntimeCoordinateAddress(memAddr) ||
                    memAddr == BATTLE_MONSTER_COUNT_ADDRESS;
+        }
+
+        private static bool IsRuntimeCoordinateAddress(ushort memAddr)
+        {
+            return memAddr == RuntimeCoordinateXAddress ||
+                   memAddr == RuntimeCoordinateYAddress ||
+                   memAddr == RuntimePackedCoordinateAddress;
         }
 
         private static bool ShouldTrackUnknownExternalStateGuardAddress(ushort memAddr)
