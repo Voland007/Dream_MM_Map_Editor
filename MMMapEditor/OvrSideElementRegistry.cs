@@ -282,6 +282,15 @@ namespace MMMapEditor
                         CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E")),
                 [new OvrSideLayoutFamilyKey(
                     new OvrSideKey(0x02, 0x0D),
+                    new OvrSideKey(0x01, 0x0A),
+                    new OvrSideKey(0x05, 0x18),
+                    0x0B)] = CreateLayoutTemplate(
+                        "AreaE3",
+                        CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441"),
+                        CreateBorder("\u0413\u043E\u0440\u044B"),
+                        CreateBorder("\u0415\u043B\u043E\u0432\u044B\u0439 \u043B\u0435\u0441(\u0441\u043D\u0435\u0433)")),
+                [new OvrSideLayoutFamilyKey(
+                    new OvrSideKey(0x02, 0x0D),
                     new OvrSideKey(0x01, 0x07),
                     new OvrSideKey(0x09, 0x1A),
                     0x01)] = CreateLayoutTemplate(
