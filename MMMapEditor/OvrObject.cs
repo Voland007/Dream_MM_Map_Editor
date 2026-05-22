@@ -376,10 +376,12 @@ namespace MMMapEditor
         public string GetDarkeningLevelDescription(byte defaultDarkeningLevel)
         {
             if (!DarkeningLevel.HasValue) return null;
-            byte newDarkeningLevel = DarkeningLevel.Value;
-            if (newDarkeningLevel > defaultDarkeningLevel) return $"Уровень затемнённости увеличивается с {defaultDarkeningLevel} до {newDarkeningLevel}";
-            if (newDarkeningLevel < defaultDarkeningLevel) return $"Уровень затемнённости уменьшается с {defaultDarkeningLevel} до {newDarkeningLevel}";
-            return $"Уровень затемнённости остаётся прежним: {newDarkeningLevel}";
+            bool wasDarknessEnabled = OvrMapFlags.IsDarknessEnabled(defaultDarkeningLevel);
+            bool isDarknessEnabled = OvrMapFlags.IsDarknessEnabled(DarkeningLevel.Value);
+
+            if (!wasDarknessEnabled && isDarknessEnabled) return "Затемнение включается";
+            if (wasDarknessEnabled && !isDarknessEnabled) return "Затемнение выключается";
+            return isDarknessEnabled ? "Затемнение остаётся включённым" : "Затемнение остаётся выключенным";
         }
 
         public string GetRandomEncounterChanceDescription(byte defaultChance)

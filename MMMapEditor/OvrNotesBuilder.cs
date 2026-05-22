@@ -110,7 +110,7 @@ namespace MMMapEditor
                 if (config.RandomEncounterMonsterBatchCountCap < fileData.Length)
                     defaultRandomEncounterMonsterBatchCountCap = fileData[config.RandomEncounterMonsterBatchCountCap];
                 if (config.DarkeningLevel < fileData.Length)
-                    defaultDarkeningLevel = fileData[config.DarkeningLevel];
+                    defaultDarkeningLevel = OvrMapFlags.GetDarknessValue(fileData[config.DarkeningLevel]);
                 if (config.RandomEncounterChance < fileData.Length)
                     defaultRandomEncounterChance = fileData[config.RandomEncounterChance];
             }

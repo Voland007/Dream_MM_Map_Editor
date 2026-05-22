@@ -38,6 +38,9 @@ namespace MMMapEditor
         public byte RandomEncounterMonsterPowerCap { get; set; }
         public byte RandomEncounterMonsterLevelCap { get; set; }
         public byte DarkeningLevel { get; set; }
+        public byte MapFlagsRaw { get; set; }
+        public bool IsDarknessEnabled { get; set; }
+        public bool IsTeleportSpellAllowed { get; set; }
         public byte RandomEncounterMonsterBatchCountCap { get; set; }
         public byte RandomEncounterChanceRaw { get; set; } // исходное шестнадцатеричное число из оверлейного файла
         public double RandomEncounterChancePercent { get; set; } // рассчитанный % на основании RandomEncounterChanceRaw
@@ -99,7 +102,10 @@ namespace MMMapEditor
             result.RandomEncounterChancePercent = DecodeRandomEncounterChance(ReadByte(fileData, config.RandomEncounterChance));
             result.RandomEncounterMonsterPowerCap = ReadByte(fileData, config.RandomEncounterMonsterPowerCap);
             result.RandomEncounterMonsterLevelCap = ReadByte(fileData, config.RandomEncounterMonsterLevelCap);
-            result.DarkeningLevel = ReadByte(fileData, config.DarkeningLevel);
+            result.MapFlagsRaw = ReadByte(fileData, config.DarkeningLevel);
+            result.DarkeningLevel = OvrMapFlags.GetDarknessValue(result.MapFlagsRaw);
+            result.IsDarknessEnabled = OvrMapFlags.IsDarknessEnabled(result.MapFlagsRaw);
+            result.IsTeleportSpellAllowed = OvrMapFlags.IsTeleportSpellAllowed(result.MapFlagsRaw);
             result.RandomEncounterMonsterBatchCountCap = ReadByte(fileData, config.RandomEncounterMonsterBatchCountCap);
             result.SurfaceCoords = ReadSurface(fileData, config.SurfaceX, config.SurfaceY);
             result.SectorMap = ReadSectorMap(fileData, config.SectorMapLetter, config.SectorMapDigit);

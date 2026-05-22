@@ -1091,14 +1091,15 @@ namespace MMMapEditor
                 result.RandomEncounterMonsterLevelCap = randomEncounterMonsterLevelCap;
                 AnalysisDebug.WriteLine($"    УСТАНОВЛЕН МАКСИМАЛЬНЫЙ УРОВЕНЬ СЛУЧАЙНЫХ МОНСТРОВ: {randomEncounterMonsterLevelCap}");
             }
-            // MOV byte ptr [C96E], imm8 - уровень затемнённости
+            // MOV byte ptr [C96E], imm8 - флаги карты; bit 0 включает затемнение
             else if (instructionBytes.Length >= 5 &&
                      instructionBytes[0] == 0xC6 && instructionBytes[1] == 0x06 &&
                      instructionBytes[2] == 0x6E && instructionBytes[3] == 0xC9)
             {
-                byte darkeningLevel = instructionBytes[4];
+                byte mapFlags = instructionBytes[4];
+                byte darkeningLevel = OvrMapFlags.GetDarknessValue(mapFlags);
                 result.DarkeningLevel = darkeningLevel;
-                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ: {darkeningLevel}");
+                AnalysisDebug.WriteLine($"    УСТАНОВЛЕН ФЛАГ ЗАТЕМНЕНИЯ: {darkeningLevel} (raw 0x{mapFlags:X2})");
             }
             // MOV byte ptr [C962], imm8 - максимальное количество случайных монстров в группе
             else if (instructionBytes.Length >= 5 &&
@@ -1138,8 +1139,9 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("CH", out byte chValue))
                 {
-                    result.DarkeningLevel = chValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ ИЗ CH: {chValue}");
+                    byte darkeningLevel = OvrMapFlags.GetDarknessValue(chValue);
+                    result.DarkeningLevel = darkeningLevel;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН ФЛАГ ЗАТЕМНЕНИЯ ИЗ CH: {darkeningLevel} (raw 0x{chValue:X2})");
                 }
             }
             // MOV [C962], CH
@@ -1182,8 +1184,9 @@ namespace MMMapEditor
             {
                 if (registerTracker.TryGetByteRegisterValue("AL", out byte alValue))
                 {
-                    result.DarkeningLevel = alValue;
-                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН УРОВЕНЬ ЗАТЕМНЁННОСТИ ИЗ AL: {alValue}");
+                    byte darkeningLevel = OvrMapFlags.GetDarknessValue(alValue);
+                    result.DarkeningLevel = darkeningLevel;
+                    AnalysisDebug.WriteLine($"    УСТАНОВЛЕН ФЛАГ ЗАТЕМНЕНИЯ ИЗ AL: {darkeningLevel} (raw 0x{alValue:X2})");
                 }
             }
             // MOV [C962], AL

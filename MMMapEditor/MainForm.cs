@@ -1250,8 +1250,9 @@ namespace MMMapEditor
                 $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
                 $"Максимальная сила случайных монстров: {loadResult.RandomEncounterMonsterPowerCap}\n" +
                 $"Максимальный уровень случайных монстров: {loadResult.RandomEncounterMonsterLevelCap}\n" +
-                $"Уровень затемнённости: {loadResult.DarkeningLevel}\n" +
-                $"Максимальное кол-во случайных монстров в группе: {loadResult.RandomEncounterMonsterBatchCountCap}";
+                $"Максимальное кол-во случайных монстров в группе: {loadResult.RandomEncounterMonsterBatchCountCap}\n" +
+                $"Затемнение: {(loadResult.IsDarknessEnabled ? "включено" : "выключено")}\n" +
+                $"Телепорт (заклинание 5-5): {(loadResult.IsTeleportSpellAllowed ? "разрешён" : "запрещён")}";
 
             // Перерисовываем интерфейс
             foreach (var button in gridButtons)
@@ -1785,10 +1786,10 @@ namespace MMMapEditor
                 rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
             }
 
-            // Уровень затемнённости
+            // Затемнение
             var lightingMatches = Regex.Matches(
                 noteText,
-                @"Уровень затемнённости (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+                @"Затемнение (включается|выключается|остаётся включённым|остаётся выключенным)"
             );
 
             foreach (Match match in lightingMatches)
