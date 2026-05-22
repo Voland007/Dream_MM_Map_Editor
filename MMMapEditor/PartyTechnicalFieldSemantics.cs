@@ -19,6 +19,8 @@ namespace MMMapEditor
     {
         public const int RanalouQuestLineFieldOffset = 0x71;
         public const string RanalouQuestLineFieldLabel = "поле прогресса линейки квестов волшебника RANALOU (+0x71)";
+        public const int RanalouJudgementScoreFieldOffset = 0x6E;
+        public const string RanalouJudgementScoreFieldLabel = "счёт зачтённых узников RANALOU (+0x6E)";
         public const int MainQuestCompletionFieldOffset = 0x7D;
         public const byte MainQuestCompletedThreshold = 0x80;
         public const string MainQuestCompletionFieldLabel = "поле завершения главного квеста (+0x7D)";
@@ -26,6 +28,7 @@ namespace MMMapEditor
         public static bool IsTrackedField(PartyFieldKind field)
         {
             return field == PartyFieldKind.Technical71 ||
+                   field == PartyFieldKind.Technical6E ||
                    field == PartyFieldKind.Technical7D ||
                    PartyQuestLordFieldSemantics.IsQuestField(field);
         }
@@ -40,6 +43,7 @@ namespace MMMapEditor
             return field switch
             {
                 PartyFieldKind.Technical71 => RanalouQuestLineFieldLabel,
+                PartyFieldKind.Technical6E => RanalouJudgementScoreFieldLabel,
                 PartyFieldKind.Technical7D => MainQuestCompletionFieldLabel,
                 _ when PartyQuestLordFieldSemantics.IsQuestField(field) => PartyQuestLordFieldSemantics.GetFieldLabel(field),
                 _ => null

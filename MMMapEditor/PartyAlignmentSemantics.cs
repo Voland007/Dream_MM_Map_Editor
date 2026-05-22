@@ -20,9 +20,9 @@ namespace MMMapEditor
         public const int InnateFieldOffset = 0x11;
         public const int CurrentFieldOffset = 0x12;
 
-        public const byte EvilValue = 0x01;
+        public const byte GoodValue = 0x01;
         public const byte NeutralValue = 0x02;
-        public const byte GoodValue = 0x03;
+        public const byte EvilValue = 0x03;
 
         public const string InnateFieldLabel = "врождённый ALIGNMENT";
         public const string CurrentFieldLabel = "текущий ALIGNMENT";

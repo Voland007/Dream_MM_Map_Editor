@@ -1421,6 +1421,9 @@ namespace MMMapEditor
             if (PartyTechnicalFieldSemantics.IsMainQuestCompletionField(field))
                 return BuildMainQuestCompletionFieldDescription(effect, field, scope, condition);
 
+            if (field == PartyFieldKind.Technical6E)
+                return BuildRanalouJudgementScoreDescription(effect, field, scope, condition);
+
             return BuildRanalouQuestLineDescription(effect, field, scope, condition);
         }
 
@@ -2060,6 +2063,13 @@ namespace MMMapEditor
                 return null;
 
             const string fieldLabel = "прогресс линейки квестов волшебника RANALOU (+0x71)";
+            if (IsRanalouPrisonerFoundBitSet(effect, field, scope))
+            {
+                return WrapTechnicalQuestLordNote(
+                    "У каждого персонажа текущей партии, у которого этот узник ещё не был отмечен, " +
+                    "в прогресс линейки квестов волшебника RANALOU (+0x71) устанавливается бит 1 (маска 0x02)");
+            }
+
             string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
             var operation = GetEffectiveOperation(effect);
             var knowledge = GetEffectiveValueKnowledge(effect);
@@ -2113,6 +2123,68 @@ namespace MMMapEditor
                         $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}",
                         $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}")
                     : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                _ => !string.IsNullOrWhiteSpace(effect.Description)
+                    ? effect.Description
+                    : fieldLabel
+            };
+
+            return WrapTechnicalQuestLordNote(body);
+        }
+
+        private static bool IsRanalouPrisonerFoundBitSet(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope)
+        {
+            return effect != null &&
+                   field == PartyFieldKind.Technical71 &&
+                   GetEffectiveOperation(effect) == PartyEffectOperation.BitSet &&
+                   effect.ImmediateValue == 0x02 &&
+                   IsLoopDerived(effect) &&
+                   scope == PartyEffectScope.PartySubset;
+        }
+
+        private static string BuildRanalouJudgementScoreDescription(
+            PartyEffect effect,
+            PartyFieldKind field,
+            PartyEffectScope scope,
+            PartyConditionKind condition)
+        {
+            if (effect == null || field != PartyFieldKind.Technical6E)
+                return null;
+
+            string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);
+            var operation = GetEffectiveOperation(effect);
+            string fieldLabel = PartyTechnicalFieldSemantics.RanalouJudgementScoreFieldLabel;
+
+            string body = operation switch
+            {
+                PartyEffectOperation.Increment when effect.ImmediateValue == 0x20 && IsLoopDerived(effect) =>
+                    "Для каждого активного персонажа партии, у которого этот узник ещё не был отмечен и выбранный поступок " +
+                    "совпадает с текущим ALIGNMENT, узник засчитывается для награды RANALOU (+0x6E увеличивается на 0x20)",
+                PartyEffectOperation.Increment when effect.ImmediateValue.HasValue =>
+                    ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} увеличивается на 0x{effect.ImmediateValue.Value:X2}",
+                        $"{fieldLabel} увеличивается на 0x{effect.ImmediateValue.Value:X2}"),
+                PartyEffectOperation.Decrement when effect.ImmediateValue.HasValue =>
+                    ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} уменьшается на 0x{effect.ImmediateValue.Value:X2}",
+                        $"{fieldLabel} уменьшается на 0x{effect.ImmediateValue.Value:X2}"),
+                PartyEffectOperation.Write => effect.ImmediateValue.HasValue
+                    ? ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}",
+                        $"{fieldLabel} становится равным 0x{effect.ImmediateValue.Value:X2}")
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется {fieldLabel}",
+                        $"изменяется {fieldLabel}"),
+                PartyEffectOperation.Read => ComposeQuestLordSentence(
+                    targetPrefix,
+                    $"Читается {fieldLabel}",
+                    $"читается {fieldLabel}"),
                 _ => !string.IsNullOrWhiteSpace(effect.Description)
                     ? effect.Description
                     : fieldLabel

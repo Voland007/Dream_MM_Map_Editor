@@ -6985,7 +6985,206 @@ namespace MMMapEditor
             items = SuppressRedundantNarrativeCoveredConditionalStatRewardNoEffectVariants(items);
             NormalizeNarrativeCoveredConditionalStatRewardOutcomeItems(items);
             items = CollapseExhaustiveGuardDuplicateItems(items);
+            items = CollapseRanalouPrisonerPartyScanItems(items);
             return SuppressStatusComplementVariantsByUserVisibleAssumptions(items);
+        }
+
+        private static List<VariantRenderItem> CollapseRanalouPrisonerPartyScanItems(
+            List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (source.Count <= 1)
+                return source;
+
+            var replacements = new Dictionary<VariantRenderItem, VariantRenderItem>();
+            var consumed = new HashSet<VariantRenderItem>();
+
+            foreach (var group in source
+                .Select(item => new
+                {
+                    Item = item,
+                    Choice = TryGetRanalouPrisonerChoiceValue(item?.Variant, out byte choiceValue)
+                        ? choiceValue
+                        : (byte?)null
+                })
+                .Where(entry => entry.Choice.HasValue)
+                .GroupBy(entry => entry.Choice.Value))
+            {
+                var groupItems = group
+                    .Select(entry => entry.Item)
+                    .Where(item => item != null)
+                    .OrderBy(GetVariantRenderOrderKey)
+                    .ToList();
+
+                if (groupItems.Count < 2 ||
+                    !groupItems.Any(item => HasRanalouPrisonerPartyScanEffect(item?.Variant)))
+                {
+                    continue;
+                }
+
+                var replacement = BuildCollapsedRanalouPrisonerPartyScanItem(groupItems);
+                if (replacement == null)
+                    continue;
+
+                replacements[groupItems[0]] = replacement;
+                foreach (var item in groupItems.Skip(1))
+                    consumed.Add(item);
+            }
+
+            if (replacements.Count == 0)
+                return source;
+
+            var result = new List<VariantRenderItem>();
+            foreach (var item in source)
+            {
+                if (consumed.Contains(item))
+                    continue;
+
+                result.Add(replacements.TryGetValue(item, out var replacement) ? replacement : item);
+            }
+
+            return result;
+        }
+
+        private static bool TryGetRanalouPrisonerChoiceValue(PathVariantInfo variant, out byte choiceValue)
+        {
+            choiceValue = 0;
+            var values = (variant?.BranchChoices ?? new List<BranchChoice>())
+                .Where(choice => choice != null &&
+                                 !string.IsNullOrWhiteSpace(choice.Label) &&
+                                 choice.Label.StartsWith("InputChoice", StringComparison.OrdinalIgnoreCase) &&
+                                 choice.CompareValue >= (byte)'1' &&
+                                 choice.CompareValue <= (byte)'9')
+                .Select(choice => choice.CompareValue.Value)
+                .ToList();
+
+            if (values.Count == 0)
+                return false;
+
+            choiceValue = values.Max();
+            return true;
+        }
+
+        private static bool HasRanalouPrisonerPartyScanEffect(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects?.Any(IsRanalouPrisonerPartyScanEffect) == true;
+        }
+
+        private static bool IsRanalouPrisonerPartyScanEffect(PartyEffect effect)
+        {
+            if (effect == null || !PartyEffectSemantics.IsLoopDerived(effect))
+                return false;
+
+            var field = PartyEffectSemantics.GetEffectiveField(effect);
+            var operation = PartyEffectSemantics.GetEffectiveOperation(effect);
+
+            return (field == PartyFieldKind.Technical71 &&
+                    operation == PartyEffectOperation.BitSet &&
+                    effect.ImmediateValue == 0x02) ||
+                   (field == PartyFieldKind.Technical6E &&
+                    operation == PartyEffectOperation.Increment &&
+                    effect.ImmediateValue == 0x20);
+        }
+
+        private static VariantRenderItem BuildCollapsedRanalouPrisonerPartyScanItem(
+            List<VariantRenderItem> groupItems)
+        {
+            var preferred = (groupItems ?? new List<VariantRenderItem>())
+                .Where(item => item?.Variant != null)
+                .OrderByDescending(item => item.Variant.PartyEffects?.Count(IsRanalouPrisonerPartyScanEffect) ?? 0)
+                .ThenByDescending(item => item.Variant.PartyEffects?.Count ?? 0)
+                .ThenBy(GetVariantRenderOrderKey)
+                .FirstOrDefault();
+            if (preferred?.Variant == null)
+                return null;
+
+            var mergedVariant = ClonePathVariantForRender(preferred.Variant);
+            mergedVariant.PathId = groupItems
+                .Where(item => item?.Variant != null)
+                .Min(item => item.Variant.PathId);
+            mergedVariant.PathOrderKey = groupItems
+                .Where(item => item?.Variant != null)
+                .Min(item => item.Variant.PathOrderKey);
+            mergedVariant.BranchChoices = preferred.Variant.BranchChoices?
+                .Where(IsRanalouPrisonerInputChoiceBranch)
+                .Select(choice => choice.Clone())
+                .ToList() ?? new List<BranchChoice>();
+            mergedVariant.PartyEffects = groupItems
+                .SelectMany(item => item?.Variant?.PartyEffects ?? Enumerable.Empty<PartyEffect>())
+                .Where(effect => effect != null)
+                .GroupBy(PartyEffectSemantics.BuildSemanticKey)
+                .Select(group => group.First().Clone())
+                .OrderBy(PartyEffectSemantics.BuildSemanticKey)
+                .ToList();
+
+            foreach (var item in groupItems)
+                MergeVariantOccurrencesForRender(mergedVariant, item?.Variant);
+
+            var mergedItem = new VariantRenderItem
+            {
+                Variant = mergedVariant,
+                NarrativeLines = preferred.NarrativeLines?.ToList() ?? new List<string>(),
+                HeaderAnnotations = preferred.HeaderAnnotations?.ToList() ?? new List<string>(),
+                SupplementalLines = preferred.SupplementalLines?.ToList() ?? new List<string>(),
+                ConditionalComplementOutcomeEffectKeys = preferred.ConditionalComplementOutcomeEffectKeys != null
+                    ? new HashSet<string>(preferred.ConditionalComplementOutcomeEffectKeys, StringComparer.Ordinal)
+                    : null
+            };
+
+            var oldEffectLines = groupItems
+                .SelectMany(item => GetVariantPartyEffectLines(item))
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var baseLines = RemoveLineOccurrences(
+                preferred.Lines?.Where(line => line != null).ToList() ?? new List<string>(),
+                oldEffectLines);
+            var mergedEffectLines = GetVariantPartyEffectLines(mergedItem)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+
+            mergedItem.Lines = InsertMissingLinesBeforeBattle(baseLines, mergedEffectLines);
+            return mergedItem;
+        }
+
+        private static bool IsRanalouPrisonerInputChoiceBranch(BranchChoice choice)
+        {
+            return choice != null &&
+                   !string.IsNullOrWhiteSpace(choice.Label) &&
+                   choice.Label.StartsWith("InputChoice", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void MergeVariantOccurrencesForRender(PathVariantInfo target, PathVariantInfo source)
+        {
+            if (target == null || source == null)
+                return;
+
+            target.OccurrenceIndices = (target.OccurrenceIndices ?? new List<int>())
+                .Concat(source.OccurrenceIndices ?? new List<int>())
+                .Distinct()
+                .OrderBy(index => index)
+                .ToList();
+        }
+
+        private static List<string> InsertMissingLinesBeforeBattle(
+            List<string> lines,
+            IEnumerable<string> linesToInsert)
+        {
+            var result = lines?.Where(line => line != null).ToList() ?? new List<string>();
+            foreach (var line in linesToInsert ?? Enumerable.Empty<string>())
+            {
+                if (string.IsNullOrWhiteSpace(line) ||
+                    result.Contains(line, StringComparer.Ordinal))
+                {
+                    continue;
+                }
+
+                result = InsertLineBeforeBattleOutcome(result, line);
+            }
+
+            return result;
         }
 
         private static List<VariantRenderItem> SuppressRedundantPermanentStatRaiseNoEffectVariants(
@@ -12767,11 +12966,54 @@ namespace MMMapEditor
             PartyEffect effect,
             PathVariantInfo variantContext = null)
         {
+            if (TryBuildRanalouPrisonerChoiceJudgementDescription(effect, variantContext, out string ranalouJudgementDescription))
+                return ranalouJudgementDescription;
+
             string description = PartyEffectSemantics.BuildHumanDescription(effect);
             if (!ShouldRenderStandardStatusLoopAsCurrentMember(variantContext, effect))
                 return description;
 
             return ReplaceWholePartyConditionTargetWithCurrentMember(description);
+        }
+
+        private static bool TryBuildRanalouPrisonerChoiceJudgementDescription(
+            PartyEffect effect,
+            PathVariantInfo variantContext,
+            out string description)
+        {
+            description = null;
+            if (effect == null ||
+                PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Technical6E ||
+                PartyEffectSemantics.GetEffectiveOperation(effect) != PartyEffectOperation.Increment ||
+                effect.ImmediateValue != 0x20 ||
+                !PartyEffectSemantics.IsLoopDerived(effect) ||
+                !TryGetRanalouPrisonerChoiceValue(variantContext, out byte choiceValue) ||
+                !TryGetRanalouPrisonerChoiceAlignmentName(choiceValue, out string alignmentName))
+            {
+                return false;
+            }
+
+            description =
+                "-=*Узник засчитывается по квесту RANALOU каждому персонажу текущей партии, " +
+                $"у которого этот узник ещё не был отмечен и текущий ALIGNMENT = {alignmentName}*=-";
+            return true;
+        }
+
+        private static bool TryGetRanalouPrisonerChoiceAlignmentName(byte choiceValue, out string alignmentName)
+        {
+            byte? alignmentValue = choiceValue switch
+            {
+                (byte)'1' => PartyAlignmentSemantics.GoodValue,
+                (byte)'2' => PartyAlignmentSemantics.EvilValue,
+                (byte)'3' => PartyAlignmentSemantics.NeutralValue,
+                _ => (byte?)null
+            };
+
+            alignmentName = alignmentValue.HasValue
+                ? PartyAlignmentSemantics.FormatAlignmentValue(alignmentValue.Value)
+                : null;
+
+            return alignmentName != null;
         }
 
         private static string ReplaceWholePartyConditionTargetWithCurrentMember(string description)
@@ -14031,6 +14273,7 @@ namespace MMMapEditor
                 string effectiveChildLabel = GetEffectiveNodeLabel(child, syntheticChildLabel);
                 bool hasChoiceOrder = TryGetChoiceOrderKey(effectiveChildLabel, promptChoiceOrder, out int choiceOrderKey);
                 bool mixedPartyScanCancelChoice =
+                    !hasChoiceOrder &&
                     ContainsMixedPartyScanSubsetSummary(parentNode) &&
                     IsLikelyCancelNode(child);
                 bool promotedNoBattleChild = IsSyntheticNoBattleLabel(effectiveChildLabel);
@@ -15435,7 +15678,10 @@ namespace MMMapEditor
         private static IEnumerable<VariantRenderItem> OrderDirectVariants(IEnumerable<VariantRenderItem> variants)
         {
             return (variants ?? Enumerable.Empty<VariantRenderItem>())
-                .OrderBy(v => v?.Lines?.Count ?? 0)
+                .OrderBy(v => TryGetRanalouPrisonerChoiceValue(v?.Variant, out byte choiceValue)
+                    ? choiceValue
+                    : byte.MaxValue)
+                .ThenBy(v => v?.Lines?.Count ?? 0)
                 .ThenByDescending(v => v?.Variant?.ProbabilityDenominator ?? 1)
                 .ThenByDescending(v => v?.Variant?.ProbabilityNumerator ?? 1)
                 .ThenBy(v => GetPathOrderKey(v?.Variant));

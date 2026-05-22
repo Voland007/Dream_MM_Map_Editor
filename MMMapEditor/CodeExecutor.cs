@@ -140,6 +140,7 @@ namespace MMMapEditor
         private const int PARTY_FOOD_OFFSET = PartyFoodSemantics.FieldOffset;
         private const int PARTY_AGE_OFFSET = PartyAgeSemantics.FieldOffset;
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
+        private const int PARTY_RANALOU_JUDGEMENT_SCORE_OFFSET = PartyTechnicalFieldSemantics.RanalouJudgementScoreFieldOffset;
         private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
         private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
         private const int PARTY_QUEST_LORD2_OFFSET = PartyQuestLordFieldSemantics.Lord2FieldOffset;
@@ -1184,6 +1185,7 @@ namespace MMMapEditor
                 PARTY_FOOD_OFFSET => PartyFieldKind.Food,
                 PARTY_AGE_OFFSET => PartyFieldKind.Age,
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
+                PARTY_RANALOU_JUDGEMENT_SCORE_OFFSET => PartyFieldKind.Technical6E,
                 PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
                 PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
@@ -2734,7 +2736,8 @@ namespace MMMapEditor
             if (fieldRef == null ||
                 registerTracker == null ||
                 string.IsNullOrWhiteSpace(sourceRegisterName) ||
-                !PartyAgeSemantics.IsAgeField(fieldRef.Field))
+                !(PartyAgeSemantics.IsAgeField(fieldRef.Field) ||
+                  PartyTechnicalFieldSemantics.IsTrackedField(fieldRef.Field)))
             {
                 return null;
             }
