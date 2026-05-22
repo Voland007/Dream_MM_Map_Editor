@@ -2625,7 +2625,9 @@ namespace MMMapEditor
             if (scope == PartyEffectScope.RandomMember)
             {
                 return isZero
-                    ? $"{statLabel} случайного персонажа партии обнуляется"
+                    ? field == PartyFieldKind.Hp
+                        ? $"!!!! {statLabel} случайного персонажа партии обнуляется !!!!"
+                        : $"{statLabel} случайного персонажа партии обнуляется"
                     : $"{statLabel} случайного персонажа партии становится равным {value}";
             }
 
