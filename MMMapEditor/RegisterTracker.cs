@@ -1087,27 +1087,25 @@ namespace MMMapEditor
 
             ClearExactRegisterValuesForRangeTarget(regUpper);
 
-            if (regUpper == "AX")
+            if (TryGetByteRegisterFamily(regUpper, out string rangeFullReg, out string rangeLowReg, out string rangeHighReg))
             {
-                registerRanges["AX"] = new ValueRange8(min, max);
-                registerRanges["AL"] = new ValueRange8(min, max);
-                registerRangeDistributions["AX"] = distribution;
-                registerRangeDistributions["AL"] = distribution;
-
-                registers.Remove("AX");
-                registers.Remove("AL");
-                registers.Remove("AH");
-            }
-            else if (regUpper == "AL" || regUpper == "AH")
-            {
-                registerRanges["AX"] = new ValueRange8(min, max);
-                registerRanges["AL"] = new ValueRange8(min, max);
-                registerRangeDistributions["AX"] = distribution;
-                registerRangeDistributions["AL"] = distribution;
-
-                registers.Remove("AX");
-                registers.Remove("AL");
-                registers.Remove("AH");
+                if (regUpper == rangeFullReg)
+                {
+                    registerRanges[rangeLowReg] = new ValueRange8(min, max);
+                    registerRangeDistributions[rangeLowReg] = distribution;
+                    registers.Remove(rangeFullReg);
+                    registers.Remove(rangeLowReg);
+                    registers.Remove(rangeHighReg);
+                }
+                else if (regUpper == rangeLowReg &&
+                         registers.TryGetValue(rangeHighReg, out ushort highValue) &&
+                         (byte)highValue == 0)
+                {
+                    registerRanges[rangeFullReg] = new ValueRange8(min, max);
+                    registerRangeDistributions[rangeFullReg] = distribution;
+                    registers.Remove(rangeFullReg);
+                    registers.Remove(rangeLowReg);
+                }
             }
 
             SetDiscreteValuesForRangeTargets(regUpper, BuildDiscreteValues(min, max, distribution));
@@ -1225,25 +1223,14 @@ namespace MMMapEditor
             registerRanges.Remove(regUpper);
             registerRangeDistributions.Remove(regUpper);
 
-            if (regUpper == "AX")
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
             {
-                registerRanges.Remove("AL");
-                registerRanges.Remove("AH");
-                registerRangeDistributions.Remove("AX");
-                registerRangeDistributions.Remove("AL");
-                registerRangeDistributions.Remove("AH");
-            }
-            else if (regUpper == "AL" || regUpper == "AH")
-            {
-                registerRanges.Remove("AX");
-                registerRanges.Remove("AL");
-                registerRanges.Remove("AH");
-                registerRangeDistributions.Remove("AX");
-                registerRangeDistributions.Remove("AL");
-                registerRangeDistributions.Remove("AH");
-                registerRangeDistributions.Remove("AX");
-                registerRangeDistributions.Remove("AL");
-                registerRangeDistributions.Remove("AH");
+                registerRanges.Remove(fullReg);
+                registerRanges.Remove(lowReg);
+                registerRanges.Remove(highReg);
+                registerRangeDistributions.Remove(fullReg);
+                registerRangeDistributions.Remove(lowReg);
+                registerRangeDistributions.Remove(highReg);
             }
         }
 
@@ -2008,6 +1995,126 @@ namespace MMMapEditor
             ActivePartyPredicateWindows.Clear();
         }
 
+        private sealed class ZeroExtendedLowByteSnapshot
+        {
+            public string FullReg { get; set; }
+            public string LowReg { get; set; }
+            public string HighReg { get; set; }
+            public ValueRange8 Range { get; set; }
+            public RegisterValueDistribution Distribution { get; set; }
+            public List<byte> DiscreteValues { get; set; }
+            public bool HasSourceInfo { get; set; }
+            public (ushort addr, bool fromTable, ushort originalBx, string sourceTable, bool sourceIndexExternallyDerived, ushort? sourceIndexProviderAddr) SourceInfo { get; set; }
+            public string SourceDescription { get; set; }
+            public ValueRange8 SourceIndexRange { get; set; }
+            public List<byte> SourceIndexValues { get; set; }
+            public bool IsExternallyDerived { get; set; }
+            public bool HasPendingExternalCallResult { get; set; }
+            public ExternalCallResultKind PendingExternalCallKind { get; set; }
+            public bool HasRandomUpperBound { get; set; }
+            public byte RandomUpperBound { get; set; }
+        }
+
+        private ZeroExtendedLowByteSnapshot CaptureZeroExtendedLowByteSnapshot(
+            string fullRegUpper,
+            string partialRegUpper,
+            byte value)
+        {
+            if (value != 0 ||
+                !TryGetByteRegisterFamily(partialRegUpper, out string familyFullReg, out string lowReg, out string highReg) ||
+                !string.Equals(fullRegUpper, familyFullReg, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(partialRegUpper, highReg, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            TryGetRegisterRange(lowReg, out var lowRange);
+            TryGetRegisterDistribution(lowReg, out var distribution);
+            TryGetRegisterDiscreteValues(lowReg, out var discreteValues);
+            TryGetSourceIndexRange(lowReg, out var sourceIndexRange);
+            TryGetSourceIndexValues(lowReg, out var sourceIndexValues);
+            bool hasSourceInfo = registerSources2.TryGetValue(lowReg, out var sourceInfo) ||
+                                 registerSources2.TryGetValue(fullRegUpper, out sourceInfo);
+            registerSources.TryGetValue(lowReg, out string sourceDescription);
+            if (sourceDescription == null)
+                registerSources.TryGetValue(fullRegUpper, out sourceDescription);
+
+            bool hasRange = lowRange != null;
+            bool hasDiscreteValues = discreteValues != null && discreteValues.Count > 0;
+            if (!hasRange && !hasDiscreteValues)
+                return null;
+
+            bool hasPendingExternalCallResult = TryGetPendingExternalCallResultKind(lowReg, out var pendingKind) ||
+                                                TryGetPendingExternalCallResultKind(fullRegUpper, out pendingKind);
+            bool hasRandomUpperBound = TryGetRegisterRandomUpperBound(lowReg, out byte randomUpperBound) ||
+                                       TryGetRegisterRandomUpperBound(fullRegUpper, out randomUpperBound);
+
+            return new ZeroExtendedLowByteSnapshot
+            {
+                FullReg = fullRegUpper,
+                LowReg = lowReg,
+                HighReg = highReg,
+                Range = lowRange == null ? null : new ValueRange8(lowRange.Min, lowRange.Max),
+                Distribution = distribution,
+                DiscreteValues = discreteValues == null ? new List<byte>() : new List<byte>(discreteValues),
+                HasSourceInfo = hasSourceInfo,
+                SourceInfo = sourceInfo,
+                SourceDescription = sourceDescription,
+                SourceIndexRange = sourceIndexRange == null ? null : new ValueRange8(sourceIndexRange.Min, sourceIndexRange.Max),
+                SourceIndexValues = sourceIndexValues == null ? new List<byte>() : new List<byte>(sourceIndexValues),
+                IsExternallyDerived = IsRegisterExternallyDerived(lowReg) || IsRegisterExternallyDerived(fullRegUpper),
+                HasPendingExternalCallResult = hasPendingExternalCallResult,
+                PendingExternalCallKind = pendingKind,
+                HasRandomUpperBound = hasRandomUpperBound,
+                RandomUpperBound = randomUpperBound
+            };
+        }
+
+        private void RestoreZeroExtendedLowByteSnapshot(ZeroExtendedLowByteSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return;
+
+            registers.Remove(snapshot.FullReg);
+            registers[snapshot.HighReg] = 0;
+
+            if (snapshot.Range != null)
+            {
+                registerRanges[snapshot.FullReg] = new ValueRange8(snapshot.Range.Min, snapshot.Range.Max);
+                registerRangeDistributions[snapshot.FullReg] = snapshot.Distribution;
+                registerRanges[snapshot.LowReg] = new ValueRange8(snapshot.Range.Min, snapshot.Range.Max);
+                registerRangeDistributions[snapshot.LowReg] = snapshot.Distribution;
+            }
+
+            if (snapshot.DiscreteValues != null && snapshot.DiscreteValues.Count > 0)
+                SetDiscreteValuesForRangeTargets(snapshot.LowReg, snapshot.DiscreteValues);
+            else if (snapshot.Range != null)
+                SetDiscreteValuesForRangeTargets(snapshot.LowReg, BuildDiscreteValues(snapshot.Range.Min, snapshot.Range.Max, snapshot.Distribution));
+
+            if (snapshot.HasSourceInfo)
+            {
+                registerSources2[snapshot.LowReg] = snapshot.SourceInfo;
+                registerSources2[snapshot.FullReg] = snapshot.SourceInfo;
+
+                if (snapshot.SourceDescription != null)
+                {
+                    registerSources[snapshot.LowReg] = snapshot.SourceDescription;
+                    registerSources[snapshot.FullReg] = snapshot.SourceDescription;
+                }
+            }
+
+            SetRegisterSourceIndexMetadata(snapshot.LowReg, snapshot.SourceIndexRange, snapshot.SourceIndexValues);
+
+            if (snapshot.IsExternallyDerived)
+                MarkRegisterAsExternallyDerived(snapshot.LowReg);
+
+            if (snapshot.HasPendingExternalCallResult)
+                MarkRegisterAsPendingExternalCallResult(snapshot.LowReg, snapshot.PendingExternalCallKind);
+
+            if (snapshot.HasRandomUpperBound)
+                SetRegisterRandomUpperBound(snapshot.LowReg, snapshot.RandomUpperBound);
+        }
+
         public void TrackPartialRegisterOperation(string fullReg, string partialReg,
             byte value, uint address, string instruction, bool preserveSourceMetadata = false)
         {
@@ -2031,6 +2138,9 @@ namespace MMMapEditor
             {
                 currentValue = existingValue;
             }
+
+            ZeroExtendedLowByteSnapshot zeroExtendedLowByteSnapshot =
+                CaptureZeroExtendedLowByteSnapshot(fullRegUpper, partialRegUpper, value);
 
             bool preserveZeroExtendedLowByteSource = false;
             (ushort addr, bool fromTable, ushort originalBx, string sourceTable, bool sourceIndexExternallyDerived, ushort? sourceIndexProviderAddr) lowByteSource = default;
@@ -2096,6 +2206,7 @@ namespace MMMapEditor
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
                     ClearSemanticsAfterByteWrite();
+                    RestoreZeroExtendedLowByteSnapshot(zeroExtendedLowByteSnapshot);
                 }
             }
             else if (partialRegUpper == "CL" || partialRegUpper == "CH")
@@ -2120,6 +2231,7 @@ namespace MMMapEditor
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
                     ClearSemanticsAfterByteWrite();
+                    RestoreZeroExtendedLowByteSnapshot(zeroExtendedLowByteSnapshot);
                 }
             }
             else if (partialRegUpper == "DL" || partialRegUpper == "DH")
@@ -2144,6 +2256,7 @@ namespace MMMapEditor
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
                     ClearSemanticsAfterByteWrite();
+                    RestoreZeroExtendedLowByteSnapshot(zeroExtendedLowByteSnapshot);
                 }
             }
             else if (partialRegUpper == "BL" || partialRegUpper == "BH")
@@ -2168,6 +2281,7 @@ namespace MMMapEditor
                     registers[fullRegUpper] = currentValue;
                     registers[partialRegUpper] = value;
                     ClearSemanticsAfterByteWrite();
+                    RestoreZeroExtendedLowByteSnapshot(zeroExtendedLowByteSnapshot);
                 }
             }
         }

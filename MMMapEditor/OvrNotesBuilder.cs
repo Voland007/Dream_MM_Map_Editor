@@ -7625,6 +7625,10 @@ namespace MMMapEditor
             if (source.Count <= 1)
                 return source;
 
+            source = SuppressDeadStatusComplementTextOnlyVariants(source);
+            if (source.Count <= 1)
+                return source;
+
             var assumedStatusChangeKeys = source
                 .Where(item => ShouldApplyAssumedAliveStatusModel(item?.Variant))
                 .Where(item => VariantHasAssumedAliveStatusGuard(item?.Variant))
@@ -7644,6 +7648,159 @@ namespace MMMapEditor
                     HasNonTextOutcome(item?.Variant) ||
                     !assumedStatusChangeKeys.Contains(BuildStatusComplementVariantKey(item)))
                 .ToList();
+        }
+
+        private static List<VariantRenderItem> SuppressDeadStatusComplementTextOnlyVariants(
+            List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            if (source.Count <= 1)
+                return source;
+
+            var guardedOutcomeEntries = source
+                .Where(HasAssumedAliveStatusGuardedOutcome)
+                .Select(item => new
+                {
+                    Item = item,
+                    ContextKey = BuildStatusComplementRandomContextKey(item?.Variant),
+                    Lines = BuildMeaningfulLineList(item?.Lines)
+                })
+                .Where(entry =>
+                    !string.IsNullOrWhiteSpace(entry.ContextKey) &&
+                    entry.Lines.Count > 0)
+                .ToList();
+            if (guardedOutcomeEntries.Count == 0)
+                return source;
+
+            return source
+                .Where(item =>
+                    !ShouldSuppressDeadStatusComplementTextOnlyVariant(
+                        item,
+                        guardedOutcomeEntries.Select(entry => (entry.Item, entry.ContextKey, entry.Lines))))
+                .ToList();
+        }
+
+        private static bool ShouldSuppressDeadStatusComplementTextOnlyVariant(
+            VariantRenderItem item,
+            IEnumerable<(VariantRenderItem Item, string ContextKey, List<string> Lines)> guardedOutcomeEntries)
+        {
+            if (!IsDeadStatusComplementTextOnlyVariant(item))
+                return false;
+
+            string contextKey = BuildStatusComplementRandomContextKey(item?.Variant);
+            if (string.IsNullOrWhiteSpace(contextKey))
+                return false;
+
+            var lines = BuildMeaningfulLineList(item?.Lines);
+            if (lines.Count == 0)
+                return false;
+
+            return (guardedOutcomeEntries ?? Enumerable.Empty<(VariantRenderItem Item, string ContextKey, List<string> Lines)>())
+                .Any(entry =>
+                    !ReferenceEquals(entry.Item, item) &&
+                    string.Equals(entry.ContextKey, contextKey, StringComparison.Ordinal) &&
+                    IsLineListPrefix(lines, entry.Lines));
+        }
+
+        private static bool IsDeadStatusComplementTextOnlyVariant(VariantRenderItem item)
+        {
+            var variant = item?.Variant;
+            if (variant == null || HasNonTextOutcome(variant))
+                return false;
+
+            return GetStatusGuardPredicatesForComplementAnalysis(variant)
+                .Any(IsDeadStatusComplementPredicate);
+        }
+
+        private static bool HasAssumedAliveStatusGuardedOutcome(VariantRenderItem item)
+        {
+            var variant = item?.Variant;
+            if (variant == null || !HasNonTextOutcome(variant))
+                return false;
+
+            return GetStatusGuardPredicatesForComplementAnalysis(variant)
+                .Any(IsSatisfiedByAssumedStatusBelowDeathThreshold);
+        }
+
+        private static IEnumerable<PartyPredicate> GetStatusGuardPredicatesForComplementAnalysis(
+            PathVariantInfo variant)
+        {
+            foreach (var predicate in variant?.GetGuardPredicates() ?? Array.Empty<PartyPredicate>())
+            {
+                if (predicate != null)
+                    yield return predicate;
+            }
+
+            foreach (var choice in variant?.BranchChoices ?? new List<BranchChoice>())
+            {
+                if (choice?.GuardPredicate != null)
+                    yield return choice.GuardPredicate;
+
+                var displayPredicate = choice?.GetGuardPredicateForDisplay();
+                if (displayPredicate != null)
+                    yield return displayPredicate;
+            }
+
+            foreach (var predicate in (variant?.PartyEffects ?? new List<PartyEffect>())
+                         .SelectMany(PartyEffectSemantics.GetEffectiveGuardPredicates))
+            {
+                if (predicate != null)
+                    yield return predicate;
+            }
+        }
+
+        private static bool IsDeadStatusComplementPredicate(PartyPredicate predicate)
+        {
+            if (!TryGetImmediateStatusPredicate(predicate, out ushort value))
+                return false;
+
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.GreaterOrEqual:
+                    return value == AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.GreaterThan:
+                    return value + 1 == AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.LessThan:
+                    return predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None &&
+                           value == AssumedUserVisibleStatusUpperBoundExclusive;
+                case PartyPredicateComparison.LessOrEqual:
+                    return predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None &&
+                           value + 1 == AssumedUserVisibleStatusUpperBoundExclusive;
+                default:
+                    return false;
+            }
+        }
+
+        private static string BuildStatusComplementRandomContextKey(PathVariantInfo variant)
+        {
+            return string.Join("\n",
+                GetRelevantBranchChoices(variant)
+                    .Select(choice => NormalizeChoiceLabel(choice?.Label))
+                    .Where(IsTechnicalChoiceLabel));
+        }
+
+        private static List<string> BuildMeaningfulLineList(IEnumerable<string> lines)
+        {
+            return (lines ?? Enumerable.Empty<string>())
+                .Select(line => line?.TrimEnd() ?? string.Empty)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .ToList();
+        }
+
+        private static bool IsLineListPrefix(IReadOnlyList<string> prefix, IReadOnlyList<string> lines)
+        {
+            if (prefix == null || lines == null || prefix.Count == 0 || prefix.Count > lines.Count)
+                return false;
+
+            for (int i = 0; i < prefix.Count; i++)
+            {
+                if (!string.Equals(prefix[i], lines[i], StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
         }
 
         private static bool VariantHasAssumedAliveStatusGuard(PathVariantInfo variant)

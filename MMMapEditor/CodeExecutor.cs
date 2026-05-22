@@ -3915,6 +3915,19 @@ namespace MMMapEditor
             if (!IsActiveTextDisplayRoutine(callTarget))
                 return false;
 
+            if (TryAddDisplayedTextPointerTableAlternativesFromRegisterSource(
+                    br,
+                    registerTracker,
+                    result,
+                    callTarget,
+                    callDepth,
+                    (uint)insn.Address,
+                    debugMode,
+                    ref textOrderCounter))
+            {
+                return true;
+            }
+
             if (!TryResolveTrackedWordValue(br, ACTIVE_TEXT_POINTER_ADDRESS, result, targetX, targetY, out ushort textAddress))
             {
                 if (debugMode)
@@ -3965,6 +3978,126 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryAddDisplayedTextPointerTableAlternativesFromRegisterSource(
+            BinaryReader br,
+            RegisterTracker registerTracker,
+            PathAnalysisResult result,
+            uint callTarget,
+            int callDepth,
+            uint instructionAddress,
+            bool debugMode,
+            ref int textOrderCounter)
+        {
+            if (br == null ||
+                registerTracker == null ||
+                !ShouldExpandDisplayedTextPointerTable(registerTracker, result) ||
+                !registerTracker.IsFromTable("AX"))
+            {
+                return false;
+            }
+
+            ushort? sourceAddress = registerTracker.GetSourceAddress("AX");
+            if (!sourceAddress.HasValue || sourceAddress.Value < OvrFileConfig.OverlayTextStartAddress)
+                return false;
+
+            ushort originalIndex = registerTracker.GetOriginalBx("AX") ?? 0;
+            int baseAddress = sourceAddress.Value - originalIndex;
+            if (baseAddress < OvrFileConfig.OverlayTextStartAddress || baseAddress > ushort.MaxValue)
+                return false;
+
+            registerTracker.TryGetSourceIndexValues("AX", out var sourceIndexValues);
+            if (sourceIndexValues == null || sourceIndexValues.Count == 0)
+            {
+                if (!registerTracker.TryGetSourceIndexRange("AX", out var sourceIndexRange) ||
+                    sourceIndexRange == null ||
+                    sourceIndexRange.Max < sourceIndexRange.Min ||
+                    sourceIndexRange.Max - sourceIndexRange.Min >= MAX_TEXT_POINTER_TABLE_OPTIONS * 2)
+                {
+                    return false;
+                }
+
+                sourceIndexValues = Enumerable
+                    .Range(sourceIndexRange.Min, sourceIndexRange.Max - sourceIndexRange.Min + 1)
+                    .Select(value => (byte)value)
+                    .ToList();
+            }
+
+            var options = new List<(ushort Address, string Text)>();
+            var seenAddresses = new HashSet<ushort>();
+
+            foreach (byte sourceIndex in sourceIndexValues.Distinct().OrderBy(value => value))
+            {
+                ushort pointerAddress = unchecked((ushort)(baseAddress + sourceIndex));
+                if (!TryReadOverlayWord(br, pointerAddress, out ushort textAddress) ||
+                    textAddress < OvrFileConfig.OverlayTextStartAddress ||
+                    !seenAddresses.Add(textAddress))
+                {
+                    continue;
+                }
+
+                string text = ExtractText(br, textAddress);
+                if (string.IsNullOrEmpty(text) ||
+                    text == "(empty string)" ||
+                    text.StartsWith("Cannot locate", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                options.Add((textAddress, text));
+            }
+
+            if (options.Count == 0)
+                return false;
+
+            bool addedAny = false;
+            string pendingPrintedTextPrefix = result?.PendingPrintedTextPrefix;
+            uint pendingPrintedTextAddress = result?.PendingPrintedTextAddress ?? 0;
+            bool applyPendingPrintedPrefix = !string.IsNullOrEmpty(pendingPrintedTextPrefix);
+            if (applyPendingPrintedPrefix)
+            {
+                result.PendingPrintedTextPrefix = string.Empty;
+                result.PendingPrintedTextAddress = 0;
+            }
+
+            foreach (var option in options)
+            {
+                string entryText = BuildOverlayTextEntry(option.Address, option.Text, pendingPrintedTextPrefix);
+                string visibleText = TrySplitOverlayTextEntry(entryText, out _, out string splitVisibleText)
+                    ? splitVisibleText
+                    : option.Text;
+
+                if (HasOverlayTextEntry(result, entryText) ||
+                    callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS &&
+                    HasOverlayTextEntryWithSameVisibleText(result, visibleText))
+                {
+                    continue;
+                }
+
+                AddSyntheticOutcomeText(
+                    result,
+                    entryText,
+                    callDepth,
+                    instructionAddress,
+                    debugMode,
+                    ref textOrderCounter);
+                addedAny = true;
+            }
+
+            if (!addedAny && applyPendingPrintedPrefix)
+            {
+                result.PendingPrintedTextPrefix = pendingPrintedTextPrefix;
+                result.PendingPrintedTextAddress = pendingPrintedTextAddress;
+            }
+
+            if (addedAny && debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        CALL 0x{callTarget:X4}: раскрыта диапазонная таблица текстовых указателей 0x{baseAddress:X4}, вариантов: {options.Count}");
+            }
+
+            return addedAny;
+        }
+
         private bool TryAddDisplayedTextPointerTableAlternatives(BinaryReader br, RegisterTracker registerTracker,
             PathAnalysisResult result, ushort currentTextAddress, uint callTarget, int callDepth,
             uint instructionAddress, bool debugMode, ref int textOrderCounter)
@@ -3980,23 +4113,43 @@ namespace MMMapEditor
                 return false;
 
             bool addedAny = false;
+            string pendingPrintedTextPrefix = result?.PendingPrintedTextPrefix;
+            uint pendingPrintedTextAddress = result?.PendingPrintedTextAddress ?? 0;
+            bool applyPendingPrintedPrefix = !string.IsNullOrEmpty(pendingPrintedTextPrefix);
+            if (applyPendingPrintedPrefix)
+            {
+                result.PendingPrintedTextPrefix = string.Empty;
+                result.PendingPrintedTextAddress = 0;
+            }
+
             foreach (var option in options)
             {
-                if (HasOverlayTextEntry(result, option.Address, option.Text) ||
+                string entryText = BuildOverlayTextEntry(option.Address, option.Text, pendingPrintedTextPrefix);
+                string visibleText = TrySplitOverlayTextEntry(entryText, out _, out string splitVisibleText)
+                    ? splitVisibleText
+                    : option.Text;
+
+                if (HasOverlayTextEntry(result, entryText) ||
                     callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS &&
-                    HasOverlayTextEntryWithSameVisibleText(result, option.Text))
+                    HasOverlayTextEntryWithSameVisibleText(result, visibleText))
                 {
                     continue;
                 }
 
                 AddSyntheticOutcomeText(
                     result,
-                    $"Text at 0x{option.Address:X4}: {option.Text}",
+                    entryText,
                     callDepth,
                     instructionAddress,
                     debugMode,
                     ref textOrderCounter);
                 addedAny = true;
+            }
+
+            if (!addedAny && applyPendingPrintedPrefix)
+            {
+                result.PendingPrintedTextPrefix = pendingPrintedTextPrefix;
+                result.PendingPrintedTextAddress = pendingPrintedTextAddress;
             }
 
             if (addedAny && debugMode)
@@ -4189,12 +4342,26 @@ namespace MMMapEditor
             if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
                 return false;
 
-            string candidateText = $"Text at 0x{textAddress:X4}: {text}";
+            return HasOverlayTextEntry(result, BuildOverlayTextEntry(textAddress, text));
+        }
+
+        private static bool HasOverlayTextEntry(PathAnalysisResult result, string candidateText)
+        {
+            if (result?.OrderedTexts == null || string.IsNullOrEmpty(candidateText))
+                return false;
 
             return result.OrderedTexts.Any(entry =>
                 entry != null &&
                 (IsEquivalentOverlayTextEntry(entry.Text, candidateText) ||
                  ExistingOverlayTextCoversCandidate(entry.Text, candidateText)));
+        }
+
+        private static string BuildOverlayTextEntry(ushort textAddress, string text, string pendingPrintedTextPrefix = null)
+        {
+            string entryText = $"Text at 0x{textAddress:X4}: {text}";
+            return string.IsNullOrEmpty(pendingPrintedTextPrefix)
+                ? entryText
+                : ApplyPrintedTextPrefixToOverlayTextEntry(entryText, pendingPrintedTextPrefix);
         }
 
         private static bool HasOverlayTextEntryWithSameVisibleText(PathAnalysisResult result, string text)
@@ -4710,12 +4877,8 @@ namespace MMMapEditor
                 return text;
             }
 
-            int separatorIndex = text.IndexOf(": ", StringComparison.Ordinal);
-            if (separatorIndex < 0)
-                return text;
-
             string pendingText = result.PendingPrintedTextPrefix;
-            string updatedText = text.Insert(separatorIndex + 2, pendingText);
+            string updatedText = ApplyPrintedTextPrefixToOverlayTextEntry(text, pendingText);
             result.PendingPrintedTextPrefix = string.Empty;
             result.PendingPrintedTextAddress = 0;
 
@@ -4723,6 +4886,42 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"        Добавили ранее напечатанные символы перед следующим текстом -> {updatedText}");
 
             return updatedText;
+        }
+
+        private static string ApplyPrintedTextPrefixToOverlayTextEntry(string text, string printedTextPrefix)
+        {
+            if (string.IsNullOrEmpty(printedTextPrefix) ||
+                string.IsNullOrEmpty(text) ||
+                !TrySplitOverlayTextEntry(text, out _, out string visibleText))
+            {
+                return text;
+            }
+
+            int separatorIndex = text.IndexOf(": ", StringComparison.Ordinal);
+            if (separatorIndex < 0)
+                return text;
+
+            string suffix = ShouldInsertSpaceAfterPrintedTextPrefix(printedTextPrefix, visibleText)
+                ? " "
+                : string.Empty;
+            return text.Insert(separatorIndex + 2, printedTextPrefix + suffix);
+        }
+
+        private static bool ShouldInsertSpaceAfterPrintedTextPrefix(string printedTextPrefix, string followingText)
+        {
+            string prefixVisibleText = InlineNoteStyleCodec.RenderVisibleText(printedTextPrefix);
+            string followingVisibleText = InlineNoteStyleCodec.RenderVisibleText(followingText);
+
+            if (string.IsNullOrEmpty(prefixVisibleText) || string.IsNullOrEmpty(followingVisibleText))
+                return false;
+
+            char lastPrefixChar = prefixVisibleText[prefixVisibleText.Length - 1];
+            char firstFollowingChar = followingVisibleText[0];
+
+            if (char.IsWhiteSpace(lastPrefixChar) || char.IsWhiteSpace(firstFollowingChar))
+                return false;
+
+            return char.IsLetterOrDigit(lastPrefixChar) && char.IsLetter(firstFollowingChar);
         }
 
         private static char? GetFirstVisiblePrintedChar(string printedText)
@@ -12878,6 +13077,44 @@ namespace MMMapEditor
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {operationName} {regName}, 1: 0x{oldValue:X4} -> 0x{newValue:X4}");
+                    }
+                }
+                else if (mode == 0x03 &&
+                         rm < regNames16.Length &&
+                         registerTracker.TryGetRegisterRange(regNames16[rm], out var oldRange) &&
+                         oldRange != null)
+                {
+                    string regName = regNames16[rm];
+                    registerTracker.TryGetRegisterDistribution(regName, out var rangeDistribution);
+
+                    string operationName = null;
+                    int newMin = oldRange.Min;
+                    int newMax = oldRange.Max;
+
+                    switch (operation)
+                    {
+                        case 4: // SHL/SAL r/m16,1
+                            operationName = "SHL";
+                            newMin = Math.Min(byte.MaxValue, oldRange.Min << 1);
+                            newMax = Math.Min(byte.MaxValue, oldRange.Max << 1);
+                            rangeDistribution = GetShiftedRangeDistribution(rangeDistribution, operation);
+                            break;
+                        case 5: // SHR r/m16,1
+                            operationName = "SHR";
+                            newMin = oldRange.Min >> 1;
+                            newMax = oldRange.Max >> 1;
+                            rangeDistribution = GetShiftedRangeDistribution(rangeDistribution, operation);
+                            break;
+                    }
+
+                    if (!string.IsNullOrEmpty(operationName))
+                    {
+                        registerTracker.SetRegisterRange(regName, (byte)newMin, (byte)newMax, rangeDistribution);
+                        registerTracker.FlagsKnown = false;
+                        registerTracker.SetFlagsMetadata(regName, RegisterTracker.FlagsOriginKind.Arithmetic, address);
+
+                        if (debugMode)
+                            AnalysisDebug.WriteLine($"        {operationName} {regName}, 1: диапазон {oldRange.Min}-{oldRange.Max} -> {newMin}-{newMax}");
                     }
                 }
             }
