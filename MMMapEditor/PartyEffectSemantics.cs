@@ -2066,8 +2066,8 @@ namespace MMMapEditor
             if (IsRanalouPrisonerFoundBitSet(effect, field, scope))
             {
                 return WrapTechnicalQuestLordNote(
-                    "У каждого персонажа текущей партии, у которого этот узник ещё не был отмечен, " +
-                    "в прогресс линейки квестов волшебника RANALOU (+0x71) устанавливается бит 1 (маска 0x02)");
+                    "Подквест (узник) засчитывается в прогресс линейки волшебника RANALOU " +
+                    "каждому персонажу партии, для которого он ещё не был зачтён");
             }
 
             string targetPrefix = BuildQuestLordTargetPrefix(effect, scope, condition);

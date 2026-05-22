@@ -6951,6 +6951,7 @@ namespace MMMapEditor
                 .OrderBy(GetPathOrderKey))
             {
                 var displayVariant = NormalizeInventoryItemRangePredicatesForDisplay(obj, variant);
+                displayVariant = NormalizeAreaE1JudgementStatueScoreScratchForDisplay(obj, displayVariant);
                 if (ShouldSuppressByUserVisibleAssumptions(displayVariant))
                     continue;
 
@@ -7813,6 +7814,46 @@ namespace MMMapEditor
                     ? new HashSet<string>(item.ConditionalComplementOutcomeEffectKeys, StringComparer.Ordinal)
                     : new HashSet<string>(StringComparer.Ordinal)
             };
+        }
+
+        private static PathVariantInfo NormalizeAreaE1JudgementStatueScoreScratchForDisplay(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            if (!IsAreaE1JudgementStatueObject(obj) || variant == null)
+                return variant;
+
+            bool hasInternalScoreChoice = variant.BranchChoices?.Any(IsAreaE1JudgementStatueScoreScratchChoice) == true;
+            bool hasInternalScoreEffect = variant.PartyEffects?.Any(IsAreaE1JudgementStatueScoreScratchEffect) == true;
+            if (!hasInternalScoreChoice && !hasInternalScoreEffect)
+                return variant;
+
+            var clone = ClonePathVariantForRender(variant);
+            clone.BranchChoices = clone.BranchChoices?
+                .Where(choice => !IsAreaE1JudgementStatueScoreScratchChoice(choice))
+                .ToList() ?? new List<BranchChoice>();
+            clone.PartyEffects = clone.PartyEffects?
+                .Where(effect => !IsAreaE1JudgementStatueScoreScratchEffect(effect))
+                .ToList() ?? new List<PartyEffect>();
+            return clone;
+        }
+
+        private static bool IsAreaE1JudgementStatueScoreScratchChoice(BranchChoice choice)
+        {
+            if (choice == null)
+                return false;
+
+            var predicate = choice.GuardPredicate ?? choice.GetGuardPredicateForDisplay();
+            if (predicate?.Field == PartyFieldKind.Technical6E)
+                return true;
+
+            return choice.ComparedPartyField?.Field == PartyFieldKind.Technical6E;
+        }
+
+        private static bool IsAreaE1JudgementStatueScoreScratchEffect(PartyEffect effect)
+        {
+            return effect != null &&
+                   PartyEffectSemantics.GetEffectiveField(effect) == PartyFieldKind.Technical6E;
         }
 
         private static List<VariantRenderItem> SuppressStatusComplementVariantsByUserVisibleAssumptions(
@@ -16290,7 +16331,12 @@ namespace MMMapEditor
         private static bool IsAreaE1JudgementStatueObject(string fileNameOnly, OvrObject obj)
         {
             return string.Equals(fileNameOnly, "AREAE1.OVR", StringComparison.OrdinalIgnoreCase) &&
-                   obj != null &&
+                   IsAreaE1JudgementStatueObject(obj);
+        }
+
+        private static bool IsAreaE1JudgementStatueObject(OvrObject obj)
+        {
+            return obj != null &&
                    obj.X == 9 &&
                    obj.Y == 13 &&
                    obj.PatchAddress == 0x0322;
