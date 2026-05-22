@@ -178,6 +178,7 @@ namespace MMMapEditor
                     [new OvrSideKey(0x0B, 0x17)] = CreateGrate("Каменная стена"),
                     [new OvrSideKey(0x01, 0x0B)] = CreateDoor("Кирпичная стена"),
                     [new OvrSideKey(0x05, 0x0D)] = CreateBorder("Еловый лес"),
+                    [new OvrSideKey(0x01, 0x0A)] = CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
                     [new OvrSideKey(0x05, 0x1A)] = CreateBorder("\u0412\u043E\u0434\u0430"),
                     [new OvrSideKey(0x05, 0x07)] = CreateBorder("\u0411\u043E\u043B\u043E\u0442\u043E")
                 }
@@ -236,6 +237,15 @@ namespace MMMapEditor
                         CreateSecretWall("\u041A\u0430\u043C\u0435\u043D\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
                         CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
                         CreateDoor("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430")),
+                [new OvrSideLayoutFamilyKey(
+                    new OvrSideKey(0x03, 0x1A),
+                    new OvrSideKey(0x01, 0x0D),
+                    new OvrSideKey(0x01, 0x0A),
+                    0x05)] = CreateLayoutTemplate(
+                        "UnderDragadBrickDungeon",
+                        CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
+                        CreateDoor2("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
+                        CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430")),
                 [new OvrSideLayoutFamilyKey(
                     new OvrSideKey(0x03, 0x1A),
                     new OvrSideKey(0x01, 0x0D),
@@ -409,6 +419,14 @@ namespace MMMapEditor
             {
                 BorderType = borderType,
                 PassageType = 1,
+                MarkClosedWhenSecondLowBitSet = true
+            };
+
+        private static OvrSideElementDefinition CreateDoor2(string borderType) =>
+            new OvrSideElementDefinition
+            {
+                BorderType = borderType,
+                PassageType = 9,
                 MarkClosedWhenSecondLowBitSet = true
             };
 

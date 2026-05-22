@@ -38,8 +38,11 @@ namespace MMMapEditor
     {
         private const int GridSize = 16;
         private const int CellSize = 40;
+        private const int PassageTypeDoor = 1;
+        private const int PassageTypeGrate = 2;
         private const int PassageTypeSecret = 3;
         private const int PassageTypeRough = 8;
+        private const int PassageTypeDoor2 = 9;
         private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
         private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
         private const string BorderTypeSwamp = "\u0411\u043E\u043B\u043E\u0442\u043E";
@@ -4894,7 +4897,7 @@ namespace MMMapEditor
                 FlatStyle = FlatStyle.Flat
             };
 
-            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход", "Девятый вал" });
+            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход", "Девятый вал", "Дверь 2" });
 
             if (comboBox.Items.Count > 0)
             {
@@ -6755,40 +6758,56 @@ namespace MMMapEditor
                     }
 
                     // Остальные элементы (двери и решётки) остались прежними
-                    if (passageData.Top == 1) // Дверь сверху
+                    if (passageData.Top == PassageTypeDoor) // Дверь сверху
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Top, Direction.Top);
                     }
-                    else if (passageData.Top == 2) // Решётка сверху
+                    else if (passageData.Top == PassageTypeGrate) // Решётка сверху
                     {
                         DrawRoundedGrate(g, bounds, Direction.Top);
                     }
+                    else if (passageData.Top == PassageTypeDoor2) // Дверь 2 сверху
+                    {
+                        DrawDoor2(g, bounds, Direction.Top);
+                    }
 
-                    if (passageData.Bottom == 1) // Дверь снизу
+                    if (passageData.Bottom == PassageTypeDoor) // Дверь снизу
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Bottom, Direction.Bottom);
                     }
-                    else if (passageData.Bottom == 2) // Решётка снизу
+                    else if (passageData.Bottom == PassageTypeGrate) // Решётка снизу
                     {
                         DrawRoundedGrate(g, bounds, Direction.Bottom);
                     }
+                    else if (passageData.Bottom == PassageTypeDoor2) // Дверь 2 снизу
+                    {
+                        DrawDoor2(g, bounds, Direction.Bottom);
+                    }
 
-                    if (passageData.Left == 1) // Дверь слева
+                    if (passageData.Left == PassageTypeDoor) // Дверь слева
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Left, Direction.Left);
                     }
-                    else if (passageData.Left == 2) // Решётка слева
+                    else if (passageData.Left == PassageTypeGrate) // Решётка слева
                     {
                         DrawRoundedGrate(g, bounds, Direction.Left);
                     }
+                    else if (passageData.Left == PassageTypeDoor2) // Дверь 2 слева
+                    {
+                        DrawDoor2(g, bounds, Direction.Left);
+                    }
 
-                    if (passageData.Right == 1) // Дверь справа
+                    if (passageData.Right == PassageTypeDoor) // Дверь справа
                     {
                         DrawCorrectDoor(g, bounds, edgeTypes.Right, Direction.Right);
                     }
-                    else if (passageData.Right == 2) // Решётка справа
+                    else if (passageData.Right == PassageTypeGrate) // Решётка справа
                     {
                         DrawRoundedGrate(g, bounds, Direction.Right);
+                    }
+                    else if (passageData.Right == PassageTypeDoor2) // Дверь 2 справа
+                    {
+                        DrawDoor2(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка лестниц вверх
@@ -7166,6 +7185,91 @@ namespace MMMapEditor
             }
 
             // Выводим итоговое изображение двери на экран
+            g.DrawImage(doorImage, targetRect);
+        }
+
+        private void DrawDoor2(Graphics g, Rectangle bounds, Direction direction)
+        {
+            string[] pixels =
+            {
+                "AAAAABBAAAAA",
+                "ACCCADDACCCA",
+                "ACACABBACACA",
+                "ACCCADDACCCA",
+                "AAAAABBAAAAA",
+                "AAACADDACAAA",
+                "AAAAABBAAAAA"
+            };
+
+            int doorWidth = pixels[0].Length;
+            int doorHeight = pixels.Length;
+
+            using Bitmap doorImage = new Bitmap(doorWidth, doorHeight, PixelFormat.Format32bppArgb);
+            using (Graphics imgG = Graphics.FromImage(doorImage))
+            {
+                imgG.Clear(Color.Transparent);
+                imgG.InterpolationMode = InterpolationMode.NearestNeighbor;
+
+                for (int y = 0; y < pixels.Length; y++)
+                {
+                    for (int x = 0; x < pixels[y].Length; x++)
+                    {
+                        switch (pixels[y][x])
+                        {
+                            case 'A':
+                                imgG.FillRectangle(Brushes.Black, x, y, 1, 1);
+                                break;
+                            case 'B':
+                                imgG.FillRectangle(Brushes.DarkGray, x, y, 1, 1);
+                                break;
+                            case 'C':
+                                imgG.FillRectangle(Brushes.White, x, y, 1, 1);
+                                break;
+                            case 'D':
+                                imgG.FillRectangle(Brushes.LightGray, x, y, 1, 1);
+                                break;
+                        }
+                    }
+                }
+            }
+
+            Rectangle targetRect;
+            switch (direction)
+            {
+                case Direction.Top:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - doorWidth / 2,
+                        bounds.Y,
+                        doorWidth,
+                        doorHeight);
+                    break;
+                case Direction.Bottom:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - doorWidth / 2,
+                        bounds.Bottom - doorHeight,
+                        doorWidth,
+                        doorHeight);
+                    break;
+                case Direction.Left:
+                    doorImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.X,
+                        (bounds.Y + bounds.Height / 2 - doorHeight / 2) - 3,
+                        doorHeight,
+                        doorWidth);
+                    break;
+                case Direction.Right:
+                    doorImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.Right - doorHeight,
+                        (bounds.Y + bounds.Height / 2 - doorHeight / 2) - 3,
+                        doorHeight,
+                        doorWidth);
+                    break;
+                default:
+                    return;
+            }
+
             g.DrawImage(doorImage, targetRect);
         }
 
