@@ -265,6 +265,10 @@ namespace MMMapEditor
                 uint lastTextAddress = 0;
                 var foundTextsInThisPath = new HashSet<string>();
                 int textOrderCounter = 0;
+                bool trackIndirectBattleTableCopyPattern = depth == 0 && currentCallDepth == 0;
+                int indirectBattleTableCopyPatternStage = 0;
+                ushort indirectBattleFirstTableCandidate = 0;
+                ushort indirectBattleSecondTableCandidate = 0;
 
                 while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
                 {
@@ -335,12 +339,16 @@ namespace MMMapEditor
 
                         byte[] bytes = insn.Bytes;
 
-                        if (currentAddress == startAddress &&
-                            IsPotentialIndirectBattleTableCopyStart(bytes) &&
-                            TryExecuteIndirectBattleTableCopyPattern(
+                        if (TryAdvanceIndirectBattleTableCopyPattern(
                                 br,
                                 startAddress,
+                                currentAddress,
+                                bytes,
+                                trackIndirectBattleTableCopyPattern,
                                 debugMode,
+                                ref indirectBattleTableCopyPatternStage,
+                                ref indirectBattleFirstTableCandidate,
+                                ref indirectBattleSecondTableCandidate,
                                 out var indirectBattleResult))
                         {
                             return CaptureExitStateAndFinalizeResult(
@@ -11371,15 +11379,6 @@ namespace MMMapEditor
             return data;
         }
 
-        private static bool IsPotentialIndirectBattleTableCopyStart(byte[] bytes)
-        {
-            if (bytes == null || bytes.Length < 3 || bytes[0] != 0xB8)
-                return false;
-
-            ushort tableAddress = (ushort)(bytes[1] | (bytes[2] << 8));
-            return tableAddress >= OvrFileConfig.OverlayTextStartAddress;
-        }
-
         private bool TryExecuteIndirectBattleTableCopyPattern(
             BinaryReader br,
             uint startAddress,
@@ -11397,6 +11396,123 @@ namespace MMMapEditor
             {
                 return false;
             }
+
+            return TryBuildIndirectBattleTableCopyPatternResult(
+                br,
+                startAddress,
+                firstTableAddress,
+                secondTableAddress,
+                tailAddress,
+                debugMode,
+                out result);
+        }
+
+        private bool TryAdvanceIndirectBattleTableCopyPattern(
+            BinaryReader br,
+            uint startAddress,
+            uint currentAddress,
+            byte[] bytes,
+            bool enabled,
+            bool debugMode,
+            ref int stage,
+            ref ushort firstTableAddress,
+            ref ushort secondTableAddress,
+            out PathAnalysisResult result)
+        {
+            result = null;
+
+            if (!enabled || bytes == null || stage < 0)
+                return false;
+
+            switch (stage)
+            {
+                case 0:
+                    if (currentAddress == startAddress &&
+                        bytes.Length >= 3 &&
+                        bytes[0] == 0xB8)
+                    {
+                        ushort candidate = (ushort)(bytes[1] | (bytes[2] << 8));
+                        if (candidate >= OvrFileConfig.OverlayTextStartAddress)
+                        {
+                            firstTableAddress = candidate;
+                            stage = 1;
+                            return false;
+                        }
+                    }
+
+                    stage = -1;
+                    return false;
+
+                case 1:
+                    if (bytes.Length >= 3 &&
+                        bytes[0] == 0xA3 &&
+                        bytes[1] == (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS & 0xFF) &&
+                        bytes[2] == (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS >> 8))
+                    {
+                        stage = 2;
+                        return false;
+                    }
+
+                    stage = -1;
+                    return false;
+
+                case 2:
+                    if (bytes.Length >= 3 && bytes[0] == 0xB8)
+                    {
+                        secondTableAddress = (ushort)(bytes[1] | (bytes[2] << 8));
+                        stage = 3;
+                        return false;
+                    }
+
+                    stage = -1;
+                    return false;
+
+                case 3:
+                    uint tailAddress;
+                    if (bytes.Length >= 3 && bytes[0] == 0xE9)
+                    {
+                        short relative = unchecked((short)(bytes[1] | (bytes[2] << 8)));
+                        tailAddress = (uint)(currentAddress + 3 + relative);
+                    }
+                    else if (bytes.Length >= 3 &&
+                             bytes[0] == 0xA3 &&
+                             bytes[1] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS & 0xFF) &&
+                             bytes[2] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS >> 8))
+                    {
+                        tailAddress = currentAddress;
+                    }
+                    else
+                    {
+                        stage = -1;
+                        return false;
+                    }
+
+                    stage = -1;
+                    return TryBuildIndirectBattleTableCopyPatternResult(
+                        br,
+                        startAddress,
+                        firstTableAddress,
+                        secondTableAddress,
+                        tailAddress,
+                        debugMode,
+                        out result);
+
+                default:
+                    stage = -1;
+                    return false;
+            }
+        }
+
+        private bool TryBuildIndirectBattleTableCopyPatternResult(
+            BinaryReader br,
+            uint startAddress,
+            ushort firstTableAddress,
+            ushort secondTableAddress,
+            uint tailAddress,
+            bool debugMode,
+            out PathAnalysisResult result)
+        {
+            result = null;
 
             if (!TryValidateIndirectBattleTableCopyTail(
                     br,

@@ -30,6 +30,7 @@ namespace MMMapEditor
     public class InstructionAnalyzer
     {
         private readonly OvrFileConfig _config;
+        private readonly Dictionary<ushort, string> _inlineTextImmediateCache = new Dictionary<ushort, string>();
 
         public InstructionAnalyzer(OvrFileConfig config)
         {
@@ -155,10 +156,20 @@ namespace MMMapEditor
         {
             text = null;
 
-            if (br == null ||
-                textAddress < OvrFileConfig.OverlayTextStartAddress ||
-                !OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, textAddress, out long fileOffset))
+            if (_inlineTextImmediateCache.TryGetValue(textAddress, out string cachedText))
             {
+                text = cachedText;
+                return cachedText != null;
+            }
+
+            if (br == null || textAddress < OvrFileConfig.OverlayTextStartAddress)
+            {
+                return false;
+            }
+
+            if (!OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, textAddress, out long fileOffset))
+            {
+                _inlineTextImmediateCache[textAddress] = null;
                 return false;
             }
 
@@ -190,6 +201,7 @@ namespace MMMapEditor
                     }
                     else
                     {
+                        _inlineTextImmediateCache[textAddress] = null;
                         return false;
                     }
 
@@ -200,16 +212,26 @@ namespace MMMapEditor
                     visiblePrintable == 0 ||
                     printableOrWhitespace != bytes.Count)
                 {
+                    _inlineTextImmediateCache[textAddress] = null;
                     return false;
                 }
 
                 text = OvrOverlayAddressReader.DecodeText(bytes.ToArray());
-                return !string.IsNullOrEmpty(text) &&
-                       text != "(empty string)" &&
-                       !text.StartsWith("Cannot locate");
+                if (!string.IsNullOrEmpty(text) &&
+                    text != "(empty string)" &&
+                    !text.StartsWith("Cannot locate"))
+                {
+                    _inlineTextImmediateCache[textAddress] = text;
+                    return true;
+                }
+
+                _inlineTextImmediateCache[textAddress] = null;
+                text = null;
+                return false;
             }
             catch
             {
+                _inlineTextImmediateCache[textAddress] = null;
                 return false;
             }
             finally

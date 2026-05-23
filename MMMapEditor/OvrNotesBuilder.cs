@@ -123,6 +123,9 @@ namespace MMMapEditor
 
             var allObjects = preAnalyzedObjects?.ToList()
                 ?? OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions);
+            var renderedNoteCache = !buildInlineStyleSpans
+                ? new Dictionary<RenderedObjectNoteCacheKey, string>()
+                : null;
 
             result.TotalObjects = allObjects.Count;
             result.TableObjects = allObjects.Count(o => o.IsFromTable);
@@ -205,6 +208,31 @@ namespace MMMapEditor
                     fileNameOnly,
                     obj,
                     useHierarchical);
+                var renderedNoteCacheKey = renderedNoteCache == null
+                    ? null
+                    : BuildRenderedObjectNoteCacheKey(
+                        fileNameOnly,
+                        useHierarchical,
+                        obj,
+                        defaultRandomEncounterMonsterPowerCap,
+                        defaultRandomEncounterMonsterLevelCap,
+                        defaultRandomEncounterMonsterBatchCountCap,
+                        defaultDarkeningLevel,
+                        defaultRandomEncounterChance,
+                        existingCellNotes,
+                        technicalRenderPatchLine,
+                        specialSpoilerLine,
+                        inlineSpecialSpoilerLine,
+                        specialPlayerExplanation,
+                        trailingRepeatedBattleWarningLine,
+                        specialFullNotes);
+
+                if (renderedNoteCacheKey != null &&
+                    renderedNoteCache.TryGetValue(renderedNoteCacheKey, out string cachedRenderedNote))
+                {
+                    result.NotesPerCell[pos] = cachedRenderedNote;
+                    continue;
+                }
 
                 string hierarchicalNotes = useHierarchical
                     ? BuildHierarchicalVariantNotes(
@@ -345,6 +373,9 @@ namespace MMMapEditor
                         .Select(span => span.Clone())
                         .ToList();
                 }
+
+                if (renderedNoteCacheKey != null)
+                    renderedNoteCache[renderedNoteCacheKey] = finalNoteText;
             }
 
             ApplyAreaD4TechnicalRenderPatchFallback(
@@ -355,6 +386,208 @@ namespace MMMapEditor
                 buildInlineStyleSpans);
 
             return result;
+        }
+
+        private static RenderedObjectNoteCacheKey BuildRenderedObjectNoteCacheKey(
+            string fileNameOnly,
+            bool useHierarchical,
+            OvrObject obj,
+            byte defaultRandomEncounterMonsterPowerCap,
+            byte defaultRandomEncounterMonsterLevelCap,
+            byte defaultRandomEncounterMonsterBatchCountCap,
+            byte defaultDarkeningLevel,
+            byte defaultRandomEncounterChance,
+            string existingCellNotes,
+            string technicalRenderPatchLine,
+            string specialSpoilerLine,
+            string inlineSpecialSpoilerLine,
+            string specialPlayerExplanation,
+            string trailingRepeatedBattleWarningLine,
+            string specialFullNotes)
+        {
+            if (obj?.PathVariants == null || obj.PathVariants.Count == 0)
+                return null;
+
+            var orderedVariants = obj.PathVariants
+                .OrderBy(kvp => kvp.Key)
+                .ToList();
+            return new RenderedObjectNoteCacheKey(
+                fileNameOnly,
+                useHierarchical,
+                obj.IsFromTable,
+                obj.PatchAddress,
+                obj.DirectionByte,
+                RequiresRenderedNoteCoordinateCacheDiscriminator(fileNameOnly, obj)
+                    ? $"{obj.X:X2},{obj.Y:X2}"
+                    : string.Empty,
+                defaultRandomEncounterMonsterPowerCap,
+                defaultRandomEncounterMonsterLevelCap,
+                defaultRandomEncounterMonsterBatchCountCap,
+                defaultDarkeningLevel,
+                defaultRandomEncounterChance,
+                existingCellNotes,
+                technicalRenderPatchLine,
+                specialSpoilerLine,
+                inlineSpecialSpoilerLine,
+                specialPlayerExplanation,
+                trailingRepeatedBattleWarningLine,
+                specialFullNotes,
+                orderedVariants.Select(kvp => kvp.Key).ToArray(),
+                orderedVariants.Select(kvp => kvp.Value).ToArray());
+        }
+
+        private static bool RequiresRenderedNoteCoordinateCacheDiscriminator(string fileNameOnly, OvrObject obj)
+        {
+            return IsAreaE1JudgementStatueObject(fileNameOnly, obj);
+        }
+
+        private sealed class RenderedObjectNoteCacheKey : IEquatable<RenderedObjectNoteCacheKey>
+        {
+            private readonly string _fileNameOnly;
+            private readonly bool _useHierarchical;
+            private readonly bool _isFromTable;
+            private readonly uint? _patchAddress;
+            private readonly byte _directionByte;
+            private readonly string _coordinateDiscriminator;
+            private readonly byte _defaultRandomEncounterMonsterPowerCap;
+            private readonly byte _defaultRandomEncounterMonsterLevelCap;
+            private readonly byte _defaultRandomEncounterMonsterBatchCountCap;
+            private readonly byte _defaultDarkeningLevel;
+            private readonly byte _defaultRandomEncounterChance;
+            private readonly string _existingCellNotes;
+            private readonly string _technicalRenderPatchLine;
+            private readonly string _specialSpoilerLine;
+            private readonly string _inlineSpecialSpoilerLine;
+            private readonly string _specialPlayerExplanation;
+            private readonly string _trailingRepeatedBattleWarningLine;
+            private readonly string _specialFullNotes;
+            private readonly int[] _variantKeys;
+            private readonly PathVariantInfo[] _variantReferences;
+
+            public RenderedObjectNoteCacheKey(
+                string fileNameOnly,
+                bool useHierarchical,
+                bool isFromTable,
+                uint? patchAddress,
+                byte directionByte,
+                string coordinateDiscriminator,
+                byte defaultRandomEncounterMonsterPowerCap,
+                byte defaultRandomEncounterMonsterLevelCap,
+                byte defaultRandomEncounterMonsterBatchCountCap,
+                byte defaultDarkeningLevel,
+                byte defaultRandomEncounterChance,
+                string existingCellNotes,
+                string technicalRenderPatchLine,
+                string specialSpoilerLine,
+                string inlineSpecialSpoilerLine,
+                string specialPlayerExplanation,
+                string trailingRepeatedBattleWarningLine,
+                string specialFullNotes,
+                int[] variantKeys,
+                PathVariantInfo[] variantReferences)
+            {
+                _fileNameOnly = fileNameOnly ?? string.Empty;
+                _useHierarchical = useHierarchical;
+                _isFromTable = isFromTable;
+                _patchAddress = patchAddress;
+                _directionByte = directionByte;
+                _coordinateDiscriminator = coordinateDiscriminator ?? string.Empty;
+                _defaultRandomEncounterMonsterPowerCap = defaultRandomEncounterMonsterPowerCap;
+                _defaultRandomEncounterMonsterLevelCap = defaultRandomEncounterMonsterLevelCap;
+                _defaultRandomEncounterMonsterBatchCountCap = defaultRandomEncounterMonsterBatchCountCap;
+                _defaultDarkeningLevel = defaultDarkeningLevel;
+                _defaultRandomEncounterChance = defaultRandomEncounterChance;
+                _existingCellNotes = existingCellNotes ?? string.Empty;
+                _technicalRenderPatchLine = technicalRenderPatchLine ?? string.Empty;
+                _specialSpoilerLine = specialSpoilerLine ?? string.Empty;
+                _inlineSpecialSpoilerLine = inlineSpecialSpoilerLine ?? string.Empty;
+                _specialPlayerExplanation = specialPlayerExplanation ?? string.Empty;
+                _trailingRepeatedBattleWarningLine = trailingRepeatedBattleWarningLine ?? string.Empty;
+                _specialFullNotes = specialFullNotes ?? string.Empty;
+                _variantKeys = variantKeys ?? Array.Empty<int>();
+                _variantReferences = variantReferences ?? Array.Empty<PathVariantInfo>();
+            }
+
+            public bool Equals(RenderedObjectNoteCacheKey other)
+            {
+                if (ReferenceEquals(this, other))
+                    return true;
+
+                if (other == null ||
+                    _useHierarchical != other._useHierarchical ||
+                    _isFromTable != other._isFromTable ||
+                    _patchAddress != other._patchAddress ||
+                    _directionByte != other._directionByte ||
+                    _defaultRandomEncounterMonsterPowerCap != other._defaultRandomEncounterMonsterPowerCap ||
+                    _defaultRandomEncounterMonsterLevelCap != other._defaultRandomEncounterMonsterLevelCap ||
+                    _defaultRandomEncounterMonsterBatchCountCap != other._defaultRandomEncounterMonsterBatchCountCap ||
+                    _defaultDarkeningLevel != other._defaultDarkeningLevel ||
+                    _defaultRandomEncounterChance != other._defaultRandomEncounterChance ||
+                    !string.Equals(_fileNameOnly, other._fileNameOnly, StringComparison.Ordinal) ||
+                    !string.Equals(_coordinateDiscriminator, other._coordinateDiscriminator, StringComparison.Ordinal) ||
+                    !string.Equals(_existingCellNotes, other._existingCellNotes, StringComparison.Ordinal) ||
+                    !string.Equals(_technicalRenderPatchLine, other._technicalRenderPatchLine, StringComparison.Ordinal) ||
+                    !string.Equals(_specialSpoilerLine, other._specialSpoilerLine, StringComparison.Ordinal) ||
+                    !string.Equals(_inlineSpecialSpoilerLine, other._inlineSpecialSpoilerLine, StringComparison.Ordinal) ||
+                    !string.Equals(_specialPlayerExplanation, other._specialPlayerExplanation, StringComparison.Ordinal) ||
+                    !string.Equals(_trailingRepeatedBattleWarningLine, other._trailingRepeatedBattleWarningLine, StringComparison.Ordinal) ||
+                    !string.Equals(_specialFullNotes, other._specialFullNotes, StringComparison.Ordinal) ||
+                    _variantKeys.Length != other._variantKeys.Length ||
+                    _variantReferences.Length != other._variantReferences.Length)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < _variantKeys.Length; i++)
+                {
+                    if (_variantKeys[i] != other._variantKeys[i])
+                        return false;
+                }
+
+                for (int i = 0; i < _variantReferences.Length; i++)
+                {
+                    if (!ReferenceEquals(_variantReferences[i], other._variantReferences[i]))
+                        return false;
+                }
+
+                return true;
+            }
+
+            public override bool Equals(object obj)
+            {
+                return Equals(obj as RenderedObjectNoteCacheKey);
+            }
+
+            public override int GetHashCode()
+            {
+                var hash = new HashCode();
+                hash.Add(_fileNameOnly, StringComparer.Ordinal);
+                hash.Add(_useHierarchical);
+                hash.Add(_isFromTable);
+                hash.Add(_patchAddress);
+                hash.Add(_directionByte);
+                hash.Add(_coordinateDiscriminator, StringComparer.Ordinal);
+                hash.Add(_defaultRandomEncounterMonsterPowerCap);
+                hash.Add(_defaultRandomEncounterMonsterLevelCap);
+                hash.Add(_defaultRandomEncounterMonsterBatchCountCap);
+                hash.Add(_defaultDarkeningLevel);
+                hash.Add(_defaultRandomEncounterChance);
+                hash.Add(_existingCellNotes, StringComparer.Ordinal);
+                hash.Add(_technicalRenderPatchLine, StringComparer.Ordinal);
+                hash.Add(_specialSpoilerLine, StringComparer.Ordinal);
+                hash.Add(_inlineSpecialSpoilerLine, StringComparer.Ordinal);
+                hash.Add(_specialPlayerExplanation, StringComparer.Ordinal);
+                hash.Add(_trailingRepeatedBattleWarningLine, StringComparer.Ordinal);
+                hash.Add(_specialFullNotes, StringComparer.Ordinal);
+
+                foreach (int key in _variantKeys)
+                    hash.Add(key);
+
+                foreach (var variant in _variantReferences)
+                    hash.Add(variant == null ? 0 : RuntimeHelpers.GetHashCode(variant));
+
+                return hash.ToHashCode();
+            }
         }
 
         private static void AppendExistingRenderedText(
