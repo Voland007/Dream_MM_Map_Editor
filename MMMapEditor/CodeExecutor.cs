@@ -266,23 +266,6 @@ namespace MMMapEditor
                 var foundTextsInThisPath = new HashSet<string>();
                 int textOrderCounter = 0;
 
-                if (TryExecuteIndirectBattleTableCopyPattern(
-                        br,
-                        startAddress,
-                        debugMode,
-                        out var indirectBattleResult))
-                {
-                    return CaptureExitStateAndFinalizeResult(
-                        indirectBattleResult,
-                        registerTracker,
-                        0,
-                        startAddress,
-                        fileLength,
-                        debugMode,
-                        currentPendingReturnAddresses,
-                        currentCallDepth);
-                }
-
                 while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
                 {
                     if (visitedInThisPath.Contains(currentAddress))
@@ -351,6 +334,25 @@ namespace MMMapEditor
                             AnalysisDebug.WriteLine($"      Анализ инструкции по адресу 0x{insn.Address:X4}: {insn.Mnemonic} {insn.Operand}");
 
                         byte[] bytes = insn.Bytes;
+
+                        if (currentAddress == startAddress &&
+                            IsPotentialIndirectBattleTableCopyStart(bytes) &&
+                            TryExecuteIndirectBattleTableCopyPattern(
+                                br,
+                                startAddress,
+                                debugMode,
+                                out var indirectBattleResult))
+                        {
+                            return CaptureExitStateAndFinalizeResult(
+                                indirectBattleResult,
+                                registerTracker,
+                                instructionCount,
+                                currentAddress,
+                                fileLength,
+                                debugMode,
+                                currentPendingReturnAddresses,
+                                currentCallDepth);
+                        }
 
                         // Отслеживание MOV AL, imm8
                         if (bytes.Length >= 2 && bytes[0] == 0xB0)
@@ -11367,6 +11369,15 @@ namespace MMMapEditor
             byte[] data = br.ReadBytes(count);
             br.BaseStream.Position = originalPos;
             return data;
+        }
+
+        private static bool IsPotentialIndirectBattleTableCopyStart(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length < 3 || bytes[0] != 0xB8)
+                return false;
+
+            ushort tableAddress = (ushort)(bytes[1] | (bytes[2] << 8));
+            return tableAddress >= OvrFileConfig.OverlayTextStartAddress;
         }
 
         private bool TryExecuteIndirectBattleTableCopyPattern(

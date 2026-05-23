@@ -95,21 +95,15 @@ namespace MMMapEditor
                 ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
 
                 // Проверяем, не является ли это значение адресом текста
-                if (immediateValue >= 0xC000 && immediateValue <= 0xFFFF)
+                if (immediateValue >= 0xC000 && immediateValue <= 0xFFFF &&
+                    TryExtractLikelyInlineTextImmediate(br, immediateValue, out string text))
                 {
-                    string text = ExtractText(br, immediateValue);
-                    if (!string.IsNullOrEmpty(text) &&
-                        text != "(empty string)" &&
-                        !text.StartsWith("Cannot locate") &&
-                        IsLikelyInlineTextImmediate(br, immediateValue, text))
-                    {
-                        byte regIndex = (byte)(instructionBytes[0] - 0xB8);
-                        string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
-                        string regName = regIndex < regNames.Length ? regNames[regIndex] : "?";
+                    byte regIndex = (byte)(instructionBytes[0] - 0xB8);
+                    string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+                    string regName = regIndex < regNames.Length ? regNames[regIndex] : "?";
 
-                        string textEntry = $"Text at 0x{immediateValue:X4} (via {regName}): {text}";
-                        AddOutputText(output, address, textEntry);
-                    }
+                    string textEntry = $"Text at 0x{immediateValue:X4} (via {regName}): {text}";
+                    AddOutputText(output, address, textEntry);
                 }
             }
             // MOV BP, imm16
@@ -117,17 +111,11 @@ namespace MMMapEditor
             {
                 ushort immediateValue = BitConverter.ToUInt16(instructionBytes, 1);
 
-                if (immediateValue >= 0xC000 && immediateValue <= 0xFFFF)
+                if (immediateValue >= 0xC000 && immediateValue <= 0xFFFF &&
+                    TryExtractLikelyInlineTextImmediate(br, immediateValue, out string text))
                 {
-                    string text = ExtractText(br, immediateValue);
-                    if (!string.IsNullOrEmpty(text) &&
-                        text != "(empty string)" &&
-                        !text.StartsWith("Cannot locate") &&
-                        IsLikelyInlineTextImmediate(br, immediateValue, text))
-                    {
-                        string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
-                        AddOutputText(output, address, textEntry);
-                    }
+                    string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
+                    AddOutputText(output, address, textEntry);
                 }
             }
 
@@ -163,49 +151,20 @@ namespace MMMapEditor
             });
         }
 
-        private bool IsLikelyInlineTextImmediate(BinaryReader br, ushort textAddress, string decodedText)
+        private bool TryExtractLikelyInlineTextImmediate(BinaryReader br, ushort textAddress, out string text)
         {
+            text = null;
+
             if (br == null ||
-                string.IsNullOrEmpty(decodedText) ||
                 textAddress < OvrFileConfig.OverlayTextStartAddress ||
-                !TryReadOverlayTextBytes(br, textAddress, out var bytes) ||
-                bytes.Count == 0)
+                !OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, textAddress, out long fileOffset))
             {
                 return false;
             }
 
+            var bytes = new List<byte>();
             int printableOrWhitespace = 0;
             int visiblePrintable = 0;
-
-            foreach (byte value in bytes)
-            {
-                if (value >= 0x20 && value <= 0x7E)
-                {
-                    printableOrWhitespace++;
-                    if (value != 0x20)
-                        visiblePrintable++;
-                    continue;
-                }
-
-                if (value == 0x0D || value == 0x0A || value == 0x09)
-                {
-                    printableOrWhitespace++;
-                    continue;
-                }
-
-                return false;
-            }
-
-            return visiblePrintable > 0 &&
-                   printableOrWhitespace == bytes.Count;
-        }
-
-        private bool TryReadOverlayTextBytes(BinaryReader br, ushort textAddress, out List<byte> bytes)
-        {
-            bytes = new List<byte>();
-
-            if (!OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, textAddress, out long fileOffset))
-                return false;
 
             long originalPos = br.BaseStream.Position;
             try
@@ -217,16 +176,40 @@ namespace MMMapEditor
                 {
                     byte value = br.ReadByte();
                     if (value == 0)
-                        return true;
+                        break;
+
+                    if (value >= 0x20 && value <= 0x7E)
+                    {
+                        printableOrWhitespace++;
+                        if (value != 0x20)
+                            visiblePrintable++;
+                    }
+                    else if (value == 0x0D || value == 0x0A || value == 0x09)
+                    {
+                        printableOrWhitespace++;
+                    }
+                    else
+                    {
+                        return false;
+                    }
 
                     bytes.Add(value);
                 }
 
-                return bytes.Count > 0;
+                if (bytes.Count == 0 ||
+                    visiblePrintable == 0 ||
+                    printableOrWhitespace != bytes.Count)
+                {
+                    return false;
+                }
+
+                text = OvrOverlayAddressReader.DecodeText(bytes.ToArray());
+                return !string.IsNullOrEmpty(text) &&
+                       text != "(empty string)" &&
+                       !text.StartsWith("Cannot locate");
             }
             catch
             {
-                bytes.Clear();
                 return false;
             }
             finally
