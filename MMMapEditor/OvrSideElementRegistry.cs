@@ -252,9 +252,9 @@ namespace MMMapEditor
                     new OvrSideKey(0x01, 0x0B),
                     0x0B)] = CreateLayoutTemplate(
                         "StoneBrickKeep",
-                        CreateSecretWall("\u041A\u0430\u043C\u0435\u043D\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
                         CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
-                        CreateDoor("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430")),
+                        CreateDoor2("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
+                        CreateGrate2("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430")),
                 [new OvrSideLayoutFamilyKey(
                     new OvrSideKey(0x02, 0x0B),
                     new OvrSideKey(0x0B, 0x0A),
@@ -435,6 +435,14 @@ namespace MMMapEditor
             {
                 BorderType = borderType,
                 PassageType = 2,
+                MarkClosedWhenSecondLowBitSet = true
+            };
+
+        private static OvrSideElementDefinition CreateGrate2(string borderType) =>
+            new OvrSideElementDefinition
+            {
+                BorderType = borderType,
+                PassageType = 10,
                 MarkClosedWhenSecondLowBitSet = true
             };
     }
