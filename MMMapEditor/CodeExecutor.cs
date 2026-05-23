@@ -108,8 +108,6 @@ namespace MMMapEditor
         private const ushort BATTLE_MONSTER_FIRST_TABLE_ADDRESS = 0x3C58;
         private const ushort BATTLE_MONSTER_SECOND_TABLE_ADDRESS = 0x3C29;
         private const ushort BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS = 0x3CA6;
-        private const ushort INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS = 0xCCFB;
-        private const ushort INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS = 0xCCFD;
         private const int BATTLE_MONSTER_TABLE_SLOT_COUNT = 0x0F;
         private const int INDIRECT_BATTLE_TABLE_COPY_SLOT_LIMIT = 0x0E;
         private const int PARTY_MEMBER_COUNT = 6;
@@ -269,6 +267,7 @@ namespace MMMapEditor
                 int indirectBattleTableCopyPatternStage = 0;
                 ushort indirectBattleFirstTableCandidate = 0;
                 ushort indirectBattleSecondTableCandidate = 0;
+                ushort indirectBattleFirstPointerCandidate = 0;
 
                 while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
                 {
@@ -349,6 +348,7 @@ namespace MMMapEditor
                                 ref indirectBattleTableCopyPatternStage,
                                 ref indirectBattleFirstTableCandidate,
                                 ref indirectBattleSecondTableCandidate,
+                                ref indirectBattleFirstPointerCandidate,
                                 out var indirectBattleResult))
                         {
                             return CaptureExitStateAndFinalizeResult(
@@ -11392,6 +11392,7 @@ namespace MMMapEditor
                     startAddress,
                     out ushort firstTableAddress,
                     out ushort secondTableAddress,
+                    out ushort firstPointerAddress,
                     out uint tailAddress))
             {
                 return false;
@@ -11402,6 +11403,7 @@ namespace MMMapEditor
                 startAddress,
                 firstTableAddress,
                 secondTableAddress,
+                firstPointerAddress,
                 tailAddress,
                 debugMode,
                 out result);
@@ -11417,6 +11419,7 @@ namespace MMMapEditor
             ref int stage,
             ref ushort firstTableAddress,
             ref ushort secondTableAddress,
+            ref ushort firstPointerAddress,
             out PathAnalysisResult result)
         {
             result = null;
@@ -11428,13 +11431,11 @@ namespace MMMapEditor
             {
                 case 0:
                     if (currentAddress == startAddress &&
-                        bytes.Length >= 3 &&
-                        bytes[0] == 0xB8)
+                        TryDecodeMovAxImmediate(bytes, 0, out ushort firstTableCandidate))
                     {
-                        ushort candidate = (ushort)(bytes[1] | (bytes[2] << 8));
-                        if (candidate >= OvrFileConfig.OverlayTextStartAddress)
+                        if (LooksLikeOverlayDataTableAddress(firstTableCandidate))
                         {
-                            firstTableAddress = candidate;
+                            firstTableAddress = firstTableCandidate;
                             stage = 1;
                             return false;
                         }
@@ -11444,11 +11445,9 @@ namespace MMMapEditor
                     return false;
 
                 case 1:
-                    if (bytes.Length >= 3 &&
-                        bytes[0] == 0xA3 &&
-                        bytes[1] == (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS & 0xFF) &&
-                        bytes[2] == (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS >> 8))
+                    if (TryDecodeMovMoffs16FromAx(bytes, out ushort firstPointerCandidate))
                     {
+                        firstPointerAddress = firstPointerCandidate;
                         stage = 2;
                         return false;
                     }
@@ -11457,9 +11456,10 @@ namespace MMMapEditor
                     return false;
 
                 case 2:
-                    if (bytes.Length >= 3 && bytes[0] == 0xB8)
+                    if (TryDecodeMovAxImmediate(bytes, 0, out ushort secondTableCandidate) &&
+                        LooksLikeOverlayDataTableAddress(secondTableCandidate))
                     {
-                        secondTableAddress = (ushort)(bytes[1] | (bytes[2] << 8));
+                        secondTableAddress = secondTableCandidate;
                         stage = 3;
                         return false;
                     }
@@ -11475,9 +11475,7 @@ namespace MMMapEditor
                         tailAddress = (uint)(currentAddress + 3 + relative);
                     }
                     else if (bytes.Length >= 3 &&
-                             bytes[0] == 0xA3 &&
-                             bytes[1] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS & 0xFF) &&
-                             bytes[2] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS >> 8))
+                             bytes[0] == 0xA3)
                     {
                         tailAddress = currentAddress;
                     }
@@ -11493,6 +11491,7 @@ namespace MMMapEditor
                         startAddress,
                         firstTableAddress,
                         secondTableAddress,
+                        firstPointerAddress,
                         tailAddress,
                         debugMode,
                         out result);
@@ -11508,6 +11507,7 @@ namespace MMMapEditor
             uint startAddress,
             ushort firstTableAddress,
             ushort secondTableAddress,
+            ushort firstPointerAddress,
             uint tailAddress,
             bool debugMode,
             out PathAnalysisResult result)
@@ -11517,6 +11517,8 @@ namespace MMMapEditor
             if (!TryValidateIndirectBattleTableCopyTail(
                     br,
                     tailAddress,
+                    firstPointerAddress,
+                    out ushort secondPointerAddress,
                     out byte rubiconValue,
                     out uint randomEncounterJumpAddress))
             {
@@ -11577,7 +11579,9 @@ namespace MMMapEditor
             {
                 AnalysisDebug.WriteLine(
                     $"      Распознан шаблон косвенного копирования битвы: " +
-                    $"first=0x{firstTableAddress:X4}, second=0x{secondTableAddress:X4}, count={entries.Count}, rubicon=0x{rubiconValue:X2}");
+                    $"first=0x{firstTableAddress:X4} via [0x{firstPointerAddress:X4}], " +
+                    $"second=0x{secondTableAddress:X4} via [0x{secondPointerAddress:X4}], " +
+                    $"count={entries.Count}, rubicon=0x{rubiconValue:X2}");
             }
 
             return true;
@@ -11588,39 +11592,41 @@ namespace MMMapEditor
             uint startAddress,
             out ushort firstTableAddress,
             out ushort secondTableAddress,
+            out ushort firstPointerAddress,
             out uint tailAddress)
         {
             firstTableAddress = 0;
             secondTableAddress = 0;
+            firstPointerAddress = 0;
             tailAddress = 0;
 
             if (br == null || startAddress >= br.BaseStream.Length)
                 return false;
 
             byte[] bytes = ReadBytesAt(br, startAddress, (int)Math.Min(16, br.BaseStream.Length - startAddress));
-            if (bytes.Length < 13 ||
-                bytes[0] != 0xB8 ||
-                bytes[3] != 0xA3 ||
-                bytes[4] != (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS & 0xFF) ||
-                bytes[5] != (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS >> 8) ||
-                bytes[6] != 0xB8)
+            if (bytes.Length < 9 ||
+                !TryDecodeMovAxImmediate(bytes, 0, out firstTableAddress) ||
+                !TryDecodeMovMoffs16FromAx(bytes, 3, out firstPointerAddress) ||
+                !TryDecodeMovAxImmediate(bytes, 6, out secondTableAddress))
             {
                 return false;
             }
 
-            firstTableAddress = (ushort)(bytes[1] | (bytes[2] << 8));
-            secondTableAddress = (ushort)(bytes[7] | (bytes[8] << 8));
+            if (!LooksLikeOverlayDataTableAddress(firstTableAddress) ||
+                !LooksLikeOverlayDataTableAddress(secondTableAddress) ||
+                firstPointerAddress == 0)
+            {
+                return false;
+            }
 
-            if (bytes[9] == 0xE9)
+            if (bytes.Length >= 12 && bytes[9] == 0xE9)
             {
                 short relative = unchecked((short)(bytes[10] | (bytes[11] << 8)));
                 tailAddress = (uint)(startAddress + 12 + relative);
                 return tailAddress < br.BaseStream.Length;
             }
 
-            if (bytes[9] == 0xA3 &&
-                bytes[10] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS & 0xFF) &&
-                bytes[11] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS >> 8))
+            if (bytes.Length >= 12 && TryDecodeMovMoffs16FromAx(bytes, 9, out _))
             {
                 tailAddress = startAddress + 9;
                 return tailAddress < br.BaseStream.Length;
@@ -11632,22 +11638,24 @@ namespace MMMapEditor
         private bool TryValidateIndirectBattleTableCopyTail(
             BinaryReader br,
             uint tailAddress,
+            ushort firstPointerAddress,
+            out ushort secondPointerAddress,
             out byte rubiconValue,
             out uint randomEncounterJumpAddress)
         {
+            secondPointerAddress = 0;
             rubiconValue = 0;
             randomEncounterJumpAddress = 0;
 
-            if (br == null || tailAddress >= br.BaseStream.Length)
+            if (br == null || tailAddress >= br.BaseStream.Length || firstPointerAddress == 0)
                 return false;
 
             byte[] bytes = ReadBytesAt(br, tailAddress, (int)Math.Min(64, br.BaseStream.Length - tailAddress));
             if (bytes.Length < 57)
                 return false;
 
-            if (bytes[0] != 0xA3 ||
-                bytes[1] != (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS & 0xFF) ||
-                bytes[2] != (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS >> 8))
+            if (!TryDecodeMovMoffs16FromAx(bytes, out secondPointerAddress) ||
+                secondPointerAddress == 0)
             {
                 return false;
             }
@@ -11663,7 +11671,7 @@ namespace MMMapEditor
             byte[] expectedPrefix =
             {
                 0xBB, 0x00, 0x00,
-                0x8B, 0x36, 0xFB, 0xCC,
+                0x8B, 0x36, (byte)(firstPointerAddress & 0xFF), (byte)(firstPointerAddress >> 8),
                 0x8A, 0x00,
                 0x0A, 0xC0,
                 0x74
@@ -11677,7 +11685,7 @@ namespace MMMapEditor
 
             byte[] expectedCopyBody =
             {
-                0x8B, 0x36, 0xFD, 0xCC,
+                0x8B, 0x36, (byte)(secondPointerAddress & 0xFF), (byte)(secondPointerAddress >> 8),
                 0x8A, 0x08,
                 0x88, 0x87, 0x58, 0x3C,
                 0x88, 0x8F, 0x29, 0x3C,
@@ -11723,6 +11731,36 @@ namespace MMMapEditor
 
             randomEncounterJumpAddress = tailAddress + 54;
             return true;
+        }
+
+        private static bool TryDecodeMovAxImmediate(byte[] bytes, int offset, out ushort value)
+        {
+            value = 0;
+            if (bytes == null || offset < 0 || offset + 2 >= bytes.Length || bytes[offset] != 0xB8)
+                return false;
+
+            value = (ushort)(bytes[offset + 1] | (bytes[offset + 2] << 8));
+            return true;
+        }
+
+        private static bool TryDecodeMovMoffs16FromAx(byte[] bytes, out ushort address)
+        {
+            return TryDecodeMovMoffs16FromAx(bytes, 0, out address);
+        }
+
+        private static bool TryDecodeMovMoffs16FromAx(byte[] bytes, int offset, out ushort address)
+        {
+            address = 0;
+            if (bytes == null || offset < 0 || offset + 2 >= bytes.Length || bytes[offset] != 0xA3)
+                return false;
+
+            address = (ushort)(bytes[offset + 1] | (bytes[offset + 2] << 8));
+            return true;
+        }
+
+        private static bool LooksLikeOverlayDataTableAddress(ushort address)
+        {
+            return address >= OvrFileConfig.OverlayTextStartAddress;
         }
 
         /// <summary>
