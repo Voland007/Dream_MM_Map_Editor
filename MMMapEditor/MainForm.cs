@@ -43,6 +43,7 @@ namespace MMMapEditor
         private const int PassageTypeSecret = 3;
         private const int PassageTypeRough = 8;
         private const int PassageTypeDoor2 = 9;
+        private const int PassageTypeGrate2 = 10;
         private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
         private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
         private const string BorderTypeSwamp = "\u0411\u043E\u043B\u043E\u0442\u043E";
@@ -4897,7 +4898,7 @@ namespace MMMapEditor
                 FlatStyle = FlatStyle.Flat
             };
 
-            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход", "Девятый вал", "Дверь 2" });
+            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход", "Девятый вал", "Дверь 2", "Решётка 2" });
 
             if (comboBox.Items.Count > 0)
             {
@@ -6533,6 +6534,88 @@ namespace MMMapEditor
             g.DrawImage(originalGrateImage, targetRect);
         }
 
+        private void DrawGrate2(Graphics g, Rectangle bounds, Direction direction)
+        {
+            string[] pixels =
+            {
+                "0XXXXXXX0",
+                "XX21212XX",
+                "0X11111X0",
+                "XX21212XX",
+                "0X11111X0",
+                "XX21212XX",
+                "0XXXXXXX0"
+            };
+
+            int grateWidth = pixels[0].Length;
+            int grateHeight = pixels.Length;
+
+            using Bitmap grateImage = new Bitmap(grateWidth, grateHeight, PixelFormat.Format32bppArgb);
+            using (Graphics imgG = Graphics.FromImage(grateImage))
+            {
+                imgG.Clear(Color.Transparent);
+                imgG.InterpolationMode = InterpolationMode.NearestNeighbor;
+
+                for (int y = 0; y < pixels.Length; y++)
+                {
+                    for (int x = 0; x < pixels[y].Length; x++)
+                    {
+                        switch (pixels[y][x])
+                        {
+                            case 'X':
+                                imgG.FillRectangle(Brushes.Blue, x, y, 1, 1);
+                                break;
+                            case '1':
+                                imgG.FillRectangle(Brushes.Silver, x, y, 1, 1);
+                                break;
+                            case '2':
+                                imgG.FillRectangle(Brushes.Black, x, y, 1, 1);
+                                break;
+                        }
+                    }
+                }
+            }
+
+            Rectangle targetRect;
+            switch (direction)
+            {
+                case Direction.Top:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - grateWidth / 2,
+                        bounds.Y,
+                        grateWidth,
+                        grateHeight);
+                    break;
+                case Direction.Bottom:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - grateWidth / 2,
+                        bounds.Bottom - grateHeight,
+                        grateWidth,
+                        grateHeight);
+                    break;
+                case Direction.Left:
+                    grateImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.X,
+                        bounds.Y + bounds.Height / 2 - grateHeight / 2 - 2,
+                        grateHeight,
+                        grateWidth);
+                    break;
+                case Direction.Right:
+                    grateImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.Right - grateHeight,
+                        bounds.Y + bounds.Height / 2 - grateHeight / 2 - 2,
+                        grateHeight,
+                        grateWidth);
+                    break;
+                default:
+                    return;
+            }
+
+            g.DrawImage(grateImage, targetRect);
+        }
+
         private void ModifyGrate(Bitmap doorImage, Direction direction)
         {
             // Определим начало колонны для обработки
@@ -6770,6 +6853,10 @@ namespace MMMapEditor
                     {
                         DrawDoor2(g, bounds, Direction.Top);
                     }
+                    else if (passageData.Top == PassageTypeGrate2) // Решётка 2 сверху
+                    {
+                        DrawGrate2(g, bounds, Direction.Top);
+                    }
 
                     if (passageData.Bottom == PassageTypeDoor) // Дверь снизу
                     {
@@ -6782,6 +6869,10 @@ namespace MMMapEditor
                     else if (passageData.Bottom == PassageTypeDoor2) // Дверь 2 снизу
                     {
                         DrawDoor2(g, bounds, Direction.Bottom);
+                    }
+                    else if (passageData.Bottom == PassageTypeGrate2) // Решётка 2 снизу
+                    {
+                        DrawGrate2(g, bounds, Direction.Bottom);
                     }
 
                     if (passageData.Left == PassageTypeDoor) // Дверь слева
@@ -6796,6 +6887,10 @@ namespace MMMapEditor
                     {
                         DrawDoor2(g, bounds, Direction.Left);
                     }
+                    else if (passageData.Left == PassageTypeGrate2) // Решётка 2 слева
+                    {
+                        DrawGrate2(g, bounds, Direction.Left);
+                    }
 
                     if (passageData.Right == PassageTypeDoor) // Дверь справа
                     {
@@ -6808,6 +6903,10 @@ namespace MMMapEditor
                     else if (passageData.Right == PassageTypeDoor2) // Дверь 2 справа
                     {
                         DrawDoor2(g, bounds, Direction.Right);
+                    }
+                    else if (passageData.Right == PassageTypeGrate2) // Решётка 2 справа
+                    {
+                        DrawGrate2(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка лестниц вверх
