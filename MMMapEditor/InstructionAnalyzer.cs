@@ -98,7 +98,10 @@ namespace MMMapEditor
                 if (immediateValue >= 0xC000 && immediateValue <= 0xFFFF)
                 {
                     string text = ExtractText(br, immediateValue);
-                    if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                    if (!string.IsNullOrEmpty(text) &&
+                        text != "(empty string)" &&
+                        !text.StartsWith("Cannot locate") &&
+                        IsLikelyInlineTextImmediate(br, immediateValue, text))
                     {
                         byte regIndex = (byte)(instructionBytes[0] - 0xB8);
                         string[] regNames = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
@@ -117,7 +120,10 @@ namespace MMMapEditor
                 if (immediateValue >= 0xC000 && immediateValue <= 0xFFFF)
                 {
                     string text = ExtractText(br, immediateValue);
-                    if (!string.IsNullOrEmpty(text) && text != "(empty string)" && !text.StartsWith("Cannot locate"))
+                    if (!string.IsNullOrEmpty(text) &&
+                        text != "(empty string)" &&
+                        !text.StartsWith("Cannot locate") &&
+                        IsLikelyInlineTextImmediate(br, immediateValue, text))
                     {
                         string textEntry = $"Text at 0x{immediateValue:X4} (via BP): {text}";
                         AddOutputText(output, address, textEntry);
@@ -155,6 +161,78 @@ namespace MMMapEditor
                 SemanticKind = semanticKind,
                 IsInferred = isInferred
             });
+        }
+
+        private bool IsLikelyInlineTextImmediate(BinaryReader br, ushort textAddress, string decodedText)
+        {
+            if (br == null ||
+                string.IsNullOrEmpty(decodedText) ||
+                textAddress < OvrFileConfig.OverlayTextStartAddress ||
+                !TryReadOverlayTextBytes(br, textAddress, out var bytes) ||
+                bytes.Count == 0)
+            {
+                return false;
+            }
+
+            int printableOrWhitespace = 0;
+            int visiblePrintable = 0;
+
+            foreach (byte value in bytes)
+            {
+                if (value >= 0x20 && value <= 0x7E)
+                {
+                    printableOrWhitespace++;
+                    if (value != 0x20)
+                        visiblePrintable++;
+                    continue;
+                }
+
+                if (value == 0x0D || value == 0x0A || value == 0x09)
+                {
+                    printableOrWhitespace++;
+                    continue;
+                }
+
+                return false;
+            }
+
+            return visiblePrintable > 0 &&
+                   printableOrWhitespace == bytes.Count;
+        }
+
+        private bool TryReadOverlayTextBytes(BinaryReader br, ushort textAddress, out List<byte> bytes)
+        {
+            bytes = new List<byte>();
+
+            if (!OvrOverlayAddressReader.TryMapOverlayAddressToFileOffset(br, _config, textAddress, out long fileOffset))
+                return false;
+
+            long originalPos = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = fileOffset;
+                const int maxLength = 250;
+
+                while (br.BaseStream.Position < br.BaseStream.Length && bytes.Count < maxLength)
+                {
+                    byte value = br.ReadByte();
+                    if (value == 0)
+                        return true;
+
+                    bytes.Add(value);
+                }
+
+                return bytes.Count > 0;
+            }
+            catch
+            {
+                bytes.Clear();
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPos;
+            }
         }
 
         private void ProcessSecretPassageToDoomCastleNote(uint instructionAddress, byte[] instructionBytes,

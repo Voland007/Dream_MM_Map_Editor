@@ -108,7 +108,10 @@ namespace MMMapEditor
         private const ushort BATTLE_MONSTER_FIRST_TABLE_ADDRESS = 0x3C58;
         private const ushort BATTLE_MONSTER_SECOND_TABLE_ADDRESS = 0x3C29;
         private const ushort BATTLE_MONSTER_STRENGTH_ADJUSTMENT_ADDRESS = 0x3CA6;
+        private const ushort INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS = 0xCCFB;
+        private const ushort INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS = 0xCCFD;
         private const int BATTLE_MONSTER_TABLE_SLOT_COUNT = 0x0F;
+        private const int INDIRECT_BATTLE_TABLE_COPY_SLOT_LIMIT = 0x0E;
         private const int PARTY_MEMBER_COUNT = 6;
         private const int PARTY_sex_OFFSET = 0x10;
         private const byte PARTY_sex_MALE_VALUE = 0x01;
@@ -262,6 +265,23 @@ namespace MMMapEditor
                 uint lastTextAddress = 0;
                 var foundTextsInThisPath = new HashSet<string>();
                 int textOrderCounter = 0;
+
+                if (TryExecuteIndirectBattleTableCopyPattern(
+                        br,
+                        startAddress,
+                        debugMode,
+                        out var indirectBattleResult))
+                {
+                    return CaptureExitStateAndFinalizeResult(
+                        indirectBattleResult,
+                        registerTracker,
+                        0,
+                        startAddress,
+                        fileLength,
+                        debugMode,
+                        currentPendingReturnAddresses,
+                        currentCallDepth);
+                }
 
                 while (currentAddress < fileLength && instructionCount < MAX_INSTRUCTIONS_PER_PATH)
                 {
@@ -11347,6 +11367,235 @@ namespace MMMapEditor
             byte[] data = br.ReadBytes(count);
             br.BaseStream.Position = originalPos;
             return data;
+        }
+
+        private bool TryExecuteIndirectBattleTableCopyPattern(
+            BinaryReader br,
+            uint startAddress,
+            bool debugMode,
+            out PathAnalysisResult result)
+        {
+            result = null;
+
+            if (!TryReadIndirectBattleTableCopyEntry(
+                    br,
+                    startAddress,
+                    out ushort firstTableAddress,
+                    out ushort secondTableAddress,
+                    out uint tailAddress))
+            {
+                return false;
+            }
+
+            if (!TryValidateIndirectBattleTableCopyTail(
+                    br,
+                    tailAddress,
+                    out byte rubiconValue,
+                    out uint randomEncounterJumpAddress))
+            {
+                return false;
+            }
+
+            var entries = new List<(byte First, byte Second)>();
+            for (int slot = 0; slot < INDIRECT_BATTLE_TABLE_COPY_SLOT_LIMIT; slot++)
+            {
+                ushort firstAddress = unchecked((ushort)(firstTableAddress + slot));
+                ushort secondAddress = unchecked((ushort)(secondTableAddress + slot));
+
+                if (!TryReadOverlayByte(br, firstAddress, out byte firstValue))
+                    return false;
+
+                if (firstValue == 0)
+                    break;
+
+                if (!TryReadOverlayByte(br, secondAddress, out byte secondValue))
+                    return false;
+
+                entries.Add((firstValue, secondValue));
+            }
+
+            if (entries.Count == 0)
+                return false;
+
+            result = new PathAnalysisResult
+            {
+                HasSignificantCode = true,
+                IsTerminated = true,
+                DisablesCurrentMapEvent = true,
+                BattleMonsterCount = (byte)entries.Count,
+                BattleMonsterCountRange = new ValueRange8((byte)entries.Count, (byte)entries.Count),
+                IsBattleMonsterCountIndeterminate = false,
+                RandomEncounterRubicon = rubiconValue
+            };
+
+            result.VisitedAddresses.Add(startAddress);
+            result.VisitedAddresses.Add(tailAddress);
+            result.VisitedAddresses.Add(randomEncounterJumpAddress);
+            result.MemoryReadAddresses.Add(firstTableAddress);
+            result.MemoryReadAddresses.Add(secondTableAddress);
+            result.MemoryWrittenAddresses.Add(BATTLE_MONSTER_FIRST_TABLE_ADDRESS);
+            result.MemoryWrittenAddresses.Add(BATTLE_MONSTER_SECOND_TABLE_ADDRESS);
+            result.MemoryWrittenAddresses.Add(BATTLE_MONSTER_COUNT_ADDRESS);
+            result.MemoryWrittenAddresses.Add(BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS);
+
+            for (int slot = 0; slot < entries.Count; slot++)
+            {
+                var entry = entries[slot];
+                result.BattleMonsterEntries[slot] = (entry.First, entry.Second, false);
+            }
+
+            MarkRandomEncounterJump(result, randomEncounterJumpAddress, debugMode, "JMP");
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"      Распознан шаблон косвенного копирования битвы: " +
+                    $"first=0x{firstTableAddress:X4}, second=0x{secondTableAddress:X4}, count={entries.Count}, rubicon=0x{rubiconValue:X2}");
+            }
+
+            return true;
+        }
+
+        private bool TryReadIndirectBattleTableCopyEntry(
+            BinaryReader br,
+            uint startAddress,
+            out ushort firstTableAddress,
+            out ushort secondTableAddress,
+            out uint tailAddress)
+        {
+            firstTableAddress = 0;
+            secondTableAddress = 0;
+            tailAddress = 0;
+
+            if (br == null || startAddress >= br.BaseStream.Length)
+                return false;
+
+            byte[] bytes = ReadBytesAt(br, startAddress, (int)Math.Min(16, br.BaseStream.Length - startAddress));
+            if (bytes.Length < 13 ||
+                bytes[0] != 0xB8 ||
+                bytes[3] != 0xA3 ||
+                bytes[4] != (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS & 0xFF) ||
+                bytes[5] != (byte)(INDIRECT_BATTLE_FIRST_TABLE_POINTER_ADDRESS >> 8) ||
+                bytes[6] != 0xB8)
+            {
+                return false;
+            }
+
+            firstTableAddress = (ushort)(bytes[1] | (bytes[2] << 8));
+            secondTableAddress = (ushort)(bytes[7] | (bytes[8] << 8));
+
+            if (bytes[9] == 0xE9)
+            {
+                short relative = unchecked((short)(bytes[10] | (bytes[11] << 8)));
+                tailAddress = (uint)(startAddress + 12 + relative);
+                return tailAddress < br.BaseStream.Length;
+            }
+
+            if (bytes[9] == 0xA3 &&
+                bytes[10] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS & 0xFF) &&
+                bytes[11] == (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS >> 8))
+            {
+                tailAddress = startAddress + 9;
+                return tailAddress < br.BaseStream.Length;
+            }
+
+            return false;
+        }
+
+        private bool TryValidateIndirectBattleTableCopyTail(
+            BinaryReader br,
+            uint tailAddress,
+            out byte rubiconValue,
+            out uint randomEncounterJumpAddress)
+        {
+            rubiconValue = 0;
+            randomEncounterJumpAddress = 0;
+
+            if (br == null || tailAddress >= br.BaseStream.Length)
+                return false;
+
+            byte[] bytes = ReadBytesAt(br, tailAddress, (int)Math.Min(64, br.BaseStream.Length - tailAddress));
+            if (bytes.Length < 57)
+                return false;
+
+            if (bytes[0] != 0xA3 ||
+                bytes[1] != (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS & 0xFF) ||
+                bytes[2] != (byte)(INDIRECT_BATTLE_SECOND_TABLE_POINTER_ADDRESS >> 8))
+            {
+                return false;
+            }
+
+            if (bytes[3] != 0xE8)
+                return false;
+
+            short callRelative = unchecked((short)(bytes[4] | (bytes[5] << 8)));
+            uint callTarget = (uint)(tailAddress + 6 + callRelative);
+            if (callTarget != CURRENT_MAP_EVENT_DISABLE_ROUTINE_ADDRESS)
+                return false;
+
+            byte[] expectedPrefix =
+            {
+                0xBB, 0x00, 0x00,
+                0x8B, 0x36, 0xFB, 0xCC,
+                0x8A, 0x00,
+                0x0A, 0xC0,
+                0x74
+            };
+
+            for (int i = 0; i < expectedPrefix.Length; i++)
+            {
+                if (bytes[6 + i] != expectedPrefix[i])
+                    return false;
+            }
+
+            byte[] expectedCopyBody =
+            {
+                0x8B, 0x36, 0xFD, 0xCC,
+                0x8A, 0x08,
+                0x88, 0x87, 0x58, 0x3C,
+                0x88, 0x8F, 0x29, 0x3C,
+                0xFE, 0xC3,
+                0x80, 0xFB, 0x0E,
+                0x72
+            };
+
+            for (int i = 0; i < expectedCopyBody.Length; i++)
+            {
+                if (bytes[19 + i] != expectedCopyBody[i])
+                    return false;
+            }
+
+            byte[] expectedExit =
+            {
+                0x88, 0x1E, 0x1D, 0x3C,
+                0xFE, 0x06, 0x21, 0x3C,
+                0xB0
+            };
+
+            for (int i = 0; i < expectedExit.Length; i++)
+            {
+                if (bytes[40 + i] != expectedExit[i])
+                    return false;
+            }
+
+            rubiconValue = bytes[49];
+
+            if (bytes[50] != 0xA2 ||
+                bytes[51] != (byte)(BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS & 0xFF) ||
+                bytes[52] != (byte)(BATTLE_RANDOM_ENCOUNTER_RUBICON_ADDRESS >> 8) ||
+                bytes[53] != 0x58 ||
+                bytes[54] != 0xE9)
+            {
+                return false;
+            }
+
+            short jumpRelative = unchecked((short)(bytes[55] | (bytes[56] << 8)));
+            uint jumpTarget = (uint)(tailAddress + 57 + jumpRelative);
+            if (jumpTarget != 0x517C)
+                return false;
+
+            randomEncounterJumpAddress = tailAddress + 54;
+            return true;
         }
 
         /// <summary>
