@@ -80,13 +80,7 @@ namespace MMMapEditor.Tests
     {
         private const int DefaultMaxParallelTests = 4;
 
-        private readonly Dictionary<string, OvrFileConfig> _configs;
         private static readonly Lazy<bool> VerboseTestLoggingEnabled = new Lazy<bool>(DetermineVerboseTestLoggingEnabled, LazyThreadSafetyMode.ExecutionAndPublication);
-
-        public OvrAnalyzerTestRunner()
-        {
-            _configs = OvrFileConfigs.Configs;
-        }
 
         private static bool DetermineVerboseTestLoggingEnabled()
         {
@@ -285,17 +279,17 @@ namespace MMMapEditor.Tests
 
                     WriteVerboseTestLog($"Файл существует: {Path.GetFileName(testCase.OvrFilePath)}");
 
-                    // Проверяем наличие конфигурации
+                    // Проверяем наличие данных карты из MAZEDATA.DTA/MM.EXE
                     string configKey = testCase.OvrConfigName ?? Path.GetFileName(testCase.OvrFilePath).ToUpper();
-                    if (!_configs.ContainsKey(configKey))
+                    if (!OvrFileConfigs.TryGetConfigForFile(testCase.OvrFilePath, out var config, out string configError))
                     {
                         result.Passed = false;
-                        result.ErrorMessage = $"Конфигурация {configKey} не найдена";
+                        result.ErrorMessage = configError ?? $"Данные карты для {configKey} не найдены";
                         System.Diagnostics.Debug.WriteLine($"ОШИБКА: {result.ErrorMessage}");
                         return result;
                     }
 
-                    WriteVerboseTestLog($"Конфигурация найдена: {configKey}");
+                    WriteVerboseTestLog($"Данные карты загружены: {configKey}");
 
                     using (var logger = new TestLogger(testCase.Id))
                     {
@@ -331,7 +325,6 @@ namespace MMMapEditor.Tests
                             }
                         }
 
-                        var config = OvrFileConfigs.ResolveConfig(testCase.OvrFilePath, _configs[configKey]);
                         var analyzedObjects = OvrFileAnalyzer.AnalyzeOvrFile(
                             testCase.OvrFilePath,
                             config,
@@ -460,10 +453,8 @@ namespace MMMapEditor.Tests
 
             string resolvedConfigKey = configKey ?? Path.GetFileName(filename).ToUpper();
 
-            if (!_configs.TryGetValue(resolvedConfigKey, out var baseConfig))
-                throw new InvalidOperationException($"Конфигурация {resolvedConfigKey} не найдена");
-
-            var config = OvrFileConfigs.ResolveConfig(filename, baseConfig);
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config, out string configError))
+                throw new InvalidOperationException(configError ?? $"Данные карты для {resolvedConfigKey} не найдены");
 
             string[] lines = new string[33];
 

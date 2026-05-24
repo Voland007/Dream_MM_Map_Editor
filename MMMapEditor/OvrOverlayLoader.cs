@@ -63,8 +63,8 @@ namespace MMMapEditor
         {
             string fileNameOnly = Path.GetFileName(filename).ToUpper();
 
-            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
-                throw new InvalidOperationException($"Конфигурация для файла {fileNameOnly} не найдена.");
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config, out string configError))
+                throw new InvalidOperationException(configError ?? $"Конфигурация для файла {fileNameOnly} не найдена.");
 
             byte[] fileData = File.ReadAllBytes(filename);
 

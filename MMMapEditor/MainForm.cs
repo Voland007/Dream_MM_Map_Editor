@@ -1155,9 +1155,9 @@ namespace MMMapEditor
             string[] lines = new string[33];
 
             // Проверяем наличие конфигурации для данного файла
-            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config, out string configError))
             {
-                MessageBox.Show($"Конфигурация для файла {fileNameOnly} не найдена.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(configError ?? $"Конфигурация для файла {fileNameOnly} не найдена.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
