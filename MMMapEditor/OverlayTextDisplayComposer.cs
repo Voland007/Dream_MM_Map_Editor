@@ -77,9 +77,14 @@ namespace MMMapEditor
                 return true;
             }
 
-            return TrySplitOverlayTextEntry(previous.Text, out _, out string previousPayload) &&
-                   TrySplitOverlayTextEntry(current.Text, out _, out _) &&
-                   EndsWithOpenQuote(previousPayload);
+            if (!TrySplitOverlayTextEntry(previous.Text, out _, out string previousPayload) ||
+                !TrySplitOverlayTextEntry(current.Text, out _, out string currentPayload))
+            {
+                return false;
+            }
+
+            return EndsWithOpenQuote(previousPayload) ||
+                   StartsWithInlineCommaContinuation(previousPayload, currentPayload);
         }
 
         private static void MergeOverlayText(TextEntry target, TextEntry source)
@@ -138,6 +143,54 @@ namespace MMMapEditor
             return quoteIndex == 0 ||
                    decoded[quoteIndex - 1] == '\r' ||
                    decoded[quoteIndex - 1] == '\n';
+        }
+
+        private static bool StartsWithInlineCommaContinuation(
+            string previousEncodedPayload,
+            string currentEncodedPayload)
+        {
+            if (string.IsNullOrEmpty(previousEncodedPayload) ||
+                string.IsNullOrEmpty(currentEncodedPayload))
+                return false;
+
+            if (EndsWithEncodedLineBreak(previousEncodedPayload))
+                return false;
+
+            int index = 0;
+            while (index < currentEncodedPayload.Length &&
+                   (currentEncodedPayload[index] == ' ' || currentEncodedPayload[index] == '\t'))
+            {
+                index++;
+            }
+
+            if (index == 0 || index >= currentEncodedPayload.Length)
+                return false;
+
+            return currentEncodedPayload[index] == ',';
+        }
+
+        private static bool EndsWithEncodedLineBreak(string encodedPayload)
+        {
+            if (string.IsNullOrEmpty(encodedPayload))
+                return false;
+
+            int index = encodedPayload.Length - 1;
+            while (index >= 0 &&
+                   (encodedPayload[index] == ' ' || encodedPayload[index] == '\t'))
+            {
+                index--;
+            }
+
+            if (index < 0)
+                return false;
+
+            char ch = encodedPayload[index];
+            if (ch == '\r' || ch == '\n')
+                return true;
+
+            return index > 0 &&
+                   encodedPayload[index - 1] == '\\' &&
+                   (ch == 'r' || ch == 'n');
         }
 
         private static bool TrySplitOverlayTextEntry(string rawText, out ushort textAddress, out string payload)

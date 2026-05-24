@@ -11143,8 +11143,10 @@ namespace MMMapEditor
 
             var seenInventoryPresenceItems = new HashSet<string>(StringComparer.Ordinal);
             var collapsedCandidates = CollapseFlagPropagatedInputChoiceDuplicates(candidates);
+            var displayCandidates = SuppressMainQuestCompletionThresholdChoicesShadowedByTransferReadyFlag(
+                collapsedCandidates);
             var result = new List<BranchChoice>();
-            foreach (var candidate in SuppressInventorySlotChoicesShadowedByRange(collapsedCandidates))
+            foreach (var candidate in SuppressInventorySlotChoicesShadowedByRange(displayCandidates))
             {
                 if (candidate?.Normalized == null)
                     continue;
@@ -11159,6 +11161,29 @@ namespace MMMapEditor
             }
 
             return result;
+        }
+
+        private static List<BranchChoiceDisplayCandidate> SuppressMainQuestCompletionThresholdChoicesShadowedByTransferReadyFlag(
+            List<BranchChoiceDisplayCandidate> choices)
+        {
+            var source = choices ?? new List<BranchChoiceDisplayCandidate>();
+            bool hasTransferReadyFlagChoice = source.Any(candidate =>
+                IsMainQuestPredicate(candidate?.Normalized?.GuardPredicate, 0x40));
+            if (!hasTransferReadyFlagChoice)
+                return source;
+
+            return source
+                .Where(candidate => !IsMainQuestPredicate(
+                    candidate?.Normalized?.GuardPredicate,
+                    PartyTechnicalFieldSemantics.MainQuestCompletedThreshold))
+                .ToList();
+        }
+
+        private static bool IsMainQuestPredicate(PartyPredicate predicate, byte immediateValue)
+        {
+            return predicate?.Field == PartyFieldKind.Technical7D &&
+                   predicate.ImmediateValue.HasValue &&
+                   predicate.ImmediateValue.Value == immediateValue;
         }
 
         private static bool IsPermanentStatRaiseGuardBranchChoice(

@@ -271,7 +271,7 @@ namespace MMMapEditor
                     ovrObject.Y,
                     predefinedAlternativePaths: null,
                     reachableAddresses: tableReachableAddresses,
-                    initializeRegisters: tracker => SetInitialRegistersFromCoordinates(tracker, ovrObject.X, ovrObject.Y, patchAddress),
+                    initializeRegisters: tracker => SetInitialRegistersForTableObjectPatch(tracker, patchAddress),
                     analysisCacheScopeKey: "table",
                     repeatedEventAnalysisMode: repeatedEventAnalysisMode);
 
@@ -309,12 +309,22 @@ namespace MMMapEditor
 
         private bool ShouldAnalyzeTableObjectAsSingleOccurrence(OvrObject obj)
         {
-            return _config != null &&
-                   _config.StartAddress == 0x52C &&
-                   obj != null &&
-                   obj.X == 9 &&
-                   obj.Y == 13 &&
-                   obj.PatchAddress == 0x0322;
+            if (_config == null || obj == null)
+                return false;
+
+            if (_config.StartAddress == 0x52C &&
+                obj.X == 9 &&
+                obj.Y == 13 &&
+                obj.PatchAddress == 0x0322)
+            {
+                return true;
+            }
+
+            // ASTRAL.OVR inner sanctum uses CE4D..CE50 as overlay-local scratch bytes.
+            return _config.StartAddress == 0x02F5 &&
+                   obj.X == 6 &&
+                   obj.Y == 7 &&
+                   obj.PatchAddress == 0x0169;
         }
 
         private List<OvrObject> ProcessMacros(BinaryReader br, List<X86Instruction> allInstructions, List<CoordinateComparison> comparisons,
@@ -2107,6 +2117,13 @@ namespace MMMapEditor
                 finalVariants = _pathAnalyzer.BuildFinalPathVariants(collectedVariants);
             }
 
+            finalVariants = FilterAstralInnerSanctumImpreciseExcellentVariants(
+                startAddress,
+                targetX,
+                targetY,
+                finalVariants,
+                debugMode);
+
             ApplyOccurrenceDescriptions(finalVariants.Values, maxAnalyzedOccurrence, analysisTruncated, usedRepeatedEventAcceleration);
             RegisterCachedObjectVariants(
                 analysisCacheScopeKey,
@@ -2122,6 +2139,82 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"Канонических outcomes после схлопывания: {finalVariants.Count}");
 
             return finalVariants;
+        }
+
+        private Dictionary<int, PathVariantInfo> FilterAstralInnerSanctumImpreciseExcellentVariants(
+            uint startAddress,
+            byte targetX,
+            byte targetY,
+            Dictionary<int, PathVariantInfo> variants,
+            bool debugMode)
+        {
+            if (_config == null ||
+                _config.StartAddress != 0x02F5 ||
+                startAddress != 0x0169 ||
+                targetX != 6 ||
+                targetY != 7 ||
+                variants == null ||
+                variants.Count == 0)
+            {
+                return variants;
+            }
+
+            bool hasPreciseExcellentOutcome = variants.Values.Any(IsAstralInnerSanctumExcellentWithQuestWrite);
+            if (!hasPreciseExcellentOutcome)
+                return variants;
+
+            var filtered = variants.Values
+                .Where(variant => !IsAstralInnerSanctumImpreciseTextOnlyExcellent(variant))
+                .ToList();
+            if (filtered.Count == variants.Count)
+                return variants;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"  ASTRAL inner sanctum: убрано text-only excellent outcomes после схлопывания party-loop: " +
+                    $"{variants.Count - filtered.Count}");
+            }
+
+            return filtered
+                .Select((variant, index) => new { index, variant })
+                .ToDictionary(item => item.index, item => item.variant);
+        }
+
+        private static bool IsAstralInnerSanctumImpreciseTextOnlyExcellent(PathVariantInfo variant)
+        {
+            return HasAstralInnerSanctumExcellentText(variant) &&
+                   !HasMainQuestCompletionWrite(variant) &&
+                   VariantRequiresCe50NonZero(variant);
+        }
+
+        private static bool IsAstralInnerSanctumExcellentWithQuestWrite(PathVariantInfo variant)
+        {
+            return HasAstralInnerSanctumExcellentText(variant) &&
+                   HasMainQuestCompletionWrite(variant);
+        }
+
+        private static bool HasAstralInnerSanctumExcellentText(PathVariantInfo variant)
+        {
+            return variant?.Texts?.Any(text =>
+                !string.IsNullOrWhiteSpace(text) &&
+                text.IndexOf("EXCELLENT RATING", StringComparison.OrdinalIgnoreCase) >= 0) == true;
+        }
+
+        private static bool HasMainQuestCompletionWrite(PathVariantInfo variant)
+        {
+            return variant?.PartyEffects?.Any(effect =>
+                effect != null &&
+                (effect.Field == PartyFieldKind.Technical7D ||
+                 effect.TechnicalFieldOffset == PartyTechnicalFieldSemantics.MainQuestCompletionFieldOffset) &&
+                effect.Operation == PartyEffectOperation.Write) == true;
+        }
+
+        private static bool VariantRequiresCe50NonZero(PathVariantInfo variant)
+        {
+            return variant?.StateValueConstraints != null &&
+                   variant.StateValueConstraints.TryGetValue(0xCE50, out var constraint) &&
+                   constraint?.ExcludedValues?.Contains(0x00) == true;
         }
 
         private SingleOccurrenceAnalysisResult AnalyzeSingleOccurrenceVariants(
@@ -3671,6 +3764,9 @@ namespace MMMapEditor
 
                 if (!hasCurrentValue && !hasCurrentConstraint && isLocallyMaterialized)
                 {
+                    if (LocalExitStateMaySatisfyConstraint(variant, address, requiredConstraint))
+                        continue;
+
                     if (isInitialRepeatedEventState &&
                         ShouldEvaluateInitialOverlayConstraintForOccurrence(variant) &&
                         TryEvaluateInitialReadBeforeWriteOverlayConstraint(
@@ -6157,6 +6253,13 @@ namespace MMMapEditor
             tracker.SetRegisterValue("BH", 0, patchStartAddress, "Initial BH = 0");
             tracker.SetRegisterValue("BX", (ushort)x, patchStartAddress, $"Initial BX = X ({x})");
             tracker.MarkRegisterAsCoordinateSeed("BX");
+        }
+
+        private void SetInitialRegistersForTableObjectPatch(RegisterTracker tracker, uint patchStartAddress)
+        {
+            tracker.SetRegisterValue("BL", 0, patchStartAddress, "Initial BL = 0 from table dispatch");
+            tracker.SetRegisterValue("BH", 0, patchStartAddress, "Initial BH = 0 from table dispatch");
+            tracker.SetRegisterValue("BX", 0, patchStartAddress, "Initial BX = 0 from table dispatch");
         }
 
         private (List<TextEntry> local, List<TextEntry> context) CollectTextsFromResult(PathAnalysisResult result)

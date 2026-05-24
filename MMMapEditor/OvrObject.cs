@@ -946,12 +946,30 @@ namespace MMMapEditor
             {
                 if (IsMainQuestCompletionPredicate(predicate))
                 {
-                    if (IsLinear && TryInvertPredicateComparison(predicate.Comparison, out var invertedComparison))
-                        predicate.Comparison = invertedComparison;
+                    if (predicate.ImmediateValue.Value == 0x40)
+                    {
+                        if (IsLinear && TryInvertPredicateComparison(predicate.Comparison, out var invertedComparison))
+                            predicate.Comparison = invertedComparison;
 
-                    predicate.LoopQuantifier = IsLinear
-                        ? PartyPredicateLoopQuantifier.None
-                        : PartyPredicateLoopQuantifier.Any;
+                        predicate.LoopQuantifier = IsLinear
+                            ? PartyPredicateLoopQuantifier.Any
+                            : PartyPredicateLoopQuantifier.None;
+                    }
+                    else if (IsLinear &&
+                             predicate.ImmediateValue.Value == PartyTechnicalFieldSemantics.MainQuestCompletedThreshold &&
+                             predicate.Comparison == PartyPredicateComparison.GreaterOrEqual)
+                    {
+                        predicate.LoopQuantifier = PartyPredicateLoopQuantifier.Any;
+                    }
+                    else
+                    {
+                        if (IsLinear && TryInvertPredicateComparison(predicate.Comparison, out var invertedComparison))
+                            predicate.Comparison = invertedComparison;
+
+                        predicate.LoopQuantifier = IsLinear
+                            ? PartyPredicateLoopQuantifier.None
+                            : PartyPredicateLoopQuantifier.Any;
+                    }
                 }
                 else
                 {
