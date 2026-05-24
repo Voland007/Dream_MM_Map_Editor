@@ -8873,7 +8873,7 @@ namespace MMMapEditor
                     FlattenTransparentStructuralWrappers(
                         SimplifyGenericChoiceTree(
                             CompressVariantTree(root))));
-                HoistSharedLeadingLines(group.TreeRoot, allowDisplayLineDirectVariantHoist: true);
+                HoistSharedLeadingLines(group.TreeRoot, allowDisplayLineHoist: true);
                 CollapseSingleSubvariantBranches(group);
             }
 
@@ -13235,6 +13235,24 @@ namespace MMMapEditor
             return GetCommonPrefix(directVariants.Select(variant => variant.Lines).ToList());
         }
 
+        private static List<string> GetHoistablePromptDisplayLines(VariantTreeNode node)
+        {
+            if (node == null)
+                return new List<string>();
+
+            if (node.CommonLines != null && node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return FlattenDisplayLines(node.CommonLines);
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (directVariants.Count == 0)
+                return new List<string>();
+
+            return GetCommonDisplayLinePrefix(directVariants.Select(variant => variant.Lines).ToList());
+        }
+
         private static bool PromptPrefixContainsChoiceLabel(IEnumerable<string> promptLines, string choiceLabel)
         {
             string normalizedChoice = NormalizeChoiceLabel(choiceLabel);
@@ -13275,6 +13293,22 @@ namespace MMMapEditor
                    variants.All(variant => StartsWithLineSequence(variant.Lines, prefix));
         }
 
+        private static bool NodeDisplayContentStartsWithLines(VariantTreeNode node, IReadOnlyList<string> prefix)
+        {
+            if (node == null || prefix == null || prefix.Count == 0)
+                return false;
+
+            if (StartsWithLineSequence(FlattenDisplayLines(node.CommonLines), prefix))
+                return true;
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant != null)
+                .ToList();
+
+            return variants.Count > 0 &&
+                   variants.All(variant => StartsWithLineSequence(FlattenDisplayLines(variant.Lines), prefix));
+        }
+
         private static bool TryRemoveLeadingLinesFromNodeContent(VariantTreeNode node, IReadOnlyList<string> prefix)
         {
             if (node == null || prefix == null || prefix.Count == 0)
@@ -13308,17 +13342,50 @@ namespace MMMapEditor
             return true;
         }
 
+        private static bool TryRemoveLeadingDisplayLinesFromNodeContent(VariantTreeNode node, IReadOnlyList<string> prefix)
+        {
+            if (node == null || prefix == null || prefix.Count == 0)
+                return false;
+
+            if (StartsWithLineSequence(FlattenDisplayLines(node.CommonLines), prefix))
+            {
+                node.CommonLines = FlattenDisplayLines(node.CommonLines)
+                    .Skip(prefix.Count)
+                    .ToList();
+                return true;
+            }
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (variants.Count == 0 ||
+                variants.Any(variant => !StartsWithLineSequence(FlattenDisplayLines(variant.Lines), prefix)))
+            {
+                return false;
+            }
+
+            foreach (var variant in variants)
+            {
+                variant.Lines = FlattenDisplayLines(variant.Lines)
+                    .Skip(prefix.Count)
+                    .ToList();
+            }
+
+            return true;
+        }
+
         private static void HoistSharedLeadingLines(
             VariantTreeNode node,
-            bool allowDisplayLineDirectVariantHoist = false)
+            bool allowDisplayLineHoist = false)
         {
             if (node == null)
                 return;
 
             foreach (var child in node.Children ?? new List<VariantTreeNode>())
-                HoistSharedLeadingLines(child, allowDisplayLineDirectVariantHoist);
+                HoistSharedLeadingLines(child, allowDisplayLineHoist);
 
-            HoistSharedLeadingLinesAcrossDirectVariants(node, allowDisplayLineDirectVariantHoist);
+            HoistSharedLeadingLinesAcrossDirectVariants(node, allowDisplayLineHoist);
 
             var children = (node.Children ?? new List<VariantTreeNode>())
                 .Where(IsRenderableStructuralNode)
@@ -13333,14 +13400,32 @@ namespace MMMapEditor
                 return;
 
             var commonLines = GetCommonPrefix(childLeadingLines);
+            bool useDisplayLinePrefix = false;
+            if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)) &&
+                allowDisplayLineHoist)
+            {
+                childLeadingLines = children
+                    .Select(GetHoistablePromptDisplayLines)
+                    .ToList();
+                if (childLeadingLines.Any(lines => lines == null || lines.Count == 0))
+                    return;
+
+                commonLines = GetCommonPrefix(childLeadingLines);
+                useDisplayLinePrefix = commonLines.Any(line => !string.IsNullOrWhiteSpace(line));
+            }
+
             if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
                 return;
 
             var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
                 .Where(variant => variant != null && HasMeaningfulLines(variant.Lines))
                 .ToList();
-            if (directVariants.Any(variant => !StartsWithLineSequence(variant.Lines, commonLines)))
+            if (useDisplayLinePrefix
+                ? directVariants.Any(variant => !StartsWithLineSequence(FlattenDisplayLines(variant.Lines), commonLines))
+                : directVariants.Any(variant => !StartsWithLineSequence(variant.Lines, commonLines)))
+            {
                 return;
+            }
 
             var descendants = children
                 .SelectMany(GetAllVariants)
@@ -13349,15 +13434,24 @@ namespace MMMapEditor
             if (ShouldKeepSharedPartyEffectPrefixInline(descendants, commonLines))
                 return;
 
-            if (children.Any(child => !NodeContentStartsWithLines(child, commonLines)))
+            if (children.Any(child => useDisplayLinePrefix
+                    ? !NodeDisplayContentStartsWithLines(child, commonLines)
+                    : !NodeContentStartsWithLines(child, commonLines)))
+            {
                 return;
+            }
 
             foreach (var child in children)
-                TryRemoveLeadingLinesFromNodeContent(child, commonLines);
+            {
+                if (useDisplayLinePrefix)
+                    TryRemoveLeadingDisplayLinesFromNodeContent(child, commonLines);
+                else
+                    TryRemoveLeadingLinesFromNodeContent(child, commonLines);
+            }
 
             foreach (var variant in directVariants)
             {
-                variant.Lines = variant.Lines
+                variant.Lines = (useDisplayLinePrefix ? FlattenDisplayLines(variant.Lines) : variant.Lines)
                     .Skip(commonLines.Count)
                     .ToList();
             }

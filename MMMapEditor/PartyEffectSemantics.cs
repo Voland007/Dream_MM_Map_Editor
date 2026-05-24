@@ -25,10 +25,25 @@ namespace MMMapEditor
         private const ushort StandardActivePartyMemberStatusThreshold = 0x80;
         private const ushort PartySexMaleValue = 0x01;
         private const ushort PartySexFemaleValue = 0x02;
+        private const byte MonksOfSouthQuestCompletionRaiseFlagsValue = 0x80;
+        private const string MonksOfSouthQuestCompletionNote =
+            "-=*У всех персонажей партии засчитывается выполнение квеста о нахождении монахов юга: это позволяет повторно получить постоянные повышения характеристик в соответствующих локациях*=-";
 
         private static string FormatMemberDisplay(int memberIndex)
         {
             return PartyMemberReference.FormatDisplayIndex(memberIndex);
+        }
+
+        private static bool IsMonksOfSouthQuestCompletionRaiseFlagsReset(
+            PartyEffectOperation operation,
+            PartyEffectScope scope,
+            ushort? immediateValue)
+        {
+            return scope == PartyEffectScope.WholeParty &&
+                   (!immediateValue.HasValue ||
+                    ((operation == PartyEffectOperation.Write ||
+                      operation == PartyEffectOperation.Unknown) &&
+                     (byte)(immediateValue.Value & 0xFF) == MonksOfSouthQuestCompletionRaiseFlagsValue));
         }
 
         private static bool IsTrackedByteField(PartyFieldKind field)
@@ -1504,10 +1519,12 @@ namespace MMMapEditor
 
             if (!effect.ImmediateValue.HasValue)
             {
-                return ComposeQuestLordSentence(
-                    targetPrefix,
-                    $"Изменяется поле {fieldLabel}",
-                    $"изменяется поле {fieldLabel}");
+                return IsMonksOfSouthQuestCompletionRaiseFlagsReset(operation, scope, effect.ImmediateValue)
+                    ? MonksOfSouthQuestCompletionNote
+                    : ComposeQuestLordSentence(
+                        targetPrefix,
+                        $"Изменяется поле {fieldLabel}",
+                        $"изменяется поле {fieldLabel}");
             }
 
             byte mask = (byte)(effect.ImmediateValue.Value & 0xFF);
@@ -1536,10 +1553,12 @@ namespace MMMapEditor
                         targetPrefix,
                         $"В поле {fieldLabel} переключается маска 0x{mask:X2}",
                         $"в поле {fieldLabel} переключается маска 0x{mask:X2}"),
-                    _ => ComposeQuestLordSentence(
-                        targetPrefix,
-                        $"Изменяется поле {fieldLabel}",
-                        $"изменяется поле {fieldLabel}")
+                    _ => IsMonksOfSouthQuestCompletionRaiseFlagsReset(operation, scope, effect.ImmediateValue)
+                        ? MonksOfSouthQuestCompletionNote
+                        : ComposeQuestLordSentence(
+                            targetPrefix,
+                            $"Изменяется поле {fieldLabel}",
+                            $"изменяется поле {fieldLabel}")
                 };
             }
 
