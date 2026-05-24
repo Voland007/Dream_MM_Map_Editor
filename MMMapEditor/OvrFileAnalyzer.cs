@@ -36,6 +36,7 @@ namespace MMMapEditor
 
         private sealed class ObjectTableLayout
         {
+            public int ObjectCount { get; set; }
             public long CountOffset { get; set; }
             public long CoordinatesOffset { get; set; }
             public long DirectionsOffset { get; set; }
@@ -119,8 +120,7 @@ namespace MMMapEditor
             {
                 ObjectTableLayout layout = ResolveObjectTableLayout(br);
 
-                br.BaseStream.Seek(layout.CountOffset, SeekOrigin.Begin);
-                byte numObjects = br.ReadByte();
+                int numObjects = layout.ObjectCount;
                 long requiredLength = Math.Max(
                     Math.Max(layout.CoordinatesOffset + numObjects, layout.DirectionsOffset + numObjects),
                     layout.PatchKeysOffset + (numObjects * 2L));
@@ -220,8 +220,7 @@ namespace MMMapEditor
             var objects = new List<OvrObject>();
 
             ObjectTableLayout layout = ResolveObjectTableLayout(br);
-            br.BaseStream.Seek(layout.CountOffset, SeekOrigin.Begin);
-            byte numObjects = br.ReadByte();
+            int numObjects = layout.ObjectCount;
 
             var coordinates = ReadCoordinates(br, layout.CoordinatesOffset, numObjects);
             var directions = ReadDirections(br, layout.DirectionsOffset, numObjects);
@@ -563,6 +562,7 @@ namespace MMMapEditor
 
             return new ObjectTableLayout
             {
+                ObjectCount = numObjects,
                 CountOffset = _config.StartAddress,
                 CoordinatesOffset = coordinatesOffset,
                 DirectionsOffset = directionsOffset,
@@ -656,15 +656,24 @@ namespace MMMapEditor
                         continue;
 
                     if (coordinatesOffset < 0 ||
-                        directionsOffset < coordinatesOffset + numObjects ||
-                        patchKeysOffset < directionsOffset + numObjects ||
+                        directionsOffset < coordinatesOffset ||
+                        patchKeysOffset < directionsOffset ||
+                        coordinatesOffset + numObjects > fileLength ||
+                        directionsOffset + numObjects > fileLength ||
                         patchKeysOffset + (numObjects * 2L) > fileLength)
                     {
                         continue;
                     }
 
+                    int tableObjectCount = ResolveDetectedTableObjectCount(
+                        numObjects,
+                        coordinatesOffset,
+                        directionsOffset,
+                        patchKeysOffset);
+
                     layout = new ObjectTableLayout
                     {
+                        ObjectCount = tableObjectCount,
                         CountOffset = countOffset,
                         CoordinatesOffset = coordinatesOffset,
                         DirectionsOffset = directionsOffset,
@@ -683,6 +692,26 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        private static int ResolveDetectedTableObjectCount(
+            byte declaredObjectCount,
+            long coordinatesOffset,
+            long directionsOffset,
+            long patchKeysOffset)
+        {
+            int objectCount = declaredObjectCount;
+
+            long coordinateRecordSpan = directionsOffset - coordinatesOffset;
+            long directionRecordSpan = patchKeysOffset - directionsOffset;
+            long overlappedRecordCount = Math.Min(coordinateRecordSpan, directionRecordSpan);
+
+            if (overlappedRecordCount > 0 && overlappedRecordCount < objectCount)
+            {
+                objectCount = (int)overlappedRecordCount;
+            }
+
+            return objectCount;
         }
 
         private static bool TryMapLoadedAddressToFileOffset(
