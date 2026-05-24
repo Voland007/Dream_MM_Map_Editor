@@ -3767,6 +3767,39 @@ namespace MMMapEditor
                 updated = true;
             }
 
+            if (existing.DisplayRoutine == OverlayTextDisplayRoutineKind.Unknown &&
+                candidate.DisplayRoutine != OverlayTextDisplayRoutineKind.Unknown)
+            {
+                existing.DisplayRoutine = candidate.DisplayRoutine;
+                updated = true;
+            }
+
+            if (existing.DisplayInstructionAddress == 0 &&
+                candidate.DisplayInstructionAddress != 0)
+            {
+                existing.DisplayInstructionAddress = candidate.DisplayInstructionAddress;
+                updated = true;
+            }
+
+            if (!existing.ScreenTextContinuesPrevious && candidate.ScreenTextContinuesPrevious)
+            {
+                existing.ScreenTextContinuesPrevious = true;
+                updated = true;
+            }
+
+            if (!existing.ScreenLineBreakAfter && candidate.ScreenLineBreakAfter)
+            {
+                existing.ScreenLineBreakAfter = true;
+                updated = true;
+            }
+
+            if (string.IsNullOrEmpty(existing.ScreenTextSeparatorAfter) &&
+                !string.IsNullOrEmpty(candidate.ScreenTextSeparatorAfter))
+            {
+                existing.ScreenTextSeparatorAfter = candidate.ScreenTextSeparatorAfter;
+                updated = true;
+            }
+
             return updated;
         }
 
@@ -3786,6 +3819,13 @@ namespace MMMapEditor
                 ? replacement.SemanticKind
                 : existing.SemanticKind;
             existing.IsInferred = replacement.IsInferred;
+            if (replacement.DisplayRoutine != OverlayTextDisplayRoutineKind.Unknown)
+                existing.DisplayRoutine = replacement.DisplayRoutine;
+            if (replacement.DisplayInstructionAddress != 0)
+                existing.DisplayInstructionAddress = replacement.DisplayInstructionAddress;
+            existing.ScreenTextContinuesPrevious = replacement.ScreenTextContinuesPrevious;
+            existing.ScreenLineBreakAfter = replacement.ScreenLineBreakAfter;
+            existing.ScreenTextSeparatorAfter = replacement.ScreenTextSeparatorAfter;
 
             AddLegacyText(result, existing.Text, existing.IsContextual);
             foundTextsInThisPath?.Add(existing.Text);
@@ -3835,11 +3875,18 @@ namespace MMMapEditor
 
         private OrderedTextMergeOutcome UpsertOrderedText(PathAnalysisResult result, string text, bool isContextual,
             uint instructionAddress, ref int textOrderCounter, TextSemanticKind semanticKind = TextSemanticKind.Unknown,
-            bool isInferred = false, HashSet<string> foundTextsInThisPath = null, bool debugMode = false)
+            bool isInferred = false, HashSet<string> foundTextsInThisPath = null, bool debugMode = false,
+            OverlayTextDisplayRoutineKind displayRoutine = OverlayTextDisplayRoutineKind.Unknown,
+            uint displayInstructionAddress = 0)
         {
             if (result == null || string.IsNullOrEmpty(text))
                 return OrderedTextMergeOutcome.UnchangedExisting;
 
+            bool continuesPreviousScreenText =
+                result != null &&
+                !string.IsNullOrEmpty(result.PendingPrintedTextPrefix) &&
+                !string.IsNullOrEmpty(text) &&
+                TrySplitOverlayTextEntry(text, out _, out _);
             text = ConsumePendingPrintedTextPrefix(result, text, instructionAddress, debugMode);
 
             var candidate = new TextEntry
@@ -3848,7 +3895,10 @@ namespace MMMapEditor
                 IsContextual = isContextual,
                 Address = instructionAddress,
                 SemanticKind = semanticKind,
-                IsInferred = isInferred
+                IsInferred = isInferred,
+                DisplayRoutine = displayRoutine,
+                DisplayInstructionAddress = displayInstructionAddress,
+                ScreenTextContinuesPrevious = continuesPreviousScreenText
             };
 
             var existingExact = result.OrderedTexts.FirstOrDefault(entry =>
@@ -3887,7 +3937,16 @@ namespace MMMapEditor
                 return OrderedTextMergeOutcome.UpdatedExisting;
 
             AddLegacyText(result, text, isContextual);
-            AddOrderedText(result, text, isContextual, instructionAddress, ref textOrderCounter, semanticKind, isInferred);
+            AddOrderedText(
+                result,
+                text,
+                isContextual,
+                instructionAddress,
+                ref textOrderCounter,
+                semanticKind,
+                isInferred,
+                displayRoutine,
+                displayInstructionAddress);
             foundTextsInThisPath?.Add(text);
             return OrderedTextMergeOutcome.Added;
         }
@@ -3899,7 +3958,9 @@ namespace MMMapEditor
         }
 
         private void AddOrderedText(PathAnalysisResult result, string text, bool isContextual, uint instructionAddress,
-            ref int textOrderCounter, TextSemanticKind semanticKind, bool isInferred)
+            ref int textOrderCounter, TextSemanticKind semanticKind, bool isInferred,
+            OverlayTextDisplayRoutineKind displayRoutine = OverlayTextDisplayRoutineKind.Unknown,
+            uint displayInstructionAddress = 0)
         {
             if (string.IsNullOrEmpty(text))
                 return;
@@ -3911,13 +3972,17 @@ namespace MMMapEditor
                 Address = instructionAddress,
                 Order = textOrderCounter++,
                 SemanticKind = semanticKind,
-                IsInferred = isInferred
+                IsInferred = isInferred,
+                DisplayRoutine = displayRoutine,
+                DisplayInstructionAddress = displayInstructionAddress
             });
         }
 
         private void AddSyntheticOutcomeText(PathAnalysisResult result, string text, int callDepth,
             uint instructionAddress, bool debugMode, ref int textOrderCounter,
-            TextSemanticKind semanticKind = TextSemanticKind.Unknown, bool isInferred = false)
+            TextSemanticKind semanticKind = TextSemanticKind.Unknown, bool isInferred = false,
+            OverlayTextDisplayRoutineKind displayRoutine = OverlayTextDisplayRoutineKind.Unknown,
+            uint displayInstructionAddress = 0)
         {
             if (result == null || string.IsNullOrEmpty(text))
                 return;
@@ -3932,7 +3997,9 @@ namespace MMMapEditor
                 semanticKind,
                 isInferred,
                 foundTextsInThisPath: null,
-                debugMode: debugMode);
+                debugMode: debugMode,
+                displayRoutine: displayRoutine,
+                displayInstructionAddress: displayInstructionAddress);
 
             result.HasSignificantCode = true;
 
@@ -4011,7 +4078,24 @@ namespace MMMapEditor
                 return true;
             }
 
-            if (HasOverlayTextEntry(result, textAddress, text) ||
+            OverlayTextDisplayRoutineKind displayRoutine = GetOverlayTextDisplayRoutine(callTarget);
+            bool markedExisting = TryMarkOverlayTextEntryDisplayed(
+                result,
+                textAddress,
+                text,
+                displayRoutine,
+                (uint)insn.Address);
+            bool markedSameVisiblePositioned =
+                callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS &&
+                TryMarkOverlayTextEntryDisplayedByVisibleText(
+                    result,
+                    text,
+                    displayRoutine,
+                    (uint)insn.Address);
+
+            if (markedExisting ||
+                markedSameVisiblePositioned ||
+                HasOverlayTextEntry(result, textAddress, text) ||
                 callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS && HasOverlayTextEntryWithSameVisibleText(result, text))
             {
                 return false;
@@ -4023,7 +4107,9 @@ namespace MMMapEditor
                 callDepth,
                 (uint)insn.Address,
                 debugMode,
-                ref textOrderCounter);
+                ref textOrderCounter,
+                displayRoutine: displayRoutine,
+                displayInstructionAddress: (uint)insn.Address);
 
             return true;
         }
@@ -4142,7 +4228,9 @@ namespace MMMapEditor
                     callDepth,
                     instructionAddress,
                     debugMode,
-                    ref textOrderCounter);
+                    ref textOrderCounter,
+                    displayRoutine: GetOverlayTextDisplayRoutine(callTarget),
+                    displayInstructionAddress: instructionAddress);
                 addedAny = true;
             }
 
@@ -4292,7 +4380,9 @@ namespace MMMapEditor
                     callDepth,
                     instructionAddress,
                     debugMode,
-                    ref textOrderCounter);
+                    ref textOrderCounter,
+                    displayRoutine: GetOverlayTextDisplayRoutine(callTarget),
+                    displayInstructionAddress: instructionAddress);
                 addedAny = true;
             }
 
@@ -4391,6 +4481,17 @@ namespace MMMapEditor
         {
             return callTarget == DISPLAY_TEXT_ROUTINE_ADDRESS ||
                    callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS;
+        }
+
+        private static OverlayTextDisplayRoutineKind GetOverlayTextDisplayRoutine(uint callTarget)
+        {
+            if (callTarget == POSITIONED_TEXT_ROUTINE_ADDRESS)
+                return OverlayTextDisplayRoutineKind.Positioned;
+
+            if (callTarget == DISPLAY_TEXT_ROUTINE_ADDRESS)
+                return OverlayTextDisplayRoutineKind.Standard;
+
+            return OverlayTextDisplayRoutineKind.Unknown;
         }
 
         private void AdvancePositionedTextCursorForExternalCall(X86Instruction insn, BinaryReader br,
@@ -4493,6 +4594,60 @@ namespace MMMapEditor
                 return false;
 
             return HasOverlayTextEntry(result, BuildOverlayTextEntry(textAddress, text));
+        }
+
+        private static bool TryMarkOverlayTextEntryDisplayed(
+            PathAnalysisResult result,
+            ushort textAddress,
+            string text,
+            OverlayTextDisplayRoutineKind displayRoutine,
+            uint displayInstructionAddress)
+        {
+            if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
+                return false;
+
+            string candidateText = BuildOverlayTextEntry(textAddress, text);
+            var entry = result.OrderedTexts.FirstOrDefault(existing =>
+                existing != null &&
+                (IsEquivalentOverlayTextEntry(existing.Text, candidateText) ||
+                 ExistingOverlayTextCoversCandidate(existing.Text, candidateText)));
+
+            if (entry == null)
+                return false;
+
+            if (entry.DisplayRoutine == OverlayTextDisplayRoutineKind.Unknown)
+                entry.DisplayRoutine = displayRoutine;
+
+            if (entry.DisplayInstructionAddress == 0)
+                entry.DisplayInstructionAddress = displayInstructionAddress;
+
+            return true;
+        }
+
+        private static bool TryMarkOverlayTextEntryDisplayedByVisibleText(
+            PathAnalysisResult result,
+            string text,
+            OverlayTextDisplayRoutineKind displayRoutine,
+            uint displayInstructionAddress)
+        {
+            if (result?.OrderedTexts == null || string.IsNullOrEmpty(text))
+                return false;
+
+            var entry = result.OrderedTexts.FirstOrDefault(existing =>
+                existing != null &&
+                TrySplitOverlayTextEntry(existing.Text, out _, out string existingText) &&
+                string.Equals(existingText, text, StringComparison.Ordinal));
+
+            if (entry == null)
+                return false;
+
+            if (entry.DisplayRoutine == OverlayTextDisplayRoutineKind.Unknown)
+                entry.DisplayRoutine = displayRoutine;
+
+            if (entry.DisplayInstructionAddress == 0)
+                entry.DisplayInstructionAddress = displayInstructionAddress;
+
+            return true;
         }
 
         private static bool HasOverlayTextEntry(PathAnalysisResult result, string candidateText)
@@ -4908,7 +5063,9 @@ namespace MMMapEditor
                     entry.SemanticKind,
                     entry.IsInferred,
                     foundTextsInThisPath,
-                    debugMode);
+                    debugMode,
+                    entry.DisplayRoutine,
+                    entry.DisplayInstructionAddress);
 
                 if (mergeOutcome != OrderedTextMergeOutcome.Added)
                     continue;
@@ -5121,6 +5278,7 @@ namespace MMMapEditor
         private static bool IsTerminalPrintedSuffixPunctuation(char ch)
         {
             return ch == '.' ||
+                   ch == ',' ||
                    ch == '!' ||
                    ch == '?' ||
                    ch == ';' ||
@@ -5135,6 +5293,81 @@ namespace MMMapEditor
                             TrySplitOverlayTextEntry(t.Text, out _, out _))
                 .OrderBy(t => t.Order)
                 .LastOrDefault();
+        }
+
+        private static TextEntry FindLastScreenTextEntry(PathAnalysisResult result, uint instructionAddress)
+        {
+            return result?.OrderedTexts?
+                .Where(t => IsDisplayedScreenTextEntryBefore(t, instructionAddress))
+                .OrderBy(t => t.Order)
+                .LastOrDefault();
+        }
+
+        private static bool IsDisplayedScreenTextEntryBefore(TextEntry entry, uint instructionAddress)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.Text))
+                return false;
+
+            if (entry.DisplayInstructionAddress != 0)
+                return entry.DisplayInstructionAddress < instructionAddress;
+
+            return !TrySplitOverlayTextEntry(entry.Text, out _, out _) &&
+                   entry.Address <= instructionAddress;
+        }
+
+        private static TextEntry AddPendingPrintedTextAsScreenEntry(
+            PathAnalysisResult result,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result == null || string.IsNullOrEmpty(result.PendingPrintedTextPrefix))
+                return null;
+
+            int nextOrder = result.OrderedTexts.Count == 0 ? 0 : result.OrderedTexts.Max(t => t.Order) + 1;
+            var entry = new TextEntry
+            {
+                Text = result.PendingPrintedTextPrefix,
+                IsContextual = false,
+                Address = result.PendingPrintedTextAddress != 0
+                    ? result.PendingPrintedTextAddress
+                    : instructionAddress,
+                Order = nextOrder,
+                ScreenTextContinuesPrevious = true
+            };
+
+            result.OrderedTexts.Add(entry);
+            AddLegacyText(result, entry.Text, isContextual: false);
+
+            if (debugMode)
+                AnalysisDebug.WriteLine($"        Материализовали отложенные печатаемые символы как экранный фрагмент -> {entry.Text}");
+
+            result.PendingPrintedTextPrefix = string.Empty;
+            result.PendingPrintedTextAddress = 0;
+
+            return entry;
+        }
+
+        private static void MarkScreenSpaceAfterLastScreenText(
+            PathAnalysisResult result,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            var lastText = AddPendingPrintedTextAsScreenEntry(result, instructionAddress, debugMode)
+                ?? FindLastScreenTextEntry(result, instructionAddress);
+            if (lastText == null)
+                return;
+
+            lastText.ScreenTextSeparatorAfter = " ";
+
+            if (debugMode)
+            {
+                string displayAddress = lastText.DisplayInstructionAddress != 0
+                    ? $"0x{lastText.DisplayInstructionAddress:X4}"
+                    : "без отдельного display-call";
+                AnalysisDebug.WriteLine(
+                    $"        Явный сдвиг экранного курсора после экранного текста {displayAddress} " +
+                    $"учтён как пробел перед следующим текстом (instruction 0x{instructionAddress:X4})");
+            }
         }
 
         private static void ReplaceOverlayTextEntry(PathAnalysisResult result, TextEntry entry, string updatedText,
@@ -5232,7 +5465,8 @@ namespace MMMapEditor
                     Text = pendingText,
                     IsContextual = false,
                     Address = result.PendingPrintedTextAddress != 0 ? result.PendingPrintedTextAddress : instructionAddress,
-                    Order = nextOrder
+                    Order = nextOrder,
+                    ScreenTextContinuesPrevious = true
                 });
                 AddLegacyText(result, pendingText, isContextual: false);
 
@@ -12729,6 +12963,8 @@ namespace MMMapEditor
                 ushort memAddr = BitConverter.ToUInt16(instructionBytes, 2);
                 int delta = instructionBytes[1] == 0x06 ? 1 : -1;
                 result?.AdjustedMemoryAddresses.Add(memAddr);
+                if (delta > 0 && memAddr == TEXT_CURSOR_COLUMN_ADDRESS)
+                    MarkScreenSpaceAfterLastScreenText(result, address, debugMode);
                 TrackBattleMonsterStrengthAdjustment(result, memAddr, delta, address, debugMode);
                 if (TryResolveTrackedByteValue(br, memAddr, result, targetX, targetY, out byte currentValue))
                 {

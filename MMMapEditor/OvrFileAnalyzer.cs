@@ -5630,6 +5630,10 @@ namespace MMMapEditor
                 PathOrderKey = source.PathOrderKey,
                 IsLeaf = source.IsLeaf,
                 Texts = source.Texts?.ToList() ?? new List<string>(),
+                TextEntries = source.TextEntries?
+                    .Where(entry => entry != null)
+                    .Select(entry => entry.Clone())
+                    .ToList() ?? new List<TextEntry>(),
                 BranchChoices = source.BranchChoices?
                     .Where(choice => choice != null)
                     .Select(choice => choice.Clone())
@@ -6206,17 +6210,15 @@ namespace MMMapEditor
 
         private PathVariantInfo CreatePathVariant(int pathId, List<TextEntry> pathTexts, bool isLeaf, PathAnalysisResult source)
         {
-            var combinedTexts = (pathTexts ?? new List<TextEntry>())
-                .Where(t => t != null && !string.IsNullOrEmpty(t.Text))
-                .OrderBy(t => t.Order)
-                .Select(t => t.Text)
-                .ToList();
+            var textEntries = OverlayTextDisplayComposer.CloneTextEntries(pathTexts);
+            var combinedTexts = OverlayTextDisplayComposer.ComposeRawTexts(textEntries);
 
             return new PathVariantInfo
             {
                 PathId = pathId,
                 PathOrderKey = pathId,
                 Texts = combinedTexts.Where(t => !string.IsNullOrEmpty(t)).ToList(),
+                TextEntries = textEntries,
                 IsLeaf = isLeaf,
                 RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
                 RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,

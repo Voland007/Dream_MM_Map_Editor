@@ -315,6 +315,13 @@ namespace MMMapEditor
         LootPayload = 2
     }
 
+    public enum OverlayTextDisplayRoutineKind
+    {
+        Unknown = 0,
+        Standard = 1,
+        Positioned = 2
+    }
+
     public enum NoteInlineStyleKind
     {
         InverseVideo = 0,
@@ -370,6 +377,11 @@ namespace MMMapEditor
         public uint Address { get; set; }
         public TextSemanticKind SemanticKind { get; set; } = TextSemanticKind.Unknown;
         public bool IsInferred { get; set; } = false;
+        public OverlayTextDisplayRoutineKind DisplayRoutine { get; set; } = OverlayTextDisplayRoutineKind.Unknown;
+        public uint DisplayInstructionAddress { get; set; } = 0;
+        public bool ScreenTextContinuesPrevious { get; set; } = false;
+        public bool ScreenLineBreakAfter { get; set; } = false;
+        public string ScreenTextSeparatorAfter { get; set; } = string.Empty;
 
         public TextEntry Clone()
         {
@@ -380,7 +392,12 @@ namespace MMMapEditor
                 IsContextual = IsContextual,
                 Address = Address,
                 SemanticKind = SemanticKind,
-                IsInferred = IsInferred
+                IsInferred = IsInferred,
+                DisplayRoutine = DisplayRoutine,
+                DisplayInstructionAddress = DisplayInstructionAddress,
+                ScreenTextContinuesPrevious = ScreenTextContinuesPrevious,
+                ScreenLineBreakAfter = ScreenLineBreakAfter,
+                ScreenTextSeparatorAfter = ScreenTextSeparatorAfter
             };
         }
     }

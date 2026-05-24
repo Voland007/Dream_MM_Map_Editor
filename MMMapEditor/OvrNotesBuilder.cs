@@ -8394,6 +8394,12 @@ namespace MMMapEditor
                 line += scoreMarker;
             }
 
+            line = Regex.Replace(
+                line,
+                @"^(\s*)\+\s+EXPERIENCE\b(.*)$",
+                match => match.Groups[1].Value + "+" + experienceRange + " EXPERIENCE" + match.Groups[2].Value,
+                RegexOptions.CultureInvariant);
+
             return Regex.Replace(
                 line,
                 @"^(\s*)\+\s*$",
@@ -8417,7 +8423,7 @@ namespace MMMapEditor
             int experienceIndex = -1;
             for (int i = 0; i < lines.Count; i++)
             {
-                if (string.Equals(lines[i]?.Trim(), "EXPERIENCE", StringComparison.Ordinal))
+                if (IsAreaE1JudgementStatueExperienceRewardLine(lines[i]))
                     experienceIndex = i;
             }
 
@@ -8430,6 +8436,19 @@ namespace MMMapEditor
                 experienceIndex--;
             lines.Insert(Math.Min(experienceIndex + 1, lines.Count), resetLine);
             return lines;
+        }
+
+        private static bool IsAreaE1JudgementStatueExperienceRewardLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.Trim();
+            return string.Equals(trimmed, "EXPERIENCE", StringComparison.Ordinal) ||
+                   Regex.IsMatch(
+                       trimmed,
+                       @"^\+(?:\d+(?:/\d+)*)?\s+EXPERIENCE\b",
+                       RegexOptions.CultureInvariant);
         }
 
         private static bool IsAreaE1JudgementStatueScoreScratchChoice(BranchChoice choice)
@@ -8837,6 +8856,7 @@ namespace MMMapEditor
                 AttachChoiceChildrenToSiblingPromptParents(root);
                 IntroduceSharedPromptHierarchyFromChoiceChildContent(root);
                 IntroduceSharedPromptHierarchyAcrossChoiceChildren(root);
+                HoistSharedLeadingLines(root);
                 HoistSharedCommonPartyNotes(root);
                 NormalizeConditionalStatusComplementLines(root);
                 GroupConditionalLoopSubsetComplementOutcomes(root);
@@ -8845,6 +8865,7 @@ namespace MMMapEditor
                 RemoveRedundantInheritedLines(root);
                 CollapseTransparentDirectVariantWrappers(root);
                 IntroduceSharedLineHierarchyAcrossHiddenTechnicalChildren(root);
+                HoistSharedLeadingLines(root);
                 PromoteSingleLeafNarrativeCoveredStatRewardAnnotations(root);
                 CollapseTransparentDirectVariantWrappers(root);
                 RemoveRedundantInheritedLines(root);
@@ -8852,6 +8873,7 @@ namespace MMMapEditor
                     FlattenTransparentStructuralWrappers(
                         SimplifyGenericChoiceTree(
                             CompressVariantTree(root))));
+                HoistSharedLeadingLines(group.TreeRoot, allowDisplayLineDirectVariantHoist: true);
                 CollapseSingleSubvariantBranches(group);
             }
 
@@ -10268,7 +10290,10 @@ namespace MMMapEditor
             if (item?.Lines == null || item.Lines.Count == 0)
                 return "<NO_LINES>";
 
-            return "LINE|" + string.Join("\n---\n", item.Lines.Take(1));
+            string firstDisplayLine = GetFirstMeaningfulDisplayLine(item.Lines);
+            return !string.IsNullOrWhiteSpace(firstDisplayLine)
+                ? "LINE|" + firstDisplayLine
+                : "LINE|" + string.Join("\n---\n", item.Lines.Take(1));
         }
 
         private static string GetNarrativeRootLine(VariantRenderItem item)
@@ -10276,7 +10301,13 @@ namespace MMMapEditor
             if (item?.NarrativeLines == null)
                 return null;
 
-            return item.NarrativeLines
+            return GetFirstMeaningfulDisplayLine(item.NarrativeLines);
+        }
+
+        private static string GetFirstMeaningfulDisplayLine(IEnumerable<string> lines)
+        {
+            return (lines ?? Enumerable.Empty<string>())
+                .SelectMany(SplitDisplayLines)
                 .FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))
                 ?.Trim();
         }
@@ -13277,6 +13308,137 @@ namespace MMMapEditor
             return true;
         }
 
+        private static void HoistSharedLeadingLines(
+            VariantTreeNode node,
+            bool allowDisplayLineDirectVariantHoist = false)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                HoistSharedLeadingLines(child, allowDisplayLineDirectVariantHoist);
+
+            HoistSharedLeadingLinesAcrossDirectVariants(node, allowDisplayLineDirectVariantHoist);
+
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            if (children.Count < 2)
+                return;
+
+            var childLeadingLines = children
+                .Select(GetHoistablePromptContentLines)
+                .ToList();
+            if (childLeadingLines.Any(lines => lines == null || lines.Count == 0))
+                return;
+
+            var commonLines = GetCommonPrefix(childLeadingLines);
+            if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return;
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null && HasMeaningfulLines(variant.Lines))
+                .ToList();
+            if (directVariants.Any(variant => !StartsWithLineSequence(variant.Lines, commonLines)))
+                return;
+
+            var descendants = children
+                .SelectMany(GetAllVariants)
+                .Where(variant => variant != null)
+                .ToList();
+            if (ShouldKeepSharedPartyEffectPrefixInline(descendants, commonLines))
+                return;
+
+            if (children.Any(child => !NodeContentStartsWithLines(child, commonLines)))
+                return;
+
+            foreach (var child in children)
+                TryRemoveLeadingLinesFromNodeContent(child, commonLines);
+
+            foreach (var variant in directVariants)
+            {
+                variant.Lines = variant.Lines
+                    .Skip(commonLines.Count)
+                    .ToList();
+            }
+
+            node.CommonLines ??= new List<string>();
+            node.CommonLines.AddRange(commonLines);
+        }
+
+        private static void HoistSharedLeadingLinesAcrossDirectVariants(
+            VariantTreeNode node,
+            bool allowDisplayLineHoist)
+        {
+            if (node == null)
+                return;
+
+            var directVariants = (node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(variant => variant != null && HasMeaningfulLines(variant.Lines))
+                .ToList();
+            if (directVariants.Count < 2)
+                return;
+
+            var commonLines = GetCommonPrefix(directVariants.Select(variant => variant.Lines).ToList());
+            bool useDisplayLinePrefix = false;
+            if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)) &&
+                allowDisplayLineHoist)
+            {
+                commonLines = GetCommonDisplayLinePrefix(directVariants.Select(variant => variant.Lines).ToList());
+                useDisplayLinePrefix = commonLines.Any(line => !string.IsNullOrWhiteSpace(line));
+            }
+
+            if (!commonLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                return;
+
+            var children = (node.Children ?? new List<VariantTreeNode>())
+                .Where(IsRenderableStructuralNode)
+                .ToList();
+            if (useDisplayLinePrefix && children.Count > 0)
+                return;
+
+            if (children.Any(child => !NodeContentStartsWithLines(child, commonLines)))
+                return;
+
+            var descendants = directVariants
+                .Concat(children.SelectMany(GetAllVariants))
+                .Where(variant => variant != null)
+                .ToList();
+            if (ShouldKeepSharedPartyEffectPrefixInline(descendants, commonLines))
+                return;
+
+            foreach (var variant in directVariants)
+            {
+                variant.Lines = useDisplayLinePrefix
+                    ? FlattenDisplayLines(variant.Lines).Skip(commonLines.Count).ToList()
+                    : variant.Lines.Skip(commonLines.Count).ToList();
+            }
+
+            foreach (var child in children)
+                TryRemoveLeadingLinesFromNodeContent(child, commonLines);
+
+            node.CommonLines ??= new List<string>();
+            node.CommonLines.AddRange(commonLines);
+        }
+
+        private static List<string> GetCommonDisplayLinePrefix(List<List<string>> source)
+        {
+            if (source == null || source.Count == 0)
+                return new List<string>();
+
+            return GetCommonPrefix(source.Select(FlattenDisplayLines).ToList());
+        }
+
+        private static List<string> FlattenDisplayLines(IEnumerable<string> lines)
+        {
+            var result = new List<string>();
+
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+                result.AddRange(SplitDisplayLines(line));
+
+            return result;
+        }
+
         private static bool StartsWithLineSequence(IReadOnlyList<string> lines, IReadOnlyList<string> prefix)
         {
             if (lines == null || prefix == null || prefix.Count == 0 || lines.Count < prefix.Count)
@@ -14384,6 +14546,10 @@ namespace MMMapEditor
             }
 
             clone.Texts = source.Texts?.ToList() ?? new List<string>();
+            clone.TextEntries = source.TextEntries?
+                .Where(entry => entry != null)
+                .Select(entry => entry.Clone())
+                .ToList() ?? new List<TextEntry>();
             clone.BranchChoices = source.BranchChoices?
                 .Where(choice => choice != null)
                 .Select(choice => choice.Clone())
@@ -16876,7 +17042,13 @@ namespace MMMapEditor
             noteText = Regex.Replace(
                 noteText,
                 @"(?m)^(\s*)\+\s*$\r?\n(\s*)EXPERIENCE\s*$",
-                match => $"{match.Groups[1].Value}+{experienceRange}\n{match.Groups[2].Value}EXPERIENCE",
+                match => $"{match.Groups[1].Value}+{experienceRange} EXPERIENCE",
+                RegexOptions.CultureInvariant);
+
+            noteText = Regex.Replace(
+                noteText,
+                @"(?m)^(\s*)\+\s+EXPERIENCE\b(.*)$",
+                match => $"{match.Groups[1].Value}+{experienceRange} EXPERIENCE{match.Groups[2].Value}",
                 RegexOptions.CultureInvariant);
 
             noteText = ApplyAreaE1JudgementStatueScoreSpecificRanges(noteText);
@@ -17007,8 +17179,8 @@ namespace MMMapEditor
 
             return Regex.Replace(
                 line,
-                @"^(\s*)\+0/16/32/48/64/80/96\s*$",
-                match => match.Groups[1].Value + "+" + experienceRange,
+                @"^(\s*)\+0/16/32/48/64/80/96(\s+EXPERIENCE\b.*)?$",
+                match => match.Groups[1].Value + "+" + experienceRange + match.Groups[2].Value,
                 RegexOptions.CultureInvariant);
         }
 

@@ -1020,6 +1020,7 @@ namespace MMMapEditor
         public bool IsLeaf { get; set; }
 
         public List<string> Texts { get; set; } = new List<string>();
+        public List<TextEntry> TextEntries { get; set; } = new List<TextEntry>();
         public List<BranchChoice> BranchChoices { get; set; } = new List<BranchChoice>();
 
         internal bool OvrNotesPermanentStatRaiseVariantInfoCacheComputed;

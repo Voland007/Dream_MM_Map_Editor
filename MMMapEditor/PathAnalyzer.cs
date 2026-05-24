@@ -617,6 +617,39 @@ namespace MMMapEditor
                 updated = true;
             }
 
+            if (existing.DisplayRoutine == OverlayTextDisplayRoutineKind.Unknown &&
+                candidate.DisplayRoutine != OverlayTextDisplayRoutineKind.Unknown)
+            {
+                existing.DisplayRoutine = candidate.DisplayRoutine;
+                updated = true;
+            }
+
+            if (existing.DisplayInstructionAddress == 0 &&
+                candidate.DisplayInstructionAddress != 0)
+            {
+                existing.DisplayInstructionAddress = candidate.DisplayInstructionAddress;
+                updated = true;
+            }
+
+            if (!existing.ScreenTextContinuesPrevious && candidate.ScreenTextContinuesPrevious)
+            {
+                existing.ScreenTextContinuesPrevious = true;
+                updated = true;
+            }
+
+            if (!existing.ScreenLineBreakAfter && candidate.ScreenLineBreakAfter)
+            {
+                existing.ScreenLineBreakAfter = true;
+                updated = true;
+            }
+
+            if (string.IsNullOrEmpty(existing.ScreenTextSeparatorAfter) &&
+                !string.IsNullOrEmpty(candidate.ScreenTextSeparatorAfter))
+            {
+                existing.ScreenTextSeparatorAfter = candidate.ScreenTextSeparatorAfter;
+                updated = true;
+            }
+
             return updated;
         }
 
@@ -1446,17 +1479,16 @@ namespace MMMapEditor
                 .Where(PartyEffectSemantics.IsSemanticOutcomeEffect)
                 .Where(effect => !PartyEffectSemantics.IsImplicitHpLossConsequenceOutcome(effect, normalizedPartyEffects))
                 .ToList();
+            var textEntries = OverlayTextDisplayComposer.CloneTextEntries(pathTexts);
+            var displayTexts = OverlayTextDisplayComposer.ComposeRawTexts(textEntries);
 
             return new PathVariantInfo
             {
                 PathId = pathId,
                 PathOrderKey = pathOrderKey,
                 IsLeaf = isLeaf,
-                Texts = pathTexts
-                    .OrderBy(t => t.Order)
-                    .Select(t => t.Text)
-                    .Where(t => !string.IsNullOrEmpty(t))
-                    .ToList(),
+                Texts = displayTexts,
+                TextEntries = textEntries,
                 RandomEncounterMonsterPowerCap = source.RandomEncounterMonsterPowerCap,
                 RandomEncounterMonsterLevelCap = source.RandomEncounterMonsterLevelCap,
                 RandomEncounterMonsterBatchCountCap = source.RandomEncounterMonsterBatchCountCap,
@@ -3179,6 +3211,10 @@ namespace MMMapEditor
                 PathOrderKey = source.PathOrderKey,
                 IsLeaf = source.IsLeaf,
                 Texts = source.Texts?.ToList() ?? new List<string>(),
+                TextEntries = source.TextEntries?
+                    .Where(entry => entry != null)
+                    .Select(entry => entry.Clone())
+                    .ToList() ?? new List<TextEntry>(),
                 BranchChoices = source.BranchChoices?
                     .Where(choice => choice != null)
                     .Select(choice => choice.Clone())
