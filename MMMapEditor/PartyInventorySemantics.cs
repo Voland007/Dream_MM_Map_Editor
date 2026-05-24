@@ -69,13 +69,37 @@ namespace MMMapEditor
             return null;
         }
 
+        public static string GetSlotFieldRangeLabel(ValueRange8 fieldOffsetRange)
+        {
+            if (!IsInventorySlotRange(fieldOffsetRange))
+                return null;
+
+            if (fieldOffsetRange.IsExact)
+                return GetSlotFieldLabel(fieldOffsetRange.Min);
+
+            byte min = fieldOffsetRange.Min;
+            byte max = fieldOffsetRange.Max;
+
+            if (min == FirstSlotOffset && max == LastBackpackSlotOffset)
+                return null;
+
+            if (max <= LastSlotOffset)
+                return $"слоты инвентаря {min - FirstSlotOffset + 1}..{max - FirstSlotOffset + 1}";
+
+            if (min >= FirstBackpackSlotOffset)
+                return $"backpack слоты {min - FirstBackpackSlotOffset + 1}..{max - FirstBackpackSlotOffset + 1}";
+
+            return $"слоты инвентаря {min - FirstSlotOffset + 1}..{LastSlotOffset - FirstSlotOffset + 1} " +
+                   $"или backpack 1..{max - FirstBackpackSlotOffset + 1}";
+        }
+
         public static string GetSlotFieldLabel(PartyFieldReference fieldRef)
         {
             if (fieldRef == null)
                 return null;
 
             if (fieldRef.FieldOffsetRange != null && !fieldRef.FieldOffsetRange.IsExact)
-                return null;
+                return GetSlotFieldRangeLabel(fieldRef.FieldOffsetRange);
 
             byte? offset = fieldRef.FieldOffsetRange != null && fieldRef.FieldOffsetRange.IsExact
                 ? fieldRef.FieldOffsetRange.Min
@@ -90,7 +114,7 @@ namespace MMMapEditor
                 return null;
 
             if (predicate.FieldOffsetRange != null && !predicate.FieldOffsetRange.IsExact)
-                return null;
+                return GetSlotFieldRangeLabel(predicate.FieldOffsetRange);
 
             byte? offset = predicate.FieldOffsetRange != null && predicate.FieldOffsetRange.IsExact
                 ? predicate.FieldOffsetRange.Min

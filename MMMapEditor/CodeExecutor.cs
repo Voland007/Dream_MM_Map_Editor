@@ -7020,6 +7020,7 @@ namespace MMMapEditor
                     out var partyInventoryScanSlotRange);
 
                 if (isPartyInventoryScanMatchBranch &&
+                    condJumpTarget > currentAddress &&
                     processedBackEdges != null &&
                     !processedBackEdges.Add((currentAddress, condJumpTarget)))
                 {
@@ -7596,7 +7597,7 @@ namespace MMMapEditor
                 br?.BaseStream == null ||
                 !br.BaseStream.CanSeek ||
                 registerTracker == null ||
-                condJumpTarget <= currentAddress ||
+                condJumpTarget == currentAddress ||
                 condJumpTarget >= fileLength ||
                 registerTracker.LastFlagsOrigin != RegisterTracker.FlagsOriginKind.CompareImmediate ||
                 !string.Equals(registerTracker.LastFlagsRegister, "AL", StringComparison.OrdinalIgnoreCase) ||
@@ -7616,13 +7617,31 @@ namespace MMMapEditor
                 return false;
             }
 
-            if (!WindowContainsPartyInventoryScanExhaustion(
+            byte? slotUpperExclusive = null;
+            bool hasInventoryScanExhaustion;
+            if (condJumpTarget > currentAddress)
+            {
+                hasInventoryScanExhaustion = WindowContainsPartyInventoryScanExhaustion(
                     br,
                     fileLength,
                     nextAddress,
                     currentAddress,
                     condJumpTarget,
-                    out byte? slotUpperExclusive))
+                    out slotUpperExclusive);
+            }
+            else
+            {
+                hasInventoryScanExhaustion =
+                    LooksLikeBackwardInventoryScanSuccessTarget(br, fileLength, condJumpTarget, currentAddress) &&
+                    WindowContainsPartyInventoryScanExhaustionAfterBackwardMatch(
+                    br,
+                    fileLength,
+                    nextAddress,
+                    currentAddress,
+                    out slotUpperExclusive);
+            }
+
+            if (!hasInventoryScanExhaustion)
             {
                 return false;
             }
@@ -7691,6 +7710,49 @@ namespace MMMapEditor
             }
 
             uint scanEnd = (uint)Math.Min(fileLength, Math.Min(matchBranchTarget, scanStartAddress + 0x50));
+            return WindowContainsPartyInventoryScanExhaustionInWindow(
+                br,
+                fileLength,
+                scanStartAddress,
+                scanEnd,
+                matchBranchAddress,
+                out slotUpperExclusive);
+        }
+
+        private bool WindowContainsPartyInventoryScanExhaustionAfterBackwardMatch(
+            BinaryReader br,
+            long fileLength,
+            uint scanStartAddress,
+            uint matchBranchAddress,
+            out byte? slotUpperExclusive)
+        {
+            slotUpperExclusive = null;
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                scanStartAddress >= fileLength)
+            {
+                return false;
+            }
+
+            uint scanEnd = (uint)Math.Min(fileLength, scanStartAddress + 0x50);
+            return WindowContainsPartyInventoryScanExhaustionInWindow(
+                br,
+                fileLength,
+                scanStartAddress,
+                scanEnd,
+                matchBranchAddress,
+                out slotUpperExclusive);
+        }
+
+        private bool WindowContainsPartyInventoryScanExhaustionInWindow(
+            BinaryReader br,
+            long fileLength,
+            uint scanStartAddress,
+            uint scanEnd,
+            uint matchBranchAddress,
+            out byte? slotUpperExclusive)
+        {
+            slotUpperExclusive = null;
             bool sawSlotBackEdge = false;
             bool sawPartyBackEdge = false;
             bool sawExhaustedTerminalWrite = false;
@@ -7731,6 +7793,26 @@ namespace MMMapEditor
             }
 
             return sawSlotBackEdge && (sawPartyBackEdge || sawExhaustedTerminalWrite);
+        }
+
+        private bool LooksLikeBackwardInventoryScanSuccessTarget(
+            BinaryReader br,
+            long fileLength,
+            uint targetAddress,
+            uint currentAddress)
+        {
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                targetAddress >= currentAddress ||
+                targetAddress + 3 > fileLength)
+            {
+                return false;
+            }
+
+            byte[] bytes = ReadBytesAt(br, targetAddress, 3);
+            return bytes.Length >= 3 &&
+                   bytes[0] == 0xB0 &&
+                   bytes[2] == 0xC3;
         }
 
         private bool LooksLikeSimpleTerminalByteStateWrite(BinaryReader br, long fileLength, uint address)
