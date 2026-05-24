@@ -4491,14 +4491,16 @@ namespace MMMapEditor
             return PrefixProbabilityWordInParentheses(probabilityLine);
         }
 
-        private static List<PartyPredicate> GetDisplayGuardPredicates(PathVariantInfo variant)
+        private static List<PartyPredicate> GetDisplayGuardPredicates(
+            PathVariantInfo variant,
+            string suppressedGuardKey = null)
         {
             if (!ShouldDisplayGuardCondition(variant))
                 return new List<PartyPredicate>();
 
             var structurallyRenderedPredicateKeys = BuildStructurallyRenderedPredicateKeySet(variant);
 
-            return variant?.GetGuardPredicates()?
+            var predicates = variant?.GetGuardPredicates()?
                 .Where(predicate => predicate != null)
                 .Where(predicate => !PartyEffectSemantics.IsUnrecognizedTechnicalFieldPredicate(predicate))
                 .Where(predicate => !IsRedundantUserVisibleAssumptionPredicateForNotes(predicate, variant))
@@ -4509,6 +4511,99 @@ namespace MMMapEditor
                 .Where(predicate =>
                     !structurallyRenderedPredicateKeys.Contains(PartyEffectSemantics.BuildPredicateKey(predicate)))
                 .ToList() ?? new List<PartyPredicate>();
+
+            return FilterSuppressedGuardPredicates(predicates, suppressedGuardKey);
+        }
+
+        private static List<PartyPredicate> FilterSuppressedGuardPredicates(
+            IEnumerable<PartyPredicate> predicates,
+            string suppressedGuardKey)
+        {
+            var list = (predicates ?? Enumerable.Empty<PartyPredicate>())
+                .Where(predicate => predicate != null)
+                .ToList();
+            if (list.Count == 0 || string.IsNullOrWhiteSpace(suppressedGuardKey))
+                return list;
+
+            var suppressedKeys = SplitGuardConditionKey(suppressedGuardKey)
+                .ToHashSet(StringComparer.Ordinal);
+            if (suppressedKeys.Count == 0)
+                return list;
+
+            return list
+                .Where(predicate => !IsSuppressedGuardPredicate(predicate, suppressedKeys))
+                .ToList();
+        }
+
+        private static bool HasSuppressedDisplayGuardPredicate(
+            PathVariantInfo variant,
+            string suppressedGuardKey)
+        {
+            if (string.IsNullOrWhiteSpace(suppressedGuardKey))
+                return false;
+
+            var predicates = GetDisplayGuardPredicates(variant);
+            if (predicates.Count == 0)
+                return false;
+
+            return predicates.Count != FilterSuppressedGuardPredicates(predicates, suppressedGuardKey).Count;
+        }
+
+        private static bool IsGuardConditionFullySuppressedByScope(
+            PathVariantInfo variant,
+            string suppressedGuardKey)
+        {
+            if (string.IsNullOrWhiteSpace(suppressedGuardKey))
+                return false;
+
+            var predicates = GetDisplayGuardPredicates(variant);
+            return predicates.Count > 0 &&
+                   FilterSuppressedGuardPredicates(predicates, suppressedGuardKey).Count == 0;
+        }
+
+        private static bool IsSuppressedGuardPredicate(
+            PartyPredicate predicate,
+            ISet<string> suppressedKeys)
+        {
+            if (predicate == null || suppressedKeys == null || suppressedKeys.Count == 0)
+                return false;
+
+            string predicateKey = PartyEffectSemantics.BuildPredicateKey(predicate);
+            if (!string.IsNullOrWhiteSpace(predicateKey) && suppressedKeys.Contains(predicateKey))
+                return true;
+
+            return IsRanalouSelectedQuestCompletionPredicate(predicate) &&
+                   suppressedKeys.Any(IsRanalouPartyQuestCompletionGuardKey);
+        }
+
+        private static bool IsRanalouSelectedQuestCompletionPredicate(PartyPredicate predicate)
+        {
+            if (predicate == null ||
+                predicate.Field != PartyFieldKind.Technical71 ||
+                predicate.Comparison != PartyPredicateComparison.NotEqual ||
+                !predicate.ImmediateValue.HasValue ||
+                predicate.ImmediateValue.Value != 127)
+            {
+                return false;
+            }
+
+            return predicate.TargetMember == null ||
+                   !predicate.TargetMember.IsPartyLoopMember;
+        }
+
+        private static bool IsRanalouPartyQuestCompletionGuardKey(string guardKey)
+        {
+            if (string.IsNullOrWhiteSpace(guardKey))
+                return false;
+
+            var parts = guardKey.Split('|');
+            if (parts.Length < 7)
+                return false;
+
+            return string.Equals(parts[0], PartyFieldKind.Technical71.ToString(), StringComparison.Ordinal) &&
+                   string.Equals(parts[3], PartyPredicateLoopQuantifier.None.ToString(), StringComparison.Ordinal) &&
+                   string.Equals(parts[4], PartyPredicateComparison.NotEqual.ToString(), StringComparison.Ordinal) &&
+                   string.Equals(parts[6], "127", StringComparison.Ordinal);
         }
 
         private static bool ShouldSuppressByUserVisibleAssumptions(PathVariantInfo variant)
@@ -4788,16 +4883,10 @@ namespace MMMapEditor
 
         private static string BuildGuardHeaderAnnotation(PathVariantInfo variant, string suppressedGuardKey = null)
         {
-            var predicates = GetDisplayGuardPredicates(variant);
+            var predicates = GetDisplayGuardPredicates(variant, suppressedGuardKey);
             string guardKey = BuildGuardConditionKey(predicates);
             if (string.IsNullOrWhiteSpace(guardKey))
                 return null;
-
-            if (!string.IsNullOrWhiteSpace(suppressedGuardKey) &&
-                string.Equals(guardKey, suppressedGuardKey, StringComparison.Ordinal))
-            {
-                return null;
-            }
 
             return BuildGuardHeaderAnnotation(predicates);
         }
@@ -4820,9 +4909,7 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(suppressedGuardKey))
                 return false;
 
-            string guardKey = BuildGuardConditionKey(variant);
-            return !string.IsNullOrWhiteSpace(guardKey) &&
-                   string.Equals(guardKey, suppressedGuardKey, StringComparison.Ordinal);
+            return HasSuppressedDisplayGuardPredicate(variant, suppressedGuardKey);
         }
 
         private static List<string> BuildVariantHeaderAnnotations(
@@ -4878,13 +4965,16 @@ namespace MMMapEditor
         {
             var annotations = new List<string>();
             AddDistinctHeaderAnnotations(annotations, item?.HeaderAnnotations);
+            string effectiveSuppressedGuardKey = MergeGuardConditionKeys(
+                suppressedGuardKey,
+                BuildVisibleHeaderAnnotationsGuardKey(annotations));
             AddDistinctHeaderAnnotations(
                 annotations,
                 BuildVariantHeaderAnnotations(
                     item?.Variant,
                     suppressedProbabilityLine,
-                    suppressedGuardKey));
-            return annotations;
+                    effectiveSuppressedGuardKey));
+            return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
         }
 
         private static List<string> BuildTerminalVariantHeaderAnnotations(
@@ -4904,10 +4994,61 @@ namespace MMMapEditor
             AddDistinctHeaderAnnotations(
                 annotations,
                 inventoryAnnotations);
+            string effectiveSuppressedGuardKey = BuildVisibleHeaderAnnotationsGuardKey(annotations);
             AddDistinctHeaderAnnotations(
                 annotations,
-                BuildVariantHeaderAnnotations(variant));
-            return annotations;
+                BuildVariantHeaderAnnotations(variant, suppressedGuardKey: effectiveSuppressedGuardKey));
+            return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
+        }
+
+        private static string BuildVisibleHeaderAnnotationsGuardKey(IEnumerable<string> annotations)
+        {
+            var guardKeys = (annotations ?? Enumerable.Empty<string>())
+                .Select(TryBuildVisibleHeaderAnnotationGuardKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToArray();
+
+            return MergeGuardConditionKeys(guardKeys);
+        }
+
+        private static string TryBuildVisibleHeaderAnnotationGuardKey(string annotation)
+        {
+            string normalized = StripGuardHeaderAnnotationPrefix(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return null;
+
+            if (string.Equals(normalized, "Все условия квеста RANALOU выполнены", StringComparison.OrdinalIgnoreCase))
+            {
+                return BuildRanalouPartyQuestCompletionGuardKey(
+                    PartyPredicateLoopQuantifier.None,
+                    PartyPredicateComparison.NotEqual);
+            }
+
+            if (string.Equals(normalized, "Условия квеста RANALOU не выполнены", StringComparison.OrdinalIgnoreCase))
+            {
+                return BuildRanalouPartyQuestCompletionGuardKey(
+                    PartyPredicateLoopQuantifier.Any,
+                    PartyPredicateComparison.NotEqual);
+            }
+
+            return null;
+        }
+
+        private static string BuildRanalouPartyQuestCompletionGuardKey(
+            PartyPredicateLoopQuantifier quantifier,
+            PartyPredicateComparison comparison)
+        {
+            return string.Join("|",
+                PartyFieldKind.Technical71,
+                "-",
+                "-",
+                quantifier,
+                comparison,
+                PartyValueKnowledge.ExactImmediate,
+                "127",
+                "-",
+                "-",
+                $"{PartyMemberSelectionKind.Dynamic}:Loop:-:-:-");
         }
 
         private static bool HasVisibleInventoryPresenceAnnotationForSameItem(
@@ -4932,6 +5073,75 @@ namespace MMMapEditor
                         out string slotLabel) &&
                     string.Equals(itemName, candidateItemName, StringComparison.OrdinalIgnoreCase) &&
                     string.Equals(slotLabel ?? string.Empty, candidateSlotLabel ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private enum HeaderAnnotationSemanticKind
+        {
+            None = 0,
+            RanalouAllQuestConditionsComplete,
+            RanalouSelectedQuestProgressNot127
+        }
+
+        private static List<string> SuppressSemanticallyRedundantHeaderAnnotations(
+            IEnumerable<string> annotations)
+        {
+            var result = new List<string>();
+            foreach (string annotation in annotations ?? Enumerable.Empty<string>())
+            {
+                foreach (string part in SplitMergedHeaderAnnotation(annotation))
+                {
+                    string normalized = NormalizeHeaderAnnotation(part);
+                    if (string.IsNullOrWhiteSpace(normalized))
+                        continue;
+
+                    if (result.Any(existing => HeaderAnnotationSuppresses(existing, normalized)))
+                        continue;
+
+                    result.RemoveAll(existing => HeaderAnnotationSuppresses(normalized, existing));
+
+                    if (!result.Contains(normalized, StringComparer.Ordinal))
+                        result.Add(normalized);
+                }
+            }
+
+            return result;
+        }
+
+        private static bool HeaderAnnotationSuppresses(string suppressor, string candidate)
+        {
+            var suppressorKind = GetHeaderAnnotationSemanticKind(suppressor);
+            var candidateKind = GetHeaderAnnotationSemanticKind(candidate);
+
+            return suppressorKind == HeaderAnnotationSemanticKind.RanalouAllQuestConditionsComplete &&
+                   candidateKind == HeaderAnnotationSemanticKind.RanalouSelectedQuestProgressNot127;
+        }
+
+        private static HeaderAnnotationSemanticKind GetHeaderAnnotationSemanticKind(string annotation)
+        {
+            string normalized = StripGuardHeaderAnnotationPrefix(annotation);
+            if (string.IsNullOrWhiteSpace(normalized))
+                return HeaderAnnotationSemanticKind.None;
+
+            if (string.Equals(normalized, "Все условия квеста RANALOU выполнены", StringComparison.OrdinalIgnoreCase))
+                return HeaderAnnotationSemanticKind.RanalouAllQuestConditionsComplete;
+
+            if (string.Equals(
+                    normalized,
+                    "ни у одного персонажа партии поле прогресса линейки квестов волшебника RANALOU (+0x71) != 127",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return HeaderAnnotationSemanticKind.RanalouAllQuestConditionsComplete;
+            }
+
+            if (string.Equals(
+                    normalized,
+                    "у выбранного персонажа поле прогресса линейки квестов волшебника RANALOU (+0x71) != 127",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return HeaderAnnotationSemanticKind.RanalouSelectedQuestProgressNot127;
+            }
+
+            return HeaderAnnotationSemanticKind.None;
         }
 
         private static void AddDistinctHeaderAnnotations(
@@ -4965,7 +5175,7 @@ namespace MMMapEditor
 
         private static string BuildVariantHeaderAnnotationText(IEnumerable<string> annotations)
         {
-            var displayAnnotations = (annotations ?? Enumerable.Empty<string>())
+            var displayAnnotations = SuppressSemanticallyRedundantHeaderAnnotations(annotations)
                 .Select(NormalizeUserVisibleHeaderAnnotation)
                 .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
                 .Select(EncodeVariantHeaderAnnotationForDisplay)
@@ -5259,6 +5469,7 @@ namespace MMMapEditor
             public string SegmentKey { get; set; }
             public string Label { get; set; }
             public string HeaderAnnotation { get; set; }
+            public string HeaderGuardKey { get; set; }
             public bool PreserveTransparentWrapper { get; set; }
             public int? RenderPriorityOverride { get; set; }
             public List<string> CommonLines { get; set; } = new List<string>();
@@ -5272,6 +5483,7 @@ namespace MMMapEditor
             public VariantTreeNode TreeRoot { get; set; }
             public string Label { get; set; }
             public string HeaderAnnotation { get; set; }
+            public string HeaderGuardKey { get; set; }
             public string ConsumedTopChoiceKey { get; set; }
             public bool GroupedByChoice { get; set; }
             public int SourceOrderKey { get; set; } = int.MaxValue;
@@ -7202,6 +7414,11 @@ namespace MMMapEditor
 
                 lines = SuppressRedundantFoodEffectLines(lines);
                 lines = NumberLootBlockIfNeeded(lines) ?? new List<string>();
+                lines = ApplyAreaE1JudgementStatueScoreSpecificRangesToLines(obj, displayVariant, lines);
+                narrativeLines = ApplyAreaE1JudgementStatueScoreSpecificRangesToLines(
+                    obj,
+                    displayVariant,
+                    narrativeLines);
 
                 if (ShouldSkipHierarchicalVariant(lines, narrativeLines))
                     continue;
@@ -8063,12 +8280,156 @@ namespace MMMapEditor
 
             var clone = ClonePathVariantForRender(variant);
             clone.BranchChoices = clone.BranchChoices?
+                .Select(choice =>
+                    TryBuildAreaE1JudgementStatueScoreDisplayChoice(choice, out var displayChoice)
+                        ? displayChoice
+                        : choice)
                 .Where(choice => !IsAreaE1JudgementStatueScoreScratchChoice(choice))
                 .ToList() ?? new List<BranchChoice>();
             clone.PartyEffects = clone.PartyEffects?
                 .Where(effect => !IsAreaE1JudgementStatueScoreScratchEffect(effect))
                 .ToList() ?? new List<PartyEffect>();
             return clone;
+        }
+
+        private static bool TryBuildAreaE1JudgementStatueScoreDisplayChoice(
+            BranchChoice choice,
+            out BranchChoice displayChoice)
+        {
+            displayChoice = null;
+
+            var predicate = choice?.GuardPredicate;
+            if (predicate?.Field != PartyFieldKind.Technical6E ||
+                predicate.ImmediateValue != 128)
+            {
+                return false;
+            }
+
+            string annotation;
+            switch (predicate.Comparison)
+            {
+                case PartyPredicateComparison.LessThan:
+                    annotation = "0/16/32/48 EXPERIENCE";
+                    break;
+                case PartyPredicateComparison.GreaterOrEqual:
+                    annotation = "64/80/96 EXPERIENCE";
+                    break;
+                default:
+                    return false;
+            }
+
+            displayChoice = new BranchChoice
+            {
+                DisplayHeaderAnnotation = annotation,
+                Condition = choice.Condition,
+                IsLinear = choice.IsLinear
+            };
+            return true;
+        }
+
+        private const string AreaE1JudgementStatueLowScoreLineMarker = " [[AREA_E1_SCORE_LOW]]";
+        private const string AreaE1JudgementStatueHighScoreLineMarker = " [[AREA_E1_SCORE_HIGH]]";
+
+        private static List<string> ApplyAreaE1JudgementStatueScoreSpecificRangesToLines(
+            OvrObject obj,
+            PathVariantInfo variant,
+            List<string> lines)
+        {
+            if (!IsAreaE1JudgementStatueObject(obj) ||
+                lines == null ||
+                lines.Count == 0)
+            {
+                return lines ?? new List<string>();
+            }
+
+            var range = GetAreaE1JudgementStatueScoreRange(variant);
+            if (range == AreaE1JudgementStatueScoreRange.None)
+                return lines;
+
+            var transformed = lines
+                .Select(line => ApplyAreaE1JudgementStatueScoreRangeToRawLine(line, range))
+                .ToList();
+            return MoveAreaE1JudgementStatueRewardResetAfterExperience(transformed);
+        }
+
+        private static AreaE1JudgementStatueScoreRange GetAreaE1JudgementStatueScoreRange(
+            PathVariantInfo variant)
+        {
+            foreach (var choice in variant?.BranchChoices ?? new List<BranchChoice>())
+            {
+                var range = GetAreaE1JudgementStatueScoreRangeFromHeader(choice?.DisplayHeaderAnnotation);
+                if (range != AreaE1JudgementStatueScoreRange.None)
+                    return range;
+            }
+
+            return AreaE1JudgementStatueScoreRange.None;
+        }
+
+        private static string ApplyAreaE1JudgementStatueScoreRangeToRawLine(
+            string line,
+            AreaE1JudgementStatueScoreRange range)
+        {
+            if (string.IsNullOrEmpty(line))
+                return line;
+
+            string scoreRange = range == AreaE1JudgementStatueScoreRange.High
+                ? "4/5/6"
+                : "0/1/2/3";
+            string experienceRange = range == AreaE1JudgementStatueScoreRange.High
+                ? "64/80/96"
+                : "0/16/32/48";
+            string scoreMarker = range == AreaE1JudgementStatueScoreRange.High
+                ? AreaE1JudgementStatueHighScoreLineMarker
+                : AreaE1JudgementStatueLowScoreLineMarker;
+
+            line = line.Replace(
+                "YOUR ACTIONS REFLECT YOUR VIEWS   OF 6",
+                "YOUR ACTIONS REFLECT YOUR VIEWS " + scoreRange + " OF 6");
+            line = ApplyAreaE1JudgementStatueScoreRangeToLine(line, range);
+
+            if (line.IndexOf(
+                    "-=*У выбранного персонажа партии прогресс линейки квестов волшебника RANALOU",
+                    StringComparison.Ordinal) >= 0)
+            {
+                line += scoreMarker;
+            }
+
+            return Regex.Replace(
+                line,
+                @"^(\s*)\+\s*$",
+                match => match.Groups[1].Value + "+" + experienceRange,
+                RegexOptions.CultureInvariant);
+        }
+
+        private static List<string> MoveAreaE1JudgementStatueRewardResetAfterExperience(List<string> lines)
+        {
+            if (lines == null || lines.Count < 2)
+                return lines ?? new List<string>();
+
+            int resetIndex = lines.FindIndex(line =>
+                !string.IsNullOrEmpty(line) &&
+                line.IndexOf(
+                    "-=*У выбранного персонажа партии прогресс линейки квестов волшебника RANALOU",
+                    StringComparison.Ordinal) >= 0);
+            if (resetIndex < 0)
+                return lines;
+
+            int experienceIndex = -1;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if (string.Equals(lines[i]?.Trim(), "EXPERIENCE", StringComparison.Ordinal))
+                    experienceIndex = i;
+            }
+
+            if (experienceIndex < 0 || resetIndex == experienceIndex + 1)
+                return lines;
+
+            string resetLine = lines[resetIndex];
+            lines.RemoveAt(resetIndex);
+            if (resetIndex < experienceIndex)
+                experienceIndex--;
+            lines.Insert(Math.Min(experienceIndex + 1, lines.Count), resetLine);
+            return lines;
         }
 
         private static bool IsAreaE1JudgementStatueScoreScratchChoice(BranchChoice choice)
@@ -8457,6 +8818,7 @@ namespace MMMapEditor
                         Items = ordered,
                         Label = groupedByChoice ? NormalizeChoiceLabel(firstChoice?.Label) : null,
                         HeaderAnnotation = groupedByChoice ? NormalizeHeaderAnnotation(firstChoice?.DisplayHeaderAnnotation) : null,
+                        HeaderGuardKey = groupedByChoice ? BuildBranchGuardConditionKey(firstChoice) : null,
                         ConsumedTopChoiceKey = groupedByChoice ? firstChoiceKey : null,
                         GroupedByChoice = groupedByChoice,
                         SourceOrderKey = GetTopLevelGroupSourceOrderKey(obj, ordered)
@@ -9474,6 +9836,7 @@ namespace MMMapEditor
 
             MergeCollapsedChildLabelIntoParent(parent, child.Label);
             parent.HeaderAnnotation = MergeHeaderAnnotations(parent.HeaderAnnotation, child.HeaderAnnotation);
+            parent.HeaderGuardKey = MergeGuardConditionKeys(parent.HeaderGuardKey, child.HeaderGuardKey);
 
             if (!parent.RenderPriorityOverride.HasValue && child.RenderPriorityOverride.HasValue)
                 parent.RenderPriorityOverride = child.RenderPriorityOverride;
@@ -9497,7 +9860,9 @@ namespace MMMapEditor
                 return;
 
             group.HeaderAnnotation = MergeHeaderAnnotations(group.HeaderAnnotation, root.HeaderAnnotation);
+            group.HeaderGuardKey = MergeGuardConditionKeys(group.HeaderGuardKey, root.HeaderGuardKey);
             root.HeaderAnnotation = null;
+            root.HeaderGuardKey = null;
 
             string rootLabel = NormalizeChoiceLabel(root.Label);
             if (!string.IsNullOrWhiteSpace(rootLabel))
@@ -9586,6 +9951,36 @@ namespace MMMapEditor
             return merged.Count == 0
                 ? null
                 : string.Join("; ", merged);
+        }
+
+        private static string MergeGuardConditionKeys(params string[] guardKeys)
+        {
+            var merged = new List<string>();
+            foreach (string guardKey in guardKeys ?? new string[0])
+            {
+                foreach (string part in SplitGuardConditionKey(guardKey))
+                {
+                    if (!merged.Contains(part, StringComparer.Ordinal))
+                        merged.Add(part);
+                }
+            }
+
+            return merged.Count == 0
+                ? null
+                : string.Join("&", merged.OrderBy(key => key, StringComparer.Ordinal));
+        }
+
+        private static IEnumerable<string> SplitGuardConditionKey(string guardKey)
+        {
+            if (string.IsNullOrWhiteSpace(guardKey))
+                yield break;
+
+            foreach (string part in guardKey.Split(new[] { '&' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string normalized = part?.Trim();
+                if (!string.IsNullOrWhiteSpace(normalized))
+                    yield return normalized;
+            }
         }
 
         private static IEnumerable<string> SplitMergedHeaderAnnotation(string annotation)
@@ -9912,7 +10307,8 @@ namespace MMMapEditor
                         {
                             SegmentKey = key,
                             Label = NormalizeChoiceLabel(choice?.Label),
-                            HeaderAnnotation = NormalizeHeaderAnnotation(choice?.DisplayHeaderAnnotation)
+                            HeaderAnnotation = NormalizeHeaderAnnotation(choice?.DisplayHeaderAnnotation),
+                            HeaderGuardKey = BuildBranchGuardConditionKey(choice)
                         };
                         current.Children.Add(child);
                     }
@@ -9923,6 +10319,8 @@ namespace MMMapEditor
 
                     if (string.IsNullOrWhiteSpace(child.HeaderAnnotation))
                         child.HeaderAnnotation = NormalizeHeaderAnnotation(choice?.DisplayHeaderAnnotation);
+                    if (string.IsNullOrWhiteSpace(child.HeaderGuardKey))
+                        child.HeaderGuardKey = BuildBranchGuardConditionKey(choice);
 
                     current = child;
                 }
@@ -11262,17 +11660,26 @@ namespace MMMapEditor
 
         private static string BuildBranchGuardHeaderAnnotation(BranchChoice choice)
         {
+            return BuildGuardHeaderAnnotation(GetBranchDisplayGuardPredicates(choice));
+        }
+
+        private static string BuildBranchGuardConditionKey(BranchChoice choice)
+        {
+            return BuildGuardConditionKey(GetBranchDisplayGuardPredicates(choice));
+        }
+
+        private static List<PartyPredicate> GetBranchDisplayGuardPredicates(BranchChoice choice)
+        {
             if (choice?.GuardPredicate == null || IsPartyLoopTraversalBranchChoice(choice))
-                return null;
+                return new List<PartyPredicate>();
 
             var predicate = choice.GetGuardPredicateForDisplay();
-            var predicates = PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(
+            return PartyEffectSemantics.NormalizeGuardPredicatesForLoopAggregation(
                 new[] { predicate })
                 .Where(p => !IsRedundantUserVisibleAssumptionPredicateForNotes(p, null))
                 .Where(p => !IsContradictedByUserVisibleAssumptions(p, null))
                 .Where(p => !IsRedundantAliveStatusPredicateForNotes(p))
                 .ToList();
-            return BuildGuardHeaderAnnotation(predicates);
         }
 
         private static string InferChoiceLabel(BranchChoice choice)
@@ -11546,6 +11953,9 @@ namespace MMMapEditor
             if (!string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(node.HeaderAnnotation)))
                 return false;
 
+            if (!string.IsNullOrWhiteSpace(node.HeaderGuardKey))
+                return false;
+
             if ((node.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false))
                 return false;
 
@@ -11567,6 +11977,9 @@ namespace MMMapEditor
                 return false;
 
             if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
+                return false;
+
+            if (!string.IsNullOrWhiteSpace(node.HeaderGuardKey))
                 return false;
 
             if ((node.CommonLines?.Count ?? 0) > 0)
@@ -11595,6 +12008,8 @@ namespace MMMapEditor
                 }
 
                 changed = true;
+
+                node.HeaderGuardKey = MergeGuardConditionKeys(node.HeaderGuardKey, child.HeaderGuardKey);
 
                 if (child.DirectVariants != null && child.DirectVariants.Count > 0)
                     node.DirectVariants.AddRange(child.DirectVariants.Where(v => v != null));
@@ -12122,7 +12537,7 @@ namespace MMMapEditor
             if (variants.Count < 2)
                 return null;
 
-            var firstPredicates = GetDisplayGuardPredicates(variants[0].Variant);
+            var firstPredicates = GetDisplayGuardPredicates(variants[0].Variant, inheritedGuardKey);
             string firstGuardKey = BuildGuardConditionKey(firstPredicates);
             if (string.IsNullOrWhiteSpace(firstGuardKey))
                 return null;
@@ -12134,7 +12549,7 @@ namespace MMMapEditor
             }
 
             return variants
-                .Select(variant => BuildGuardConditionKey(variant.Variant))
+                .Select(variant => BuildGuardConditionKey(GetDisplayGuardPredicates(variant.Variant, inheritedGuardKey)))
                 .All(key => string.Equals(key, firstGuardKey, StringComparison.Ordinal))
                 ? firstPredicates
                 : null;
@@ -12151,10 +12566,7 @@ namespace MMMapEditor
 
             return variants.Count > 0 &&
                    variants.All(variant =>
-                       string.Equals(
-                           BuildGuardConditionKey(variant.Variant),
-                           inheritedGuardKey,
-                           StringComparison.Ordinal));
+                       IsGuardConditionFullySuppressedByScope(variant.Variant, inheritedGuardKey));
         }
 
         private static void ComputeCommonLines(VariantTreeNode node)
@@ -14775,14 +15187,17 @@ namespace MMMapEditor
             string sharedProbabilityLine = singleLeaf == null
                 ? GetSharedProbabilityLine(group?.TreeRoot)
                 : null;
+            string groupGuardKey = group?.HeaderGuardKey;
             var sharedGuardPredicates = singleLeaf == null
-                ? GetSharedGuardPredicates(group?.TreeRoot)
+                ? GetSharedGuardPredicates(group?.TreeRoot, groupGuardKey)
                 : null;
             string sharedGuardKey = BuildGuardConditionKey(sharedGuardPredicates);
+            string topSuppressedGuardKey = MergeGuardConditionKeys(groupGuardKey, sharedGuardKey);
             string sharedGuardAnnotation = BuildGuardHeaderAnnotation(sharedGuardPredicates);
             string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(
                 sharedProbabilityLine,
-                !string.IsNullOrWhiteSpace(sharedGuardAnnotation));
+                !string.IsNullOrWhiteSpace(sharedGuardAnnotation) ||
+                HasInheritedGuardForAllVariants(group?.TreeRoot, topSuppressedGuardKey));
 
             var sharedAnnotations = new List<string>();
             if (!string.IsNullOrWhiteSpace(group?.HeaderAnnotation))
@@ -14791,7 +15206,7 @@ namespace MMMapEditor
             {
                 AddDistinctHeaderAnnotations(
                     sharedAnnotations,
-                    BuildVariantHeaderAnnotations(singleLeafItem));
+                    BuildVariantHeaderAnnotations(singleLeafItem, null, groupGuardKey));
             }
             else
             {
@@ -14867,7 +15282,7 @@ namespace MMMapEditor
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        sharedGuardKey,
+                        topSuppressedGuardKey,
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
@@ -14883,7 +15298,7 @@ namespace MMMapEditor
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        sharedGuardKey);
+                        topSuppressedGuardKey);
                 }
                 else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
                 {
@@ -14894,7 +15309,7 @@ namespace MMMapEditor
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        sharedGuardKey);
+                        topSuppressedGuardKey);
                 }
                 else
                 {
@@ -14904,7 +15319,7 @@ namespace MMMapEditor
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        sharedGuardKey);
+                        topSuppressedGuardKey);
                 }
 
                 wroteAnyChild = true;
@@ -15475,17 +15890,19 @@ namespace MMMapEditor
             string promotedSingleLeafLabel = string.IsNullOrWhiteSpace(nodeLabel)
                 ? TryPromoteLeadingAnswerLine(singleLeafLines)
                 : null;
+            string nodeSuppressedGuardKey = MergeGuardConditionKeys(inheritedGuardKey, node.HeaderGuardKey);
             string sharedProbabilityLine = singleLeaf == null
                 ? GetSharedProbabilityLine(node, inheritedProbabilityLine)
                 : null;
             var sharedGuardPredicates = singleLeaf == null
-                ? GetSharedGuardPredicates(node, inheritedGuardKey)
+                ? GetSharedGuardPredicates(node, nodeSuppressedGuardKey)
                 : null;
             string sharedGuardKey = BuildGuardConditionKey(sharedGuardPredicates);
             string sharedGuardAnnotation = BuildGuardHeaderAnnotation(sharedGuardPredicates);
+            string currentSuppressedGuardKey = MergeGuardConditionKeys(nodeSuppressedGuardKey, sharedGuardKey);
             bool conditionVisibleForSharedProbability =
                 !string.IsNullOrWhiteSpace(sharedGuardAnnotation) ||
-                HasInheritedGuardForAllVariants(node, inheritedGuardKey);
+                HasInheritedGuardForAllVariants(node, currentSuppressedGuardKey);
             string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(
                 sharedProbabilityLine,
                 conditionVisibleForSharedProbability);
@@ -15498,7 +15915,7 @@ namespace MMMapEditor
                 AddDistinctHeaderAnnotations(annotations, new[] { node.HeaderAnnotation });
                 AddDistinctHeaderAnnotations(
                     annotations,
-                    BuildVariantHeaderAnnotations(singleLeafItem, inheritedProbabilityLine, inheritedGuardKey));
+                    BuildVariantHeaderAnnotations(singleLeafItem, inheritedProbabilityLine, nodeSuppressedGuardKey));
                 string annotationText = BuildVariantHeaderAnnotationText(annotations);
                 if (!string.IsNullOrWhiteSpace(annotationText))
                     header += $" ({annotationText})";
@@ -15573,7 +15990,7 @@ namespace MMMapEditor
             int nestedIndex = 1;
             bool wroteAny = false;
             string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
-            string descendantSuppressedGuardKey = sharedGuardKey ?? inheritedGuardKey;
+            string descendantSuppressedGuardKey = currentSuppressedGuardKey;
             var orderedEntries = BuildOrderedRenderEntries(
                 node,
                 renderableChildren,
@@ -16450,6 +16867,7 @@ namespace MMMapEditor
             noteText = noteText
                 .Replace(oldNotWorthyCondition, notWorthyCondition)
                 .Replace(oldWorthyCondition, worthyCondition);
+            noteText = RemoveAreaE1JudgementStatueScoreRangeLineMarkers(noteText);
 
             noteText = noteText.Replace(
                 "YOUR ACTIONS REFLECT YOUR VIEWS   OF 6",
@@ -16460,6 +16878,8 @@ namespace MMMapEditor
                 @"(?m)^(\s*)\+\s*$\r?\n(\s*)EXPERIENCE\s*$",
                 match => $"{match.Groups[1].Value}+{experienceRange}\n{match.Groups[2].Value}EXPERIENCE",
                 RegexOptions.CultureInvariant);
+
+            noteText = ApplyAreaE1JudgementStatueScoreSpecificRanges(noteText);
 
             noteText = Regex.Replace(
                 noteText,
@@ -16484,9 +16904,112 @@ namespace MMMapEditor
 
             AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, questProgressRange);
             AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, experienceRange);
+            AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, "0/1/2/3");
+            AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, "4/5/6");
+            AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, "0/16/32/48");
+            AddGeneratedOverlaySubstitutionSpans(noteText, inlineStyles, "64/80/96");
             RefreshAreaE1JudgementExplanationStyleSpan(noteText, inlineStyles);
 
             return noteText;
+        }
+
+        private static string RemoveAreaE1JudgementStatueScoreRangeLineMarkers(string noteText)
+        {
+            return string.IsNullOrEmpty(noteText)
+                ? noteText
+                : noteText
+                    .Replace(AreaE1JudgementStatueLowScoreLineMarker, string.Empty)
+                    .Replace(AreaE1JudgementStatueHighScoreLineMarker, string.Empty);
+        }
+
+        private enum AreaE1JudgementStatueScoreRange
+        {
+            None = 0,
+            Low = 1,
+            High = 2
+        }
+
+        private static string ApplyAreaE1JudgementStatueScoreSpecificRanges(string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText) ||
+                (noteText.IndexOf("0/16/32/48 EXPERIENCE", StringComparison.Ordinal) < 0 &&
+                 noteText.IndexOf("64/80/96 EXPERIENCE", StringComparison.Ordinal) < 0))
+            {
+                return noteText;
+            }
+
+            string normalized = noteText.Replace("\r\n", "\n").Replace('\r', '\n');
+            var lines = normalized.Split('\n');
+            var activeRanges = new List<(int Indent, AreaE1JudgementStatueScoreRange Range)>();
+            var sb = new StringBuilder(normalized.Length);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                var headerMatch = Regex.Match(
+                    line,
+                    @"^(\s*)Вариант\s+\d+(?:\.\d+)*(?:\s+\((.*?)\))?:\s*$",
+                    RegexOptions.CultureInvariant);
+
+                if (headerMatch.Success)
+                {
+                    int indent = headerMatch.Groups[1].Value.Length;
+                    activeRanges.RemoveAll(entry => entry.Indent >= indent);
+
+                    var headerRange = GetAreaE1JudgementStatueScoreRangeFromHeader(headerMatch.Groups[2].Value);
+                    if (headerRange != AreaE1JudgementStatueScoreRange.None)
+                        activeRanges.Add((indent, headerRange));
+                }
+
+                var activeRange = activeRanges.Count == 0
+                    ? AreaE1JudgementStatueScoreRange.None
+                    : activeRanges[activeRanges.Count - 1].Range;
+                if (activeRange != AreaE1JudgementStatueScoreRange.None)
+                    line = ApplyAreaE1JudgementStatueScoreRangeToLine(line, activeRange);
+
+                if (i > 0)
+                    sb.Append('\n');
+                sb.Append(line);
+            }
+
+            return sb.ToString();
+        }
+
+        private static AreaE1JudgementStatueScoreRange GetAreaE1JudgementStatueScoreRangeFromHeader(
+            string headerAnnotation)
+        {
+            if (string.IsNullOrWhiteSpace(headerAnnotation))
+                return AreaE1JudgementStatueScoreRange.None;
+
+            if (headerAnnotation.IndexOf("0/16/32/48 EXPERIENCE", StringComparison.Ordinal) >= 0)
+                return AreaE1JudgementStatueScoreRange.Low;
+
+            if (headerAnnotation.IndexOf("64/80/96 EXPERIENCE", StringComparison.Ordinal) >= 0)
+                return AreaE1JudgementStatueScoreRange.High;
+
+            return AreaE1JudgementStatueScoreRange.None;
+        }
+
+        private static string ApplyAreaE1JudgementStatueScoreRangeToLine(
+            string line,
+            AreaE1JudgementStatueScoreRange range)
+        {
+            string scoreRange = range == AreaE1JudgementStatueScoreRange.High
+                ? "4/5/6"
+                : "0/1/2/3";
+            string experienceRange = range == AreaE1JudgementStatueScoreRange.High
+                ? "64/80/96"
+                : "0/16/32/48";
+
+            line = line.Replace(
+                "YOUR ACTIONS REFLECT YOUR VIEWS 0/1/2/3/4/5/6 OF 6",
+                "YOUR ACTIONS REFLECT YOUR VIEWS " + scoreRange + " OF 6");
+
+            return Regex.Replace(
+                line,
+                @"^(\s*)\+0/16/32/48/64/80/96\s*$",
+                match => match.Groups[1].Value + "+" + experienceRange,
+                RegexOptions.CultureInvariant);
         }
 
         private static void AddGeneratedOverlaySubstitutionSpans(

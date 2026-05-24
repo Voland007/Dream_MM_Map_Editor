@@ -91,6 +91,7 @@ namespace MMMapEditor
         private Dictionary<string, SortedSet<byte>> registerDiscreteValues = new Dictionary<string, SortedSet<byte>>();
         private Dictionary<string, ValueRange8> registerSourceIndexRanges = new Dictionary<string, ValueRange8>();
         private Dictionary<string, SortedSet<byte>> registerSourceIndexValues = new Dictionary<string, SortedSet<byte>>();
+        private Dictionary<string, RegisterValueDistribution> registerSourceIndexDistributions = new Dictionary<string, RegisterValueDistribution>();
         private Dictionary<string, byte> registerRandomUpperBounds = new Dictionary<string, byte>();
         private Dictionary<string, PartyMemberReference> partyMemberBases = new Dictionary<string, PartyMemberReference>();
         private Dictionary<string, PartyFieldReference> partyFieldValues = new Dictionary<string, PartyFieldReference>();
@@ -99,6 +100,7 @@ namespace MMMapEditor
         private Dictionary<string, (ushort sourceAddr, int delta)> memoryByteDeltaSources =
             new Dictionary<string, (ushort, int)>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> coordinateSeedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private HashSet<string> splitMaterializedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public bool HasObservedCoordinateSeedRead { get; private set; }
 
         // Для отслеживания флагов
@@ -598,7 +600,11 @@ namespace MMMapEditor
             }
         }
 
-        private void SetSourceIndexMetadataForName(string regUpper, ValueRange8 range, IEnumerable<byte> values)
+        private void SetSourceIndexMetadataForName(
+            string regUpper,
+            ValueRange8 range,
+            IEnumerable<byte> values,
+            RegisterValueDistribution distribution)
         {
             if (string.IsNullOrWhiteSpace(regUpper))
                 return;
@@ -613,31 +619,42 @@ namespace MMMapEditor
                 registerSourceIndexValues.Remove(regUpper);
             else
                 registerSourceIndexValues[regUpper] = normalized;
+
+            if (distribution == RegisterValueDistribution.Unknown)
+                registerSourceIndexDistributions.Remove(regUpper);
+            else
+                registerSourceIndexDistributions[regUpper] = distribution;
         }
 
-        private void SetSourceIndexMetadataForRangeTargets(string regUpper, ValueRange8 range, IEnumerable<byte> values)
+        private void SetSourceIndexMetadataForRangeTargets(
+            string regUpper,
+            ValueRange8 range,
+            IEnumerable<byte> values,
+            RegisterValueDistribution distribution)
         {
             if (string.IsNullOrWhiteSpace(regUpper))
                 return;
 
             if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
             {
-                SetSourceIndexMetadataForName(regUpper, range, values);
+                SetSourceIndexMetadataForName(regUpper, range, values, distribution);
                 return;
             }
 
             if (regUpper == fullReg || regUpper == lowReg)
             {
-                SetSourceIndexMetadataForName(fullReg, range, values);
-                SetSourceIndexMetadataForName(lowReg, range, values);
+                SetSourceIndexMetadataForName(fullReg, range, values, distribution);
+                SetSourceIndexMetadataForName(lowReg, range, values, distribution);
                 registerSourceIndexRanges.Remove(highReg);
                 registerSourceIndexValues.Remove(highReg);
+                registerSourceIndexDistributions.Remove(highReg);
             }
             else
             {
-                SetSourceIndexMetadataForName(highReg, range, values);
+                SetSourceIndexMetadataForName(highReg, range, values, distribution);
                 registerSourceIndexRanges.Remove(fullReg);
                 registerSourceIndexValues.Remove(fullReg);
+                registerSourceIndexDistributions.Remove(fullReg);
             }
         }
 
@@ -648,12 +665,14 @@ namespace MMMapEditor
 
             registerSourceIndexRanges.Remove(regUpper);
             registerSourceIndexValues.Remove(regUpper);
+            registerSourceIndexDistributions.Remove(regUpper);
 
             if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
                 return;
 
             registerSourceIndexRanges.Remove(fullReg);
             registerSourceIndexValues.Remove(fullReg);
+            registerSourceIndexDistributions.Remove(fullReg);
 
             if (regUpper == fullReg)
             {
@@ -661,20 +680,28 @@ namespace MMMapEditor
                 registerSourceIndexRanges.Remove(highReg);
                 registerSourceIndexValues.Remove(lowReg);
                 registerSourceIndexValues.Remove(highReg);
+                registerSourceIndexDistributions.Remove(lowReg);
+                registerSourceIndexDistributions.Remove(highReg);
             }
             else if (regUpper == lowReg)
             {
                 registerSourceIndexRanges.Remove(lowReg);
                 registerSourceIndexValues.Remove(lowReg);
+                registerSourceIndexDistributions.Remove(lowReg);
             }
             else
             {
                 registerSourceIndexRanges.Remove(highReg);
                 registerSourceIndexValues.Remove(highReg);
+                registerSourceIndexDistributions.Remove(highReg);
             }
         }
 
-        private void SetRegisterSourceIndexMetadata(string regUpper, ValueRange8 sourceIndexRange, IEnumerable<byte> sourceIndexValues)
+        private void SetRegisterSourceIndexMetadata(
+            string regUpper,
+            ValueRange8 sourceIndexRange,
+            IEnumerable<byte> sourceIndexValues,
+            RegisterValueDistribution sourceIndexDistribution = RegisterValueDistribution.Unknown)
         {
             if (string.IsNullOrWhiteSpace(regUpper))
                 return;
@@ -690,7 +717,7 @@ namespace MMMapEditor
                 return;
             }
 
-            SetSourceIndexMetadataForRangeTargets(regUpper, range, normalized);
+            SetSourceIndexMetadataForRangeTargets(regUpper, range, normalized, sourceIndexDistribution);
         }
 
         public bool TryGetSourceIndexRange(string reg, out ValueRange8 range)
@@ -746,6 +773,27 @@ namespace MMMapEditor
             return false;
         }
 
+        public bool TryGetSourceIndexDistribution(string reg, out RegisterValueDistribution distribution)
+        {
+            distribution = RegisterValueDistribution.Unknown;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (registerSourceIndexDistributions.TryGetValue(regUpper, out distribution))
+                return true;
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                regUpper != fullReg &&
+                registerSourceIndexDistributions.TryGetValue(fullReg, out distribution))
+            {
+                return true;
+            }
+
+            distribution = RegisterValueDistribution.Unknown;
+            return false;
+        }
+
         public void SetRegisterDiscreteValues(
             string reg,
             IEnumerable<byte> values,
@@ -779,7 +827,8 @@ namespace MMMapEditor
             bool sourceIndexExternallyDerived = false,
             ushort? sourceIndexProviderAddr = null,
             ValueRange8 sourceIndexRange = null,
-            IEnumerable<byte> sourceIndexValues = null)
+            IEnumerable<byte> sourceIndexValues = null,
+            RegisterValueDistribution sourceIndexDistribution = RegisterValueDistribution.Unknown)
         {
             SetRegisterDiscreteValues(reg, values, distribution);
 
@@ -798,7 +847,7 @@ namespace MMMapEditor
             var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
             registerSources2[regUpper] = srcInfo;
             registerSources[regUpper] = $"0x{normalized.Min:X2}..0x{normalized.Max:X2} loaded at 0x{address:X4} via {instruction}";
-            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues);
+            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues, sourceIndexDistribution);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
             {
@@ -1157,7 +1206,8 @@ namespace MMMapEditor
             bool sourceIndexExternallyDerived = false,
             ushort? sourceIndexProviderAddr = null,
             ValueRange8 sourceIndexRange = null,
-            IEnumerable<byte> sourceIndexValues = null)
+            IEnumerable<byte> sourceIndexValues = null,
+            RegisterValueDistribution sourceIndexDistribution = RegisterValueDistribution.Unknown)
         {
             SetRegisterRange(reg, min, max, distribution);
 
@@ -1172,7 +1222,7 @@ namespace MMMapEditor
             var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
             registerSources2[regUpper] = srcInfo;
             registerSources[regUpper] = $"0x{min:X2}..0x{max:X2} loaded at 0x{address:X4} via {instruction}";
-            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues);
+            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues, sourceIndexDistribution);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
             {
@@ -1192,7 +1242,8 @@ namespace MMMapEditor
             bool sourceIndexExternallyDerived = false,
             ushort? sourceIndexProviderAddr = null,
             ValueRange8 sourceIndexRange = null,
-            IEnumerable<byte> sourceIndexValues = null)
+            IEnumerable<byte> sourceIndexValues = null,
+            RegisterValueDistribution sourceIndexDistribution = RegisterValueDistribution.Unknown)
         {
             string regUpper = reg?.ToUpperInvariant();
             if (string.IsNullOrWhiteSpace(regUpper))
@@ -1205,7 +1256,7 @@ namespace MMMapEditor
             var srcInfo = (addr: sourceAddr, fromTable, originalBx, tableType, sourceIndexExternallyDerived, sourceIndexProviderAddr);
             registerSources2[regUpper] = srcInfo;
             registerSources[regUpper] = $"source 0x{sourceAddr:X4} associated at 0x{address:X4} via {instruction}";
-            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues);
+            SetRegisterSourceIndexMetadata(regUpper, sourceIndexRange, sourceIndexValues, sourceIndexDistribution);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _))
             {
@@ -1219,6 +1270,7 @@ namespace MMMapEditor
             string regUpper = reg.ToUpperInvariant();
             ClearRegisterDiscreteValues(regUpper);
             ClearRegisterRandomUpperBound(regUpper);
+            ClearSplitMaterializedRegister(regUpper);
             ClearSourceIndexMetadata(regUpper);
             registerRanges.Remove(regUpper);
             registerRangeDistributions.Remove(regUpper);
@@ -1232,6 +1284,56 @@ namespace MMMapEditor
                 registerRangeDistributions.Remove(lowReg);
                 registerRangeDistributions.Remove(highReg);
             }
+        }
+
+        private void ClearSplitMaterializedRegister(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            splitMaterializedRegisters.Remove(regUpper);
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                splitMaterializedRegisters.Remove(fullReg);
+                splitMaterializedRegisters.Remove(lowReg);
+                splitMaterializedRegisters.Remove(highReg);
+            }
+        }
+
+        public void MarkRegisterAsSplitMaterialized(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            splitMaterializedRegisters.Add(regUpper);
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+            {
+                if (regUpper == fullReg || regUpper == lowReg)
+                {
+                    splitMaterializedRegisters.Add(fullReg);
+                    splitMaterializedRegisters.Add(lowReg);
+                }
+                else if (regUpper == highReg)
+                {
+                    splitMaterializedRegisters.Add(highReg);
+                }
+            }
+        }
+
+        public bool IsRegisterSplitMaterialized(string reg)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (splitMaterializedRegisters.Contains(regUpper))
+                return true;
+
+            return TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg) &&
+                   (splitMaterializedRegisters.Contains(fullReg) ||
+                    splitMaterializedRegisters.Contains(lowReg) ||
+                    splitMaterializedRegisters.Contains(highReg));
         }
 
         public void SetRegisterValue(string reg, ushort value, uint address, string instruction)
@@ -1968,6 +2070,7 @@ namespace MMMapEditor
             registerDiscreteValues.Clear();
             registerSourceIndexRanges.Clear();
             registerSourceIndexValues.Clear();
+            registerSourceIndexDistributions.Clear();
             registerRandomUpperBounds.Clear();
             partyMemberBases.Clear();
             partyFieldValues.Clear();
@@ -2008,6 +2111,7 @@ namespace MMMapEditor
             public string SourceDescription { get; set; }
             public ValueRange8 SourceIndexRange { get; set; }
             public List<byte> SourceIndexValues { get; set; }
+            public RegisterValueDistribution SourceIndexDistribution { get; set; }
             public bool IsExternallyDerived { get; set; }
             public bool HasPendingExternalCallResult { get; set; }
             public ExternalCallResultKind PendingExternalCallKind { get; set; }
@@ -2033,6 +2137,7 @@ namespace MMMapEditor
             TryGetRegisterDiscreteValues(lowReg, out var discreteValues);
             TryGetSourceIndexRange(lowReg, out var sourceIndexRange);
             TryGetSourceIndexValues(lowReg, out var sourceIndexValues);
+            TryGetSourceIndexDistribution(lowReg, out var sourceIndexDistribution);
             bool hasSourceInfo = registerSources2.TryGetValue(lowReg, out var sourceInfo) ||
                                  registerSources2.TryGetValue(fullRegUpper, out sourceInfo);
             registerSources.TryGetValue(lowReg, out string sourceDescription);
@@ -2062,6 +2167,7 @@ namespace MMMapEditor
                 SourceDescription = sourceDescription,
                 SourceIndexRange = sourceIndexRange == null ? null : new ValueRange8(sourceIndexRange.Min, sourceIndexRange.Max),
                 SourceIndexValues = sourceIndexValues == null ? new List<byte>() : new List<byte>(sourceIndexValues),
+                SourceIndexDistribution = sourceIndexDistribution,
                 IsExternallyDerived = IsRegisterExternallyDerived(lowReg) || IsRegisterExternallyDerived(fullRegUpper),
                 HasPendingExternalCallResult = hasPendingExternalCallResult,
                 PendingExternalCallKind = pendingKind,
@@ -2103,7 +2209,11 @@ namespace MMMapEditor
                 }
             }
 
-            SetRegisterSourceIndexMetadata(snapshot.LowReg, snapshot.SourceIndexRange, snapshot.SourceIndexValues);
+            SetRegisterSourceIndexMetadata(
+                snapshot.LowReg,
+                snapshot.SourceIndexRange,
+                snapshot.SourceIndexValues,
+                snapshot.SourceIndexDistribution);
 
             if (snapshot.IsExternallyDerived)
                 MarkRegisterAsExternallyDerived(snapshot.LowReg);
@@ -2364,6 +2474,10 @@ namespace MMMapEditor
             {
                 clone.registerSourceIndexValues[kvp.Key] = CloneDiscreteValues(kvp.Value);
             }
+            foreach (var kvp in registerSourceIndexDistributions)
+            {
+                clone.registerSourceIndexDistributions[kvp.Key] = kvp.Value;
+            }
             foreach (var kvp in registerRandomUpperBounds)
             {
                 clone.registerRandomUpperBounds[kvp.Key] = kvp.Value;
@@ -2391,6 +2505,10 @@ namespace MMMapEditor
             foreach (var reg in coordinateSeedRegisters)
             {
                 clone.coordinateSeedRegisters.Add(reg);
+            }
+            foreach (var reg in splitMaterializedRegisters)
+            {
+                clone.splitMaterializedRegisters.Add(reg);
             }
             clone.ZeroFlag = this.ZeroFlag;
             clone.CarryFlag = this.CarryFlag;
