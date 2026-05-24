@@ -551,6 +551,18 @@ namespace MMMapEditor
 
         private ObjectTableLayout ResolveObjectTableLayout(BinaryReader br)
         {
+            if (!_config.HasObjectTable)
+            {
+                return new ObjectTableLayout
+                {
+                    ObjectCount = 0,
+                    CountOffset = _config.StartAddress,
+                    CoordinatesOffset = _config.StartAddress,
+                    DirectionsOffset = _config.StartAddress,
+                    PatchKeysOffset = _config.StartAddress
+                };
+            }
+
             byte numObjects = ReadByteAt(br, _config.StartAddress);
 
             if (TryDetectObjectTableLayoutFromOverlayCode(br, numObjects, out ObjectTableLayout detectedLayout))

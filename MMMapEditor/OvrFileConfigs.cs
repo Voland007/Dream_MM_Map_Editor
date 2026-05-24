@@ -33,6 +33,7 @@ namespace MMMapEditor
 
         private const int OverlayHeaderSize = 0x0E;
         private const int ObjectCountInstructionOffset = 0x2E;
+        private const int ObjectCountInstructionLength = 4;
 
         public static bool TryGetConfigForFile(string filename, out OvrFileConfig config)
         {
@@ -116,11 +117,13 @@ namespace MMMapEditor
                     $"Блок карты #{blockIndex} для {overlayFileName} выходит за пределы {MazeDataFileName}.");
             }
 
+            var resolvedLayout = ResolveOverlayDataLayout(fullOverlayPath, overlayFileName);
+
             return new OvrFileConfig
             {
                 First16Lines = FormatMapLayerLines(mazeData, blockOffset),
                 Second16Lines = FormatMapLayerLines(mazeData, blockOffset + StaticMapLayerByteCount)
-            }.WithStartAddress(ResolveStartAddress(fullOverlayPath));
+            }.WithStartAddress(resolvedLayout.StartAddress, resolvedLayout.HasObjectTable);
         }
 
         public static OvrFileConfig ResolveConfig(string filename, OvrFileConfig baseConfig)
@@ -128,7 +131,8 @@ namespace MMMapEditor
             if (baseConfig == null)
                 throw new ArgumentNullException(nameof(baseConfig));
 
-            return baseConfig.WithStartAddress(ResolveStartAddress(filename));
+            var resolvedLayout = ResolveOverlayDataLayout(filename, Path.GetFileName(filename));
+            return baseConfig.WithStartAddress(resolvedLayout.StartAddress, resolvedLayout.HasObjectTable);
         }
 
         public static int ResolveStartAddress(string filename)
@@ -139,6 +143,23 @@ namespace MMMapEditor
 
         public static int ResolveStartAddress(byte[] fileData, string? displayName = null)
         {
+            return ResolveOverlayDataLayout(fileData, displayName).StartAddress;
+        }
+
+        private sealed class ResolvedOverlayDataLayout
+        {
+            public int StartAddress { get; set; }
+            public bool HasObjectTable { get; set; }
+        }
+
+        private static ResolvedOverlayDataLayout ResolveOverlayDataLayout(string filename, string? displayName = null)
+        {
+            byte[] fileData = File.ReadAllBytes(filename);
+            return ResolveOverlayDataLayout(fileData, displayName);
+        }
+
+        private static ResolvedOverlayDataLayout ResolveOverlayDataLayout(byte[] fileData, string? displayName = null)
+        {
             if (fileData == null)
                 throw new ArgumentNullException(nameof(fileData));
 
@@ -146,27 +167,16 @@ namespace MMMapEditor
                 ? "overlay"
                 : displayName;
 
-            if (fileData.Length < ObjectCountInstructionOffset + 4)
-                throw new InvalidOperationException(
-                    $"{label}: file is too small to read object-count instruction at 0x{ObjectCountInstructionOffset:X2}.");
-
             if (fileData.Length < OverlayHeaderSize)
                 throw new InvalidOperationException($"{label}: file is too small to read overlay header.");
 
-            byte opcode = fileData[ObjectCountInstructionOffset];
-            byte modRm = fileData[ObjectCountInstructionOffset + 1];
-            if (opcode != 0x3A || modRm != 0x1E)
-            {
+            if (fileData.Length < ObjectCountInstructionOffset + ObjectCountInstructionLength)
                 throw new InvalidOperationException(
-                    $"{label}: expected 'cmp bl, byte ptr [imm16]' at 0x{ObjectCountInstructionOffset:X2}, " +
-                    $"found {opcode:X2} {modRm:X2}.");
-            }
+                    $"{label}: file is too small to read object-count instruction at 0x{ObjectCountInstructionOffset:X2}.");
 
-            ushort countMemoryAddress = ReadUInt16(fileData, ObjectCountInstructionOffset + 2);
             ushort firstBlockLength = ReadUInt16(fileData, 0x04);
             ushort secondBlockLoadAddress = ReadUInt16(fileData, 0x06);
             int secondBlockFileOffset = OverlayHeaderSize + firstBlockLength;
-            int startAddress = secondBlockFileOffset + (countMemoryAddress - secondBlockLoadAddress);
 
             if (secondBlockFileOffset < OverlayHeaderSize || secondBlockFileOffset >= fileData.Length)
             {
@@ -174,13 +184,77 @@ namespace MMMapEditor
                     $"{label}: invalid second block file offset 0x{secondBlockFileOffset:X}.");
             }
 
-            if (startAddress < 0 || startAddress >= fileData.Length)
+            if (TryResolveObjectTableStartAddress(
+                    fileData,
+                    ObjectCountInstructionOffset,
+                    secondBlockFileOffset,
+                    secondBlockLoadAddress,
+                    out int objectTableStartAddress))
             {
-                throw new InvalidOperationException(
-                    $"{label}: resolved object-table start address 0x{startAddress:X} is outside the overlay.");
+                return new ResolvedOverlayDataLayout
+                {
+                    StartAddress = objectTableStartAddress,
+                    HasObjectTable = true
+                };
             }
 
-            return startAddress;
+            int dataStartAddress = secondBlockFileOffset +
+                (OvrFileConfig.OverlayTextStartAddress - secondBlockLoadAddress);
+
+            if (dataStartAddress >= 0 &&
+                dataStartAddress < fileData.Length &&
+                LooksLikeOverlayTextStart(fileData, dataStartAddress))
+            {
+                return new ResolvedOverlayDataLayout
+                {
+                    StartAddress = dataStartAddress,
+                    HasObjectTable = false
+                };
+            }
+
+            byte opcode = fileData[ObjectCountInstructionOffset];
+            byte modRm = fileData[ObjectCountInstructionOffset + 1];
+            throw new InvalidOperationException(
+                $"{label}: expected 'cmp bl, byte ptr [imm16]' at 0x{ObjectCountInstructionOffset:X2}, " +
+                $"found {opcode:X2} {modRm:X2}.");
+        }
+
+        private static bool TryResolveObjectTableStartAddress(
+            byte[] fileData,
+            int instructionOffset,
+            int secondBlockFileOffset,
+            ushort secondBlockLoadAddress,
+            out int startAddress)
+        {
+            startAddress = 0;
+
+            if (instructionOffset < 0 ||
+                instructionOffset + ObjectCountInstructionLength > fileData.Length ||
+                fileData[instructionOffset] != 0x3A ||
+                fileData[instructionOffset + 1] != 0x1E)
+            {
+                return false;
+            }
+
+            ushort countMemoryAddress = ReadUInt16(fileData, instructionOffset + 2);
+            long mappedOffset = secondBlockFileOffset + (countMemoryAddress - secondBlockLoadAddress);
+            if (mappedOffset < 0 || mappedOffset >= fileData.Length)
+                return false;
+
+            startAddress = (int)mappedOffset;
+            return true;
+        }
+
+        private static bool LooksLikeOverlayTextStart(byte[] fileData, int offset)
+        {
+            if (offset < 0 || offset >= fileData.Length)
+                return false;
+
+            byte value = fileData[offset];
+            return value == 0 ||
+                   value == 0x0D ||
+                   value == 0x0A ||
+                   (value >= 0x20 && value <= 0x7E);
         }
 
         private static string FindCompanionFile(string directory, string fileName)
@@ -355,6 +429,7 @@ namespace MMMapEditor
         }
 
         public bool HasResolvedStartAddress => _startAddress.HasValue;
+        public bool HasObjectTable { get; private set; } = true;
         public string[] First16Lines { get; set; } = Array.Empty<string>();
         public string[] Second16Lines { get; set; } = Array.Empty<string>();
         public int TextBaseAddr => OverlayTextStartAddress - StartAddress;
@@ -372,9 +447,15 @@ namespace MMMapEditor
 
         public OvrFileConfig WithStartAddress(int startAddress)
         {
+            return WithStartAddress(startAddress, HasObjectTable);
+        }
+
+        public OvrFileConfig WithStartAddress(int startAddress, bool hasObjectTable)
+        {
             return new OvrFileConfig
             {
                 StartAddress = startAddress,
+                HasObjectTable = hasObjectTable,
                 First16Lines = First16Lines,
                 Second16Lines = Second16Lines
             };
