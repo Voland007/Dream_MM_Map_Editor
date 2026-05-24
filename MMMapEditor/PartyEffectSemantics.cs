@@ -825,6 +825,9 @@ namespace MMMapEditor
                 return false;
             }
 
+            if (TryBuildMainQuestMilestonePredicateDisplayText(predicate, out text))
+                return true;
+
             if (!TryResolveMainQuestCompletionPredicateState(
                     predicate.Comparison,
                     predicate.ImmediateValue.Value,
@@ -833,7 +836,7 @@ namespace MMMapEditor
                 return false;
             }
 
-            if (predicate.TargetMember?.IsPartyLoopMember == true)
+            if (IsPartyLoopPredicate(predicate))
             {
                 text = predicate.LoopQuantifier switch
                 {
@@ -856,6 +859,45 @@ namespace MMMapEditor
                 ? stateText
                 : $"{targetText} {stateText}";
             return true;
+        }
+
+        private static bool TryBuildMainQuestMilestonePredicateDisplayText(PartyPredicate predicate, out string text)
+        {
+            text = null;
+            if (!IsPartyLoopPredicate(predicate) ||
+                !predicate.ImmediateValue.HasValue)
+            {
+                return false;
+            }
+
+            ushort value = predicate.ImmediateValue.Value;
+            if (value == PartyTechnicalFieldSemantics.AstralProjectorsCompletedValue &&
+                predicate.Comparison == PartyPredicateComparison.NotEqual)
+            {
+                text = predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None
+                    ? "Все персонажи прошли все пять астральных проекторов в главном квесте"
+                    : "Хотя бы один персонаж не прошёл все пять астральных проекторов в главном квесте";
+                return true;
+            }
+
+            if (value == PartyTechnicalFieldSemantics.ImposterDefeatedTransferReadyValue &&
+                predicate.Comparison == PartyPredicateComparison.Equal)
+            {
+                text = predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None
+                    ? "Никто в партии ещё не победил самозванца (главгада) по главному квесту"
+                    : "Хотя бы один персонаж победил самозванца (главгада) по главному квесту";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsPartyLoopPredicate(PartyPredicate predicate)
+        {
+            return predicate != null &&
+                   (predicate.TargetMember?.IsPartyLoopMember == true ||
+                    predicate.LoopQuantifier == PartyPredicateLoopQuantifier.Any ||
+                    predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None);
         }
 
         private static bool TryResolveMainQuestCompletionPredicateState(
@@ -2267,14 +2309,33 @@ namespace MMMapEditor
                         (byte)effect.ImmediateValue.Value)
                     : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
                 PartyEffectOperation.Write => effect.ImmediateValue.HasValue
-                    ? BuildMainQuestCompletionWriteDescription(targetPrefix, effect.ImmediateValue.Value)
-                    : ComposeQuestLordSentence(targetPrefix, $"Изменяется {fieldLabel}", $"изменяется {fieldLabel}"),
+                    ? BuildMainQuestCompletionWriteDescription(
+                        effect,
+                        targetPrefix,
+                        scope,
+                        condition,
+                        effect.ImmediateValue.Value)
+                    : BuildMainQuestCompletionUnknownWriteDescription(targetPrefix, fieldLabel, scope),
                 _ => !string.IsNullOrWhiteSpace(effect.Description)
                     ? effect.Description
                     : fieldLabel
             };
 
             return WrapTechnicalQuestLordNote(body);
+        }
+
+        private static string BuildMainQuestCompletionUnknownWriteDescription(
+            string targetPrefix,
+            string fieldLabel,
+            PartyEffectScope scope)
+        {
+            if (scope == PartyEffectScope.WholeParty)
+                return "Текущий астральный проектор засчитан каждому персонажу партии для главного квеста";
+
+            return ComposeQuestLordSentence(
+                targetPrefix,
+                $"Изменяется {fieldLabel}",
+                $"изменяется {fieldLabel}");
         }
 
         private static string FormatMainQuestCompletionValue(ushort value)
@@ -2351,8 +2412,19 @@ namespace MMMapEditor
             };
         }
 
-        private static string BuildMainQuestCompletionWriteDescription(string targetPrefix, ushort value)
+        private static string BuildMainQuestCompletionWriteDescription(
+            PartyEffect effect,
+            string targetPrefix,
+            PartyEffectScope scope,
+            PartyConditionKind condition,
+            ushort value)
         {
+            if (value >= PartyTechnicalFieldSemantics.MainQuestCompletedThreshold &&
+                TryBuildMainQuestTransferReadyTargetPrefix(effect, scope, condition, out string guardedTargetPrefix))
+            {
+                targetPrefix = guardedTargetPrefix;
+            }
+
             return value >= PartyTechnicalFieldSemantics.MainQuestCompletedThreshold
                 ? ComposeQuestLordSentence(
                     targetPrefix,
@@ -2362,6 +2434,41 @@ namespace MMMapEditor
                     targetPrefix,
                     "Главный квест игры отмечается невыполненным",
                     "главный квест игры отмечается невыполненным");
+        }
+
+        private static bool TryBuildMainQuestTransferReadyTargetPrefix(
+            PartyEffect effect,
+            PartyEffectScope scope,
+            PartyConditionKind condition,
+            out string targetPrefix)
+        {
+            targetPrefix = null;
+
+            if (effect == null ||
+                scope != PartyEffectScope.PartySubset ||
+                condition != PartyConditionKind.None)
+            {
+                return false;
+            }
+
+            bool hasTransferReadyGuard = GetEffectiveGuardPredicates(effect)
+                .Any(IsMainQuestTransferReadyPartyLoopGuard);
+
+            if (!hasTransferReadyGuard)
+                return false;
+
+            targetPrefix = "У персонажей партии, победивших самозванца (главгада) по главному квесту, ";
+            return true;
+        }
+
+        private static bool IsMainQuestTransferReadyPartyLoopGuard(PartyPredicate predicate)
+        {
+            return predicate != null &&
+                   predicate.Field == PartyFieldKind.Technical7D &&
+                   predicate.Comparison == PartyPredicateComparison.Equal &&
+                   predicate.ImmediateValue == PartyTechnicalFieldSemantics.ImposterDefeatedTransferReadyValue &&
+                   predicate.LoopQuantifier != PartyPredicateLoopQuantifier.None &&
+                   IsPartyLoopPredicate(predicate);
         }
 
         private static string BuildRanalouBitCompareDescription(string targetPrefix, string fieldLabel, byte mask)

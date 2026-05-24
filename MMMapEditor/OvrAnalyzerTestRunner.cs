@@ -517,9 +517,6 @@ namespace MMMapEditor.Tests
             if (int.TryParse(configuredValue, out int configuredParallelism) && configuredParallelism > 0)
                 return Math.Min(testCount, configuredParallelism);
 
-            if (IsAnalysisDebugEnabledForTests())
-                return 1;
-
             return Math.Min(testCount, DefaultMaxParallelTests);
         }
 

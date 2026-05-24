@@ -22,6 +22,8 @@ namespace MMMapEditor
         public const int RanalouJudgementScoreFieldOffset = 0x6E;
         public const string RanalouJudgementScoreFieldLabel = "счёт зачтённых узников RANALOU (+0x6E)";
         public const int MainQuestCompletionFieldOffset = 0x7D;
+        public const byte AstralProjectorsCompletedValue = 0x1F;
+        public const byte ImposterDefeatedTransferReadyValue = 0x40;
         public const byte MainQuestCompletedThreshold = 0x80;
         public const string MainQuestCompletionFieldLabel = "поле завершения главного квеста (+0x7D)";
 

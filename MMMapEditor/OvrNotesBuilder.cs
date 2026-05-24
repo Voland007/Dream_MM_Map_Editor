@@ -13933,6 +13933,9 @@ namespace MMMapEditor
             PartyEffect effect,
             PathVariantInfo variantContext = null)
         {
+            if (TryBuildMainQuestTransferReadyCompletionDescription(effect, variantContext, out string mainQuestCompletionDescription))
+                return mainQuestCompletionDescription;
+
             if (TryBuildRanalouPrisonerChoiceJudgementDescription(effect, variantContext, out string ranalouJudgementDescription))
                 return ranalouJudgementDescription;
 
@@ -13941,6 +13944,48 @@ namespace MMMapEditor
                 return description;
 
             return ReplaceWholePartyConditionTargetWithCurrentMember(description);
+        }
+
+        private static bool TryBuildMainQuestTransferReadyCompletionDescription(
+            PartyEffect effect,
+            PathVariantInfo variantContext,
+            out string description)
+        {
+            description = null;
+
+            if (effect == null ||
+                variantContext == null ||
+                PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Technical7D ||
+                PartyEffectSemantics.GetEffectiveOperation(effect) != PartyEffectOperation.Write ||
+                PartyEffectSemantics.GetEffectiveScope(effect) != PartyEffectScope.PartySubset ||
+                !effect.ImmediateValue.HasValue ||
+                effect.ImmediateValue.Value < PartyTechnicalFieldSemantics.MainQuestCompletedThreshold)
+            {
+                return false;
+            }
+
+            bool hasTransferReadyVariantGuard = variantContext.GetGuardPredicates()
+                .Any(IsMainQuestTransferReadyPartyLoopGuard);
+
+            if (!hasTransferReadyVariantGuard)
+                return false;
+
+            description =
+                "-=*У персонажей партии, победивших самозванца (главгада) по главному квесту, " +
+                "главный квест игры отмечается выполненным*=-";
+            return true;
+        }
+
+        private static bool IsMainQuestTransferReadyPartyLoopGuard(PartyPredicate predicate)
+        {
+            return predicate != null &&
+                   predicate.Field == PartyFieldKind.Technical7D &&
+                   predicate.Comparison == PartyPredicateComparison.Equal &&
+                   predicate.ImmediateValue == PartyTechnicalFieldSemantics.ImposterDefeatedTransferReadyValue &&
+                   predicate.LoopQuantifier != PartyPredicateLoopQuantifier.None &&
+                   (predicate.TargetMember?.IsPartyLoopMember == true ||
+                    predicate.LoopQuantifier == PartyPredicateLoopQuantifier.Any ||
+                    predicate.LoopQuantifier == PartyPredicateLoopQuantifier.Unspecified);
         }
 
         private static bool TryBuildRanalouPrisonerChoiceJudgementDescription(
