@@ -52,13 +52,17 @@ namespace MMMapEditor
         private static readonly Dictionary<ushort, string[]> KnownBinaryStateConditionLabels =
             new Dictionary<ushort, string[]>
             {
+                { 0x3C97, new[] { "PROTECTION FROM FIRE отсутствует", "PROTECTION FROM FIRE активно" } },
                 { 0x3C98, new[] { "PROTECTION FROM POISON отсутствует", "PROTECTION FROM POISON активно" } },
+                { 0x3C99, new[] { "PROTECTION FROM ACID отсутствует", "PROTECTION FROM ACID активно" } },
                 { 0x3C9E, new[] { "LEVITATE отсутствует", "LEVITATE активно" } },
                 { 0x3CA1, new[] { "PSYCHIC PROTECTION отсутствует", "PSYCHIC PROTECTION активно" } },
                 { 0xC980, new[] { "квест не взят", "квест взят" } }
             };
         private static readonly string[] KnownProtectiveSpellConditionNames =
         {
+            "PROTECTION FROM FIRE",
+            "PROTECTION FROM ACID",
             "PROTECTION FROM POISON",
             "LEVITATE",
             "PSYCHIC PROTECTION"
@@ -8852,6 +8856,7 @@ namespace MMMapEditor
                 IntroduceComplementaryInventoryPresenceBranches(root);
                 IntroduceGuardedNoOpComplementOutcomes(root);
                 ComputeCommonLines(root);
+                IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(root);
                 IntroduceSharedLineHierarchy(root);
                 AttachChoiceChildrenToSiblingPromptParents(root);
                 IntroduceSharedPromptHierarchyFromChoiceChildContent(root);
@@ -12829,6 +12834,130 @@ namespace MMMapEditor
             return node.CommonLines != null &&
                    node.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)) &&
                    HasAnyVariantItem(node);
+        }
+
+        private static void IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(VariantTreeNode node)
+        {
+            if (node == null)
+                return;
+
+            foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
+                IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(child);
+
+            var candidates = (node.Children ?? new List<VariantTreeNode>())
+                .Select((child, index) => TryBuildVisibleStateConditionBranchInfo(child, out var info)
+                    ? new { Child = child, Info = info, Index = index }
+                    : null)
+                .Where(entry =>
+                    entry != null &&
+                    entry.Child.CommonLines != null &&
+                    entry.Child.CommonLines.Any(line => !string.IsNullOrWhiteSpace(line)) &&
+                    HasAnyVariantItem(entry.Child))
+                .ToList();
+            if (candidates.Count < 2)
+                return;
+
+            var childToSyntheticParent = new Dictionary<VariantTreeNode, VariantTreeNode>();
+            foreach (var group in candidates
+                .GroupBy(entry => new
+                {
+                    entry.Info.Address,
+                    FirstLine = GetFirstMeaningfulLine(entry.Child.CommonLines) ?? string.Empty
+                })
+                .Where(group =>
+                    !string.IsNullOrWhiteSpace(group.Key.FirstLine) &&
+                    group.Any(entry => entry.Info.Polarity == StateConditionPolarity.Zero) &&
+                    group.Any(entry => entry.Info.Polarity == StateConditionPolarity.NonZero))
+                .OrderBy(group => group.Min(entry => entry.Index)))
+            {
+                var entries = group.OrderBy(entry => entry.Index).ToList();
+                if (entries.Any(entry => childToSyntheticParent.ContainsKey(entry.Child)))
+                    continue;
+
+                var sharedLines = GetCommonPrefix(entries.Select(entry => entry.Child.CommonLines).ToList());
+                if (!sharedLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+                    continue;
+
+                var syntheticParent = new VariantTreeNode
+                {
+                    CommonLines = sharedLines.ToList()
+                };
+
+                foreach (var entry in entries)
+                {
+                    entry.Child.CommonLines = entry.Child.CommonLines
+                        .Skip(sharedLines.Count)
+                        .ToList();
+                    syntheticParent.Children.Add(entry.Child);
+                    childToSyntheticParent[entry.Child] = syntheticParent;
+                }
+            }
+
+            if (childToSyntheticParent.Count == 0)
+                return;
+
+            var emittedParents = new HashSet<VariantTreeNode>();
+            var rebuiltChildren = new List<VariantTreeNode>();
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+            {
+                if (child != null && childToSyntheticParent.TryGetValue(child, out var syntheticParent))
+                {
+                    if (emittedParents.Add(syntheticParent))
+                        rebuiltChildren.Add(syntheticParent);
+                    continue;
+                }
+
+                rebuiltChildren.Add(child);
+            }
+
+            node.Children = rebuiltChildren;
+        }
+
+        private static bool TryBuildVisibleStateConditionBranchInfo(
+            VariantTreeNode node,
+            out StateConditionBranchInfo info)
+        {
+            info = null;
+            if (node == null ||
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(node.Label)))
+            {
+                return false;
+            }
+
+            string annotation = StripGuardHeaderAnnotationPrefix(node.HeaderAnnotation);
+            if (string.IsNullOrWhiteSpace(annotation))
+                return false;
+
+            foreach (var kvp in KnownBinaryStateConditionLabels)
+            {
+                var labels = kvp.Value;
+                if (labels == null || labels.Length < 2)
+                    continue;
+
+                if (string.Equals(annotation, labels[0], StringComparison.Ordinal))
+                {
+                    info = new StateConditionBranchInfo
+                    {
+                        Node = node,
+                        Address = kvp.Key,
+                        Polarity = StateConditionPolarity.Zero
+                    };
+                    return true;
+                }
+
+                if (string.Equals(annotation, labels[1], StringComparison.Ordinal))
+                {
+                    info = new StateConditionBranchInfo
+                    {
+                        Node = node,
+                        Address = kvp.Key,
+                        Polarity = StateConditionPolarity.NonZero
+                    };
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static string GetFirstMeaningfulLine(IEnumerable<string> lines)

@@ -9686,7 +9686,9 @@ namespace MMMapEditor
 
         private static bool ShouldTrackUnknownExternalStateGuardAddress(ushort memAddr)
         {
-            return memAddr == 0x3C98 ||
+            return memAddr == 0x3C97 ||
+                   memAddr == 0x3C98 ||
+                   memAddr == 0x3C99 ||
                    memAddr == 0x3C9E ||
                    memAddr == 0x3CA1;
         }
