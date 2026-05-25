@@ -7537,7 +7537,9 @@ namespace MMMapEditor
 
             return (field == PartyFieldKind.Technical71 &&
                     operation == PartyEffectOperation.BitSet &&
-                    effect.ImmediateValue == 0x02) ||
+                    effect.ImmediateValue.HasValue &&
+                    PartyTechnicalFieldSemantics.IsRanalouPrisonerProgressMask(
+                        (byte)effect.ImmediateValue.Value)) ||
                    (field == PartyFieldKind.Technical6E &&
                     operation == PartyEffectOperation.Increment &&
                     effect.ImmediateValue == 0x20);

@@ -21,6 +21,8 @@ namespace MMMapEditor
         public const string RanalouQuestLineFieldLabel = "поле прогресса линейки квестов волшебника RANALOU (+0x71)";
         public const int RanalouJudgementScoreFieldOffset = 0x6E;
         public const string RanalouJudgementScoreFieldLabel = "счёт зачтённых узников RANALOU (+0x6E)";
+        public const byte RanalouQuestStartedMask = 0x01;
+        public const byte RanalouPrisonerProgressMask = 0x7E;
         public const int MainQuestCompletionFieldOffset = 0x7D;
         public const byte AstralProjectorsCompletedValue = 0x1F;
         public const byte ImposterDefeatedTransferReadyValue = 0x40;
@@ -38,6 +40,13 @@ namespace MMMapEditor
         public static bool IsMainQuestCompletionField(PartyFieldKind field)
         {
             return field == PartyFieldKind.Technical7D;
+        }
+
+        public static bool IsRanalouPrisonerProgressMask(byte mask)
+        {
+            return (mask & RanalouPrisonerProgressMask) == mask &&
+                   mask != 0 &&
+                   (mask & (mask - 1)) == 0;
         }
 
         public static string GetFieldLabel(PartyFieldKind field)

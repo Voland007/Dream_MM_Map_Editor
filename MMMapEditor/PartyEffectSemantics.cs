@@ -2242,7 +2242,9 @@ namespace MMMapEditor
             return effect != null &&
                    field == PartyFieldKind.Technical71 &&
                    GetEffectiveOperation(effect) == PartyEffectOperation.BitSet &&
-                   effect.ImmediateValue == 0x02 &&
+                   effect.ImmediateValue.HasValue &&
+                   PartyTechnicalFieldSemantics.IsRanalouPrisonerProgressMask(
+                       (byte)effect.ImmediateValue.Value) &&
                    IsLoopDerived(effect) &&
                    scope == PartyEffectScope.PartySubset;
         }
