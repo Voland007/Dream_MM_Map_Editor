@@ -13933,6 +13933,9 @@ namespace MMMapEditor
             PartyEffect effect,
             PathVariantInfo variantContext = null)
         {
+            if (TryBuildMainQuestMilestoneWriteDescription(effect, variantContext, out string mainQuestMilestoneDescription))
+                return mainQuestMilestoneDescription;
+
             if (TryBuildMainQuestTransferReadyCompletionDescription(effect, variantContext, out string mainQuestCompletionDescription))
                 return mainQuestCompletionDescription;
 
@@ -13944,6 +13947,54 @@ namespace MMMapEditor
                 return description;
 
             return ReplaceWholePartyConditionTargetWithCurrentMember(description);
+        }
+
+        private static bool TryBuildMainQuestMilestoneWriteDescription(
+            PartyEffect effect,
+            PathVariantInfo variantContext,
+            out string description)
+        {
+            description = null;
+
+            if (effect == null ||
+                PartyEffectSemantics.GetEffectiveField(effect) != PartyFieldKind.Technical7D ||
+                PartyEffectSemantics.GetEffectiveOperation(effect) != PartyEffectOperation.Write ||
+                PartyEffectSemantics.GetEffectiveScope(effect) != PartyEffectScope.WholeParty)
+            {
+                return false;
+            }
+
+            if (effect.ImmediateValue == PartyTechnicalFieldSemantics.ImposterDefeatedTransferReadyValue ||
+                VariantTextLooksLikeImposterDefeatedMilestone(variantContext))
+            {
+                description =
+                    "-=*Каждый персонаж партии отмечается победившим самозванца (главгада) " +
+                    "по главному квесту*=-";
+                return true;
+            }
+
+            if (!effect.ImmediateValue.HasValue && VariantTextLooksLikeAstralProjectorMilestone(variantContext))
+            {
+                description =
+                    "-=*Текущий астральный проектор засчитан каждому персонажу партии " +
+                    "для главного квеста*=-";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool VariantTextLooksLikeAstralProjectorMilestone(PathVariantInfo variantContext)
+        {
+            return VariantTextsContain(variantContext, "ASTRAL PROJECTOR");
+        }
+
+        private static bool VariantTextLooksLikeImposterDefeatedMilestone(PathVariantInfo variantContext)
+        {
+            return VariantTextsContain(variantContext, "IMPOSTER") &&
+                   (VariantTextsContain(variantContext, "VOIDED") ||
+                    VariantTextsContain(variantContext, "ELIGIBLE FOR") ||
+                    VariantTextsContain(variantContext, "TRANSFER"));
         }
 
         private static bool TryBuildMainQuestTransferReadyCompletionDescription(
