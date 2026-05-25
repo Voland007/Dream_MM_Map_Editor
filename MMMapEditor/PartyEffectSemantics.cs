@@ -881,15 +881,57 @@ namespace MMMapEditor
             }
 
             if (value == PartyTechnicalFieldSemantics.ImposterDefeatedTransferReadyValue &&
-                predicate.Comparison == PartyPredicateComparison.Equal)
+                TryBuildImposterDefeatedPredicateDisplayText(predicate, out text))
             {
-                text = predicate.LoopQuantifier == PartyPredicateLoopQuantifier.None
-                    ? "Никто в партии ещё не победил самозванца (главгада) по главному квесту"
-                    : "Хотя бы один персонаж победил самозванца (главгада) по главному квесту";
                 return true;
             }
 
             return false;
+        }
+
+        private static bool TryBuildImposterDefeatedPredicateDisplayText(PartyPredicate predicate, out string text)
+        {
+            text = null;
+            if (predicate == null ||
+                predicate.ImmediateValue != PartyTechnicalFieldSemantics.ImposterDefeatedTransferReadyValue)
+            {
+                return false;
+            }
+
+            bool? hasUnmaskedImposter = predicate.Comparison switch
+            {
+                PartyPredicateComparison.Equal => true,
+                PartyPredicateComparison.NotEqual => false,
+                _ => (bool?)null
+            };
+
+            if (!hasUnmaskedImposter.HasValue)
+                return false;
+
+            if (IsPartyLoopPredicate(predicate))
+            {
+                text = predicate.LoopQuantifier switch
+                {
+                    PartyPredicateLoopQuantifier.None when hasUnmaskedImposter.Value =>
+                        "Аламар ещё не разоблачён как самозванец ни одним персонажем партии",
+                    PartyPredicateLoopQuantifier.None =>
+                        "Аламар уже разоблачён как самозванец каждым персонажем партии",
+                    _ when hasUnmaskedImposter.Value =>
+                        "Аламар уже разоблачён как самозванец хотя бы одним персонажем партии",
+                    _ =>
+                        "хотя бы один персонаж партии ещё не разоблачил Аламара как самозванца"
+                };
+                return true;
+            }
+
+            string targetText = BuildPredicateTargetDisplayText(predicate.TargetMember);
+            string stateText = hasUnmaskedImposter.Value
+                ? "Аламар уже разоблачён как самозванец"
+                : "Аламар ещё не разоблачён как самозванец";
+            text = string.IsNullOrWhiteSpace(targetText)
+                ? stateText
+                : $"{targetText}: {stateText}";
+            return true;
         }
 
         private static bool IsPartyLoopPredicate(PartyPredicate predicate)

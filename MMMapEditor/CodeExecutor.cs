@@ -7017,26 +7017,32 @@ namespace MMMapEditor
                     nextAddress,
                     condJumpTarget,
                     registerTracker,
-                    out var partyInventoryScanSlotRange);
+                    out var partyInventoryScanSlotRange,
+                    out bool partyInventoryScanRepeatContinuationBranchTaken);
 
                 if (isPartyInventoryScanMatchBranch &&
                     condJumpTarget > currentAddress &&
                     processedBackEdges != null &&
                     !processedBackEdges.Add((currentAddress, condJumpTarget)))
                 {
-                    ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic, branchTaken: false,
+                    ApplyBranchConstraintInPlace(registerTracker, insn.Mnemonic,
+                        partyInventoryScanRepeatContinuationBranchTaken,
                         (uint)insn.Address, debugMode);
+
+                    uint repeatContinuationAddress = partyInventoryScanRepeatContinuationBranchTaken
+                        ? condJumpTarget
+                        : nextAddress;
 
                     if (debugMode)
                     {
                         AnalysisDebug.WriteLine(
-                            $"      Повторная проверка слота инвентаря 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}: found-исход уже учтён, продолжаем сканирование");
+                            $"      Повторная проверка слота инвентаря 0x{currentAddress:X4} -> 0x{condJumpTarget:X4}: match-исход уже учтён, продолжаем сканирование");
                     }
 
                     return new ControlFlowResult
                     {
                         ShouldReturn = false,
-                        NextAddress = nextAddress,
+                        NextAddress = repeatContinuationAddress,
                         UpdatedPendingReturnAddresses = pendingReturnAddresses == null ? new List<uint>() : new List<uint>(pendingReturnAddresses),
                         UpdatedCallDepth = callDepth
                     };
@@ -7585,14 +7591,17 @@ namespace MMMapEditor
                 nextAddress,
                 condJumpTarget,
                 registerTracker,
+                out _,
                 out _);
         }
 
         private bool TryGetPartyInventoryScanMatchSlotRange(X86Instruction insn, BinaryReader br, long fileLength,
             uint currentAddress, uint nextAddress, uint condJumpTarget, RegisterTracker registerTracker,
-            out ValueRange8 slotRange)
+            out ValueRange8 slotRange,
+            out bool repeatContinuationBranchTaken)
         {
             slotRange = null;
+            repeatContinuationBranchTaken = false;
             if (insn == null ||
                 br?.BaseStream == null ||
                 !br.BaseStream.CanSeek ||
@@ -7607,7 +7616,9 @@ namespace MMMapEditor
             }
 
             string jump = insn.Mnemonic?.ToUpperInvariant();
-            if (jump != "JE" && jump != "JZ")
+            bool isEqualJump = jump == "JE" || jump == "JZ";
+            bool isNotEqualJump = jump == "JNE" || jump == "JNZ";
+            if (!isEqualJump && !isNotEqualJump)
                 return false;
 
             var comparedField = registerTracker.LastComparedPartyField;
@@ -7621,24 +7632,42 @@ namespace MMMapEditor
             bool hasInventoryScanExhaustion;
             if (condJumpTarget > currentAddress)
             {
-                hasInventoryScanExhaustion = WindowContainsPartyInventoryScanExhaustion(
-                    br,
-                    fileLength,
-                    nextAddress,
-                    currentAddress,
-                    condJumpTarget,
-                    out slotUpperExclusive);
+                if (isEqualJump)
+                {
+                    hasInventoryScanExhaustion = WindowContainsPartyInventoryScanExhaustion(
+                        br,
+                        fileLength,
+                        nextAddress,
+                        currentAddress,
+                        condJumpTarget,
+                        out slotUpperExclusive);
+                }
+                else
+                {
+                    repeatContinuationBranchTaken = true;
+                    hasInventoryScanExhaustion =
+                        LooksLikeInlineInventoryScanMatchBody(br, fileLength, nextAddress, condJumpTarget) &&
+                        WindowContainsPartyInventoryScanExhaustionFromContinuation(
+                            br,
+                            fileLength,
+                            condJumpTarget,
+                            currentAddress,
+                            out slotUpperExclusive);
+                }
             }
             else
             {
+                if (!isEqualJump)
+                    return false;
+
                 hasInventoryScanExhaustion =
                     LooksLikeBackwardInventoryScanSuccessTarget(br, fileLength, condJumpTarget, currentAddress) &&
-                    WindowContainsPartyInventoryScanExhaustionAfterBackwardMatch(
-                    br,
-                    fileLength,
-                    nextAddress,
-                    currentAddress,
-                    out slotUpperExclusive);
+                    WindowContainsPartyInventoryScanExhaustionFromContinuation(
+                        br,
+                        fileLength,
+                        nextAddress,
+                        currentAddress,
+                        out slotUpperExclusive);
             }
 
             if (!hasInventoryScanExhaustion)
@@ -7719,7 +7748,7 @@ namespace MMMapEditor
                 out slotUpperExclusive);
         }
 
-        private bool WindowContainsPartyInventoryScanExhaustionAfterBackwardMatch(
+        private bool WindowContainsPartyInventoryScanExhaustionFromContinuation(
             BinaryReader br,
             long fileLength,
             uint scanStartAddress,
@@ -7793,6 +7822,92 @@ namespace MMMapEditor
             }
 
             return sawSlotBackEdge && (sawPartyBackEdge || sawExhaustedTerminalWrite);
+        }
+
+        private bool LooksLikeInlineInventoryScanMatchBody(
+            BinaryReader br,
+            long fileLength,
+            uint startAddress,
+            uint targetAddress)
+        {
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                startAddress >= targetAddress ||
+                targetAddress > fileLength ||
+                targetAddress - startAddress > 0x20)
+            {
+                return false;
+            }
+
+            uint address = startAddress;
+            bool sawMemorySideEffect = false;
+            var seenAddresses = new HashSet<uint>();
+
+            while (address < targetAddress && seenAddresses.Add(address))
+            {
+                if (!TryDisassembleNext(br, address, out X86Instruction instruction) ||
+                    instruction?.Bytes == null ||
+                    instruction.Bytes.Length == 0 ||
+                    (uint)instruction.Address != address)
+                {
+                    return false;
+                }
+
+                if (IsConditionalJump(instruction, out _) ||
+                    IsUnconditionalJump(instruction) ||
+                    IsStructuralFlowTerminator(instruction) ||
+                    string.Equals(instruction.Mnemonic, "CALL", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                if (LooksLikeSimpleMemorySideEffect(instruction))
+                    sawMemorySideEffect = true;
+
+                uint nextAddress = (uint)(instruction.Address + instruction.Bytes.Length);
+                if (nextAddress <= address)
+                    return false;
+
+                address = nextAddress;
+            }
+
+            return address == targetAddress && sawMemorySideEffect;
+        }
+
+        private static bool LooksLikeSimpleMemorySideEffect(X86Instruction instruction)
+        {
+            byte[] bytes = instruction?.Bytes;
+            if (bytes == null || bytes.Length < 2)
+                return false;
+
+            byte opcode = bytes[0];
+            if (opcode == 0xA2 || opcode == 0xA3)
+                return true;
+
+            byte modRm = bytes[1];
+            byte mod = (byte)((modRm >> 6) & 0x03);
+            byte reg = (byte)((modRm >> 3) & 0x07);
+            if (mod == 0x03)
+                return false;
+
+            if ((opcode == 0xFE || opcode == 0xFF) && (reg == 0 || reg == 1))
+                return true;
+
+            if ((opcode == 0xC6 || opcode == 0xC7) && reg == 0)
+                return true;
+
+            return opcode == 0x88 ||
+                   opcode == 0x89 ||
+                   opcode == 0x00 ||
+                   opcode == 0x01 ||
+                   opcode == 0x08 ||
+                   opcode == 0x09 ||
+                   opcode == 0x20 ||
+                   opcode == 0x21 ||
+                   opcode == 0x28 ||
+                   opcode == 0x29 ||
+                   opcode == 0x30 ||
+                   opcode == 0x31;
         }
 
         private bool LooksLikeBackwardInventoryScanSuccessTarget(
