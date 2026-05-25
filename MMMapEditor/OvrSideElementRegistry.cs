@@ -215,7 +215,7 @@ namespace MMMapEditor
                     new OvrSideKey(0x01, 0x18),
                     new OvrSideKey(0x0B, 0x17),
                     0x05)] = CreateLayoutTemplate(
-                        "StoneKeep",
+                        "Castles",
                         CreateSecretWall("\u041A\u0430\u043C\u0435\u043D\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
                         CreateDoor("\u041A\u0430\u043C\u0435\u043D\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
                         CreateGrate("\u041A\u0430\u043C\u0435\u043D\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430")),
@@ -338,6 +338,23 @@ namespace MMMapEditor
                         CreateBorder("\u0412\u043E\u0434\u0430"))
             };
 
+        private static readonly IReadOnlyDictionary<string, IReadOnlyDictionary<OvrSideLayoutFamilyKey, OvrSideLayoutTemplate>> KnownTemplatesByFileName =
+            new Dictionary<string, IReadOnlyDictionary<OvrSideLayoutFamilyKey, OvrSideLayoutTemplate>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["ALAMAR.OVR"] = new Dictionary<OvrSideLayoutFamilyKey, OvrSideLayoutTemplate>
+                {
+                    [new OvrSideLayoutFamilyKey(
+                        new OvrSideKey(0x03, 0x1A),
+                        new OvrSideKey(0x01, 0x18),
+                        new OvrSideKey(0x0B, 0x17),
+                        0x05)] = CreateLayoutTemplate(
+                            "AlamarCastle",
+                            CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
+                            CreateDoor("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"),
+                            CreateSecretWall("\u041A\u0438\u0440\u043F\u0438\u0447\u043D\u0430\u044F \u0441\u0442\u0435\u043D\u0430"))
+                }
+            };
+
         public static OvrSideLayout ReadLayout(byte[] fileData, OvrFileConfig config, string fileNameOnly)
         {
             if (config == null)
@@ -354,6 +371,12 @@ namespace MMMapEditor
             }
 
             OvrSideLayoutRecord record = ReadRecord(fileData, offset);
+            if (KnownTemplatesByFileName.TryGetValue(fileNameOnly, out IReadOnlyDictionary<OvrSideLayoutFamilyKey, OvrSideLayoutTemplate>? templatesByFamilyKey) &&
+                templatesByFamilyKey.TryGetValue(record.FamilyKey, out OvrSideLayoutTemplate? fileSpecificTemplate))
+            {
+                return new OvrSideLayout(record, fileSpecificTemplate);
+            }
+
             if (KnownTemplatesByFamilyKey.TryGetValue(record.FamilyKey, out OvrSideLayoutTemplate? template))
                 return new OvrSideLayout(record, template);
 

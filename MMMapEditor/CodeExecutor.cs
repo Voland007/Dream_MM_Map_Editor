@@ -7810,9 +7810,26 @@ namespace MMMapEditor
             }
 
             byte[] bytes = ReadBytesAt(br, targetAddress, 3);
-            return bytes.Length >= 3 &&
-                   bytes[0] == 0xB0 &&
-                   bytes[2] == 0xC3;
+            if (bytes.Length >= 3 &&
+                bytes[0] == 0xB0 &&
+                bytes[2] == 0xC3)
+            {
+                return true;
+            }
+
+            if (targetAddress + 4 <= fileLength)
+            {
+                bytes = ReadBytesAt(br, targetAddress, 4);
+                // Some object-table patches exit successful inventory scans through a shared epilogue.
+                if (bytes.Length >= 4 &&
+                    bytes[0] == 0x58 &&
+                    bytes[1] == 0xE9)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private bool LooksLikeSimpleTerminalByteStateWrite(BinaryReader br, long fileLength, uint address)
