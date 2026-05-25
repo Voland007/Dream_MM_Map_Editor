@@ -25,7 +25,9 @@ namespace MMMapEditor
 {
     public class OvrFileAnalyzer
     {
-        private const uint DefaultPathStartAddress = 0x34;
+        private const uint StandardDefaultPathStartAddress = 0x34;
+        private const uint NoObjectTableDefaultPathStartAddress = 0x20;
+        private const int ObjectDispatcherPrologueStartAddress = 0x20;
         private const int OverlayHeaderSize = 0x0E;
 
         private enum RepeatedEventAnalysisMode
@@ -6045,7 +6047,7 @@ namespace MMMapEditor
             List<OvrObject> existingObjects)
         {
             var objects = new List<OvrObject>();
-            const uint defaultPathAddress = DefaultPathStartAddress;
+            uint defaultPathAddress = ResolveDefaultPathStartAddress(br);
 
             AnalysisDebug.WriteLine($"\n=== ТРЕТИЙ РЕЖИМ: ОБРАБОТКА ПУТИ ПО УМОЛЧАНИЮ ===");
             AnalysisDebug.WriteLine($"Адрес: 0x{defaultPathAddress:X4}");
@@ -6166,6 +6168,55 @@ namespace MMMapEditor
 
             AnalysisDebug.WriteLine($"  Создано объектов из третьего режима: {objectsCreated}");
             return objects;
+        }
+
+        private uint ResolveDefaultPathStartAddress(BinaryReader br)
+        {
+            bool hasStandardObjectDispatcherPrologue = HasStandardObjectDispatcherPrologue(br);
+            AnalysisDebug.WriteLine(
+                $"Стандартный пролог диспетчера объектов: {(hasStandardObjectDispatcherPrologue ? "найден" : "не найден")}");
+
+            return hasStandardObjectDispatcherPrologue
+                ? StandardDefaultPathStartAddress
+                : NoObjectTableDefaultPathStartAddress;
+        }
+
+        private bool HasStandardObjectDispatcherPrologue(BinaryReader br)
+        {
+            if (br == null || br.BaseStream.Length <= StandardDefaultPathStartAddress)
+                return false;
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                byte[] prologue = ReadBytesAt(
+                    br,
+                    ObjectDispatcherPrologueStartAddress,
+                    (int)(StandardDefaultPathStartAddress - ObjectDispatcherPrologueStartAddress));
+
+                if (prologue.Length < StandardDefaultPathStartAddress - ObjectDispatcherPrologueStartAddress)
+                    return false;
+
+                return prologue[0x00] == 0xA0 &&
+                       prologue[0x01] == 0x3A &&
+                       prologue[0x02] == 0x3C &&
+                       prologue[0x03] == 0xBB &&
+                       prologue[0x04] == 0x00 &&
+                       prologue[0x05] == 0x00 &&
+                       prologue[0x06] == 0x3A &&
+                       prologue[0x07] == 0x87 &&
+                       prologue[0x0A] == 0x74 &&
+                       prologue[0x0C] == 0xFE &&
+                       prologue[0x0D] == 0xC3 &&
+                       prologue[0x0E] == 0x3A &&
+                       prologue[0x0F] == 0x1E &&
+                       prologue[0x12] == 0x72 &&
+                       prologue[0x13] == 0xF2;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPosition;
+            }
         }
 
         // Вспомогательные методы
