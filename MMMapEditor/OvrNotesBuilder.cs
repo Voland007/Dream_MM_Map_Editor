@@ -16955,6 +16955,22 @@ namespace MMMapEditor
                 return BuildSpoilerAnswerLine(areaD4Answer);
             }
 
+            if (string.Equals(fileNameOnly, "DEMON.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (obj == null ||
+                    obj.X != 6 ||
+                    obj.Y != 0)
+                {
+                    return null;
+                }
+
+                string demonAnswer = TryReadSentinelInputValidationAnswer(filename, config, 0x0020);
+                if (string.IsNullOrWhiteSpace(demonAnswer))
+                    return null;
+
+                return BuildSpoilerAnswerLine(demonAnswer);
+            }
+
             return null;
         }
 
@@ -17637,6 +17653,138 @@ namespace MMMapEditor
             }
 
             return null;
+        }
+
+        private static string TryReadSentinelInputValidationAnswer(string filename, OvrFileConfig config, uint startAddress)
+        {
+            if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
+                return null;
+
+            try
+            {
+                using var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                uint scanEnd = (uint)Math.Min(br.BaseStream.Length, startAddress + 0x200);
+                for (uint address = startAddress; address + 16 < scanEnd; address++)
+                {
+                    if (!TryReadSentinelInputValidationAnswerPattern(
+                            br,
+                            address,
+                            scanEnd,
+                            out ushort answerAddress,
+                            out byte storedToAnswerAddValue))
+                    {
+                        continue;
+                    }
+
+                    return TryReadShiftedOverlayText(
+                        filename,
+                        config,
+                        answerAddress,
+                        32,
+                        storedToAnswerAddValue);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            return null;
+        }
+
+        private static bool TryReadSentinelInputValidationAnswerPattern(
+            BinaryReader br,
+            uint loopStartAddress,
+            uint scanEnd,
+            out ushort answerAddress,
+            out byte storedToAnswerAddValue)
+        {
+            const ushort inputBufferAddress = 0x3CB8;
+
+            answerAddress = 0;
+            storedToAnswerAddValue = 0;
+
+            if (!TryReadFileByte(br, loopStartAddress, out byte movOpcode) ||
+                movOpcode != 0x8A ||
+                !TryReadFileByte(br, loopStartAddress + 1, out byte movModRm) ||
+                movModRm != 0x87 ||
+                !TryReadFileWord(br, loopStartAddress + 2, out answerAddress) ||
+                answerAddress < OvrFileConfig.OverlayTextStartAddress)
+            {
+                return false;
+            }
+
+            uint cursor = loopStartAddress + 4;
+            if (!TryReadFileByte(br, cursor, out byte orOpcode) ||
+                orOpcode != 0x0A ||
+                !TryReadFileByte(br, cursor + 1, out byte orModRm) ||
+                orModRm != 0xC0 ||
+                !TryReadFileByte(br, cursor + 2, out byte zeroTerminatorJumpOpcode) ||
+                zeroTerminatorJumpOpcode != 0x74)
+            {
+                return false;
+            }
+
+            cursor += 4;
+            if (!TryReadFileByte(br, cursor, out byte transformOpcode) ||
+                !TryReadFileByte(br, cursor + 1, out byte transformValue))
+            {
+                return false;
+            }
+
+            if (transformOpcode == 0x04)
+            {
+                storedToAnswerAddValue = transformValue;
+            }
+            else if (transformOpcode == 0x2C)
+            {
+                storedToAnswerAddValue = unchecked((byte)-transformValue);
+            }
+            else
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (!TryReadFileByte(br, cursor, out byte cmpOpcode) ||
+                cmpOpcode != 0x3A ||
+                !TryReadFileByte(br, cursor + 1, out byte cmpModRm) ||
+                cmpModRm != 0x87 ||
+                !TryReadFileWord(br, cursor + 2, out ushort comparedAddress) ||
+                comparedAddress != inputBufferAddress)
+            {
+                return false;
+            }
+
+            cursor += 4;
+            if (!TryReadFileByte(br, cursor, out byte failureJumpOpcode) ||
+                failureJumpOpcode != 0x75)
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (!TryReadFileByte(br, cursor, out byte incOpcode) ||
+                incOpcode != 0xFE ||
+                !TryReadFileByte(br, cursor + 1, out byte incModRm) ||
+                incModRm != 0xC3)
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (!TryReadFileByte(br, cursor, out byte loopJumpOpcode) ||
+                loopJumpOpcode != 0xEB ||
+                !TryReadFileByte(br, cursor + 1, out byte relativeTarget))
+            {
+                return false;
+            }
+
+            uint nextAddress = cursor + 2;
+            uint branchTarget = unchecked((uint)((int)nextAddress + (sbyte)relativeTarget));
+            return branchTarget == loopStartAddress && nextAddress <= scanEnd;
         }
 
         private static bool TryReadFiniteInputValidationAnswerPattern(
