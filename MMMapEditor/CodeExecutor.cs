@@ -7660,8 +7660,9 @@ namespace MMMapEditor
                 if (!isEqualJump)
                     return false;
 
+                // For a backward match branch, the destination can be any already-emitted success exit.
+                // The range comes from proving that the fall-through path exhausts the slot and party loops.
                 hasInventoryScanExhaustion =
-                    LooksLikeBackwardInventoryScanSuccessTarget(br, fileLength, condJumpTarget, currentAddress) &&
                     WindowContainsPartyInventoryScanExhaustionFromContinuation(
                         br,
                         fileLength,
@@ -7908,43 +7909,6 @@ namespace MMMapEditor
                    opcode == 0x29 ||
                    opcode == 0x30 ||
                    opcode == 0x31;
-        }
-
-        private bool LooksLikeBackwardInventoryScanSuccessTarget(
-            BinaryReader br,
-            long fileLength,
-            uint targetAddress,
-            uint currentAddress)
-        {
-            if (br?.BaseStream == null ||
-                !br.BaseStream.CanSeek ||
-                targetAddress >= currentAddress ||
-                targetAddress + 3 > fileLength)
-            {
-                return false;
-            }
-
-            byte[] bytes = ReadBytesAt(br, targetAddress, 3);
-            if (bytes.Length >= 3 &&
-                bytes[0] == 0xB0 &&
-                bytes[2] == 0xC3)
-            {
-                return true;
-            }
-
-            if (targetAddress + 4 <= fileLength)
-            {
-                bytes = ReadBytesAt(br, targetAddress, 4);
-                // Some object-table patches exit successful inventory scans through a shared epilogue.
-                if (bytes.Length >= 4 &&
-                    bytes[0] == 0x58 &&
-                    bytes[1] == 0xE9)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         private bool LooksLikeSimpleTerminalByteStateWrite(BinaryReader br, long fileLength, uint address)

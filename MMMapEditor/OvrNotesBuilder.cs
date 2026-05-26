@@ -5005,6 +5005,53 @@ namespace MMMapEditor
             return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
         }
 
+        private static List<string> BuildHierarchicalTerminalVariantHeaderAnnotations(
+            OvrObject obj,
+            VariantRenderItem item,
+            IEnumerable<string> localHeaderAnnotations = null,
+            IEnumerable<string> inheritedVisibleHeaderAnnotations = null,
+            string suppressedProbabilityLine = null,
+            string suppressedGuardKey = null)
+        {
+            var annotations = new List<string>();
+            AddDistinctHeaderAnnotations(
+                annotations,
+                localHeaderAnnotations);
+            AddDistinctHeaderAnnotations(
+                annotations,
+                item?.HeaderAnnotations);
+
+            var visibleAnnotations = new List<string>();
+            AddDistinctHeaderAnnotations(
+                visibleAnnotations,
+                inheritedVisibleHeaderAnnotations);
+            AddDistinctHeaderAnnotations(
+                visibleAnnotations,
+                annotations);
+
+            var inventoryAnnotations = BuildInventoryPresenceHeaderAnnotationsForVariantPath(obj, item?.Variant)
+                .Where(annotation => !HasVisibleInventoryPresenceAnnotationForSameItem(visibleAnnotations, annotation))
+                .Where(annotation => !ContainsHeaderAnnotation(visibleAnnotations, annotation))
+                .ToList();
+            AddDistinctHeaderAnnotations(
+                annotations,
+                inventoryAnnotations);
+            AddDistinctHeaderAnnotations(
+                visibleAnnotations,
+                inventoryAnnotations);
+
+            string effectiveSuppressedGuardKey = MergeGuardConditionKeys(
+                suppressedGuardKey,
+                BuildVisibleHeaderAnnotationsGuardKey(visibleAnnotations));
+            AddDistinctHeaderAnnotations(
+                annotations,
+                BuildVariantHeaderAnnotations(
+                    item?.Variant,
+                    suppressedProbabilityLine,
+                    effectiveSuppressedGuardKey));
+            return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
+        }
+
         private static string BuildVisibleHeaderAnnotationsGuardKey(IEnumerable<string> annotations)
         {
             var guardKeys = (annotations ?? Enumerable.Empty<string>())
@@ -5179,15 +5226,67 @@ namespace MMMapEditor
 
         private static string BuildVariantHeaderAnnotationText(IEnumerable<string> annotations)
         {
-            var displayAnnotations = SuppressSemanticallyRedundantHeaderAnnotations(annotations)
+            var normalizedAnnotations = SuppressSemanticallyRedundantHeaderAnnotations(annotations)
                 .Select(NormalizeUserVisibleHeaderAnnotation)
                 .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
-                .Select(EncodeVariantHeaderAnnotationForDisplay)
                 .ToList();
+            var displayAnnotations = BuildVariantHeaderAnnotationDisplayParts(normalizedAnnotations);
 
             return displayAnnotations.Count == 0
                 ? null
                 : string.Join("; ", displayAnnotations);
+        }
+
+        private static List<string> BuildVariantHeaderAnnotationDisplayParts(List<string> annotations)
+        {
+            var result = new List<string>();
+            if (annotations == null || annotations.Count == 0)
+                return result;
+
+            int imposterDefeatedIndex = annotations.FindIndex(IsEveryPartyMemberUnmaskedAlamarHeaderAnnotation);
+            int eyeOfGorosPresentIndex = annotations.FindIndex(IsUnslottedEyeOfGorosPresentHeaderAnnotation);
+            bool hasAlamarEyeShortcut = imposterDefeatedIndex >= 0 && eyeOfGorosPresentIndex >= 0;
+            int shortcutIndex = hasAlamarEyeShortcut
+                ? Math.Min(imposterDefeatedIndex, eyeOfGorosPresentIndex)
+                : -1;
+
+            for (int i = 0; i < annotations.Count; i++)
+            {
+                if (hasAlamarEyeShortcut && i == shortcutIndex)
+                {
+                    result.Add(
+                        $"{EncodeVariantHeaderAnnotationForDisplay(annotations[imposterDefeatedIndex])} или " +
+                        $"{EncodeVariantHeaderAnnotationForDisplay(annotations[eyeOfGorosPresentIndex])}");
+                }
+
+                if (hasAlamarEyeShortcut && (i == imposterDefeatedIndex || i == eyeOfGorosPresentIndex))
+                    continue;
+
+                result.Add(EncodeVariantHeaderAnnotationForDisplay(annotations[i]));
+            }
+
+            return result;
+        }
+
+        private static bool IsEveryPartyMemberUnmaskedAlamarHeaderAnnotation(string annotation)
+        {
+            string normalized = StripGuardHeaderAnnotationPrefix(NormalizeHeaderAnnotation(annotation));
+            return string.Equals(
+                normalized,
+                "Аламар уже разоблачён как самозванец каждым персонажем партии",
+                StringComparison.Ordinal);
+        }
+
+        private static bool IsUnslottedEyeOfGorosPresentHeaderAnnotation(string annotation)
+        {
+            return TrySplitInventoryPresenceHeaderAnnotation(
+                       annotation,
+                       out string itemName,
+                       out string presenceLabel,
+                       out string slotLabel) &&
+                   string.Equals(itemName, "EYE OF GOROS", StringComparison.OrdinalIgnoreCase) &&
+                   string.Equals(presenceLabel, "есть", StringComparison.Ordinal) &&
+                   string.IsNullOrWhiteSpace(slotLabel);
         }
 
         private static string EncodeVariantHeaderAnnotationForDisplay(string annotation)
@@ -5767,7 +5866,7 @@ namespace MMMapEditor
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
             for (int i = 0; i < analysis.Groups.Count; i++)
             {
-                RenderTopLevelGroup(analysis.Groups[i], sb, i + 1);
+            RenderTopLevelGroup(obj, analysis.Groups[i], sb, i + 1);
                 if (i < analysis.Groups.Count - 1)
                     sb.AppendLine();
             }
@@ -15671,7 +15770,7 @@ namespace MMMapEditor
             return false;
         }
 
-        private static void RenderTopLevelGroup(TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
+        private static void RenderTopLevelGroup(OvrObject obj, TopLevelVariantGroup group, StringBuilder sb, int groupNumber)
         {
             var renderableChildren = (group.TreeRoot?.Children ?? Enumerable.Empty<VariantTreeNode>())
                 .Where(IsRenderableStructuralNode)
@@ -15718,7 +15817,13 @@ namespace MMMapEditor
             {
                 AddDistinctHeaderAnnotations(
                     sharedAnnotations,
-                    BuildVariantHeaderAnnotations(singleLeafItem, null, groupGuardKey));
+                    BuildHierarchicalTerminalVariantHeaderAnnotations(
+                        obj,
+                        singleLeafItem,
+                        localHeaderAnnotations: sharedAnnotations,
+                        inheritedVisibleHeaderAnnotations: null,
+                        suppressedProbabilityLine: null,
+                        suppressedGuardKey: groupGuardKey));
             }
             else
             {
@@ -15730,6 +15835,9 @@ namespace MMMapEditor
             string topAnnotationText = BuildVariantHeaderAnnotationText(sharedAnnotations);
             if (!string.IsNullOrWhiteSpace(topAnnotationText))
                 header += $" ({topAnnotationText})";
+            var topVisibleHeaderAnnotations = !string.IsNullOrWhiteSpace(topAnnotationText)
+                ? sharedAnnotations.ToList()
+                : new List<string>();
 
             string groupLabel = NormalizeUserVisibleChoiceLabel(group?.Label);
             if (!string.IsNullOrWhiteSpace(groupLabel))
@@ -15789,12 +15897,14 @@ namespace MMMapEditor
                 if (entry.ChildNode != null)
                 {
                     RenderVariantTreeNode(
+                        obj,
                         entry.ChildNode,
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
                         topSuppressedGuardKey,
+                        topVisibleHeaderAnnotations,
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
@@ -15804,34 +15914,40 @@ namespace MMMapEditor
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
                     RenderChoiceLeaf(
+                        obj,
                         syntheticLabel,
                         entry.DirectVariant,
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        topSuppressedGuardKey);
+                        topSuppressedGuardKey,
+                        topVisibleHeaderAnnotations);
                 }
                 else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
                 {
                     RenderChoiceLeaf(
+                        obj,
                         "N)",
                         entry.DirectVariant,
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        topSuppressedGuardKey);
+                        topSuppressedGuardKey,
+                        topVisibleHeaderAnnotations);
                 }
                 else
                 {
                     RenderLooseVariant(
+                        obj,
                         entry.DirectVariant,
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
                         sharedProbabilityLine,
-                        topSuppressedGuardKey);
+                        topSuppressedGuardKey,
+                        topVisibleHeaderAnnotations);
                 }
 
                 wroteAnyChild = true;
@@ -16330,12 +16446,14 @@ namespace MMMapEditor
         }
 
         private static void RenderVariantTreeNode(
+            OvrObject obj,
             VariantTreeNode node,
             StringBuilder sb,
             List<int> numbering,
             int depth,
             string inheritedProbabilityLine = null,
             string inheritedGuardKey = null,
+            IEnumerable<string> inheritedVisibleHeaderAnnotations = null,
             IReadOnlySet<string> siblingNoOpLeafKeys = null,
             string nodeLabelOverride = null)
         {
@@ -16371,12 +16489,14 @@ namespace MMMapEditor
                 IsTransparentRenderNode(node, nodeLabelOverride))
             {
                 RenderVariantTreeNode(
+                    obj,
                     renderableChildren[0],
                     sb,
                     numbering,
                     depth,
                     inheritedProbabilityLine,
                     inheritedGuardKey,
+                    inheritedVisibleHeaderAnnotations,
                     siblingNoOpLeafKeys);
                 return;
             }
@@ -16418,16 +16538,25 @@ namespace MMMapEditor
             string sharedProbabilityAnnotation = BuildProbabilityHeaderAnnotation(
                 sharedProbabilityLine,
                 conditionVisibleForSharedProbability);
+            var inheritedVisibleAnnotations = new List<string>();
+            AddDistinctHeaderAnnotations(
+                inheritedVisibleAnnotations,
+                inheritedVisibleHeaderAnnotations);
+            var descendantVisibleHeaderAnnotations = inheritedVisibleAnnotations.ToList();
 
             string header = $"{indent}Вариант {variantNumber}";
             if (singleLeaf != null)
             {
                 var annotations = new List<string>();
                 if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
-                AddDistinctHeaderAnnotations(annotations, new[] { node.HeaderAnnotation });
-                AddDistinctHeaderAnnotations(
-                    annotations,
-                    BuildVariantHeaderAnnotations(singleLeafItem, inheritedProbabilityLine, nodeSuppressedGuardKey));
+                    AddDistinctHeaderAnnotations(annotations, new[] { node.HeaderAnnotation });
+                annotations = BuildHierarchicalTerminalVariantHeaderAnnotations(
+                    obj,
+                    singleLeafItem,
+                    localHeaderAnnotations: annotations,
+                    inheritedVisibleHeaderAnnotations: inheritedVisibleAnnotations,
+                    suppressedProbabilityLine: inheritedProbabilityLine,
+                    suppressedGuardKey: nodeSuppressedGuardKey);
                 string annotationText = BuildVariantHeaderAnnotationText(annotations);
                 if (!string.IsNullOrWhiteSpace(annotationText))
                     header += $" ({annotationText})";
@@ -16443,7 +16572,12 @@ namespace MMMapEditor
                     sharedAnnotations.Add(sharedProbabilityAnnotation);
                 string annotationText = BuildVariantHeaderAnnotationText(sharedAnnotations);
                 if (!string.IsNullOrWhiteSpace(annotationText))
+                {
                     header += $" ({annotationText})";
+                    AddDistinctHeaderAnnotations(
+                        descendantVisibleHeaderAnnotations,
+                        sharedAnnotations);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(nodeLabel))
@@ -16525,12 +16659,14 @@ namespace MMMapEditor
                 if (entry.ChildNode != null)
                 {
                     RenderVariantTreeNode(
+                        obj,
                         entry.ChildNode,
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
                         descendantSuppressedProbabilityLine,
                         descendantSuppressedGuardKey,
+                        descendantVisibleHeaderAnnotations,
                         BuildSiblingNoOpLeafKeysForRenderEntry(
                             entry,
                             renderableChildren,
@@ -16540,34 +16676,40 @@ namespace MMMapEditor
                 else if (syntheticChoiceLabels.TryGetValue(entry.DirectVariant, out string syntheticLabel))
                 {
                     RenderChoiceLeaf(
+                        obj,
                         syntheticLabel,
                         entry.DirectVariant,
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
                         descendantSuppressedProbabilityLine,
-                        descendantSuppressedGuardKey);
+                        descendantSuppressedGuardKey,
+                        descendantVisibleHeaderAnnotations);
                 }
                 else if (canPromoteNoToChoice && noChoiceCount == 1 && ShouldRenderAsNoChoiceVariant(entry.DirectVariant))
                 {
                     RenderChoiceLeaf(
+                        obj,
                         "N)",
                         entry.DirectVariant,
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
                         descendantSuppressedProbabilityLine,
-                        descendantSuppressedGuardKey);
+                        descendantSuppressedGuardKey,
+                        descendantVisibleHeaderAnnotations);
                 }
                 else
                 {
                     RenderLooseVariant(
+                        obj,
                         entry.DirectVariant,
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
                         descendantSuppressedProbabilityLine,
-                        descendantSuppressedGuardKey);
+                        descendantSuppressedGuardKey,
+                        descendantVisibleHeaderAnnotations);
                 }
 
                 wroteAny = true;
@@ -16841,17 +16983,25 @@ namespace MMMapEditor
         }
 
         private static void RenderChoiceLeaf(
+            OvrObject obj,
             string label,
             VariantRenderItem item,
             StringBuilder sb,
             List<int> numbering,
             int depth,
             string inheritedProbabilityLine = null,
-            string inheritedGuardKey = null)
+            string inheritedGuardKey = null,
+            IEnumerable<string> inheritedVisibleHeaderAnnotations = null)
         {
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
-            var annotations = BuildVariantHeaderAnnotations(item, inheritedProbabilityLine, inheritedGuardKey);
+            var annotations = BuildHierarchicalTerminalVariantHeaderAnnotations(
+                obj,
+                item,
+                localHeaderAnnotations: null,
+                inheritedVisibleHeaderAnnotations: inheritedVisibleHeaderAnnotations,
+                suppressedProbabilityLine: inheritedProbabilityLine,
+                suppressedGuardKey: inheritedGuardKey);
             string annotationText = BuildVariantHeaderAnnotationText(annotations);
             if (!string.IsNullOrWhiteSpace(annotationText))
                 header += $" ({annotationText})";
@@ -16891,16 +17041,24 @@ namespace MMMapEditor
         }
 
         private static void RenderLooseVariant(
+            OvrObject obj,
             VariantRenderItem item,
             StringBuilder sb,
             List<int> numbering,
             int depth,
             string inheritedProbabilityLine = null,
-            string inheritedGuardKey = null)
+            string inheritedGuardKey = null,
+            IEnumerable<string> inheritedVisibleHeaderAnnotations = null)
         {
             string indent = new string(' ', depth * 3);
             string header = $"{indent}Вариант {string.Join(".", numbering)}";
-            var annotations = BuildVariantHeaderAnnotations(item, inheritedProbabilityLine, inheritedGuardKey);
+            var annotations = BuildHierarchicalTerminalVariantHeaderAnnotations(
+                obj,
+                item,
+                localHeaderAnnotations: null,
+                inheritedVisibleHeaderAnnotations: inheritedVisibleHeaderAnnotations,
+                suppressedProbabilityLine: inheritedProbabilityLine,
+                suppressedGuardKey: inheritedGuardKey);
             string annotationText = BuildVariantHeaderAnnotationText(annotations);
             if (!string.IsNullOrWhiteSpace(annotationText))
                 header += $" ({annotationText})";
