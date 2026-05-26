@@ -98,6 +98,7 @@ namespace MMMapEditor
         private const int MAX_DEPTH = 24;
         private const byte KEYBOARD_INPUT_MIN = 0x00;
         private const byte KEYBOARD_INPUT_MAX = 0x7F;
+        private const string KEYBOARD_INPUT_PASSTHROUGH_HEADER_ANNOTATION = "При нажатии клавиши клавиатуры";
         private const ushort LEGACY_INPUT_INDEX_ADDRESS = 0x3BBA;
         private const ushort OVERLAY_INPUT_INDEX_ADDRESS = 0xC9BB;
         private const ushort INPUT_BUFFER_ADDRESS = 0x3CB8;
@@ -6194,6 +6195,7 @@ namespace MMMapEditor
                             ObjectIndex = altPath.ObjectIndex,
                             Address = altPath.Address,
                             Condition = altPath.Condition,
+                            DisplayHeaderAnnotation = altPath.DisplayHeaderAnnotation,
                             TargetAddress = altPath.TargetAddress,
                             Analyzed = altPath.Analyzed,
                             PathNumber = result.AlternativePaths.Count + 1,
@@ -7050,6 +7052,18 @@ namespace MMMapEditor
 
                 var takenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: true);
                 var notTakenProbability = EstimateBranchProbability(insn.Mnemonic, registerTracker, branchTaken: false);
+                string takenDisplayHeaderAnnotation = BuildKeyboardInputPassthroughHeaderAnnotation(
+                    br,
+                    insn,
+                    nextAddress,
+                    condJumpTarget,
+                    branchTaken: true);
+                string notTakenDisplayHeaderAnnotation = BuildKeyboardInputPassthroughHeaderAnnotation(
+                    br,
+                    insn,
+                    nextAddress,
+                    condJumpTarget,
+                    branchTaken: false);
 
                 if (takenProbability.numerator > 0)
                 {
@@ -7059,6 +7073,7 @@ namespace MMMapEditor
                         Address = (uint)insn.Address,
                         TargetAddress = condJumpTarget,
                         Condition = $"{insn.Mnemonic} {insn.Operand}",
+                        DisplayHeaderAnnotation = takenDisplayHeaderAnnotation,
                         Analyzed = false,
                         PathNumber = result.AlternativePaths.Count + 1,
                         RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: true,
@@ -7113,6 +7128,7 @@ namespace MMMapEditor
                         Address = (uint)insn.Address,
                         TargetAddress = linearTargetAddress,
                         Condition = $"LINEAR after {insn.Mnemonic}",
+                        DisplayHeaderAnnotation = notTakenDisplayHeaderAnnotation,
                         Analyzed = false,
                         PathNumber = result.AlternativePaths.Count + 1,
                         RegisterState = CloneRegisterStateForBranch(br, registerTracker, insn.Mnemonic, branchTaken: false,
@@ -9575,6 +9591,73 @@ namespace MMMapEditor
 
             branchTaken = resolved.Value;
             return true;
+        }
+
+        private static string BuildKeyboardInputPassthroughHeaderAnnotation(
+            BinaryReader br,
+            X86Instruction instruction,
+            uint nextAddress,
+            uint condJumpTarget,
+            bool branchTaken)
+        {
+            return !branchTaken &&
+                   IsKeyboardInputPassthroughBranchPattern(br, instruction, nextAddress, condJumpTarget)
+                ? KEYBOARD_INPUT_PASSTHROUGH_HEADER_ANNOTATION
+                : null;
+        }
+
+        private static bool IsKeyboardInputPassthroughBranchPattern(
+            BinaryReader br,
+            X86Instruction instruction,
+            uint nextAddress,
+            uint condJumpTarget)
+        {
+            if (br?.BaseStream == null || instruction?.Bytes == null || instruction.Bytes.Length < 2)
+                return false;
+
+            byte[] bytes = instruction.Bytes;
+            if (bytes[0] != 0x79)
+                return false;
+
+            uint branchAddress = (uint)instruction.Address;
+            long fileLength = br.BaseStream.Length;
+            if (branchAddress < 5 ||
+                condJumpTarget != nextAddress + 1 ||
+                nextAddress >= fileLength ||
+                branchAddress + bytes.Length > fileLength)
+            {
+                return false;
+            }
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = nextAddress;
+                if (br.ReadByte() != 0xC3)
+                    return false;
+
+                br.BaseStream.Position = branchAddress - 5;
+                byte callOpcode = br.ReadByte();
+                br.BaseStream.Position += 2;
+                byte orOpcode = br.ReadByte();
+                byte orModRm = br.ReadByte();
+                byte jnsOpcode = br.ReadByte();
+                byte jnsDisplacement = br.ReadByte();
+
+                return callOpcode == 0xE8 &&
+                       orOpcode == 0x0A &&
+                       orModRm == 0xC0 &&
+                       jnsOpcode == 0x79 &&
+                       jnsDisplacement == 0x01;
+            }
+            catch (EndOfStreamException)
+            {
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPosition;
+            }
         }
 
         private static bool IsKeyboardInputPlaceholderRange(ValueRange8 range)

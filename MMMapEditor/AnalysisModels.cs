@@ -178,6 +178,7 @@ namespace MMMapEditor
         public int ObjectIndex { get; set; }
         public uint Address { get; set; }
         public string Condition { get; set; }
+        public string DisplayHeaderAnnotation { get; set; }
         public uint TargetAddress { get; set; }
         public bool Analyzed { get; set; }
         public int PathNumber { get; set; }

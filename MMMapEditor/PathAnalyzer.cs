@@ -423,11 +423,14 @@ namespace MMMapEditor
             string displayLabel = TryBuildRandomOutcomeChoiceLabel(path, out string randomOutcomeLabel)
                 ? randomOutcomeLabel
                 : technicalLabel;
+            string displayHeaderAnnotation = !string.IsNullOrWhiteSpace(path.DisplayHeaderAnnotation)
+                ? path.DisplayHeaderAnnotation
+                : BuildStateConstraintHeaderAnnotation(path);
 
             var choice = new BranchChoice
             {
                 Label = displayLabel,
-                DisplayHeaderAnnotation = BuildStateConstraintHeaderAnnotation(path),
+                DisplayHeaderAnnotation = displayHeaderAnnotation,
                 Condition = path.Condition,
                 CompareValue = path.CompareValue,
                 CompareRegister = path.CompareRegister,
@@ -1416,6 +1419,7 @@ namespace MMMapEditor
                     ObjectIndex = alt.ObjectIndex,
                     Address = alt.Address,
                     Condition = alt.Condition,
+                    DisplayHeaderAnnotation = alt.DisplayHeaderAnnotation,
                     TargetAddress = alt.TargetAddress,
                     Analyzed = alt.Analyzed,
                     PathNumber = alt.PathNumber,
