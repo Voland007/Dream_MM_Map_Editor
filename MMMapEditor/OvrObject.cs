@@ -1094,6 +1094,7 @@ namespace MMMapEditor
         public bool DisablesCurrentMapEvent { get; set; } = false;
         public bool HasRepeatedEventOccurrenceSensitivity { get; set; } = false;
         public bool SuppressRepeatedEventOccurrenceDescription { get; set; } = false;
+        public bool SuppressInputDependentRepeatedEventOccurrenceDescription { get; set; } = false;
         public bool UsesInitialCoordinates { get; set; } = false;
         public bool UsesStaticMapData { get; set; } = false;
         public Dictionary<ushort, byte> StaticMapDataReads { get; set; } = new Dictionary<ushort, byte>();

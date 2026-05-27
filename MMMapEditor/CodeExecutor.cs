@@ -8393,6 +8393,17 @@ namespace MMMapEditor
                 return result;
             }
 
+            if (TryBuildTransformedMemoryStateValueConstraint(
+                    registerTracker,
+                    mnemonic,
+                    branchTaken,
+                    out ushort transformedSourceAddress,
+                    out var transformedConstraint))
+            {
+                result[transformedSourceAddress] = transformedConstraint;
+                return result;
+            }
+
             ushort? sourceAddress = null;
             if (!string.IsNullOrWhiteSpace(registerTracker.LastFlagsRegister))
                 sourceAddress = registerTracker.GetSourceAddress(registerTracker.LastFlagsRegister);
@@ -8435,6 +8446,99 @@ namespace MMMapEditor
 
             result[sourceAddress.Value] = info;
             return result;
+        }
+
+        private bool TryBuildTransformedMemoryStateValueConstraint(
+            RegisterTracker registerTracker,
+            string mnemonic,
+            bool branchTaken,
+            out ushort sourceAddress,
+            out StateValueConstraintInfo constraintInfo)
+        {
+            sourceAddress = 0;
+            constraintInfo = null;
+
+            string flagsRegister = registerTracker?.LastFlagsRegister?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(flagsRegister) ||
+                !registerTracker.TryGetMemoryByteTransform(flagsRegister, out var transform) ||
+                transform == null ||
+                transform.IsIdentity ||
+                transform.OutputBySourceValue == null ||
+                transform.OutputBySourceValue.Length != 256)
+            {
+                return false;
+            }
+
+            bool supportsCurrentFlags =
+                registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                registerTracker.LastCompareImmediate.HasValue ||
+                registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.Test &&
+                registerTracker.LastTestMask == 0xFF;
+            if (!supportsCurrentFlags)
+                return false;
+
+            bool Matches(byte transformedValue)
+            {
+                if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.CompareImmediate &&
+                    registerTracker.LastCompareImmediate.HasValue)
+                {
+                    string jump = (mnemonic ?? string.Empty).ToUpperInvariant();
+                    return TryEvaluateUnsignedCompareImmediateJump(
+                               jump,
+                               transformedValue,
+                               registerTracker.LastCompareImmediate.Value,
+                               out bool currentBranchTaken) &&
+                           currentBranchTaken == branchTaken;
+                }
+
+                if (registerTracker.LastFlagsOrigin == RegisterTracker.FlagsOriginKind.Test &&
+                    registerTracker.LastTestMask == 0xFF)
+                {
+                    var boundary = GetStateValueBoundaryForZeroTestJump(mnemonic, branchTaken);
+                    if (!boundary.HasValue)
+                        return false;
+
+                    return boundary.Value.kind switch
+                    {
+                        StateValueBoundaryKind.Exact => transformedValue == boundary.Value.value,
+                        StateValueBoundaryKind.Excluded => transformedValue != boundary.Value.value,
+                        _ => false
+                    };
+                }
+
+                return false;
+            }
+
+            var matchingSourceValues = new List<byte>();
+            var excludedSourceValues = new List<byte>();
+
+            for (int sourceValue = 0; sourceValue <= 0xFF; sourceValue++)
+            {
+                if (Matches(transform.OutputBySourceValue[sourceValue]))
+                    matchingSourceValues.Add((byte)sourceValue);
+                else
+                    excludedSourceValues.Add((byte)sourceValue);
+            }
+
+            constraintInfo = new StateValueConstraintInfo();
+            if (matchingSourceValues.Count == 0)
+            {
+                foreach (byte value in excludedSourceValues)
+                    constraintInfo.ExcludedValues.Add(value);
+            }
+            else if (matchingSourceValues.Count <= excludedSourceValues.Count)
+            {
+                foreach (byte value in matchingSourceValues)
+                    constraintInfo.ExactValues.Add(value);
+            }
+            else
+            {
+                foreach (byte value in excludedSourceValues)
+                    constraintInfo.ExcludedValues.Add(value);
+            }
+
+            sourceAddress = transform.SourceAddress;
+            return true;
         }
 
         private (StateValueBoundaryKind kind, byte value)? GetStateValueBoundaryForZeroTestJump(
@@ -13045,6 +13149,9 @@ namespace MMMapEditor
                                 registerTracker.SetMemoryByteDeltaSource(dstReg, memoryDeltaSourceAddr, memoryDelta);
                             }
 
+                            if (registerTracker.TryGetMemoryByteTransform(regNames8[reg], out var memoryTransform))
+                                registerTracker.SetMemoryByteTransform(dstReg, memoryTransform);
+
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование {dstReg} <- {regNames8[reg]} = 0x{srcValue:X2}");
                         }
@@ -13060,8 +13167,11 @@ namespace MMMapEditor
                             out ushort memoryDeltaSourceAddr88,
                             out int memoryDelta88) &&
                             memoryDelta88 != 0;
+                        bool hasMemoryTransform88 = registerTracker.TryGetMemoryByteTransform(
+                            srcReg,
+                            out var memoryTransform88);
 
-                        if (semanticField88 != null || semanticPointerByte88 != null || hasMemoryDeltaSource88)
+                        if (semanticField88 != null || semanticPointerByte88 != null || hasMemoryDeltaSource88 || hasMemoryTransform88)
                         {
                             registerTracker.ClearConcreteByteRegisterValueKeepSemantic(dstReg);
 
@@ -13079,6 +13189,9 @@ namespace MMMapEditor
 
                             if (hasMemoryDeltaSource88)
                                 registerTracker.SetMemoryByteDeltaSource(dstReg, memoryDeltaSourceAddr88, memoryDelta88);
+
+                            if (hasMemoryTransform88)
+                                registerTracker.SetMemoryByteTransform(dstReg, memoryTransform88);
 
                             if (debugMode)
                                 AnalysisDebug.WriteLine($"        Копирование семантики {dstReg} <- {regNames8[reg]} без точного значения байта");
@@ -14184,6 +14297,9 @@ namespace MMMapEditor
                     string fullReg = GetFullRegisterNameForByteRegister(regName);
                     byte newValue = oldValue;
                     bool handled = true;
+                    RegisterTracker.MemoryByteTransformInfo memoryTransform = null;
+                    if (operation == 4 || operation == 5)
+                        registerTracker.TryCaptureMemoryByteTransform(regName, out memoryTransform);
 
                     switch (operation)
                     {
@@ -14223,6 +14339,14 @@ namespace MMMapEditor
                     if (handled && !string.IsNullOrEmpty(fullReg))
                     {
                         registerTracker.TrackPartialRegisterOperation(fullReg, regName, newValue, address, $"{mnemonicUpper} {regName}, 1");
+                        if (memoryTransform != null && (operation == 4 || operation == 5))
+                        {
+                            registerTracker.SetMemoryByteTransform(
+                                regName,
+                                memoryTransform.Compose(value => operation == 4
+                                    ? (byte)(value << 1)
+                                    : (byte)(value >> 1)));
+                        }
                     }
                 }
                 else if (mode == 0x03 && rm < regNames8.Length &&
@@ -14230,6 +14354,10 @@ namespace MMMapEditor
                          oldRange != null)
                 {
                     string regName = regNames8[rm];
+                    RegisterTracker.MemoryByteTransformInfo memoryTransform = null;
+                    if (operation == 4 || operation == 5)
+                        registerTracker.TryCaptureMemoryByteTransform(regName, out memoryTransform);
+
                     registerTracker.TryGetRegisterDistribution(regName, out var rangeDistribution);
                     bool handled = true;
                     int newMin = oldRange.Min;
@@ -14255,6 +14383,14 @@ namespace MMMapEditor
                     if (handled)
                     {
                         registerTracker.SetRegisterRange(regName, (byte)newMin, (byte)newMax, rangeDistribution);
+                        if (memoryTransform != null && (operation == 4 || operation == 5))
+                        {
+                            registerTracker.SetMemoryByteTransform(
+                                regName,
+                                memoryTransform.Compose(value => operation == 4
+                                    ? (byte)(value << 1)
+                                    : (byte)(value >> 1)));
+                        }
 
                         if (debugMode)
                             AnalysisDebug.WriteLine($"        {mnemonicUpper} {regName}, 1: диапазон {oldRange.Min}-{oldRange.Max} -> {newMin}-{newMax}");

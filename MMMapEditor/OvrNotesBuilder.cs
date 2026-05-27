@@ -321,7 +321,10 @@ namespace MMMapEditor
                     {
                         AppendRenderedText(newNotes, inlineStyles, "Эта ячейка содержит различные варианты текста:\n");
 
-                        var sortedVariants = variantContents.OrderBy(v => v.Key).ToList();
+                        var sortedVariants = OrderDisplayedVariantContents(obj, variantContents);
+                        bool indentFallbackVariantLines =
+                            useHierarchical &&
+                            ShouldIndentHierarchicalFallbackVariantLines(obj, variantContents);
                         for (int i = 0; i < sortedVariants.Count; i++)
                         {
                             var variant = sortedVariants[i];
@@ -329,7 +332,17 @@ namespace MMMapEditor
                             AppendRenderedText(newNotes, inlineStyles, $"{variantHeader}:\n");
 
                             foreach (var line in variant.Value)
-                                AppendRenderedText(newNotes, inlineStyles, line + "\n");
+                            {
+                                if (indentFallbackVariantLines)
+                                {
+                                    foreach (var part in SplitDisplayLines(line))
+                                        AppendRenderedText(newNotes, inlineStyles, "   " + part + "\n");
+                                }
+                                else
+                                {
+                                    AppendRenderedText(newNotes, inlineStyles, line + "\n");
+                                }
+                            }
 
                             if (i < sortedVariants.Count - 1)
                                 AppendRenderedText(newNotes, inlineStyles, "\n");
@@ -3628,6 +3641,93 @@ namespace MMMapEditor
             return header;
         }
 
+        private static List<KeyValuePair<int, List<string>>> OrderDisplayedVariantContents(
+            OvrObject obj,
+            Dictionary<int, List<string>> variantContents)
+        {
+            var ordered = (variantContents ?? new Dictionary<int, List<string>>())
+                .OrderBy(v => v.Key)
+                .ToList();
+
+            if (ordered.Count <= 1)
+                return ordered;
+
+            bool hasLaterOccurrenceVariant = ordered.Any(entry =>
+                TryResolvePathVariantForDisplayKey(obj, entry.Key, out var variant) &&
+                GetVariantOccurrenceOrderKey(variant) > 1);
+            if (!hasLaterOccurrenceVariant ||
+                !ordered.Any(entry => ShouldDelayFlatPromptCancelVariant(obj, entry.Key, entry.Value)))
+            {
+                return ordered;
+            }
+
+            return ordered
+                .Select((entry, index) => new { entry, index })
+                .OrderBy(item => ShouldDelayFlatPromptCancelVariant(obj, item.entry.Key, item.entry.Value) ? 1 : 0)
+                .ThenBy(item => item.index)
+                .Select(item => item.entry)
+                .ToList();
+        }
+
+        private static bool ShouldIndentHierarchicalFallbackVariantLines(
+            OvrObject obj,
+            Dictionary<int, List<string>> variantContents)
+        {
+            if (obj == null || variantContents == null || variantContents.Count <= 1)
+                return false;
+
+            foreach (int variantKey in variantContents.Keys)
+            {
+                if (!TryResolvePathVariantForDisplayKey(obj, variantKey, out var variant))
+                    continue;
+
+                string occurrence = BuildOccurrenceLine(variant);
+                if (ShouldSuppressOneShotCleanupOccurrenceHeaderAnnotation(obj, variant, occurrence))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool ShouldDelayFlatPromptCancelVariant(
+            OvrObject obj,
+            int variantKey,
+            List<string> lines)
+        {
+            if (!TryResolvePathVariantForDisplayKey(obj, variantKey, out var variant))
+                return false;
+
+            var annotations = BuildTerminalVariantHeaderAnnotations(obj, variant);
+            if (annotations.Any(annotation =>
+                !string.IsNullOrWhiteSpace(annotation) &&
+                !IsSimpleFlatChoiceHeaderAnnotation(annotation)))
+            {
+                return false;
+            }
+
+            var simpleChoices = annotations
+                .Where(IsSimpleFlatChoiceHeaderAnnotation)
+                .Select(NormalizeHeaderAnnotation)
+                .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (simpleChoices.Count != 1 ||
+                !string.Equals(simpleChoices[0], "выбор N", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var meaningfulLines = (lines ?? new List<string>())
+                .SelectMany(SplitDisplayLines)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+
+            return meaningfulLines.Count == 1 &&
+                   IsBinaryPromptLine(meaningfulLines[0]);
+        }
+
         private static bool VariantHeaderContainsProbability(string variantHeader)
         {
             return !string.IsNullOrEmpty(variantHeader)
@@ -4923,12 +5023,9 @@ namespace MMMapEditor
         {
             var annotations = new List<string>();
 
-            string occurrence = BuildOccurrenceLine(variant);
-            if (!string.IsNullOrWhiteSpace(occurrence) &&
-                !ShouldSuppressSelfDisableOccurrenceHeaderAnnotation(variant, occurrence))
-            {
+            string occurrence = BuildOccurrenceHeaderAnnotation(variant);
+            if (!string.IsNullOrWhiteSpace(occurrence))
                 annotations.Add(occurrence);
-            }
 
             string guard = BuildGuardHeaderAnnotation(variant, suppressedGuardKey);
             if (!string.IsNullOrWhiteSpace(guard))
@@ -4981,6 +5078,18 @@ namespace MMMapEditor
             return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
         }
 
+        private static string BuildOccurrenceHeaderAnnotation(PathVariantInfo variant)
+        {
+            string occurrence = BuildOccurrenceLine(variant);
+            if (string.IsNullOrWhiteSpace(occurrence) ||
+                ShouldSuppressSelfDisableOccurrenceHeaderAnnotation(variant, occurrence))
+            {
+                return null;
+            }
+
+            return occurrence;
+        }
+
         private static List<string> BuildTerminalVariantHeaderAnnotations(
             OvrObject obj,
             PathVariantInfo variant,
@@ -5002,7 +5111,7 @@ namespace MMMapEditor
             AddDistinctHeaderAnnotations(
                 annotations,
                 BuildVariantHeaderAnnotations(variant, suppressedGuardKey: effectiveSuppressedGuardKey));
-            return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
+            return SuppressContextualOccurrenceHeaderAnnotations(obj, variant, annotations);
         }
 
         private static List<string> BuildHierarchicalTerminalVariantHeaderAnnotations(
@@ -5043,13 +5152,144 @@ namespace MMMapEditor
             string effectiveSuppressedGuardKey = MergeGuardConditionKeys(
                 suppressedGuardKey,
                 BuildVisibleHeaderAnnotationsGuardKey(visibleAnnotations));
-            AddDistinctHeaderAnnotations(
-                annotations,
-                BuildVariantHeaderAnnotations(
+            var variantAnnotations = BuildVariantHeaderAnnotations(
                     item?.Variant,
                     suppressedProbabilityLine,
-                    effectiveSuppressedGuardKey));
+                    effectiveSuppressedGuardKey)
+                .Where(annotation => !ContainsHeaderAnnotation(visibleAnnotations, annotation))
+                .ToList();
+            variantAnnotations = SuppressContextualOccurrenceHeaderAnnotations(
+                obj,
+                item?.Variant,
+                variantAnnotations);
+            AddDistinctHeaderAnnotations(
+                annotations,
+                variantAnnotations);
             return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
+        }
+
+        private static List<string> SuppressContextualOccurrenceHeaderAnnotations(
+            OvrObject obj,
+            PathVariantInfo variant,
+            IEnumerable<string> annotations)
+        {
+            var result = SuppressSemanticallyRedundantHeaderAnnotations(annotations);
+            string occurrence = BuildOccurrenceLine(variant);
+            if (string.IsNullOrWhiteSpace(occurrence) ||
+                !ShouldSuppressOneShotCleanupOccurrenceHeaderAnnotation(obj, variant, occurrence))
+            {
+                return result;
+            }
+
+            string normalizedOccurrence = NormalizeHeaderAnnotation(occurrence);
+            result.RemoveAll(annotation =>
+                string.Equals(
+                    NormalizeHeaderAnnotation(annotation),
+                    normalizedOccurrence,
+                    StringComparison.Ordinal));
+            return result;
+        }
+
+        private static bool ShouldSuppressOneShotCleanupOccurrenceHeaderAnnotation(
+            OvrObject obj,
+            PathVariantInfo variant,
+            string occurrence)
+        {
+            if (variant == null ||
+                string.IsNullOrWhiteSpace(occurrence) ||
+                !HasFirstOccurrenceOnlyCoverage(variant) ||
+                !HasBattleLaunchOutcome(variant) ||
+                HasInputChoiceBranch(variant))
+            {
+                return false;
+            }
+
+            if (HasLaterVisibleBattleOccurrenceVariant(obj, variant))
+                return false;
+
+            return HasInvisibleLaterCleanupVariant(obj, variant);
+        }
+
+        private static bool HasLaterVisibleBattleOccurrenceVariant(
+            OvrObject obj,
+            PathVariantInfo currentVariant)
+        {
+            return obj?.PathVariants?.Values
+                .Where(variant => variant != null && !ReferenceEquals(variant, currentVariant))
+                .Any(variant =>
+                    HasBattleLaunchOutcome(variant) &&
+                    !HasFirstOccurrenceOnlyCoverage(variant)) == true;
+        }
+
+        private static bool HasInvisibleLaterCleanupVariant(
+            OvrObject obj,
+            PathVariantInfo currentVariant)
+        {
+            return obj?.PathVariants?.Values
+                .Where(variant => variant != null && !ReferenceEquals(variant, currentVariant))
+                .Any(variant =>
+                    StartsAfterFirstOccurrence(variant) &&
+                    IsInvisibleCleanupVariant(variant)) == true;
+        }
+
+        private static bool StartsAfterFirstOccurrence(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            bool hasCoverage = false;
+            foreach (var range in variant.OccurrenceRanges ?? Enumerable.Empty<OccurrenceRangeInfo>())
+            {
+                if (range == null || range.Start <= 0)
+                    continue;
+
+                hasCoverage = true;
+                if (range.Start <= 1)
+                    return false;
+            }
+
+            foreach (int occurrence in variant.OccurrenceIndices ?? Enumerable.Empty<int>())
+            {
+                if (occurrence <= 0)
+                    continue;
+
+                hasCoverage = true;
+                if (occurrence <= 1)
+                    return false;
+            }
+
+            return hasCoverage;
+        }
+
+        private static bool IsInvisibleCleanupVariant(PathVariantInfo variant)
+        {
+            if (variant == null ||
+                HasBattleLaunchOutcome(variant) ||
+                variant.Texts?.Any(text => !string.IsNullOrWhiteSpace(text)) == true)
+            {
+                return false;
+            }
+
+            if (variant.CallsRandomEncounter ||
+                variant.RandomEncounterMonsterPowerCap.HasValue ||
+                variant.RandomEncounterMonsterLevelCap.HasValue ||
+                variant.RandomEncounterMonsterBatchCountCap.HasValue ||
+                variant.DarkeningLevel.HasValue ||
+                variant.RandomEncounterChance.HasValue ||
+                variant.RandomEncounterRubicon.HasValue ||
+                variant.BattleMonsterStrengthAdjustment != 0 ||
+                variant.HasTeleportTarget ||
+                (variant.PersistentCounterProgressions?.Count ?? 0) > 0 ||
+                (variant.DynamicRandomBoundDependencies?.Count ?? 0) > 0 ||
+                variant.HasAnyTableLoad ||
+                (variant.LoadedValues?.Count ?? 0) > 0)
+            {
+                return false;
+            }
+
+            return variant.PartyEffects == null ||
+                   !variant.PartyEffects.Any(effect =>
+                       PartyEffectSemantics.ShouldIncludeInNotes(effect, variant.PartyEffects));
         }
 
         private static string BuildVisibleHeaderAnnotationsGuardKey(IEnumerable<string> annotations)
@@ -6399,7 +6639,6 @@ namespace MMMapEditor
             bool sortSuppressedSimpleChoiceGroups =
                 suppressSimpleChoiceAnnotations &&
                 ShouldSortSuppressedSimpleChoiceGroups(groups);
-
             var orderedGroups = sortSuppressedSimpleChoiceGroups
                 ? groups
                     .Select((group, index) => new { group, index })
@@ -6410,10 +6649,59 @@ namespace MMMapEditor
                     .ToList()
                 : groups;
 
+            if (orderedGroups.Any(IsLaterOccurrenceFlatDisplayGroup) &&
+                orderedGroups.Any(ShouldDelayFlatPromptCancelGroup))
+            {
+                orderedGroups = orderedGroups
+                    .Select((group, index) => new { group, index })
+                    .OrderBy(item => ShouldDelayFlatPromptCancelGroup(item.group) ? 1 : 0)
+                    .ThenBy(item => item.index)
+                    .Select(item => item.group)
+                    .ToList();
+            }
+
             return orderedGroups
                 .Select(group => group.Item)
                 .Where(item => item != null)
                 .ToList();
+        }
+
+        private static bool IsLaterOccurrenceFlatDisplayGroup(FlatVariantDisplayGroup group)
+        {
+            return GetVariantOccurrenceOrderKey(group?.Item?.Variant) > 1;
+        }
+
+        private static bool ShouldDelayFlatPromptCancelGroup(FlatVariantDisplayGroup group)
+        {
+            if (group?.Item?.Variant == null)
+                return false;
+
+            if (group.NonChoiceHeaderAnnotations != null &&
+                group.NonChoiceHeaderAnnotations.Any(annotation => !string.IsNullOrWhiteSpace(annotation)))
+            {
+                return false;
+            }
+
+            var simpleChoices = group.SimpleChoiceHeaderAnnotations?
+                .Select(NormalizeHeaderAnnotation)
+                .Where(annotation => !string.IsNullOrWhiteSpace(annotation))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList() ?? new List<string>();
+
+            if (simpleChoices.Count != 1 ||
+                !string.Equals(simpleChoices[0], "выбор N", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var meaningfulLines = group.Item.Lines?
+                .SelectMany(SplitDisplayLines)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList() ?? new List<string>();
+
+            return meaningfulLines.Count == 1 &&
+                   IsBinaryPromptLine(meaningfulLines[0]);
         }
 
         private static decimal GetFlatVariantRenderOrderKey(FlatVariantRenderItem variant)
@@ -12651,6 +12939,40 @@ namespace MMMapEditor
             return result;
         }
 
+        private static string GetSharedOccurrenceLine(
+            VariantTreeNode node,
+            string inheritedOccurrenceLine = null)
+        {
+            if (node == null)
+                return null;
+
+            var variants = GetAllVariants(node)
+                .Where(variant => variant?.Variant != null)
+                .ToList();
+
+            if (variants.Count < 2)
+                return null;
+
+            var occurrenceLines = variants
+                .Select(variant => BuildOccurrenceHeaderAnnotation(variant.Variant))
+                .ToList();
+
+            if (occurrenceLines.Any(string.IsNullOrWhiteSpace))
+                return null;
+
+            string firstOccurrence = occurrenceLines[0];
+            if (occurrenceLines.Any(line => !string.Equals(line, firstOccurrence, StringComparison.Ordinal)))
+                return null;
+
+            if (!string.IsNullOrWhiteSpace(inheritedOccurrenceLine) &&
+                string.Equals(firstOccurrence, inheritedOccurrenceLine, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return firstOccurrence;
+        }
+
         private static string GetSharedProbabilityLine(
             VariantTreeNode node,
             string inheritedProbabilityLine = null)
@@ -15795,6 +16117,9 @@ namespace MMMapEditor
             var singleLeafLines = BuildVariantRenderLines(singleLeafItem);
 
             string header = $"Вариант {groupNumber}";
+            string sharedOccurrenceLine = singleLeaf == null
+                ? GetSharedOccurrenceLine(group?.TreeRoot)
+                : null;
             string sharedProbabilityLine = singleLeaf == null
                 ? GetSharedProbabilityLine(group?.TreeRoot)
                 : null;
@@ -15813,6 +16138,8 @@ namespace MMMapEditor
             var sharedAnnotations = new List<string>();
             if (!string.IsNullOrWhiteSpace(group?.HeaderAnnotation))
                 sharedAnnotations.Add(group.HeaderAnnotation);
+            if (!string.IsNullOrWhiteSpace(sharedOccurrenceLine))
+                sharedAnnotations.Add(sharedOccurrenceLine);
             if (singleLeaf != null)
             {
                 AddDistinctHeaderAnnotations(
@@ -15902,6 +16229,7 @@ namespace MMMapEditor
                         sb,
                         new List<int> { groupNumber, childIndex++ },
                         1,
+                        sharedOccurrenceLine,
                         sharedProbabilityLine,
                         topSuppressedGuardKey,
                         topVisibleHeaderAnnotations,
@@ -16451,6 +16779,7 @@ namespace MMMapEditor
             StringBuilder sb,
             List<int> numbering,
             int depth,
+            string inheritedOccurrenceLine = null,
             string inheritedProbabilityLine = null,
             string inheritedGuardKey = null,
             IEnumerable<string> inheritedVisibleHeaderAnnotations = null,
@@ -16494,6 +16823,7 @@ namespace MMMapEditor
                     sb,
                     numbering,
                     depth,
+                    inheritedOccurrenceLine,
                     inheritedProbabilityLine,
                     inheritedGuardKey,
                     inheritedVisibleHeaderAnnotations,
@@ -16523,6 +16853,9 @@ namespace MMMapEditor
                 ? TryPromoteLeadingAnswerLine(singleLeafLines)
                 : null;
             string nodeSuppressedGuardKey = MergeGuardConditionKeys(inheritedGuardKey, node.HeaderGuardKey);
+            string sharedOccurrenceLine = singleLeaf == null
+                ? GetSharedOccurrenceLine(node, inheritedOccurrenceLine)
+                : null;
             string sharedProbabilityLine = singleLeaf == null
                 ? GetSharedProbabilityLine(node, inheritedProbabilityLine)
                 : null;
@@ -16566,6 +16899,8 @@ namespace MMMapEditor
                 var sharedAnnotations = new List<string>();
                 if (!string.IsNullOrWhiteSpace(node.HeaderAnnotation))
                     sharedAnnotations.Add(node.HeaderAnnotation);
+                if (!string.IsNullOrWhiteSpace(sharedOccurrenceLine))
+                    sharedAnnotations.Add(sharedOccurrenceLine);
                 if (!string.IsNullOrWhiteSpace(sharedGuardAnnotation))
                     sharedAnnotations.Add(sharedGuardAnnotation);
                 if (!string.IsNullOrWhiteSpace(sharedProbabilityAnnotation))
@@ -16635,6 +16970,7 @@ namespace MMMapEditor
 
             int nestedIndex = 1;
             bool wroteAny = false;
+            string descendantSuppressedOccurrenceLine = sharedOccurrenceLine ?? inheritedOccurrenceLine;
             string descendantSuppressedProbabilityLine = sharedProbabilityLine ?? inheritedProbabilityLine;
             string descendantSuppressedGuardKey = currentSuppressedGuardKey;
             var orderedEntries = BuildOrderedRenderEntries(
@@ -16664,6 +17000,7 @@ namespace MMMapEditor
                         sb,
                         new List<int>(numbering) { nestedIndex++ },
                         depth + 1,
+                        descendantSuppressedOccurrenceLine,
                         descendantSuppressedProbabilityLine,
                         descendantSuppressedGuardKey,
                         descendantVisibleHeaderAnnotations,

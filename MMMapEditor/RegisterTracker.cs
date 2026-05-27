@@ -99,9 +99,78 @@ namespace MMMapEditor
         private Dictionary<string, PartyPointerByteReference> partyPointerBytes = new Dictionary<string, PartyPointerByteReference>();
         private Dictionary<string, (ushort sourceAddr, int delta)> memoryByteDeltaSources =
             new Dictionary<string, (ushort, int)>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, MemoryByteTransformInfo> memoryByteTransforms =
+            new Dictionary<string, MemoryByteTransformInfo>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> coordinateSeedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private HashSet<string> splitMaterializedRegisters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public bool HasObservedCoordinateSeedRead { get; private set; }
+
+        public sealed class MemoryByteTransformInfo
+        {
+            public ushort SourceAddress { get; set; }
+            public byte[] OutputBySourceValue { get; set; } = BuildIdentityMap();
+
+            public static MemoryByteTransformInfo Identity(ushort sourceAddress)
+            {
+                return new MemoryByteTransformInfo
+                {
+                    SourceAddress = sourceAddress,
+                    OutputBySourceValue = BuildIdentityMap()
+                };
+            }
+
+            public MemoryByteTransformInfo Clone()
+            {
+                return new MemoryByteTransformInfo
+                {
+                    SourceAddress = SourceAddress,
+                    OutputBySourceValue = OutputBySourceValue == null
+                        ? BuildIdentityMap()
+                        : (byte[])OutputBySourceValue.Clone()
+                };
+            }
+
+            public bool IsIdentity
+            {
+                get
+                {
+                    var map = OutputBySourceValue;
+                    if (map == null || map.Length != 256)
+                        return false;
+
+                    for (int value = 0; value <= 0xFF; value++)
+                    {
+                        if (map[value] != (byte)value)
+                            return false;
+                    }
+
+                    return true;
+                }
+            }
+
+            public MemoryByteTransformInfo Compose(Func<byte, byte> transform)
+            {
+                var sourceMap = OutputBySourceValue ?? BuildIdentityMap();
+                var composed = new byte[256];
+                for (int value = 0; value <= 0xFF; value++)
+                    composed[value] = transform(sourceMap[value]);
+
+                return new MemoryByteTransformInfo
+                {
+                    SourceAddress = SourceAddress,
+                    OutputBySourceValue = composed
+                };
+            }
+
+            private static byte[] BuildIdentityMap()
+            {
+                var map = new byte[256];
+                for (int value = 0; value <= 0xFF; value++)
+                    map[value] = (byte)value;
+
+                return map;
+            }
+        }
 
         // Для отслеживания флагов
         public bool ZeroFlag { get; set; }
@@ -950,6 +1019,7 @@ namespace MMMapEditor
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
+            ClearMemoryByteTransform(regUpper);
             ClearSourceIndexMetadata(regUpper);
 
             if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
@@ -958,6 +1028,7 @@ namespace MMMapEditor
             registerSources.Remove(fullReg);
             registerSources2.Remove(fullReg);
             ClearSourceIndexMetadata(fullReg);
+            ClearMemoryByteTransform(fullReg);
 
             if (regUpper == fullReg)
             {
@@ -965,6 +1036,8 @@ namespace MMMapEditor
                 registerSources.Remove(highReg);
                 registerSources2.Remove(lowReg);
                 registerSources2.Remove(highReg);
+                ClearMemoryByteTransform(lowReg);
+                ClearMemoryByteTransform(highReg);
                 ClearSourceIndexMetadata(lowReg);
                 ClearSourceIndexMetadata(highReg);
             }
@@ -986,6 +1059,25 @@ namespace MMMapEditor
             {
                 memoryByteDeltaSources.Remove(lowReg);
                 memoryByteDeltaSources.Remove(highReg);
+            }
+        }
+
+        private void ClearMemoryByteTransform(string regUpper)
+        {
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            memoryByteTransforms.Remove(regUpper);
+
+            if (!TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
+                return;
+
+            memoryByteTransforms.Remove(fullReg);
+
+            if (regUpper == fullReg)
+            {
+                memoryByteTransforms.Remove(lowReg);
+                memoryByteTransforms.Remove(highReg);
             }
         }
 
@@ -1040,6 +1132,83 @@ namespace MMMapEditor
             }
 
             return false;
+        }
+
+        public bool TryCaptureMemoryByteTransform(string reg, out MemoryByteTransformInfo transform)
+        {
+            transform = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (memoryByteTransforms.TryGetValue(regUpper, out var existing) && existing != null)
+            {
+                transform = existing.Clone();
+                return true;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                !string.Equals(regUpper, fullReg, StringComparison.OrdinalIgnoreCase) &&
+                memoryByteTransforms.TryGetValue(fullReg, out existing) &&
+                existing != null)
+            {
+                transform = existing.Clone();
+                return true;
+            }
+
+            ushort? sourceAddress = GetSourceAddress(regUpper);
+            if (!sourceAddress.HasValue)
+                return false;
+
+            transform = MemoryByteTransformInfo.Identity(sourceAddress.Value);
+            return true;
+        }
+
+        public bool TryGetMemoryByteTransform(string reg, out MemoryByteTransformInfo transform)
+        {
+            transform = null;
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return false;
+
+            if (memoryByteTransforms.TryGetValue(regUpper, out var existing) && existing != null)
+            {
+                transform = existing.Clone();
+                return true;
+            }
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                !string.Equals(regUpper, fullReg, StringComparison.OrdinalIgnoreCase) &&
+                memoryByteTransforms.TryGetValue(fullReg, out existing) &&
+                existing != null)
+            {
+                transform = existing.Clone();
+                return true;
+            }
+
+            return false;
+        }
+
+        public void SetMemoryByteTransform(string reg, MemoryByteTransformInfo transform)
+        {
+            string regUpper = reg?.ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(regUpper))
+                return;
+
+            if (transform == null || transform.OutputBySourceValue == null || transform.OutputBySourceValue.Length != 256)
+            {
+                ClearMemoryByteTransform(regUpper);
+                return;
+            }
+
+            var clone = transform.Clone();
+            memoryByteTransforms[regUpper] = clone;
+
+            if (TryGetByteRegisterFamily(regUpper, out string fullReg, out _, out _) &&
+                !string.Equals(regUpper, fullReg, StringComparison.OrdinalIgnoreCase))
+            {
+                memoryByteTransforms[fullReg] = clone.Clone();
+            }
         }
 
         public void MarkRegisterAsCoordinateSeed(string reg)
@@ -1100,6 +1269,7 @@ namespace MMMapEditor
             registerSources2.Remove(regUpper);
             ClearSourceIndexMetadata(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
+            ClearMemoryByteTransform(regUpper);
 
             if (TryGetByteRegisterFamily(regUpper, out string fullReg, out string lowReg, out string highReg))
             {
@@ -1107,6 +1277,7 @@ namespace MMMapEditor
                 registerSources2.Remove(fullReg);
                 ClearSourceIndexMetadata(fullReg);
                 ClearMemoryByteDeltaSource(fullReg);
+                ClearMemoryByteTransform(fullReg);
                 ClearPartyFieldValue(fullReg);
                 ClearPartyMemberBase(fullReg);
 
@@ -1120,6 +1291,8 @@ namespace MMMapEditor
                     ClearSourceIndexMetadata(highReg);
                     ClearMemoryByteDeltaSource(lowReg);
                     ClearMemoryByteDeltaSource(highReg);
+                    ClearMemoryByteTransform(lowReg);
+                    ClearMemoryByteTransform(highReg);
                     ClearFullRegisterByteSemantics(fullReg);
                 }
                 else
@@ -1127,6 +1300,7 @@ namespace MMMapEditor
                     registerSources.Remove(regUpper);
                     registerSources2.Remove(regUpper);
                     ClearSourceIndexMetadata(regUpper);
+                    ClearMemoryByteTransform(regUpper);
                     ClearFullRegisterByteSemantics(fullReg);
                 }
             }
@@ -1272,6 +1446,7 @@ namespace MMMapEditor
             ClearRegisterRandomUpperBound(regUpper);
             ClearSplitMaterializedRegister(regUpper);
             ClearSourceIndexMetadata(regUpper);
+            ClearMemoryByteTransform(regUpper);
             registerRanges.Remove(regUpper);
             registerRangeDistributions.Remove(regUpper);
 
@@ -1283,6 +1458,9 @@ namespace MMMapEditor
                 registerRangeDistributions.Remove(fullReg);
                 registerRangeDistributions.Remove(lowReg);
                 registerRangeDistributions.Remove(highReg);
+                ClearMemoryByteTransform(fullReg);
+                ClearMemoryByteTransform(lowReg);
+                ClearMemoryByteTransform(highReg);
             }
         }
 
@@ -1906,6 +2084,7 @@ namespace MMMapEditor
             registerSources.Remove(regUpper);
             registerSources2.Remove(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
+            ClearMemoryByteTransform(regUpper);
             ClearExternalDerivation(regUpper);
             ClearPendingExternalCallResult(regUpper);
             ClearRegisterRange(regUpper);
@@ -1955,6 +2134,7 @@ namespace MMMapEditor
                 registerSources.Remove(fullReg);
                 registerSources2.Remove(fullReg);
                 ClearMemoryByteDeltaSource(fullReg);
+                ClearMemoryByteTransform(fullReg);
                 ClearExternalDerivation(fullReg);
                 ClearPendingExternalCallResult(fullReg);
                 ClearRegisterRange(fullReg);
@@ -1967,6 +2147,7 @@ namespace MMMapEditor
                 registerSources.Remove(fullReg);
                 registerSources2.Remove(fullReg);
                 ClearMemoryByteDeltaSource(fullReg);
+                ClearMemoryByteTransform(fullReg);
             }
         }
 
@@ -1985,6 +2166,7 @@ namespace MMMapEditor
             registerSources2.Remove(regUpper);
             ClearSourceIndexMetadata(regUpper);
             ClearMemoryByteDeltaSource(regUpper);
+            ClearMemoryByteTransform(regUpper);
             ClearByteRegisterSemantics(regUpper);
 
             if (regUpper == "AX")
@@ -1997,6 +2179,7 @@ namespace MMMapEditor
                 registerSources2.Remove("AH");
                 ClearSourceIndexMetadata("AX");
                 ClearMemoryByteDeltaSource("AX");
+                ClearMemoryByteTransform("AX");
                 partyFieldValues.Remove("AL");
                 partyFieldValues.Remove("AH");
                 dynamicValueFormulas.Remove("AL");
@@ -2014,6 +2197,7 @@ namespace MMMapEditor
                 registerSources2.Remove("BH");
                 ClearSourceIndexMetadata("BX");
                 ClearMemoryByteDeltaSource("BX");
+                ClearMemoryByteTransform("BX");
                 partyFieldValues.Remove("BL");
                 partyFieldValues.Remove("BH");
                 dynamicValueFormulas.Remove("BL");
@@ -2031,6 +2215,7 @@ namespace MMMapEditor
                 registerSources2.Remove("CH");
                 ClearSourceIndexMetadata("CX");
                 ClearMemoryByteDeltaSource("CX");
+                ClearMemoryByteTransform("CX");
                 partyFieldValues.Remove("CL");
                 partyFieldValues.Remove("CH");
                 dynamicValueFormulas.Remove("CL");
@@ -2048,6 +2233,7 @@ namespace MMMapEditor
                 registerSources2.Remove("DH");
                 ClearSourceIndexMetadata("DX");
                 ClearMemoryByteDeltaSource("DX");
+                ClearMemoryByteTransform("DX");
                 partyFieldValues.Remove("DL");
                 partyFieldValues.Remove("DH");
                 dynamicValueFormulas.Remove("DL");
@@ -2077,6 +2263,7 @@ namespace MMMapEditor
             dynamicValueFormulas.Clear();
             partyPointerBytes.Clear();
             memoryByteDeltaSources.Clear();
+            memoryByteTransforms.Clear();
             ZeroFlag = false;
             CarryFlag = false;
             SignFlag = false;
@@ -2501,6 +2688,10 @@ namespace MMMapEditor
             foreach (var kvp in memoryByteDeltaSources)
             {
                 clone.memoryByteDeltaSources[kvp.Key] = kvp.Value;
+            }
+            foreach (var kvp in memoryByteTransforms)
+            {
+                clone.memoryByteTransforms[kvp.Key] = kvp.Value?.Clone();
             }
             foreach (var reg in coordinateSeedRegisters)
             {

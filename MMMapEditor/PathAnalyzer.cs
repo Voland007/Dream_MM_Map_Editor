@@ -1608,6 +1608,16 @@ namespace MMMapEditor
 
         private bool HasAnyOutcome(PathVariantInfo variant)
         {
+            return HasAnyOutcome(variant, treatIgnorableExternalJumpsAsOutcome: true);
+        }
+
+        private bool HasAnyPromptOnlyBlockingOutcome(PathVariantInfo variant)
+        {
+            return HasAnyOutcome(variant, treatIgnorableExternalJumpsAsOutcome: false);
+        }
+
+        private bool HasAnyOutcome(PathVariantInfo variant, bool treatIgnorableExternalJumpsAsOutcome)
+        {
             if (variant == null)
                 return false;
 
@@ -1619,8 +1629,12 @@ namespace MMMapEditor
             if (variant.CallsRandomEncounter)
                 return true;
 
-            if (variant.ExternalJumpTargets != null && variant.ExternalJumpTargets.Count > 0)
+            if (treatIgnorableExternalJumpsAsOutcome
+                    ? (variant.ExternalJumpTargets != null && variant.ExternalJumpTargets.Count > 0)
+                    : HasSemanticExternalJumpTargets(variant))
+            {
                 return true;
+            }
 
             if (variant.TeleportTargetX.HasValue || variant.TeleportTargetY.HasValue)
                 return true;
@@ -1654,7 +1668,7 @@ namespace MMMapEditor
             if (variant == null)
                 return false;
 
-            if (HasAnyOutcome(variant))
+            if (HasAnyPromptOnlyBlockingOutcome(variant))
                 return false;
 
             if (HasTerminalPromptLoopOutcomeText(variant))
@@ -2196,12 +2210,20 @@ namespace MMMapEditor
             if (stateChangingSiblings.Count == 0)
                 return false;
 
-            if (HasNonLocalGuardedBranchChoice(promptOnlyVariant))
+            bool hasConditionalLoopSubsetSibling = stateChangingSiblings.Any(HasConditionalLoopSubsetOutcomeEffects);
+
+            if (HasNonLocalGuardedBranchChoice(
+                    promptOnlyVariant,
+                    allowPartyMemberLoopGuards:
+                        hasConditionalLoopSubsetSibling &&
+                        HasNonGuardedNonLoopTraversalBranchChoice(promptOnlyVariant)))
+            {
                 return false;
+            }
 
             var promptBranchKeys = BuildPromptShadowBranchChoiceKeySet(promptOnlyVariant);
 
-            if (stateChangingSiblings.Any(HasConditionalLoopSubsetOutcomeEffects))
+            if (hasConditionalLoopSubsetSibling)
             {
                 if (!HasInputChoiceBranch(promptOnlyVariant))
                     return true;
@@ -2299,11 +2321,28 @@ namespace MMMapEditor
                    string.Equals(normalized, "InputChoiceLinear", StringComparison.OrdinalIgnoreCase);
         }
 
-        private bool HasNonLocalGuardedBranchChoice(PathVariantInfo variant)
+        private bool HasNonLocalGuardedBranchChoice(
+            PathVariantInfo variant,
+            bool allowPartyMemberLoopGuards = false)
         {
             return variant?.BranchChoices?
                 .Any(choice => choice?.GuardPredicate != null &&
-                               !IsLoopLocalBranchChoiceForIdentity(choice)) == true;
+                               !IsLoopLocalBranchChoiceForIdentity(choice) &&
+                               !(allowPartyMemberLoopGuards && IsPartyMemberGuardBranchChoice(choice))) == true;
+        }
+
+        private static bool IsPartyMemberGuardBranchChoice(BranchChoice choice)
+        {
+            return choice?.GuardPredicate?.TargetMember != null;
+        }
+
+        private bool HasNonGuardedNonLoopTraversalBranchChoice(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?
+                .Any(choice =>
+                    choice != null &&
+                    !choice.HasGuardPredicate &&
+                    !IsPartyLoopTraversalBranchChoice(choice)) == true;
         }
 
         private HashSet<string> BuildPromptShadowBranchChoiceKeySet(PathVariantInfo variant)
@@ -2518,7 +2557,10 @@ namespace MMMapEditor
                 ? string.Join("|", variant.Texts)
                 : "<NO_TEXT>";
 
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}|{BuildExternalJumpTargetsKey(variant)}";
+            string repeatedBattleCountKey = ShouldPreserveBattleCountInSemanticKey(variant)
+                ? $"{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}"
+                : "<COUNT_COLLAPSED>";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{repeatedBattleCountKey}|{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}|{BuildExternalJumpTargetsKey(variant)}";
 
             string battleSkeleton = "<NO_BATTLE>";
             if (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0)
@@ -2540,6 +2582,25 @@ namespace MMMapEditor
             string staticMapKey = BuildStaticMapDataReadKey(variant);
 
             return $"{textKey}||{statKey}||{battleSkeleton}||{partialKey}||{partyKey}||{staticMapKey}||{probabilityKey}";
+        }
+
+        private bool ShouldPreserveBattleCountInSemanticKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            bool hasBattleCount =
+                variant.BattleMonsterCount.HasValue ||
+                variant.BattleMonsterCountRange != null ||
+                variant.IsBattleMonsterCountIndeterminate;
+            if (!hasBattleCount)
+                return false;
+
+            bool hasRepeatedCoverage =
+                (variant.OccurrenceRanges != null && variant.OccurrenceRanges.Count > 0) ||
+                (variant.OccurrenceIndices != null && variant.OccurrenceIndices.Count > 0);
+
+            return hasRepeatedCoverage || variant.HasRepeatedEventOccurrenceSensitivity;
         }
 
         private string BuildRawProbabilityKey(PathVariantInfo variant)
@@ -3297,6 +3358,7 @@ namespace MMMapEditor
                 DisablesCurrentMapEvent = source.DisablesCurrentMapEvent,
                 HasRepeatedEventOccurrenceSensitivity = source.HasRepeatedEventOccurrenceSensitivity,
                 SuppressRepeatedEventOccurrenceDescription = source.SuppressRepeatedEventOccurrenceDescription,
+                SuppressInputDependentRepeatedEventOccurrenceDescription = source.SuppressInputDependentRepeatedEventOccurrenceDescription,
                 UsesInitialCoordinates = source.UsesInitialCoordinates,
                 UsesStaticMapData = source.UsesStaticMapData,
                 StaticMapDataReads = CloneStaticMapDataReads(source.StaticMapDataReads),
@@ -3337,6 +3399,7 @@ namespace MMMapEditor
                 source.OccurrenceRanges);
             target.HasRepeatedEventOccurrenceSensitivity |= source.HasRepeatedEventOccurrenceSensitivity;
             target.SuppressRepeatedEventOccurrenceDescription |= source.SuppressRepeatedEventOccurrenceDescription;
+            target.SuppressInputDependentRepeatedEventOccurrenceDescription |= source.SuppressInputDependentRepeatedEventOccurrenceDescription;
             target.UsesInitialCoordinates |= source.UsesInitialCoordinates;
             target.UsesStaticMapData |= source.UsesStaticMapData;
             MergeStaticMapDataReads(target.StaticMapDataReads, source.StaticMapDataReads);
@@ -3460,6 +3523,12 @@ namespace MMMapEditor
 
             if (variant.DynamicRandomBoundDependencies != null)
                 score += variant.DynamicRandomBoundDependencies.Count * 20;
+
+            if (variant.CallsRandomEncounter)
+                score += 20;
+
+            if (variant.RandomEncounterRubicon.HasValue)
+                score += 10;
 
             if (variant.BattleMonsters != null)
             {
