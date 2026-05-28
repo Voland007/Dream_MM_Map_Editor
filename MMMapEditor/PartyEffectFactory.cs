@@ -643,33 +643,33 @@ namespace MMMapEditor
             return CreateTrackedTechnicalFieldBitEffect(member, field, operation, mask, instructionAddress);
         }
 
-        public static PartyEffect CreateTechnicalField77ReadEffect(PartyMemberReference member,
+        public static PartyEffect CreateLordIronfistQuestFieldReadEffect(PartyMemberReference member,
             uint instructionAddress, byte? exactValue = null)
         {
-            return CreateTrackedTechnicalFieldReadEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
+            return CreateTrackedTechnicalFieldReadEffect(member, PartyFieldKind.LordIronfistQuestCounter, instructionAddress, exactValue);
         }
 
-        public static PartyEffect CreateTechnicalField77CompareEffect(PartyMemberReference member,
+        public static PartyEffect CreateLordIronfistQuestFieldCompareEffect(PartyMemberReference member,
             uint instructionAddress, byte compareValue, bool isBitMask)
         {
             return CreateTrackedTechnicalFieldCompareEffect(
                 member,
-                PartyFieldKind.Technical77,
+                PartyFieldKind.LordIronfistQuestCounter,
                 instructionAddress,
                 compareValue,
                 isBitMask);
         }
 
-        public static PartyEffect CreateTechnicalField77WriteEffect(PartyMemberReference member,
+        public static PartyEffect CreateLordIronfistQuestFieldWriteEffect(PartyMemberReference member,
             uint instructionAddress, byte? exactValue = null)
         {
-            return CreateTrackedTechnicalFieldWriteEffect(member, PartyFieldKind.Technical77, instructionAddress, exactValue);
+            return CreateTrackedTechnicalFieldWriteEffect(member, PartyFieldKind.LordIronfistQuestCounter, instructionAddress, exactValue);
         }
 
-        public static PartyEffect CreateTechnicalField77BitEffect(PartyMemberReference member,
+        public static PartyEffect CreateLordIronfistQuestFieldBitEffect(PartyMemberReference member,
             PartyEffectOperation operation, byte mask, uint instructionAddress)
         {
-            return CreateTrackedTechnicalFieldBitEffect(member, PartyFieldKind.Technical77, operation, mask, instructionAddress);
+            return CreateTrackedTechnicalFieldBitEffect(member, PartyFieldKind.LordIronfistQuestCounter, operation, mask, instructionAddress);
         }
 
         private static PartyEffectScope ResolveScope(PartyMemberReference member, LoopSemanticKind loopSemantic, PartyConditionKind condition)

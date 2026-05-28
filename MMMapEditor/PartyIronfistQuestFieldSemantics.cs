@@ -15,10 +15,10 @@
 
 namespace MMMapEditor
 {
-    public static class PartyTechnicalField77Semantics
+    public static class PartyIronfistQuestFieldSemantics
     {
         public const int FieldOffset = 0x77;
-        public const string FieldLabel = "техническое поле +0x77";
+        public const string FieldLabel = "счётчик квестов LORD IRONFIST (+0x77)";
 
         public static byte GetRelevantMask(PartyEffectOperation operation, byte immediateValue)
         {

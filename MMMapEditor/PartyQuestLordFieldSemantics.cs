@@ -22,13 +22,13 @@ namespace MMMapEditor
     {
         public const int Lord1FieldOffset = 0x75;
         public const int Lord2FieldOffset = 0x76;
-        public const int Lord3FieldOffset = 0x77;
+        public const int LordIronfistFieldOffset = 0x77;
 
         public static bool IsQuestField(PartyFieldKind field)
         {
             return field == PartyFieldKind.Technical75 ||
                    field == PartyFieldKind.Technical76 ||
-                   field == PartyFieldKind.Technical77;
+                   field == PartyFieldKind.LordIronfistQuestCounter;
         }
 
         public static PartyFieldKind GetFieldByOffset(int offset)
@@ -37,7 +37,7 @@ namespace MMMapEditor
             {
                 Lord1FieldOffset => PartyFieldKind.Technical75,
                 Lord2FieldOffset => PartyFieldKind.Technical76,
-                Lord3FieldOffset => PartyFieldKind.Technical77,
+                LordIronfistFieldOffset => PartyFieldKind.LordIronfistQuestCounter,
                 _ => PartyFieldKind.Unknown
             };
         }
@@ -48,7 +48,7 @@ namespace MMMapEditor
             {
                 PartyFieldKind.Technical75 => "счётчик квестов Лорда1 (+0x75)",
                 PartyFieldKind.Technical76 => "счётчик квестов Лорда2 (+0x76)",
-                PartyFieldKind.Technical77 => "счётчик квестов Лорда3 (+0x77)",
+                PartyFieldKind.LordIronfistQuestCounter => "счётчик квестов LORD IRONFIST (+0x77)",
                 _ => null
             };
         }
@@ -59,7 +59,7 @@ namespace MMMapEditor
             {
                 PartyFieldKind.Technical75 => "Лорда1",
                 PartyFieldKind.Technical76 => "Лорда2",
-                PartyFieldKind.Technical77 => "Лорда3",
+                PartyFieldKind.LordIronfistQuestCounter => "LORD IRONFIST",
                 _ => null
             };
         }

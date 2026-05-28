@@ -149,7 +149,7 @@ namespace MMMapEditor
         private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
         private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
         private const int PARTY_QUEST_LORD2_OFFSET = PartyQuestLordFieldSemantics.Lord2FieldOffset;
-        private const int PARTY_QUEST_LORD3_OFFSET = PartyQuestLordFieldSemantics.Lord3FieldOffset;
+        private const int PARTY_QUEST_LORD_IRONFIST_OFFSET = PartyQuestLordFieldSemantics.LordIronfistFieldOffset;
         private const int PARTY_MAIN_QUEST_COMPLETION_OFFSET = PartyTechnicalFieldSemantics.MainQuestCompletionFieldOffset;
         private const int MAX_CALL_DEPTH = 10;
         private const int MAX_INSTRUCTIONS_PER_PATH = 3000;
@@ -1239,7 +1239,7 @@ namespace MMMapEditor
                 PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
                 PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
                 PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
-                PARTY_QUEST_LORD3_OFFSET => PartyFieldKind.Technical77,
+                PARTY_QUEST_LORD_IRONFIST_OFFSET => PartyFieldKind.LordIronfistQuestCounter,
                 PARTY_PERMANENT_STAT_RAISE_FLAGS_OFFSET => PartyFieldKind.PermanentStatRaiseFlags,
                 PARTY_MAIN_QUEST_COMPLETION_OFFSET => PartyFieldKind.Technical7D,
                 _ => PartyFieldKind.Unknown

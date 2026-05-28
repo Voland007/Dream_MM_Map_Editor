@@ -27,7 +27,7 @@ namespace MMMapEditor
         HpLow = 3,
         HpHigh = 4,
         Status = 5,
-        Technical77 = 6,
+        LordIronfistQuestCounter = 6,
         Sp = 7,
         SpLow = 8,
         SpHigh = 9,
