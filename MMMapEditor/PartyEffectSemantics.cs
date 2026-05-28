@@ -388,6 +388,16 @@ namespace MMMapEditor
                         return $"CONDITION текущего персонажа партии изменяется на {conditionStatusesText}";
                     }
 
+                    if (scope == PartyEffectScope.SingleMember &&
+                        effect.MemberIndex.HasValue &&
+                        (operation == PartyEffectOperation.BitSet ||
+                         operation == PartyEffectOperation.BitClear ||
+                         operation == PartyEffectOperation.BitToggle ||
+                         operation == PartyEffectOperation.Write))
+                    {
+                        return $"CONDITION персонажа {FormatMemberDisplay(effect.MemberIndex.Value)} в партии изменяется на {conditionStatusesText}";
+                    }
+
                     string statusTarget = BuildStatusTarget(effect, scope, condition);
                     return operation switch
                     {

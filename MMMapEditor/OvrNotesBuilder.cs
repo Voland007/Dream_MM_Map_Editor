@@ -3439,12 +3439,13 @@ namespace MMMapEditor
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine)
         {
+            var variantContext = GetSinglePathVariantContext(variantObject);
             var narrativeLines = RemoveAdjacentDuplicatePromptLines(DecodeNoteTexts(rawTexts));
             InsertInlineSpoilerAfterAnswerPrompt(narrativeLines, inlineSpecialSpoilerLine);
 
-            return new VariantLineParts
+            var parts = new VariantLineParts
             {
-                VariantContext = GetSinglePathVariantContext(variantObject),
+                VariantContext = variantContext,
                 NarrativeLines = narrativeLines,
                 MonsterStatLines = GetMonsterStatLines(
                     variantObject,
@@ -3457,6 +3458,9 @@ namespace MMMapEditor
                 PromotableConditionLines = GetPromotableConditionLines(variantObject),
                 BattleLines = GetBattleLines(variantObject)
             };
+
+            DeferTerminalLootNarrativeLinesAfterOutcomeLines(parts);
+            return parts;
         }
 
         private static List<string> ComposeVariantLines(
@@ -3484,7 +3488,8 @@ namespace MMMapEditor
 
             lines.AddRange(parts?.MonsterStatLines ?? new List<string>());
             lines.AddRange(specialNoteLines);
-                lines.AddRange(parts?.BattleLines ?? new List<string>());
+            lines.AddRange(parts?.DeferredNarrativeLines ?? new List<string>());
+            lines.AddRange(parts?.BattleLines ?? new List<string>());
 
             if (lines.Count == 0)
                 lines.Add(BuildNoOpLine(parts?.VariantContext));
@@ -3492,6 +3497,124 @@ namespace MMMapEditor
                 NormalizeNoOpOnlyLine(lines, parts?.VariantContext);
 
             return lines;
+        }
+
+        private static void DeferTerminalLootNarrativeLinesAfterOutcomeLines(VariantLineParts parts)
+        {
+            if (parts?.VariantContext == null ||
+                parts.NarrativeLines == null ||
+                parts.NarrativeLines.Count == 0)
+            {
+                return;
+            }
+
+            var terminalLootLines = BuildTerminalLootNarrativeLines(
+                parts.VariantContext,
+                out uint terminalLootAddress);
+            if (terminalLootLines.Count == 0 ||
+                !EndsWithLineSequence(parts.NarrativeLines, terminalLootLines) ||
+                !ShouldDeferTerminalLootAfterOutcomeLines(parts, terminalLootAddress))
+            {
+                return;
+            }
+
+            parts.NarrativeLines = parts.NarrativeLines
+                .Take(parts.NarrativeLines.Count - terminalLootLines.Count)
+                .ToList();
+            parts.DeferredNarrativeLines = terminalLootLines;
+        }
+
+        private static List<string> BuildTerminalLootNarrativeLines(
+            PathVariantInfo variant,
+            out uint terminalLootAddress)
+        {
+            terminalLootAddress = 0;
+            var entries = OverlayTextDisplayComposer
+                .ComposeTextEntries(variant?.TextEntries)
+                .Where(entry => entry != null)
+                .ToList();
+            if (entries.Count == 0)
+                return new List<string>();
+
+            int start = entries.Count;
+            while (start > 0 && IsLootTextEntry(entries[start - 1]))
+                start--;
+
+            if (start == entries.Count)
+                return new List<string>();
+
+            var terminalLootEntries = entries.Skip(start).ToList();
+            foreach (var entry in terminalLootEntries)
+            {
+                uint address = entry.Address != 0
+                    ? entry.Address
+                    : entry.DisplayInstructionAddress;
+                if (address != 0)
+                    terminalLootAddress = terminalLootAddress == 0
+                        ? address
+                        : Math.Min(terminalLootAddress, address);
+            }
+
+            return DecodeNoteTexts(terminalLootEntries.Select(entry => entry.Text));
+        }
+
+        private static bool IsLootTextEntry(TextEntry entry)
+        {
+            return entry?.SemanticKind == TextSemanticKind.LootContainerIntro ||
+                   entry?.SemanticKind == TextSemanticKind.LootPayload;
+        }
+
+        private static bool ShouldDeferTerminalLootAfterOutcomeLines(
+            VariantLineParts parts,
+            uint terminalLootAddress)
+        {
+            if (parts == null)
+                return false;
+
+            return HasOrderedSpecialEffectBeforeTerminalLoot(parts.VariantContext, terminalLootAddress) ||
+                   HasMonsterStatOutcomeBeforeTerminalLoot(parts.VariantContext, terminalLootAddress, parts.MonsterStatLines);
+        }
+
+        private static bool HasOrderedSpecialEffectBeforeTerminalLoot(
+            PathVariantInfo variant,
+            uint terminalLootAddress)
+        {
+            if (variant == null || terminalLootAddress == 0)
+                return false;
+
+            if ((variant.PartyEffects ?? new List<PartyEffect>())
+                .Any(effect => effect != null &&
+                               effect.InstructionAddress != 0 &&
+                               effect.InstructionAddress < terminalLootAddress))
+            {
+                return true;
+            }
+
+            return variant.CallsRandomEncounter &&
+                   variant.RandomEncounterInstructionAddress != 0 &&
+                   variant.RandomEncounterInstructionAddress < terminalLootAddress;
+        }
+
+        private static bool HasMonsterStatOutcomeBeforeTerminalLoot(
+            PathVariantInfo variant,
+            uint terminalLootAddress,
+            IEnumerable<string> monsterStatLines)
+        {
+            if (variant == null ||
+                terminalLootAddress == 0 ||
+                monsterStatLines == null ||
+                !monsterStatLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+            {
+                return false;
+            }
+
+            return variant.RandomEncounterMonsterPowerCap.HasValue ||
+                   variant.RandomEncounterMonsterLevelCap.HasValue ||
+                   variant.RandomEncounterMonsterBatchCountCap.HasValue ||
+                   variant.DarkeningLevel.HasValue ||
+                   variant.RandomEncounterChance.HasValue ||
+                   variant.RandomEncounterRubicon.HasValue ||
+                   variant.BattleMonsterStrengthAdjustment != 0;
         }
 
         private static List<string> GetPromotableConditionLines(OvrObject obj)
@@ -5923,6 +6046,7 @@ namespace MMMapEditor
         {
             public PathVariantInfo VariantContext { get; set; }
             public List<string> NarrativeLines { get; set; } = new List<string>();
+            public List<string> DeferredNarrativeLines { get; set; } = new List<string>();
             public List<string> MonsterStatLines { get; set; } = new List<string>();
             public List<string> SpecialNoteLines { get; set; } = new List<string>();
             public List<string> PromotableConditionLines { get; set; } = new List<string>();
@@ -14118,6 +14242,21 @@ namespace MMMapEditor
             for (int i = 0; i < prefix.Count; i++)
             {
                 if (!string.Equals(lines[i], prefix[i], StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static bool EndsWithLineSequence(IReadOnlyList<string> lines, IReadOnlyList<string> suffix)
+        {
+            if (lines == null || suffix == null || suffix.Count == 0 || lines.Count < suffix.Count)
+                return false;
+
+            int offset = lines.Count - suffix.Count;
+            for (int i = 0; i < suffix.Count; i++)
+            {
+                if (!string.Equals(lines[offset + i], suffix[i], StringComparison.Ordinal))
                     return false;
             }
 

@@ -810,7 +810,9 @@ namespace MMMapEditor
             string statusesText = string.Join(", ", statusNames);
             string changeText = BuildStatusChangeText(operation, statusesText);
 
-            return IsLoopTarget(member, LoopSemanticKind.None) || member?.SelectionKind == PartyMemberSelectionKind.Random
+            return IsLoopTarget(member, LoopSemanticKind.None) ||
+                   member?.SelectionKind == PartyMemberSelectionKind.Random ||
+                   member?.MemberIndex.HasValue == true
                 ? BuildStatusChangeDescription(member, changeText)
                 : $"{subject}: {changeText}";
         }
@@ -822,6 +824,9 @@ namespace MMMapEditor
 
             if (member?.SelectionKind == PartyMemberSelectionKind.Random)
                 return $"CONDITION случайного персонажа в партии изменяется на {statusesText}";
+
+            if (member?.MemberIndex.HasValue == true)
+                return $"CONDITION персонажа {PartyMemberReference.FormatDisplayIndex(member.MemberIndex.Value)} в партии изменяется на {statusesText}";
 
             string subject = BuildStatusSubject(member);
             return $"{subject}: {statusesText}";
