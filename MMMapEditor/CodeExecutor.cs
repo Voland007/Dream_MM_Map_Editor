@@ -99,6 +99,9 @@ namespace MMMapEditor
         private const byte KEYBOARD_INPUT_MIN = 0x00;
         private const byte KEYBOARD_INPUT_MAX = 0x7F;
         private const string KEYBOARD_INPUT_PASSTHROUGH_HEADER_ANNOTATION = "При нажатии клавиши клавиатуры";
+        private const int OVERLAY_HEADER_SIZE = 0x0E;
+        private const int OVERLAY_CODE_LOAD_ADDRESS_OFFSET = 0x02;
+        private const ushort RESIDENT_KEYBOARD_POLL_ROUTINE_ADDRESS = 0x0306;
         private const ushort LEGACY_INPUT_INDEX_ADDRESS = 0x3BBA;
         private const ushort OVERLAY_INPUT_INDEX_ADDRESS = 0xC9BB;
         private const ushort INPUT_BUFFER_ADDRESS = 0x3CB8;
@@ -7055,14 +7058,10 @@ namespace MMMapEditor
                 string takenDisplayHeaderAnnotation = BuildKeyboardInputPassthroughHeaderAnnotation(
                     br,
                     insn,
-                    nextAddress,
-                    condJumpTarget,
                     branchTaken: true);
                 string notTakenDisplayHeaderAnnotation = BuildKeyboardInputPassthroughHeaderAnnotation(
                     br,
                     insn,
-                    nextAddress,
-                    condJumpTarget,
                     branchTaken: false);
 
                 if (takenProbability.numerator > 0)
@@ -9700,35 +9699,35 @@ namespace MMMapEditor
         private static string BuildKeyboardInputPassthroughHeaderAnnotation(
             BinaryReader br,
             X86Instruction instruction,
-            uint nextAddress,
-            uint condJumpTarget,
             bool branchTaken)
         {
-            return !branchTaken &&
-                   IsKeyboardInputPassthroughBranchPattern(br, instruction, nextAddress, condJumpTarget)
+            return IsKeyboardInputNegativeResultBranch(br, instruction, branchTaken)
                 ? KEYBOARD_INPUT_PASSTHROUGH_HEADER_ANNOTATION
                 : null;
         }
 
-        private static bool IsKeyboardInputPassthroughBranchPattern(
+        private static bool IsKeyboardInputNegativeResultBranch(
             BinaryReader br,
             X86Instruction instruction,
-            uint nextAddress,
-            uint condJumpTarget)
+            bool branchTaken)
         {
-            if (br?.BaseStream == null || instruction?.Bytes == null || instruction.Bytes.Length < 2)
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                instruction?.Bytes == null ||
+                instruction.Bytes.Length < 2)
+            {
                 return false;
+            }
 
             byte[] bytes = instruction.Bytes;
-            if (bytes[0] != 0x79)
+            bool jumpsOnNegative = bytes[0] == 0x78;
+            bool jumpsOnNonNegative = bytes[0] == 0x79;
+            if (!jumpsOnNegative && !jumpsOnNonNegative)
                 return false;
 
             uint branchAddress = (uint)instruction.Address;
             long fileLength = br.BaseStream.Length;
-            if (branchAddress < 5 ||
-                condJumpTarget != nextAddress + 1 ||
-                nextAddress >= fileLength ||
-                branchAddress + bytes.Length > fileLength)
+            if (branchAddress < 5 || branchAddress + bytes.Length > fileLength)
             {
                 return false;
             }
@@ -9736,26 +9735,75 @@ namespace MMMapEditor
             long originalPosition = br.BaseStream.Position;
             try
             {
-                br.BaseStream.Position = nextAddress;
-                if (br.ReadByte() != 0xC3)
-                    return false;
-
                 br.BaseStream.Position = branchAddress - 5;
                 byte callOpcode = br.ReadByte();
-                br.BaseStream.Position += 2;
+                byte callLow = br.ReadByte();
+                byte callHigh = br.ReadByte();
                 byte orOpcode = br.ReadByte();
                 byte orModRm = br.ReadByte();
-                byte jnsOpcode = br.ReadByte();
-                byte jnsDisplacement = br.ReadByte();
 
-                return callOpcode == 0xE8 &&
-                       orOpcode == 0x0A &&
-                       orModRm == 0xC0 &&
-                       jnsOpcode == 0x79 &&
-                       jnsDisplacement == 0x01;
+                if (callOpcode != 0xE8 ||
+                    !IsAlSignTestInstruction(orOpcode, orModRm) ||
+                    !TryResolveOverlayRelativeCallRuntimeTarget(
+                        br,
+                        branchAddress - 5,
+                        callLow,
+                        callHigh,
+                        out ushort runtimeCallTarget) ||
+                    runtimeCallTarget != RESIDENT_KEYBOARD_POLL_ROUTINE_ADDRESS)
+                {
+                    return false;
+                }
+
+                // SUB_0306 returns a negative AL when keyboard input is already pending.
+                return jumpsOnNegative ? branchTaken : !branchTaken;
             }
             catch (EndOfStreamException)
             {
+                return false;
+            }
+            finally
+            {
+                br.BaseStream.Position = originalPosition;
+            }
+        }
+
+        private static bool IsAlSignTestInstruction(byte opcode, byte modRm)
+        {
+            return (opcode == 0x0A || opcode == 0x84) && modRm == 0xC0;
+        }
+
+        private static bool TryResolveOverlayRelativeCallRuntimeTarget(
+            BinaryReader br,
+            uint callAddress,
+            byte relativeLow,
+            byte relativeHigh,
+            out ushort runtimeTarget)
+        {
+            runtimeTarget = 0;
+
+            if (br?.BaseStream == null ||
+                !br.BaseStream.CanSeek ||
+                br.BaseStream.Length < OVERLAY_HEADER_SIZE ||
+                OVERLAY_CODE_LOAD_ADDRESS_OFFSET + 1 >= br.BaseStream.Length)
+            {
+                return false;
+            }
+
+            long originalPosition = br.BaseStream.Position;
+            try
+            {
+                br.BaseStream.Position = OVERLAY_CODE_LOAD_ADDRESS_OFFSET;
+                ushort codeLoadAddress = br.ReadUInt16();
+                short relative = unchecked((short)(relativeLow | (relativeHigh << 8)));
+                int fileTarget = unchecked((int)callAddress + 3 + relative);
+                int runtimeOffset = fileTarget - OVERLAY_HEADER_SIZE;
+                runtimeTarget = unchecked((ushort)(codeLoadAddress + runtimeOffset));
+                return true;
+            }
+            catch (EndOfStreamException)
+            {
+                runtimeTarget = 0;
                 return false;
             }
             finally
