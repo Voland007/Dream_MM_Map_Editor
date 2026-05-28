@@ -29,6 +29,8 @@ namespace MMMapEditor
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
         private const string ResponseAnswerPrompt = "RESPONSE:";
+        private static readonly Regex QuestionAnswerPromptRegex =
+            new Regex(@"\?\s*:>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private const string GuardHeaderAnnotationPrefix = "при условии:";
         private const string LoopInternalEradicatedExclusionAnnotation =
             "за исключением персонажей, у которых CONDITION == ERADICATED";
@@ -17720,6 +17722,23 @@ namespace MMMapEditor
                 return BuildSpoilerAnswerLine(areaD4Answer);
             }
 
+            if (string.Equals(fileNameOnly, "RWL1.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                if (obj == null ||
+                    obj.X != 6 ||
+                    obj.Y != 11 ||
+                    obj.PatchAddress != 0x006C)
+                {
+                    return null;
+                }
+
+                string rwl1Answer = TryReadTerminatedInputValidationAnswer(filename, config, obj.PatchAddress.Value);
+                if (string.IsNullOrWhiteSpace(rwl1Answer))
+                    return null;
+
+                return BuildSpoilerAnswerLine(rwl1Answer);
+            }
+
             if (string.Equals(fileNameOnly, "DEMON.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 if (obj == null ||
@@ -18420,6 +18439,46 @@ namespace MMMapEditor
             return null;
         }
 
+        private static string TryReadTerminatedInputValidationAnswer(string filename, OvrFileConfig config, uint startAddress)
+        {
+            if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
+                return null;
+
+            try
+            {
+                using var fs = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var br = new BinaryReader(fs);
+
+                uint scanEnd = (uint)Math.Min(br.BaseStream.Length, startAddress + 0x200);
+                for (uint address = startAddress; address + 24 < scanEnd; address++)
+                {
+                    if (!TryReadTerminatedInputValidationAnswerPattern(
+                            br,
+                            address,
+                            scanEnd,
+                            out ushort answerAddress,
+                            out int answerLength,
+                            out byte storedToAnswerAddValue))
+                    {
+                        continue;
+                    }
+
+                    return TryReadShiftedOverlayText(
+                        filename,
+                        config,
+                        answerAddress,
+                        answerLength,
+                        storedToAnswerAddValue);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            return null;
+        }
+
         private static string TryReadSentinelInputValidationAnswer(string filename, OvrFileConfig config, uint startAddress)
         {
             if (string.IsNullOrWhiteSpace(filename) || config == null || !File.Exists(filename))
@@ -18457,6 +18516,121 @@ namespace MMMapEditor
             }
 
             return null;
+        }
+
+        private static bool TryReadTerminatedInputValidationAnswerPattern(
+            BinaryReader br,
+            uint loopStartAddress,
+            uint scanEnd,
+            out ushort answerAddress,
+            out int answerLength,
+            out byte storedToAnswerAddValue)
+        {
+            const ushort inputBufferAddress = 0x3CB8;
+
+            answerAddress = 0;
+            answerLength = 0;
+            storedToAnswerAddValue = 0;
+
+            if (!TryReadFileByte(br, loopStartAddress, out byte movInputOpcode) ||
+                movInputOpcode != 0x8A ||
+                !TryReadFileByte(br, loopStartAddress + 1, out byte movInputModRm) ||
+                movInputModRm != 0x87 ||
+                !TryReadFileWord(br, loopStartAddress + 2, out ushort inputAddress) ||
+                inputAddress != inputBufferAddress)
+            {
+                return false;
+            }
+
+            uint cursor = loopStartAddress + 4;
+            if (!TryReadFileByte(br, cursor, out byte transformOpcode) ||
+                !TryReadFileByte(br, cursor + 1, out byte transformValue))
+            {
+                return false;
+            }
+
+            if (transformOpcode == 0x04)
+            {
+                storedToAnswerAddValue = unchecked((byte)-transformValue);
+            }
+            else if (transformOpcode == 0x2C)
+            {
+                storedToAnswerAddValue = transformValue;
+            }
+            else
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (TryReadFileByte(br, cursor, out byte maybeClc) && maybeClc == 0xF8)
+                cursor++;
+
+            if (!TryReadFileByte(br, cursor, out byte cmpOpcode) ||
+                cmpOpcode != 0x3A ||
+                !TryReadFileByte(br, cursor + 1, out byte cmpModRm) ||
+                cmpModRm != 0x87 ||
+                !TryReadFileWord(br, cursor + 2, out answerAddress) ||
+                answerAddress < OvrFileConfig.OverlayTextStartAddress)
+            {
+                return false;
+            }
+
+            cursor += 4;
+            if (!TryReadFileByte(br, cursor, out byte failureJumpOpcode) ||
+                failureJumpOpcode != 0x75)
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (!TryReadFileByte(br, cursor, out byte incOpcode) ||
+                incOpcode != 0xFE ||
+                !TryReadFileByte(br, cursor + 1, out byte incModRm) ||
+                incModRm != 0xC3)
+            {
+                return false;
+            }
+
+            cursor += 2;
+            if (!TryReadFileByte(br, cursor, out byte movAnswerOpcode) ||
+                movAnswerOpcode != 0x8A ||
+                !TryReadFileByte(br, cursor + 1, out byte movAnswerModRm) ||
+                movAnswerModRm != 0x87 ||
+                !TryReadFileWord(br, cursor + 2, out ushort zeroCheckAddress) ||
+                zeroCheckAddress != answerAddress ||
+                !TryReadFileByte(br, cursor + 4, out byte orOpcode) ||
+                orOpcode != 0x0A ||
+                !TryReadFileByte(br, cursor + 5, out byte orModRm) ||
+                orModRm != 0xC0 ||
+                !TryReadFileByte(br, cursor + 6, out byte zeroTerminatorJumpOpcode) ||
+                zeroTerminatorJumpOpcode != 0x74)
+            {
+                return false;
+            }
+
+            cursor += 8;
+            if (!TryReadFileByte(br, cursor, out byte cmpBlOpcode) ||
+                cmpBlOpcode != 0x80 ||
+                !TryReadFileByte(br, cursor + 1, out byte cmpBlModRm) ||
+                cmpBlModRm != 0xFB ||
+                !TryReadFileByte(br, cursor + 2, out byte maxLength) ||
+                maxLength == 0 ||
+                maxLength > 0x40 ||
+                !TryReadFileByte(br, cursor + 3, out byte loopJumpOpcode) ||
+                loopJumpOpcode != 0x72 ||
+                !TryReadFileByte(br, cursor + 4, out byte relativeTarget))
+            {
+                return false;
+            }
+
+            uint nextAddress = cursor + 5;
+            uint branchTarget = unchecked((uint)((int)nextAddress + (sbyte)relativeTarget));
+            if (branchTarget != loopStartAddress || nextAddress > scanEnd)
+                return false;
+
+            answerLength = maxLength;
+            return true;
         }
 
         private static bool TryReadSentinelInputValidationAnswerPattern(
@@ -19428,7 +19602,8 @@ namespace MMMapEditor
         private static bool IsAnswerPromptLine(string line)
         {
             return line?.IndexOf(RiddleAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   line?.IndexOf(ResponseAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0;
+                   line?.IndexOf(ResponseAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   (!string.IsNullOrWhiteSpace(line) && QuestionAnswerPromptRegex.IsMatch(line));
         }
 
         private static void AppendBlankLineAfterLootBlockIfNeeded(
