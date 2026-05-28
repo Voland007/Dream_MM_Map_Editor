@@ -276,6 +276,8 @@ namespace MMMapEditor
                     analysisCacheScopeKey: "table",
                     repeatedEventAnalysisMode: repeatedEventAnalysisMode);
 
+                finalVariants = ApplyRwl2LordArcherGoldVariants(ovrObject, finalVariants);
+
                 PopulateObjectPathData(ovrObject, finalVariants);
                 ApplyResolvedVariantInfoToObject(ovrObject);
 
@@ -306,6 +308,288 @@ namespace MMMapEditor
 
                 return ovrObject;
             }
+        }
+
+        private Dictionary<int, PathVariantInfo> ApplyRwl2LordArcherGoldVariants(
+            OvrObject obj,
+            Dictionary<int, PathVariantInfo> finalVariants)
+        {
+            if (!IsRwl2LordArcherGoldPatch(obj) ||
+                finalVariants == null ||
+                finalVariants.Count == 0)
+            {
+                return finalVariants;
+            }
+
+            var orderedVariants = finalVariants
+                .OrderBy(kvp => GetPathOrderKey(kvp.Value))
+                .ThenBy(kvp => kvp.Key)
+                .Select(kvp => kvp.Value)
+                .Where(variant => variant != null)
+                .ToList();
+
+            if (!orderedVariants.Any(HasRwl2LordArcherPromptText))
+                return finalVariants;
+
+            var submitVariants = orderedVariants
+                .Where(IsRwl2LordArcherSubmitVariant)
+                .ToList();
+
+            if (submitVariants.Count == 0 ||
+                submitVariants.Any(HasRwl2LordArcherGoldSemanticEffect))
+            {
+                return finalVariants;
+            }
+
+            var submitSet = new HashSet<PathVariantInfo>(submitVariants);
+            PathVariantInfo baseSubmitVariant = submitVariants
+                .OrderBy(GetPathOrderKey)
+                .First();
+            var replacementVariants = new List<PathVariantInfo>();
+            bool insertedSubmitVariants = false;
+
+            foreach (var variant in orderedVariants)
+            {
+                if (submitSet.Contains(variant))
+                {
+                    if (!insertedSubmitVariants)
+                    {
+                        replacementVariants.Add(BuildRwl2LordArcherGoldVariant(
+                            baseSubmitVariant,
+                            hasGold: true));
+                        replacementVariants.Add(BuildRwl2LordArcherGoldVariant(
+                            baseSubmitVariant,
+                            hasGold: false));
+                        insertedSubmitVariants = true;
+                    }
+
+                    continue;
+                }
+
+                replacementVariants.Add(CloneVariantInfo(variant));
+            }
+
+            return ReindexSourceVariants(replacementVariants);
+        }
+
+        private bool IsRwl2LordArcherGoldPatch(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x03B8 &&
+                   obj != null &&
+                   obj.X == 14 &&
+                   obj.Y == 1 &&
+                   obj.PatchAddress == 0x0069;
+        }
+
+        private PathVariantInfo BuildRwl2LordArcherGoldVariant(
+            PathVariantInfo source,
+            bool hasGold)
+        {
+            var variant = CloneVariantInfo(source) ?? new PathVariantInfo();
+            RemoveRwl2LordArcherGoldImplementationDetails(variant);
+            variant.BranchChoices ??= new List<BranchChoice>();
+            variant.BranchChoices.Add(CreateRwl2LordArcherGoldBranchChoice(hasGold));
+            AddRwl2LordArcherGoldOutcomeText(variant, hasGold);
+            variant.HasBranchSpecificContribution = true;
+            return variant;
+        }
+
+        private static BranchChoice CreateRwl2LordArcherGoldBranchChoice(bool hasGold)
+        {
+            string annotation = hasGold
+                ? "GOLD есть хотя бы у одного активного персонажа партии"
+                : "GOLD нет ни у одного активного персонажа партии";
+
+            return new BranchChoice
+            {
+                DisplayHeaderAnnotation = annotation,
+                Condition = hasGold
+                    ? "RWL2 Lord Archer: any active party member has GOLD"
+                    : "RWL2 Lord Archer: no active party member has GOLD",
+                IsLinear = false
+            };
+        }
+
+        private static void AddRwl2LordArcherGoldOutcomeText(
+            PathVariantInfo variant,
+            bool hasGold)
+        {
+            if (variant == null)
+                return;
+
+            string text = hasGold
+                ? "GOLD всех активных персонажей партии обнуляется"
+                : "Каждый активный персонаж партии получает 5000 GOLD";
+
+            variant.Texts ??= new List<string>();
+            if (!variant.Texts.Any(existing => string.Equals(existing, text, StringComparison.Ordinal)))
+                variant.Texts.Add(text);
+
+            variant.TextEntries ??= new List<TextEntry>();
+            if (variant.TextEntries.Any(entry => string.Equals(entry?.Text, text, StringComparison.Ordinal)))
+                return;
+
+            int order = variant.TextEntries
+                .Where(entry => entry != null)
+                .Select(entry => entry.Order)
+                .DefaultIfEmpty(0)
+                .Max() + 1;
+
+            variant.TextEntries.Add(new TextEntry
+            {
+                Text = text,
+                Order = order,
+                IsInferred = true,
+                Address = 0,
+                DisplayInstructionAddress = hasGold ? 0x0135u : 0x010Fu
+            });
+        }
+
+        private void RemoveRwl2LordArcherGoldImplementationDetails(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return;
+
+            variant.BranchChoices = (variant.BranchChoices ?? new List<BranchChoice>())
+                .Where(choice => !IsRwl2LordArcherGoldImplementationChoice(choice))
+                .Select(choice => choice.Clone())
+                .ToList();
+
+            variant.PartyEffects = (variant.PartyEffects ?? new List<PartyEffect>())
+                .Where(effect => !IsRwl2LordArcherGoldImplementationEffect(effect))
+                .Select(effect => effect.Clone())
+                .ToList();
+        }
+
+        private static bool IsRwl2LordArcherGoldImplementationChoice(BranchChoice choice)
+        {
+            if (choice == null)
+                return false;
+
+            if (IsRwl2LordArcherGoldField(choice.ComparedPartyField))
+                return true;
+
+            if (IsRwl2LordArcherGoldPredicate(choice.GuardPredicate))
+                return true;
+
+            string text = string.Join(" ",
+                choice.Condition ?? string.Empty,
+                choice.DisplayHeaderAnnotation ?? string.Empty);
+            return text.IndexOf("+0x39", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("+0x3A", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("+0x3B", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsRwl2LordArcherGoldImplementationEffect(PartyEffect effect)
+        {
+            return IsRwl2LordArcherGoldOffset(effect?.TechnicalFieldOffset);
+        }
+
+        private static bool IsRwl2LordArcherGoldField(PartyFieldReference field)
+        {
+            if (field == null)
+                return false;
+
+            return IsRwl2LordArcherGoldOffset(field.FieldOffset) ||
+                   IsRwl2LordArcherGoldOffsetRange(field.FieldOffsetRange);
+        }
+
+        private static bool IsRwl2LordArcherGoldPredicate(PartyPredicate predicate)
+        {
+            if (predicate == null)
+                return false;
+
+            return IsRwl2LordArcherGoldOffset(predicate.FieldOffset) ||
+                   IsRwl2LordArcherGoldOffsetRange(predicate.FieldOffsetRange);
+        }
+
+        private static bool IsRwl2LordArcherGoldOffset(byte? offset)
+        {
+            return offset.HasValue &&
+                   offset.Value >= 0x39 &&
+                   offset.Value <= 0x3B;
+        }
+
+        private static bool IsRwl2LordArcherGoldOffsetRange(ValueRange8 range)
+        {
+            return range != null &&
+                   range.Min <= 0x3B &&
+                   range.Max >= 0x39;
+        }
+
+        private static bool HasRwl2LordArcherGoldSemanticEffect(PathVariantInfo variant)
+        {
+            if (variant?.Texts?.Any(text =>
+                !string.IsNullOrWhiteSpace(text) &&
+                text.IndexOf("GOLD", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                (text.IndexOf("5000", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 text.IndexOf("обнуляется", StringComparison.OrdinalIgnoreCase) >= 0)) == true)
+            {
+                return true;
+            }
+
+            return variant?.PartyEffects?.Any(effect =>
+                effect != null &&
+                !string.IsNullOrWhiteSpace(effect.Description) &&
+                effect.Description.IndexOf("GOLD", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                (effect.Description.IndexOf("5000", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 effect.Description.IndexOf("обнуляется", StringComparison.OrdinalIgnoreCase) >= 0)) == true;
+        }
+
+        private static bool IsRwl2LordArcherSubmitVariant(PathVariantInfo variant)
+        {
+            return variant != null &&
+                   variant.TeleportTargetX == 8 &&
+                   variant.TeleportTargetY == 5 &&
+                   HasRwl2LordArcherPromptText(variant) &&
+                   HasInputChoice(variant, 'Y');
+        }
+
+        private static bool HasRwl2LordArcherPromptText(PathVariantInfo variant)
+        {
+            return variant?.Texts?.Any(text =>
+                !string.IsNullOrWhiteSpace(text) &&
+                text.IndexOf("I AM LORD ARCHER", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                text.IndexOf("SUBMIT (Y/N)?", StringComparison.OrdinalIgnoreCase) >= 0) == true;
+        }
+
+        private static bool HasInputChoice(PathVariantInfo variant, char choice)
+        {
+            byte choiceValue = (byte)char.ToUpperInvariant(choice);
+            string choiceLabel = char.ToUpperInvariant(choice).ToString();
+            return variant?.BranchChoices?.Any(branchChoice =>
+            {
+                if (branchChoice == null)
+                    return false;
+
+                if (branchChoice.CompareValue == choiceValue)
+                    return true;
+
+                string label = (branchChoice.Label ?? string.Empty).Trim();
+                return string.Equals(label, choiceLabel, StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(label, choiceLabel + ")", StringComparison.OrdinalIgnoreCase);
+            }) == true;
+        }
+
+        private static Dictionary<int, PathVariantInfo> ReindexSourceVariants(
+            IEnumerable<PathVariantInfo> variants)
+        {
+            var result = new Dictionary<int, PathVariantInfo>();
+            int index = 0;
+
+            foreach (var variant in variants ?? Enumerable.Empty<PathVariantInfo>())
+            {
+                if (variant == null)
+                    continue;
+
+                variant.PathId = index;
+                variant.PathOrderKey = index + 1;
+                result[index] = variant;
+                index++;
+            }
+
+            return result;
         }
 
         private bool ShouldAnalyzeTableObjectAsSingleOccurrence(OvrObject obj)

@@ -39,6 +39,8 @@ namespace MMMapEditor
         private const string LostTextLine = "YOU'RE LOST!!!";
         private const string LostDirectionEffectLine =
             "Направление партии случайно поворачивается налево или направо (50%/50%)";
+        private const string GoldClearedEffectLine = "GOLD всех активных персонажей партии обнуляется";
+        private const string GoldGrantedEffectLine = "Каждый активный персонаж партии получает 5000 GOLD";
         private const string WholePartyConditionChangePrefix = "CONDITION персонажа(ей) в партии изменяется на ";
         private const string LegacyWholePartyConditionChangePrefix = "CONDITION всех персонажей в партии изменяется на ";
         private const string CurrentPartyMemberConditionChangePrefix = "CONDITION текущего персонажа партии изменяется на ";
@@ -382,6 +384,7 @@ namespace MMMapEditor
                 NormalizeInlineStyleSpansForLineEndings(finalNoteText, normalizedFinalNoteText, inlineStyles);
                 finalNoteText = normalizedFinalNoteText;
 
+                AddGoldEffectStyleSpans(finalNoteText, inlineStyles);
                 AppendRawOverlayTextSpans(finalNoteText, inlineStyles, rawOverlayTexts);
 
                 result.NotesPerCell[pos] = finalNoteText;
@@ -18204,6 +18207,36 @@ namespace MMMapEditor
             List<NoteInlineStyleSpan> inlineStyles,
             string visibleText)
         {
+            AddExactTextStyleSpans(
+                noteText,
+                inlineStyles,
+                visibleText,
+                NoteInlineStyleKind.GeneratedOverlaySubstitution);
+        }
+
+        private static void AddGoldEffectStyleSpans(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles)
+        {
+            AddExactTextStyleSpans(
+                noteText,
+                inlineStyles,
+                GoldClearedEffectLine,
+                NoteInlineStyleKind.GoldClearedEffectNote);
+
+            AddExactTextStyleSpans(
+                noteText,
+                inlineStyles,
+                GoldGrantedEffectLine,
+                NoteInlineStyleKind.GoldGrantedEffectNote);
+        }
+
+        private static void AddExactTextStyleSpans(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles,
+            string visibleText,
+            NoteInlineStyleKind kind)
+        {
             if (string.IsNullOrEmpty(noteText) ||
                 string.IsNullOrEmpty(visibleText) ||
                 inlineStyles == null)
@@ -18222,7 +18255,7 @@ namespace MMMapEditor
                 {
                     Start = index,
                     Length = visibleText.Length,
-                    Kind = NoteInlineStyleKind.GeneratedOverlaySubstitution
+                    Kind = kind
                 });
                 searchStart = index + visibleText.Length;
             }

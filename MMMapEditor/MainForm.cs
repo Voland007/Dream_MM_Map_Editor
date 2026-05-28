@@ -2674,6 +2674,14 @@ namespace MMMapEditor
                         ApplyLostDirectionEffectNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.GoldClearedEffectNote:
+                        ApplyGoldClearedEffectNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.GoldGrantedEffectNote:
+                        ApplyGoldGrantedEffectNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2825,6 +2833,18 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(206, 224, 214);
             rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(48, 80, 68), 0.34);
             rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyGoldClearedEffectNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 222, 190);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(132, 28, 30), 0.50);
+        }
+
+        private void ApplyGoldGrantedEffectNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 235, 128);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(128, 92, 10), 0.44);
         }
 
         private void ApplyWheelRewardExplanationStyle(RichTextBox rt)

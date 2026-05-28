@@ -350,7 +350,9 @@ namespace MMMapEditor
         TechnicalRenderPatchNote = 22,
         AgeChangeNote = 23,
         GeneratedOverlaySubstitution = 24,
-        LostDirectionEffectNote = 25
+        LostDirectionEffectNote = 25,
+        GoldClearedEffectNote = 26,
+        GoldGrantedEffectNote = 27
     }
 
     public sealed class NoteInlineStyleSpan
