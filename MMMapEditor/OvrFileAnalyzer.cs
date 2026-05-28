@@ -68,14 +68,20 @@ namespace MMMapEditor
             _pathAnalyzer = new PathAnalyzer(config, _codeExecutor);
         }
 
-        public static List<OvrObject> AnalyzeOvrFile(string filename, OvrFileConfig config,
-            Dictionary<Point, string> existingCentralOptions)
+        public static List<OvrObject> AnalyzeOvrFile(
+            string filename,
+            OvrFileConfig config,
+            Dictionary<Point, string> existingCentralOptions,
+            ISet<Point> cellsToAnalyze = null)
         {
             var analyzer = new OvrFileAnalyzer(OvrFileConfigs.ResolveConfig(filename, config));
-            return analyzer.InternalAnalyze(filename, existingCentralOptions);
+            return analyzer.InternalAnalyze(filename, existingCentralOptions, cellsToAnalyze);
         }
 
-        private List<OvrObject> InternalAnalyze(string filename, Dictionary<Point, string> existingCentralOptions)
+        private List<OvrObject> InternalAnalyze(
+            string filename,
+            Dictionary<Point, string> existingCentralOptions,
+            ISet<Point> cellsToAnalyze)
         {
             var objects = new List<OvrObject>();
 
@@ -86,7 +92,7 @@ namespace MMMapEditor
 
                 // Чтение табличных объектов
                 var tableReachableAddresses = new HashSet<uint>();
-                var tableObjects = ReadTableObjects(br, tableReachableAddresses);
+                var tableObjects = ReadTableObjects(br, tableReachableAddresses, cellsToAnalyze);
                 objects.AddRange(tableObjects);
 
                 var tableObjectCoords = new HashSet<string>();
@@ -98,7 +104,12 @@ namespace MMMapEditor
 
                 // Обработка пути по умолчанию для всех клеток случайных встреч,
                 // которые не покрыты табличными объектами.
-                var defaultPathObjects = ProcessDefaultPath(br, tableObjectCoords, existingCentralOptions, objects);
+                var defaultPathObjects = ProcessDefaultPath(
+                    br,
+                    tableObjectCoords,
+                    existingCentralOptions,
+                    objects,
+                    cellsToAnalyze);
                 objects.AddRange(defaultPathObjects);
 
                 AnalysisDebug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
@@ -217,7 +228,10 @@ namespace MMMapEditor
             return filtered;
         }
 
-        private List<OvrObject> ReadTableObjects(BinaryReader br, HashSet<uint> tableReachableAddresses)
+        private List<OvrObject> ReadTableObjects(
+            BinaryReader br,
+            HashSet<uint> tableReachableAddresses,
+            ISet<Point> cellsToAnalyze)
         {
             var objects = new List<OvrObject>();
 
@@ -230,7 +244,19 @@ namespace MMMapEditor
 
             for (int i = 0; i < numObjects; i++)
             {
-                var obj = ProcessTableObject(br, i + 1, coordinates[i], directions[i], patchKeys[i], tableReachableAddresses);
+                var coords = coordinates[i];
+                var cellPos = new Point(coords.Item1, coords.Item2);
+                bool shouldAnalyze = cellsToAnalyze == null || cellsToAnalyze.Contains(cellPos);
+
+                var obj = shouldAnalyze
+                    ? ProcessTableObject(br, i + 1, coords, directions[i], patchKeys[i], tableReachableAddresses)
+                    : new OvrObject
+                    {
+                        X = coords.Item1,
+                        Y = coords.Item2,
+                        DirectionByte = directions[i],
+                        PatchAddress = CalculatePatchAddress(patchKeys[i])
+                    };
                 obj.IsFromTable = true;
                 objects.Add(obj);
             }
@@ -259,6 +285,9 @@ namespace MMMapEditor
                     AnalysisDebug.WriteLine($"\n=== ОБРАБОТКА ОБЪЕКТА ({ovrObject.X},{ovrObject.Y}) ===");
                     AnalysisDebug.WriteLine($"PatchAddress: 0x{patchAddress:X4}");
                 }
+
+                if (TryApplyCuratedFullNoteAnalysisShortcut(ovrObject))
+                    return ovrObject;
 
                 RepeatedEventAnalysisMode repeatedEventAnalysisMode =
                     ShouldAnalyzeTableObjectAsSingleOccurrence(ovrObject)
@@ -308,6 +337,183 @@ namespace MMMapEditor
 
                 return ovrObject;
             }
+        }
+
+        private bool TryApplyCuratedFullNoteAnalysisShortcut(OvrObject obj)
+        {
+            if (IsWhitewLordIronfistQuestDispatcher(obj))
+            {
+                var variants = new Dictionary<int, PathVariantInfo>
+                {
+                    [0] = CreateCuratedTeleportTextVariant(
+                        0,
+                        "LORD IRONFIST SPEAKS:\n\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?"),
+                    [1] = CreateCuratedTeleportTextVariant(
+                        1,
+                        "LORD IRONFIST SPEAKS:\n\"RETURN NOT UNTIL THY QUEST IS COMPLETE\""),
+                    [2] = CreateCuratedTeleportTextVariant(
+                        2,
+                        "LORD IRONFIST SPEAKS:\n\"SORRY, BUT SINCE YOU ARE CURRENTLY\nQUESTED, I CAN'T ENGAGE YOUR SERVICES.\""),
+                    [3] = CreateCuratedTeleportTextVariant(
+                        3,
+                        "LORD IRONFIST SPEAKS:\nWELL DONE, QUEST COMPLETE!")
+                };
+
+                PopulateObjectPathData(obj, variants);
+                return true;
+            }
+
+            if (IsSorpigalLeprechaunGuide(obj))
+            {
+                PopulateObjectPathData(obj, BuildSorpigalLeprechaunGuideVariants());
+                return true;
+            }
+
+            if (IsCave7VolcanoGodRiddle(obj) ||
+                IsAreaD4OgSightRestoration(obj))
+            {
+                PopulateObjectPathData(obj, new Dictionary<int, PathVariantInfo>());
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsWhitewLordIronfistQuestDispatcher(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x051A &&
+                   obj != null &&
+                   obj.X == 1 &&
+                   obj.Y == 8 &&
+                   obj.PatchAddress == 0x02E6;
+        }
+
+        private bool IsSorpigalLeprechaunGuide(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x0386 &&
+                   obj != null &&
+                   obj.X == 11 &&
+                   obj.Y == 3 &&
+                   obj.PatchAddress == 0x0160;
+        }
+
+        private bool IsCave7VolcanoGodRiddle(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x033D &&
+                   obj != null &&
+                   obj.X == 7 &&
+                   obj.Y == 11 &&
+                   obj.PatchAddress == 0x005C;
+        }
+
+        private bool IsAreaD4OgSightRestoration(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x03F8 &&
+                   obj != null &&
+                   obj.X == 7 &&
+                   obj.Y == 1 &&
+                   obj.PatchAddress == 0x0217;
+        }
+
+        private static PathVariantInfo CreateCuratedTeleportTextVariant(int pathId, string text)
+        {
+            return new PathVariantInfo
+            {
+                PathId = pathId,
+                PathOrderKey = pathId + 1,
+                IsLeaf = true,
+                Texts = new List<string> { text },
+                TeleportTargetX = 2,
+                TeleportTargetY = 8,
+                TeleportTargetXRange = new ValueRange8(2, 2),
+                TeleportTargetYRange = new ValueRange8(8, 8)
+            };
+        }
+
+        private static Dictionary<int, PathVariantInfo> BuildSorpigalLeprechaunGuideVariants()
+        {
+            const string prompt =
+                "A TENACIOUS LEPRECHAUN APPEARS SAYING,\n" +
+                "\"TRAVELING THE ROADS IS QUITE DANGEROUS\n" +
+                "SAVE FOR THE STRONG AND COURAGEOUS,\n" +
+                "ONLY 1 GEM YOU LOSE AND I'LL SEND YOU\n" +
+                "TO THE TOWN YOU CHOOSE.\"\n\n" +
+                "'ESC' TO GO BACK      WHICH TOWN (1-5)?";
+
+            var variants = new Dictionary<int, PathVariantInfo>
+            {
+                [0] = new PathVariantInfo
+                {
+                    PathId = 0,
+                    PathOrderKey = 1,
+                    IsLeaf = true,
+                    Texts = new List<string> { prompt },
+                    BranchChoices = new List<BranchChoice>
+                    {
+                        new BranchChoice { Label = "ESC)", DisplayHeaderAnnotation = "ESC)" }
+                    }
+                },
+                [1] = CreateSorpigalPaidLeprechaunTeleportVariant(1, 8, 5),
+                [2] = CreateSorpigalPaidLeprechaunTeleportVariant(2, 1, 12),
+                [3] = CreateSorpigalPaidLeprechaunTeleportVariant(3, 11, 13),
+                [4] = CreateSorpigalPaidLeprechaunTeleportVariant(4, 12, 8),
+                [5] = CreateSorpigalPaidLeprechaunTeleportVariant(5, 4, 6),
+                [6] = CreateSorpigalNoGemLeprechaunTeleportVariant()
+            };
+
+            return variants;
+        }
+
+        private static PathVariantInfo CreateSorpigalPaidLeprechaunTeleportVariant(
+            int choice,
+            byte teleportX,
+            byte teleportY)
+        {
+            byte asciiChoice = (byte)('0' + choice);
+            return new PathVariantInfo
+            {
+                PathId = choice,
+                PathOrderKey = choice + 1,
+                IsLeaf = true,
+                TeleportTargetX = teleportX,
+                TeleportTargetY = teleportY,
+                TeleportTargetXRange = new ValueRange8(teleportX, teleportX),
+                TeleportTargetYRange = new ValueRange8(teleportY, teleportY),
+                BranchChoices = new List<BranchChoice>
+                {
+                    new BranchChoice
+                    {
+                        Label = choice + ")",
+                        DisplayHeaderAnnotation = choice + ")",
+                        Condition = $"[0xCC3E] = 0x{asciiChoice:X2}",
+                        CompareMemoryAddress = 0xCC3E,
+                        CompareValue = asciiChoice,
+                        IsLinear = true
+                    }
+                },
+                PartyEffects = new List<PartyEffect>
+                {
+                    new PartyEffect()
+                }
+            };
+        }
+
+        private static PathVariantInfo CreateSorpigalNoGemLeprechaunTeleportVariant()
+        {
+            return new PathVariantInfo
+            {
+                PathId = 6,
+                PathOrderKey = 7,
+                IsLeaf = true,
+                TeleportTargetX = 8,
+                TeleportTargetY = 5,
+                TeleportTargetXRange = new ValueRange8(8, 8),
+                TeleportTargetYRange = new ValueRange8(5, 5)
+            };
         }
 
         private Dictionary<int, PathVariantInfo> ApplyRwl2LordArcherGoldVariants(
@@ -601,6 +807,13 @@ namespace MMMapEditor
                 obj.X == 9 &&
                 obj.Y == 13 &&
                 obj.PatchAddress == 0x0322)
+            {
+                return true;
+            }
+
+            // WHITEW.OVR Lord Ironfist quest dispatcher has a curated full note;
+            // repeated occurrence expansion is expensive and not used for display.
+            if (IsWhitewLordIronfistQuestDispatcher(obj))
             {
                 return true;
             }
@@ -7946,11 +8159,55 @@ namespace MMMapEditor
                  (variant.PartiallyDefinedBattles?.Count ?? 0) > 0);
         }
 
+        private string TryGetCuratedDefaultPathFamilyKey(byte x, byte y)
+        {
+            if (_config == null)
+                return null;
+
+            if (_config.StartAddress == 0x0363 &&
+                IsAreaD3ClimbTreeDefaultPathCell(x, y))
+            {
+                return "AREAD3:CLIMB_TREE";
+            }
+
+            if (_config.StartAddress == 0x052C &&
+                IsAreaE1DesertHeatDefaultPathCell(x, y))
+            {
+                return "AREAE1:DESERT_HEAT";
+            }
+
+            return null;
+        }
+
+        private static bool IsAreaD3ClimbTreeDefaultPathCell(byte x, byte y)
+        {
+            bool inMainTreeRows =
+                (x == 0 || x == 2 || x == 4) &&
+                y >= 5 &&
+                y <= 15 &&
+                (y % 2) == 1;
+
+            return inMainTreeRows || (x == 6 && y == 15);
+        }
+
+        private static bool IsAreaE1DesertHeatDefaultPathCell(byte x, byte y)
+        {
+            bool isCentralSafePatch =
+                (x == 1 && y == 3) ||
+                (x == 2 && y >= 2 && y <= 4) ||
+                (x == 3 && (y == 1 || y == 2 || y == 4 || y == 5)) ||
+                (x == 4 && y >= 2 && y <= 4) ||
+                (x == 5 && y == 3);
+
+            return !isCentralSafePatch;
+        }
+
         private List<OvrObject> ProcessDefaultPath(
             BinaryReader br,
             HashSet<string> tableObjectCoords,
             Dictionary<Point, string> existingCentralOptions,
-            List<OvrObject> existingObjects)
+            List<OvrObject> existingObjects,
+            ISet<Point> cellsToAnalyze = null)
         {
             var objects = new List<OvrObject>();
             uint defaultPathAddress = ResolveDefaultPathStartAddress(br);
@@ -7970,6 +8227,15 @@ namespace MMMapEditor
                 {
                     var cellPos = new Point(x, y);
                     string coordKey = $"{x},{y}";
+
+                    if (cellsToAnalyze != null && !cellsToAnalyze.Contains(cellPos))
+                    {
+                        using (AnalysisDebug.BeginCellScope(x, y))
+                        {
+                            AnalysisDebug.WriteLine("  -> пропуск: клетка не входит в целевой набор анализа");
+                        }
+                        continue;
+                    }
 
                     if (tableObjectCoords.Contains(coordKey))
                     {
@@ -8006,6 +8272,9 @@ namespace MMMapEditor
                 }
             }
 
+            var curatedDefaultPathFamilyVariants =
+                new Dictionary<string, Dictionary<int, PathVariantInfo>>(StringComparer.Ordinal);
+
             foreach (var cellPos in OrderCellsForCacheEvidence(defaultPathCells))
             {
                 byte x = (byte)cellPos.X;
@@ -8015,19 +8284,39 @@ namespace MMMapEditor
                     {
                         AnalysisDebug.WriteLine($"  -> анализ default-path для клетки ({x},{y})");
 
-                        var finalVariants = AnalyzeObjectVariants(
-                            br,
-                            defaultPathAddress,
-                            x,
-                            y,
-                            predefinedAlternativePaths: null,
-                            reachableAddresses: null,
-                            initializeRegisters: tracker =>
-                                SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress),
-                            analysisCacheScopeKey: "default",
-                            // Default-path описывает текущее наступление клетки; persistent counters
-                            // остаются progression-метаданными, а не отдельными будущими outcomes.
-                            repeatedEventAnalysisMode: RepeatedEventAnalysisMode.SingleOccurrenceOnly);
+                        Dictionary<int, PathVariantInfo> finalVariants = null;
+                        string curatedDefaultPathFamilyKey = TryGetCuratedDefaultPathFamilyKey(x, y);
+                        if (curatedDefaultPathFamilyKey != null &&
+                            curatedDefaultPathFamilyVariants.TryGetValue(
+                                curatedDefaultPathFamilyKey,
+                                out var cachedCuratedFamilyVariants))
+                        {
+                            finalVariants = CopyFinalVariantReferences(cachedCuratedFamilyVariants);
+                        }
+
+                        if (finalVariants == null)
+                        {
+                            finalVariants = AnalyzeObjectVariants(
+                                br,
+                                defaultPathAddress,
+                                x,
+                                y,
+                                predefinedAlternativePaths: null,
+                                reachableAddresses: null,
+                                initializeRegisters: tracker =>
+                                    SetInitialRegistersFromCoordinates(tracker, x, y, defaultPathAddress),
+                                analysisCacheScopeKey: "default",
+                                // Default-path описывает текущее наступление клетки; persistent counters
+                                // остаются progression-метаданными, а не отдельными будущими outcomes.
+                                repeatedEventAnalysisMode: RepeatedEventAnalysisMode.SingleOccurrenceOnly);
+
+                            if (curatedDefaultPathFamilyKey != null &&
+                                HasSignificantVariants(finalVariants))
+                            {
+                                curatedDefaultPathFamilyVariants[curatedDefaultPathFamilyKey] =
+                                    CloneFinalVariants(finalVariants);
+                            }
+                        }
 
                         bool hasSignificantCode = HasSignificantVariants(finalVariants);
                         if (!hasSignificantCode)

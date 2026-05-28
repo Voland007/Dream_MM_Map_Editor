@@ -325,10 +325,15 @@ namespace MMMapEditor.Tests
                             }
                         }
 
+                        ISet<Point> cellsToCheck = testCase.ExpectedCellTexts != null
+                            ? new HashSet<Point>(testCase.ExpectedCellTexts.Keys)
+                            : null;
+
                         var analyzedObjects = OvrFileAnalyzer.AnalyzeOvrFile(
                             testCase.OvrFilePath,
                             config,
-                            new Dictionary<Point, string>(centralOptions));
+                            new Dictionary<Point, string>(centralOptions),
+                            cellsToCheck);
 
                         RunChecksForMode(
                             result,

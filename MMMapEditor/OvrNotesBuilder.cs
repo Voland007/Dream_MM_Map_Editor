@@ -130,7 +130,7 @@ namespace MMMapEditor
                 ?? MainForm.GetBooleanSetting("OvrLoadSettings", "Hierarchical", true);
 
             var allObjects = preAnalyzedObjects?.ToList()
-                ?? OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions);
+                ?? OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions, cellsToBuild);
             var renderedNoteCache = !buildInlineStyleSpans
                 ? new Dictionary<RenderedObjectNoteCacheKey, string>()
                 : null;
@@ -215,7 +215,8 @@ namespace MMMapEditor
                 string specialFullNotes = TryBuildSpecialFullNotes(
                     fileNameOnly,
                     obj,
-                    useHierarchical);
+                    useHierarchical,
+                    inlineSpecialSpoilerLine);
                 var renderedNoteCacheKey = renderedNoteCache == null
                     ? null
                     : BuildRenderedObjectNoteCacheKey(
@@ -242,28 +243,37 @@ namespace MMMapEditor
                     continue;
                 }
 
-                string hierarchicalNotes = useHierarchical
-                    ? BuildHierarchicalVariantNotes(
-                        obj,
-                        defaultRandomEncounterMonsterPowerCap,
-                        defaultRandomEncounterMonsterLevelCap,
-                        defaultRandomEncounterMonsterBatchCountCap,
-                        defaultDarkeningLevel,
-                        defaultRandomEncounterChance,
-                        specialSpoilerLine,
-                        inlineSpecialSpoilerLine)
-                    : string.Empty;
-                string flatSemanticNotes = !useHierarchical
-                    ? BuildFlatSemanticVariantNotes(
-                        obj,
-                        defaultRandomEncounterMonsterPowerCap,
-                        defaultRandomEncounterMonsterLevelCap,
-                        defaultRandomEncounterMonsterBatchCountCap,
-                        defaultDarkeningLevel,
-                        defaultRandomEncounterChance,
-                        specialSpoilerLine,
-                        inlineSpecialSpoilerLine)
-                    : string.Empty;
+                string hierarchicalNotes = string.Empty;
+                string flatSemanticNotes = string.Empty;
+                bool shouldBuildGenericVariantNotes =
+                    string.IsNullOrWhiteSpace(technicalRenderPatchLine) &&
+                    string.IsNullOrWhiteSpace(specialFullNotes);
+
+                if (shouldBuildGenericVariantNotes)
+                {
+                    hierarchicalNotes = useHierarchical
+                        ? BuildHierarchicalVariantNotes(
+                            obj,
+                            defaultRandomEncounterMonsterPowerCap,
+                            defaultRandomEncounterMonsterLevelCap,
+                            defaultRandomEncounterMonsterBatchCountCap,
+                            defaultDarkeningLevel,
+                            defaultRandomEncounterChance,
+                            specialSpoilerLine,
+                            inlineSpecialSpoilerLine)
+                        : string.Empty;
+                    flatSemanticNotes = !useHierarchical
+                        ? BuildFlatSemanticVariantNotes(
+                            obj,
+                            defaultRandomEncounterMonsterPowerCap,
+                            defaultRandomEncounterMonsterLevelCap,
+                            defaultRandomEncounterMonsterBatchCountCap,
+                            defaultDarkeningLevel,
+                            defaultRandomEncounterChance,
+                            specialSpoilerLine,
+                            inlineSpecialSpoilerLine)
+                        : string.Empty;
+                }
 
                 StringBuilder newNotes = new StringBuilder();
                 var inlineStyles = buildInlineStyleSpans
@@ -17794,8 +17804,28 @@ namespace MMMapEditor
             return null;
         }
 
-        private static string TryBuildSpecialFullNotes(string fileNameOnly, OvrObject obj, bool useHierarchical)
+        private static string TryBuildSpecialFullNotes(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical,
+            string inlineSpecialSpoilerLine)
         {
+            string cave7VolcanoGodNote = TryBuildCave7VolcanoGodNote(
+                fileNameOnly,
+                obj,
+                useHierarchical,
+                inlineSpecialSpoilerLine);
+            if (!string.IsNullOrWhiteSpace(cave7VolcanoGodNote))
+                return cave7VolcanoGodNote;
+
+            string areaD4OgNote = TryBuildAreaD4OgSightRestorationNote(
+                fileNameOnly,
+                obj,
+                useHierarchical,
+                inlineSpecialSpoilerLine);
+            if (!string.IsNullOrWhiteSpace(areaD4OgNote))
+                return areaD4OgNote;
+
             string whitewLordIronfistNote = TryBuildWhitewLordIronfistQuestDispatcherNote(
                 fileNameOnly,
                 obj,
@@ -17828,6 +17858,209 @@ namespace MMMapEditor
             }
 
             return BuildWhitewLordIronfistQuestDispatcherNote();
+        }
+
+        private static string TryBuildCave7VolcanoGodNote(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical,
+            string inlineSpecialSpoilerLine)
+        {
+            if (!string.Equals(fileNameOnly, "CAVE7.OVR", StringComparison.OrdinalIgnoreCase) ||
+                obj == null ||
+                obj.X != 7 ||
+                obj.Y != 11 ||
+                obj.PatchAddress != 0x005C)
+            {
+                return null;
+            }
+
+            string spoilerLine = string.IsNullOrWhiteSpace(inlineSpecialSpoilerLine)
+                ? BuildSpoilerAnswerLine("GALA")
+                : inlineSpecialSpoilerLine;
+
+            return useHierarchical
+                ? BuildCave7VolcanoGodHierarchicalNote(spoilerLine)
+                : BuildCave7VolcanoGodFlatNote(spoilerLine);
+        }
+
+        private static string BuildCave7VolcanoGodFlatNote(string spoilerLine)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1 (только при 2-м и последующих наступлениях):");
+            sb.AppendLine("Телепорт на клетку (X=8, Y=5)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 2 (выбор A):");
+            AppendLines(sb, BuildCave7VolcanoGodPromptLines());
+            AppendLines(sb, BuildCave7VolcanoGodBattleLines(""));
+            sb.AppendLine();
+            sb.AppendLine("Вариант 3 (выбор C):");
+            AppendLines(sb, BuildCave7VolcanoGodPromptLines());
+            sb.AppendLine("Телепорт на клетку (X=0, Y=5)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 4 (выбор B):");
+            AppendLines(sb, BuildCave7VolcanoGodPromptLines());
+            AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine));
+            sb.AppendLine("Телепорт на клетку (X=8, Y=5)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 5 (выбор B):");
+            AppendLines(sb, BuildCave7VolcanoGodPromptLines());
+            AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine));
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string BuildCave7VolcanoGodHierarchicalNote(string spoilerLine)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1 (только при 2-м и последующих наступлениях):");
+            sb.AppendLine("   Телепорт на клетку (X=8, Y=5)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 2:");
+            AppendLines(sb, BuildCave7VolcanoGodPromptLines("   "));
+            sb.AppendLine();
+            sb.AppendLine("   Вариант 2.1: A)");
+            AppendLines(sb, BuildCave7VolcanoGodBattleLines("      "));
+            sb.AppendLine();
+            sb.AppendLine("   Вариант 2.2: C)");
+            sb.AppendLine("      Телепорт на клетку (X=0, Y=5)");
+            sb.AppendLine();
+            sb.AppendLine("   Вариант 2.3: B)");
+            AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine, "      "));
+            sb.AppendLine();
+            sb.AppendLine("      Вариант 2.3.1:");
+            sb.AppendLine("         Телепорт на клетку (X=8, Y=5)");
+            sb.AppendLine();
+            sb.AppendLine("      Вариант 2.3.2:");
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string[] BuildCave7VolcanoGodPromptLines(string indent = "")
+        {
+            return new[]
+            {
+                indent + "На ячейке находится  CLOTH SACK  в котором лежит:",
+                indent + "   KEY CARD",
+                indent + "THE VOLCANO GOD BELLOWS,",
+                indent + "\"WHAT DO YOU SEEK HERE?\"",
+                indent + "A) A CHALLENGE  B) A RIDDLE  C) A CLUE"
+            };
+        }
+
+        private static string[] BuildCave7VolcanoGodBattleLines(string indent)
+        {
+            return new[]
+            {
+                indent + "Битва с группой монстров:",
+                indent + "  • VOLCANO GOD x1",
+                indent + "  • LAVA BEAST x9",
+                indent + "Внимание: Если сумма уровней активной партии 194 или больше, то к битве будут ещё добавлены случайные монстры"
+            };
+        }
+
+        private static string[] BuildCave7VolcanoGodRiddleLines(string spoilerLine, string indent = "")
+        {
+            return new[]
+            {
+                indent + "WHO WAS BRAVE YET FAILED?",
+                indent,
+                indent + "ANSWER:> ..........",
+                indent + spoilerLine
+            };
+        }
+
+        private static string TryBuildAreaD4OgSightRestorationNote(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical,
+            string inlineSpecialSpoilerLine)
+        {
+            if (!string.Equals(fileNameOnly, "AREAD4.OVR", StringComparison.OrdinalIgnoreCase) ||
+                obj == null ||
+                obj.X != 7 ||
+                obj.Y != 1 ||
+                obj.PatchAddress != 0x0217)
+            {
+                return null;
+            }
+
+            string spoilerLine = string.IsNullOrWhiteSpace(inlineSpecialSpoilerLine)
+                ? BuildSpoilerAnswerLine("QUEEN TO KINGS LEVEL 1")
+                : inlineSpecialSpoilerLine;
+
+            return useHierarchical
+                ? BuildAreaD4OgSightRestorationHierarchicalNote(spoilerLine)
+                : BuildAreaD4OgSightRestorationFlatNote(spoilerLine);
+        }
+
+        private static string BuildAreaD4OgSightRestorationFlatNote(string spoilerLine)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1:");
+            sb.AppendLine("OG SAYS, \"BEGONE!\"");
+            sb.AppendLine("Телепорт на клетку (X=7, Y=7)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 2:");
+            AppendLines(sb, BuildAreaD4OgPromptLines(""));
+            sb.AppendLine(spoilerLine);
+            sb.AppendLine("OG SAYS, \"BEGONE!\"");
+            sb.AppendLine("Телепорт на клетку (X=7, Y=7)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 3:");
+            AppendLines(sb, BuildAreaD4OgPromptLines(""));
+            sb.AppendLine(spoilerLine);
+            AppendLines(sb, BuildAreaD4OgSuccessLines(""));
+            sb.AppendLine("Телепорт на клетку (X=7, Y=7)");
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string BuildAreaD4OgSightRestorationHierarchicalNote(string spoilerLine)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1:");
+            sb.AppendLine("   OG SAYS, \"BEGONE!\"");
+            sb.AppendLine("   Телепорт на клетку (X=7, Y=7)");
+            sb.AppendLine();
+            sb.AppendLine("Вариант 2:");
+            AppendLines(sb, BuildAreaD4OgPromptLines("   "));
+            sb.AppendLine("   " + spoilerLine);
+            sb.AppendLine();
+            sb.AppendLine("   Вариант 2.1:");
+            sb.AppendLine("      OG SAYS, \"BEGONE!\"");
+            sb.AppendLine("      Телепорт на клетку (X=7, Y=7)");
+            sb.AppendLine();
+            sb.AppendLine("   Вариант 2.2:");
+            AppendLines(sb, BuildAreaD4OgSuccessLines("      "));
+            sb.AppendLine("      Телепорт на клетку (X=7, Y=7)");
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static string[] BuildAreaD4OgPromptLines(string indent)
+        {
+            return new[]
+            {
+                indent + "PAINTED ON THESE GROUNDS IS A BLACK &",
+                indent + "WHITE CHECKERED MOTIF COVERED WITH",
+                indent + "IDOLS SIMILAR TO THE ONES YOU CARRY.",
+                indent + "A LARGE BEING APPROACHES...",
+                indent + "OG SPEAKS, \"QUEEN TO QUEENS LEVEL 3\"",
+                indent,
+                indent + "RESPONSE: .."
+            };
+        }
+
+        private static string[] BuildAreaD4OgSuccessLines(string indent)
+        {
+            return new[]
+            {
+                indent + "YOU HAVE RESTORED MY SIGHT! (+25000 EXP)I SEE AN IMPORTANT PRISONER IN A CASTLE",
+                indent + "ON MT. DOOM! HE HAS YOUR SIGHT.",
+                indent,
+                indent + "OG CURSES AS THE IDOLS VANISH!"
+            };
         }
 
         private static string BuildWhitewLordIronfistQuestDispatcherNote()
