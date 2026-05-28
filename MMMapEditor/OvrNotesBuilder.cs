@@ -17796,6 +17796,13 @@ namespace MMMapEditor
 
         private static string TryBuildSpecialFullNotes(string fileNameOnly, OvrObject obj, bool useHierarchical)
         {
+            string whitewLordIronfistNote = TryBuildWhitewLordIronfistQuestDispatcherNote(
+                fileNameOnly,
+                obj,
+                useHierarchical);
+            if (!string.IsNullOrWhiteSpace(whitewLordIronfistNote))
+                return whitewLordIronfistNote;
+
             string sorpigalLeprechaunNote = TryBuildSorpigalLeprechaunGuideNote(
                 fileNameOnly,
                 obj,
@@ -17804,6 +17811,106 @@ namespace MMMapEditor
                 return sorpigalLeprechaunNote;
 
             return null;
+        }
+
+        private static string TryBuildWhitewLordIronfistQuestDispatcherNote(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical)
+        {
+            if (!string.Equals(fileNameOnly, "WHITEW.OVR", StringComparison.OrdinalIgnoreCase) ||
+                obj == null ||
+                obj.X != 1 ||
+                obj.Y != 8 ||
+                obj.PatchAddress != 0x02E6)
+            {
+                return null;
+            }
+
+            return BuildWhitewLordIronfistQuestDispatcherNote();
+        }
+
+        private static string BuildWhitewLordIronfistQuestDispatcherNote()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1 (У персонажа #1 нет квеста; выбор N):");
+            AppendWhitewLordIronfistIntroAndServicePrompt(sb, "");
+            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
+            sb.AppendLine();
+
+            sb.AppendLine("Вариант 2 (У персонажа #1 уже взят квест этого Лорда, но он ещё не выполнен):");
+            sb.AppendLine("LORD IRONFIST SPEAKS:");
+            sb.AppendLine("\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"");
+            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
+            sb.AppendLine();
+
+            sb.AppendLine("Вариант 3 (У персонажа #1 уже взят квест другого Лорда):");
+            sb.AppendLine("LORD IRONFIST SPEAKS:");
+            sb.AppendLine("\"SORRY, BUT SINCE YOU ARE CURRENTLY");
+            sb.AppendLine("QUESTED, I CAN'T ENGAGE YOUR SERVICES.\"");
+            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
+            sb.AppendLine();
+
+            sb.AppendLine("Вариант 4 (Персонаж #1 сдаёт выполненный квест этого Лорда или берёт новый квест; выбор Y нужен только при взятии нового):");
+            sb.AppendLine(InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
+                BuildWhitewLordIronfistQuestDeskFrame()));
+            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
+
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static void AppendWhitewLordIronfistIntroAndServicePrompt(StringBuilder sb, string indent)
+        {
+            sb.AppendLine(indent + "LORD IRONFIST SPEAKS:");
+            sb.AppendLine(indent + "\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?");
+        }
+
+        private static string BuildWhitewLordIronfistQuestDeskFrame()
+        {
+            string[] titles =
+            {
+                "FIND THE STRONGHOLD IN RAVENS WOOD",
+                "FIND LORD KILBURN",
+                "DISCOVER THE SECRET OF PORTSMITH",
+                "FIND THE PIRATES SECRET COVE",
+                "FIND THE SHIPWRECK OF THE JOLLY RAVEN",
+                "DEFEAT THE PIRATE GHOST SHIP ANARCHIST",
+                "DEFEAT THE STRONGHOLD IN RAVENS WOOD"
+            };
+            int[] rewards = { 1000, 2000, 3000, 4000, 6000, 8000, 10000 };
+            string separator = new string('-', 60);
+
+            var lines = new List<string>
+            {
+                "Если есть квест готовый к сдаче, то",
+                "",
+                " LORD IRONFIST SPEAKS:",
+                " WELL DONE, QUEST COMPLETE!",
+                ""
+            };
+
+            for (int i = 0; i < titles.Length; i++)
+                lines.Add($" {i + 1}: {titles[i],-45} +{rewards[i]} EXP");
+
+            lines.Add("");
+            lines.Add(separator);
+            lines.Add("");
+            lines.Add("Если у персонажа #1 нет квеста и выбрать Y, будет предложен");
+            lines.Add("следующий квест:");
+            lines.Add("");
+            lines.Add(" LORD IRONFIST SPEAKS:");
+            lines.Add(" \"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?");
+            lines.Add(separator);
+            lines.Add("");
+            lines.Add("P.S. если хоть у любого персонажа партии есть MAP OF DESERT,");
+            lines.Add("то он может сдать квест 2.");
+            lines.Add("Но для этого необходимо выполнить 2 условия:");
+            lines.Add("1) Взять квест 2");
+            lines.Add("2) Поставить персонажа с MAP OF DESERT первым в отряде");
+
+            return BuildAsciiFrame(lines, 60)
+                .Replace($"|| {separator} ||", $"||{new string('-', 62)}||");
         }
 
         private static string TryBuildSorpigalLeprechaunGuideNote(

@@ -3041,7 +3041,7 @@ namespace MMMapEditor
             if (rt == null || string.IsNullOrEmpty(noteText))
                 return;
 
-            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К (?:КОЛЕСУ|СТАТУЕ СУДА))[\s\S]*?^={10,}$";
+            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К (?:КОЛЕСУ|СТАТУЕ СУДА|LORD IRONFIST))[\s\S]*?^={10,}$";
 
             foreach (Match match in Regex.Matches(
                 noteText,
