@@ -17833,6 +17833,13 @@ namespace MMMapEditor
             if (!string.IsNullOrWhiteSpace(whitewLordIronfistNote))
                 return whitewLordIronfistNote;
 
+            string blackrnLordInspectronNote = TryBuildBlackrnLordInspectronQuestDispatcherNote(
+                fileNameOnly,
+                obj,
+                useHierarchical);
+            if (!string.IsNullOrWhiteSpace(blackrnLordInspectronNote))
+                return blackrnLordInspectronNote;
+
             string sorpigalLeprechaunNote = TryBuildSorpigalLeprechaunGuideNote(
                 fileNameOnly,
                 obj,
@@ -17858,6 +17865,23 @@ namespace MMMapEditor
             }
 
             return BuildWhitewLordIronfistQuestDispatcherNote();
+        }
+
+        private static string TryBuildBlackrnLordInspectronQuestDispatcherNote(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical)
+        {
+            if (!string.Equals(fileNameOnly, "BLACKRN.OVR", StringComparison.OrdinalIgnoreCase) ||
+                obj == null ||
+                obj.X != 7 ||
+                obj.Y != 4 ||
+                obj.PatchAddress != 0x028F)
+            {
+                return null;
+            }
+
+            return BuildBlackrnLordInspectronQuestDispatcherNote();
         }
 
         private static string TryBuildCave7VolcanoGodNote(
@@ -18065,38 +18089,12 @@ namespace MMMapEditor
 
         private static string BuildWhitewLordIronfistQuestDispatcherNote()
         {
-            var sb = new StringBuilder();
-            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
-            sb.AppendLine("Вариант 1 (У персонажа #1 нет квеста; выбор N):");
-            AppendWhitewLordIronfistIntroAndServicePrompt(sb, "");
-            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
-            sb.AppendLine();
-
-            sb.AppendLine("Вариант 2 (У персонажа #1 уже взят квест этого Лорда, но он ещё не выполнен):");
-            sb.AppendLine("LORD IRONFIST SPEAKS:");
-            sb.AppendLine("\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"");
-            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
-            sb.AppendLine();
-
-            sb.AppendLine("Вариант 3 (У персонажа #1 уже взят квест другого Лорда):");
-            sb.AppendLine("LORD IRONFIST SPEAKS:");
-            sb.AppendLine("\"SORRY, BUT SINCE YOU ARE CURRENTLY");
-            sb.AppendLine("QUESTED, I CAN'T ENGAGE YOUR SERVICES.\"");
-            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
-            sb.AppendLine();
-
-            sb.AppendLine("Вариант 4 (Персонаж #1 сдаёт выполненный квест этого Лорда или берёт новый квест; выбор Y нужен только при взятии нового):");
-            sb.AppendLine(InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
-                BuildWhitewLordIronfistQuestDeskFrame()));
-            sb.AppendLine("Телепорт на клетку (X=2, Y=8)");
-
-            return sb.ToString().TrimEnd('\r', '\n');
-        }
-
-        private static void AppendWhitewLordIronfistIntroAndServicePrompt(StringBuilder sb, string indent)
-        {
-            sb.AppendLine(indent + "LORD IRONFIST SPEAKS:");
-            sb.AppendLine(indent + "\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?");
+            return BuildLordQuestDispatcherNote(
+                "LORD IRONFIST",
+                "\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?",
+                2,
+                8,
+                BuildWhitewLordIronfistQuestDeskFrame());
         }
 
         private static string BuildWhitewLordIronfistQuestDeskFrame()
@@ -18111,20 +18109,131 @@ namespace MMMapEditor
                 "DEFEAT THE PIRATE GHOST SHIP ANARCHIST",
                 "DEFEAT THE STRONGHOLD IN RAVENS WOOD"
             };
+
+            return BuildLordQuestDeskFrame(
+                "LORD IRONFIST",
+                "\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?",
+                titles,
+                "MAP OF DESERT",
+                2);
+        }
+
+        private static string BuildBlackrnLordInspectronQuestDispatcherNote()
+        {
+            return BuildLordQuestDispatcherNote(
+                "LORD INSPECTRON",
+                "\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
+                7,
+                5,
+                BuildBlackrnLordInspectronQuestDeskFrame());
+        }
+
+        private static string BuildBlackrnLordInspectronQuestDeskFrame()
+        {
+            string[] titles =
+            {
+                "FIND THE ANCIENT RUINS IN THE QUIVERING FOREST",
+                "VISIT BLITHES PEAK, AND REPORT",
+                "THE PEOPLE OF THE DESERT HAVE MUCH TO TRADE,BRING ME A SAMPLE OF THEIR GOODS",
+                "FIND THE SHRINE OF OKZAR IN THE CAVES BELOW DUSK",
+                "FIND THE FABLED FOUNTAIN IN DRAGADUNE",
+                "SOLVE THE RIDDLE OF THE RUBY",
+                "DEFEAT THE STRONGHOLD IN THE ENCHANTED FOREST"
+            };
+
+            return BuildLordQuestDeskFrame(
+                "LORD INSPECTRON",
+                "\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
+                titles,
+                "CACTUS NECTAR",
+                3);
+        }
+
+        private static string BuildLordQuestDispatcherNote(
+            string lordName,
+            string servicePrompt,
+            int teleportX,
+            int teleportY,
+            string questDeskFrame)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Эта ячейка содержит различные варианты текста:");
+            sb.AppendLine("Вариант 1 (У персонажа #1 нет квеста; выбор N):");
+            AppendLordIntroAndServicePrompt(sb, "", lordName, servicePrompt);
+            sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
+            sb.AppendLine();
+
+            sb.AppendLine("Вариант 2 (У персонажа #1 уже взят квест этого Лорда, но он ещё не выполнен):");
+            sb.AppendLine($"{lordName} SPEAKS:");
+            sb.AppendLine("\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"");
+            sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
+            sb.AppendLine();
+
+            sb.AppendLine("Вариант 3 (У персонажа #1 уже взят квест другого Лорда):");
+            sb.AppendLine($"{lordName} SPEAKS:");
+            sb.AppendLine("\"SORRY, BUT SINCE YOU ARE CURRENTLY");
+            sb.AppendLine("QUESTED, I CAN'T ENGAGE YOUR SERVICES.\"");
+            sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
+            sb.AppendLine();
+
+            sb.AppendLine("Вариант 4 (Персонаж #1 сдаёт выполненный квест этого Лорда или берёт новый квест; выбор Y нужен только при взятии нового):");
+            sb.AppendLine(InlineNoteStyleCodec.EncodeWheelRewardExplanationText(questDeskFrame));
+            sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
+
+            return sb.ToString().TrimEnd('\r', '\n');
+        }
+
+        private static void AppendLordIntroAndServicePrompt(
+            StringBuilder sb,
+            string indent,
+            string lordName,
+            string servicePrompt)
+        {
+            sb.AppendLine(indent + lordName + " SPEAKS:");
+            sb.AppendLine(indent + servicePrompt);
+        }
+
+        private static string BuildLordQuestDeskFrame(
+            string lordName,
+            string servicePrompt,
+            IReadOnlyList<string> titles,
+            string autoCompleteItemName,
+            int autoCompleteQuestNumber)
+        {
+            const int contentWidth = 89;
             int[] rewards = { 1000, 2000, 3000, 4000, 6000, 8000, 10000 };
-            string separator = new string('-', 60);
+            string separator = new string('-', contentWidth);
 
             var lines = new List<string>
             {
                 "Если есть квест готовый к сдаче, то",
                 "",
-                " LORD IRONFIST SPEAKS:",
+                $" {lordName} SPEAKS:",
                 " WELL DONE, QUEST COMPLETE!",
                 ""
             };
 
-            for (int i = 0; i < titles.Length; i++)
-                lines.Add($" {i + 1}: {titles[i],-45} +{rewards[i]} EXP");
+            int maxTitleLength = titles
+                .Where(title => title != null)
+                .Select(title => title.Length)
+                .DefaultIfEmpty(0)
+                .Max();
+            int maxRewardLength = rewards
+                .Take(titles.Count)
+                .Select(reward => $"+{reward} EXP".Length)
+                .DefaultIfEmpty(0)
+                .Max();
+            int rewardEndColumn = Math.Min(contentWidth + 1, 4 + Math.Max(45, maxTitleLength) + 1 + maxRewardLength);
+
+            for (int i = 0; i < titles.Count; i++)
+            {
+                string prefix = $" {i + 1}: ";
+                string rewardText = $"+{rewards[i]} EXP";
+                string title = titles[i] ?? string.Empty;
+                int rewardPadding = Math.Max(1, rewardEndColumn - rewardText.Length - prefix.Length - title.Length);
+
+                lines.Add(prefix + title + new string(' ', rewardPadding) + rewardText);
+            }
 
             lines.Add("");
             lines.Add(separator);
@@ -18132,18 +18241,18 @@ namespace MMMapEditor
             lines.Add("Если у персонажа #1 нет квеста и выбрать Y, будет предложен");
             lines.Add("следующий квест:");
             lines.Add("");
-            lines.Add(" LORD IRONFIST SPEAKS:");
-            lines.Add(" \"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?");
+            lines.Add($" {lordName} SPEAKS:");
+            lines.Add($" {servicePrompt}");
             lines.Add(separator);
             lines.Add("");
-            lines.Add("P.S. если хоть у любого персонажа партии есть MAP OF DESERT,");
-            lines.Add("то он может сдать квест 2.");
+            lines.Add($"P.S. если хоть у любого персонажа партии есть {autoCompleteItemName},");
+            lines.Add($"то он может сдать квест {autoCompleteQuestNumber}.");
             lines.Add("Но для этого необходимо выполнить 2 условия:");
-            lines.Add("1) Взять квест 2");
-            lines.Add("2) Поставить персонажа с MAP OF DESERT первым в отряде");
+            lines.Add($"1) Взять квест {autoCompleteQuestNumber}");
+            lines.Add($"2) Поставить персонажа с {autoCompleteItemName} первым в отряде");
 
-            return BuildAsciiFrame(lines, 60)
-                .Replace($"|| {separator} ||", $"||{new string('-', 62)}||");
+            return BuildAsciiFrame(lines, contentWidth)
+                .Replace($"|| {separator} ||", $"||{new string('-', contentWidth + 2)}||");
         }
 
         private static string TryBuildSorpigalLeprechaunGuideNote(
@@ -18672,7 +18781,7 @@ namespace MMMapEditor
                 {
                     sb.Append("|| ");
                     sb.Append(segment.PadRight(contentWidth));
-                    sb.AppendLine(" ||");
+                    sb.AppendLine(segment.Length > contentWidth ? "||" : " ||");
                 }
             }
 
@@ -18685,6 +18794,12 @@ namespace MMMapEditor
             if (string.IsNullOrEmpty(line))
             {
                 yield return string.Empty;
+                yield break;
+            }
+
+            if (line.Length <= contentWidth + 1)
+            {
+                yield return line;
                 yield break;
             }
 
