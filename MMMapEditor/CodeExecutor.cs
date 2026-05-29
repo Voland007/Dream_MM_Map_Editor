@@ -147,8 +147,8 @@ namespace MMMapEditor
         private const int PARTY_STATUS_OFFSET = PartyStatusSemantics.FieldOffset;
         private const int PARTY_RANALOU_JUDGEMENT_SCORE_OFFSET = PartyTechnicalFieldSemantics.RanalouJudgementScoreFieldOffset;
         private const int PARTY_RANALOU_QUESTLINE_OFFSET = PartyTechnicalFieldSemantics.RanalouQuestLineFieldOffset;
-        private const int PARTY_QUEST_LORD1_OFFSET = PartyQuestLordFieldSemantics.Lord1FieldOffset;
-        private const int PARTY_QUEST_LORD2_OFFSET = PartyQuestLordFieldSemantics.Lord2FieldOffset;
+        private const int PARTY_QUEST_LORD_INSPECTRON_OFFSET = PartyQuestLordFieldSemantics.LordInspectronFieldOffset;
+        private const int PARTY_QUEST_LORD_HACKER_OFFSET = PartyQuestLordFieldSemantics.LordHackerFieldOffset;
         private const int PARTY_QUEST_LORD_IRONFIST_OFFSET = PartyQuestLordFieldSemantics.LordIronfistFieldOffset;
         private const int PARTY_MAIN_QUEST_COMPLETION_OFFSET = PartyTechnicalFieldSemantics.MainQuestCompletionFieldOffset;
         private const int MAX_CALL_DEPTH = 10;
@@ -1237,8 +1237,8 @@ namespace MMMapEditor
                 PARTY_STATUS_OFFSET => PartyFieldKind.Status,
                 PARTY_RANALOU_JUDGEMENT_SCORE_OFFSET => PartyFieldKind.Technical6E,
                 PARTY_RANALOU_QUESTLINE_OFFSET => PartyFieldKind.Technical71,
-                PARTY_QUEST_LORD1_OFFSET => PartyFieldKind.Technical75,
-                PARTY_QUEST_LORD2_OFFSET => PartyFieldKind.Technical76,
+                PARTY_QUEST_LORD_INSPECTRON_OFFSET => PartyFieldKind.LordInspectronQuestCounter,
+                PARTY_QUEST_LORD_HACKER_OFFSET => PartyFieldKind.LordHackerQuestCounter,
                 PARTY_QUEST_LORD_IRONFIST_OFFSET => PartyFieldKind.LordIronfistQuestCounter,
                 PARTY_PERMANENT_STAT_RAISE_FLAGS_OFFSET => PartyFieldKind.PermanentStatRaiseFlags,
                 PARTY_MAIN_QUEST_COMPLETION_OFFSET => PartyFieldKind.Technical7D,

@@ -20,14 +20,14 @@ namespace MMMapEditor
 {
     public static class PartyQuestLordFieldSemantics
     {
-        public const int Lord1FieldOffset = 0x75;
-        public const int Lord2FieldOffset = 0x76;
+        public const int LordInspectronFieldOffset = 0x75;
+        public const int LordHackerFieldOffset = 0x76;
         public const int LordIronfistFieldOffset = 0x77;
 
         public static bool IsQuestField(PartyFieldKind field)
         {
-            return field == PartyFieldKind.Technical75 ||
-                   field == PartyFieldKind.Technical76 ||
+            return field == PartyFieldKind.LordInspectronQuestCounter ||
+                   field == PartyFieldKind.LordHackerQuestCounter ||
                    field == PartyFieldKind.LordIronfistQuestCounter;
         }
 
@@ -35,8 +35,8 @@ namespace MMMapEditor
         {
             return offset switch
             {
-                Lord1FieldOffset => PartyFieldKind.Technical75,
-                Lord2FieldOffset => PartyFieldKind.Technical76,
+                LordInspectronFieldOffset => PartyFieldKind.LordInspectronQuestCounter,
+                LordHackerFieldOffset => PartyFieldKind.LordHackerQuestCounter,
                 LordIronfistFieldOffset => PartyFieldKind.LordIronfistQuestCounter,
                 _ => PartyFieldKind.Unknown
             };
@@ -46,8 +46,8 @@ namespace MMMapEditor
         {
             return field switch
             {
-                PartyFieldKind.Technical75 => "счётчик квестов Лорда1 (+0x75)",
-                PartyFieldKind.Technical76 => "счётчик квестов Лорда2 (+0x76)",
+                PartyFieldKind.LordInspectronQuestCounter => "счётчик квестов LORD INSPECTRON (+0x75)",
+                PartyFieldKind.LordHackerQuestCounter => "счётчик квестов LORD HACKER (+0x76)",
                 PartyFieldKind.LordIronfistQuestCounter => "счётчик квестов LORD IRONFIST (+0x77)",
                 _ => null
             };
@@ -57,8 +57,8 @@ namespace MMMapEditor
         {
             return field switch
             {
-                PartyFieldKind.Technical75 => "Лорда1",
-                PartyFieldKind.Technical76 => "Лорда2",
+                PartyFieldKind.LordInspectronQuestCounter => "LORD INSPECTRON",
+                PartyFieldKind.LordHackerQuestCounter => "LORD HACKER",
                 PartyFieldKind.LordIronfistQuestCounter => "LORD IRONFIST",
                 _ => null
             };

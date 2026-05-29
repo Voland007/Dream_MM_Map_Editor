@@ -3495,7 +3495,7 @@ namespace MMMapEditor
                     rt.SelectionFont = new Font("Segoe UI", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
                 }
 
-                foreach (Match lordMatch in Regex.Matches(match.Value, @"\b(?:Лорда\d+|LORD IRONFIST)\b", RegexOptions.IgnoreCase))
+                foreach (Match lordMatch in Regex.Matches(match.Value, @"\b(?:Лорда\d+|LORD INSPECTRON|LORD HACKER|LORD IRONFIST)\b", RegexOptions.IgnoreCase))
                 {
                     rt.Select(match.Index + lordMatch.Index, lordMatch.Length);
                     rt.SelectionColor = lordNameColor;
