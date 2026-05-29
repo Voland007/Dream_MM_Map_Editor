@@ -347,16 +347,54 @@ namespace MMMapEditor
                 {
                     [0] = CreateCuratedTeleportTextVariant(
                         0,
-                        "LORD IRONFIST SPEAKS:\n\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?"),
+                        "LORD IRONFIST SPEAKS:\n\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?",
+                        2,
+                        8),
                     [1] = CreateCuratedTeleportTextVariant(
                         1,
-                        "LORD IRONFIST SPEAKS:\n\"RETURN NOT UNTIL THY QUEST IS COMPLETE\""),
+                        "LORD IRONFIST SPEAKS:\n\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"",
+                        2,
+                        8),
                     [2] = CreateCuratedTeleportTextVariant(
                         2,
-                        "LORD IRONFIST SPEAKS:\n\"SORRY, BUT SINCE YOU ARE CURRENTLY\nQUESTED, I CAN'T ENGAGE YOUR SERVICES.\""),
+                        "LORD IRONFIST SPEAKS:\n\"SORRY, BUT SINCE YOU ARE CURRENTLY\nQUESTED, I CAN'T ENGAGE YOUR SERVICES.\"",
+                        2,
+                        8),
                     [3] = CreateCuratedTeleportTextVariant(
                         3,
-                        "LORD IRONFIST SPEAKS:\nWELL DONE, QUEST COMPLETE!")
+                        "LORD IRONFIST SPEAKS:\nWELL DONE, QUEST COMPLETE!",
+                        2,
+                        8)
+                };
+
+                PopulateObjectPathData(obj, variants);
+                return true;
+            }
+
+            if (IsBlackrnLordInspectronQuestDispatcher(obj))
+            {
+                var variants = new Dictionary<int, PathVariantInfo>
+                {
+                    [0] = CreateCuratedTeleportTextVariant(
+                        0,
+                        "LORD INSPECTRON SPEAKS:\n\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
+                        7,
+                        5),
+                    [1] = CreateCuratedTeleportTextVariant(
+                        1,
+                        "LORD INSPECTRON SPEAKS:\n\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"",
+                        7,
+                        5),
+                    [2] = CreateCuratedTeleportTextVariant(
+                        2,
+                        "LORD INSPECTRON SPEAKS:\n\"SORRY, BUT SINCE YOU ARE CURRENTLY\nQUESTED, I CAN'T ENGAGE YOUR SERVICES.\"",
+                        7,
+                        5),
+                    [3] = CreateCuratedTeleportTextVariant(
+                        3,
+                        "LORD INSPECTRON SPEAKS:\nWELL DONE, QUEST COMPLETE!",
+                        7,
+                        5)
                 };
 
                 PopulateObjectPathData(obj, variants);
@@ -399,6 +437,16 @@ namespace MMMapEditor
                    obj.PatchAddress == 0x0160;
         }
 
+        private bool IsBlackrnLordInspectronQuestDispatcher(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x04F2 &&
+                   obj != null &&
+                   obj.X == 7 &&
+                   obj.Y == 4 &&
+                   obj.PatchAddress == 0x028F;
+        }
+
         private bool IsCave7VolcanoGodRiddle(OvrObject obj)
         {
             return _config != null &&
@@ -419,7 +467,11 @@ namespace MMMapEditor
                    obj.PatchAddress == 0x0217;
         }
 
-        private static PathVariantInfo CreateCuratedTeleportTextVariant(int pathId, string text)
+        private static PathVariantInfo CreateCuratedTeleportTextVariant(
+            int pathId,
+            string text,
+            byte teleportX,
+            byte teleportY)
         {
             return new PathVariantInfo
             {
@@ -427,10 +479,10 @@ namespace MMMapEditor
                 PathOrderKey = pathId + 1,
                 IsLeaf = true,
                 Texts = new List<string> { text },
-                TeleportTargetX = 2,
-                TeleportTargetY = 8,
-                TeleportTargetXRange = new ValueRange8(2, 2),
-                TeleportTargetYRange = new ValueRange8(8, 8)
+                TeleportTargetX = teleportX,
+                TeleportTargetY = teleportY,
+                TeleportTargetXRange = new ValueRange8(teleportX, teleportX),
+                TeleportTargetYRange = new ValueRange8(teleportY, teleportY)
             };
         }
 
