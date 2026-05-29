@@ -2682,6 +2682,10 @@ namespace MMMapEditor
                         ApplyGoldGrantedEffectNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.CriticalWarningNote:
+                        ApplyCriticalWarningNoteStyle(rt);
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2852,6 +2856,13 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(238, 241, 226);
             rt.SelectionBackColor = Color.FromArgb(35, 49, 40);
             rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Regular);
+        }
+
+        private void ApplyCriticalWarningNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 238, 220);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Bold);
         }
 
         private void ApplyRepeatedBattleWarningStyle(RichTextBox rt)

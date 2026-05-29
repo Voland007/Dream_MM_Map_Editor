@@ -352,7 +352,8 @@ namespace MMMapEditor
         GeneratedOverlaySubstitution = 24,
         LostDirectionEffectNote = 25,
         GoldClearedEffectNote = 26,
-        GoldGrantedEffectNote = 27
+        GoldGrantedEffectNote = 27,
+        CriticalWarningNote = 28
     }
 
     public sealed class NoteInlineStyleSpan

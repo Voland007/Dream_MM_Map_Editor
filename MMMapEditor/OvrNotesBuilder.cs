@@ -17840,6 +17840,13 @@ namespace MMMapEditor
             if (!string.IsNullOrWhiteSpace(blackrnLordInspectronNote))
                 return blackrnLordInspectronNote;
 
+            string blackrsLordHackerNote = TryBuildBlackrsLordHackerQuestDispatcherNote(
+                fileNameOnly,
+                obj,
+                useHierarchical);
+            if (!string.IsNullOrWhiteSpace(blackrsLordHackerNote))
+                return blackrsLordHackerNote;
+
             string sorpigalLeprechaunNote = TryBuildSorpigalLeprechaunGuideNote(
                 fileNameOnly,
                 obj,
@@ -17882,6 +17889,23 @@ namespace MMMapEditor
             }
 
             return BuildBlackrnLordInspectronQuestDispatcherNote();
+        }
+
+        private static string TryBuildBlackrsLordHackerQuestDispatcherNote(
+            string fileNameOnly,
+            OvrObject obj,
+            bool useHierarchical)
+        {
+            if (!string.Equals(fileNameOnly, "BLACKRS.OVR", StringComparison.OrdinalIgnoreCase) ||
+                obj == null ||
+                obj.X != 11 ||
+                obj.Y != 7 ||
+                obj.PatchAddress != 0x0297)
+            {
+                return null;
+            }
+
+            return BuildBlackrsLordHackerQuestDispatcherNote();
         }
 
         private static string TryBuildCave7VolcanoGodNote(
@@ -18094,7 +18118,13 @@ namespace MMMapEditor
                 "\"YOUR SERVICES ARE NEEDED!\" ACCEPT(Y/N)?",
                 2,
                 8,
-                BuildWhitewLordIronfistQuestDeskFrame());
+                BuildWhitewLordIronfistQuestDeskFrame(),
+                "\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"",
+                new[]
+                {
+                    "\"SORRY, BUT SINCE YOU ARE CURRENTLY",
+                    "QUESTED, I CAN'T ENGAGE YOUR SERVICES.\""
+                });
         }
 
         private static string BuildWhitewLordIronfistQuestDeskFrame()
@@ -18125,7 +18155,13 @@ namespace MMMapEditor
                 "\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
                 7,
                 5,
-                BuildBlackrnLordInspectronQuestDeskFrame());
+                BuildBlackrnLordInspectronQuestDeskFrame(),
+                "\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"",
+                new[]
+                {
+                    "\"SORRY, BUT SINCE YOU ARE CURRENTLY",
+                    "QUESTED, I CAN'T ENGAGE YOUR SERVICES.\""
+                });
         }
 
         private static string BuildBlackrnLordInspectronQuestDeskFrame()
@@ -18149,12 +18185,51 @@ namespace MMMapEditor
                 3);
         }
 
+        private static string BuildBlackrsLordHackerQuestDispatcherNote()
+        {
+            return BuildLordQuestDispatcherNote(
+                "LORD HACKER",
+                "\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
+                10,
+                7,
+                BuildBlackrsLordHackerQuestDeskFrame(),
+                "\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"(LEADER SHOULD PRESENT ITEMS)",
+                new[]
+                {
+                    "\"SORRY, YOU'RE ALREADY QUESTED."
+                },
+                questDeskFrameAlreadyStyled: true);
+        }
+
+        private static string BuildBlackrsLordHackerQuestDeskFrame()
+        {
+            string[] itemNames =
+            {
+                "GARLIC",
+                "WOLFSBANE",
+                "BELLADONNA",
+                "THE HEAD OF A MEDUSA",
+                "AN EYE OF A WYVERN",
+                "A DRAGONS TOOTH",
+                "THE RING OF OKIRM"
+            };
+
+            return BuildLordItemQuestDeskFrame(
+                "LORD HACKER",
+                "\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
+                itemNames);
+        }
+
         private static string BuildLordQuestDispatcherNote(
             string lordName,
             string servicePrompt,
             int teleportX,
             int teleportY,
-            string questDeskFrame)
+            string questDeskFrame,
+            string incompleteQuestPrompt,
+            IReadOnlyList<string> alreadyQuestedLines,
+            IReadOnlyList<string> variant4OutroLines = null,
+            bool questDeskFrameAlreadyStyled = false)
         {
             var sb = new StringBuilder();
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
@@ -18165,20 +18240,30 @@ namespace MMMapEditor
 
             sb.AppendLine("Вариант 2 (У персонажа #1 уже взят квест этого Лорда, но он ещё не выполнен):");
             sb.AppendLine($"{lordName} SPEAKS:");
-            sb.AppendLine("\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"");
+            sb.AppendLine(incompleteQuestPrompt);
             sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
             sb.AppendLine();
 
             sb.AppendLine("Вариант 3 (У персонажа #1 уже взят квест другого Лорда):");
             sb.AppendLine($"{lordName} SPEAKS:");
-            sb.AppendLine("\"SORRY, BUT SINCE YOU ARE CURRENTLY");
-            sb.AppendLine("QUESTED, I CAN'T ENGAGE YOUR SERVICES.\"");
+            foreach (string line in alreadyQuestedLines ?? Array.Empty<string>())
+                sb.AppendLine(line);
             sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
             sb.AppendLine();
 
             sb.AppendLine("Вариант 4 (Персонаж #1 сдаёт выполненный квест этого Лорда или берёт новый квест; выбор Y нужен только при взятии нового):");
-            sb.AppendLine(InlineNoteStyleCodec.EncodeWheelRewardExplanationText(questDeskFrame));
-            sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
+            sb.AppendLine(questDeskFrameAlreadyStyled
+                ? questDeskFrame
+                : InlineNoteStyleCodec.EncodeWheelRewardExplanationText(questDeskFrame));
+            if (variant4OutroLines != null && variant4OutroLines.Count > 0)
+            {
+                foreach (string line in variant4OutroLines)
+                    sb.AppendLine(line);
+            }
+            else
+            {
+                sb.AppendLine($"Телепорт на клетку (X={teleportX}, Y={teleportY})");
+            }
 
             return sb.ToString().TrimEnd('\r', '\n');
         }
@@ -18253,6 +18338,145 @@ namespace MMMapEditor
 
             return BuildAsciiFrame(lines, contentWidth)
                 .Replace($"|| {separator} ||", $"||{new string('-', contentWidth + 2)}||");
+        }
+
+        private static string BuildLordItemQuestDeskFrame(
+            string lordName,
+            string servicePrompt,
+            IReadOnlyList<string> itemNames)
+        {
+            const int contentWidth = 89;
+            int[] rewards = { 1000, 2000, 3000, 4000, 6000, 8000, 10000 };
+            string separator = new string('-', contentWidth);
+
+            var lines = new List<string>
+            {
+                "Если есть предметный квест готовый к сдаче, то",
+                "",
+                $" {lordName} SPEAKS:",
+                " WELL DONE, QUEST COMPLETE!",
+                ""
+            };
+
+            string[] rowTitles = itemNames
+                .Select(itemName => "BRING ME " + (itemName ?? string.Empty))
+                .ToArray();
+            int maxTitleLength = rowTitles
+                .Select(title => title.Length)
+                .DefaultIfEmpty(0)
+                .Max();
+            int maxRewardLength = rewards
+                .Take(rowTitles.Length)
+                .Select(reward => $"+{reward} EXP".Length)
+                .DefaultIfEmpty(0)
+                .Max();
+            int rewardEndColumn = Math.Min(contentWidth + 1, 4 + Math.Max(45, maxTitleLength) + 1 + maxRewardLength);
+
+            for (int i = 0; i < rowTitles.Length; i++)
+            {
+                string prefix = $" {i + 1}: ";
+                string rewardText = $"+{rewards[i]} EXP";
+                string title = rowTitles[i];
+                int rewardPadding = Math.Max(1, rewardEndColumn - rewardText.Length - prefix.Length - title.Length);
+
+                lines.Add(prefix + title + new string(' ', rewardPadding) + rewardText);
+            }
+
+            lines.Add("");
+            lines.Add(separator);
+            lines.Add("");
+            lines.Add("Если у персонажа #1 нет квеста и выбрать Y, будет предложен");
+            lines.Add("следующий предметный квест:");
+            lines.Add("");
+            lines.Add($" {lordName} SPEAKS:");
+            lines.Add($" {servicePrompt}");
+            lines.Add("");
+            lines.Add(separator);
+            lines.Add("");
+            int criticalWarningStartLine = lines.Count;
+            lines.Add("! ВНИМАНИЕ: Если у лидера уже выполнены все 7 квестов LORD HACKER");
+            lines.Add("и выбрать Y, нового квеста не будет. Вместо этого будет:");
+            lines.Add("");
+            lines.Add(" MY BREW IS COMPLETE, GUARDS TAKE THEIR");
+            lines.Add(" ITEMS AND SEND THEM TO THE PIT!");
+            lines.Add("");
+            lines.Add("- отнимают все вещи из рюкзака (backpack-слотов 1..6) у всех персонажей партии.");
+            lines.Add("- вместо обычного телепорта на клетку (X=10, Y=7) будет Телепорт на клетку (X=11, Y=5)");
+            int criticalWarningEndLine = lines.Count;
+            lines.Add(separator);
+            lines.Add("");
+            lines.Add("P.S. предметные квесты LORD HACKER сдаются лидером партии:");
+            lines.Add("нужный предмет должен быть у персонажа #1.");
+            lines.Add("Для сдачи нужно:");
+            lines.Add("1) Взять соответствующий квест LORD HACKER");
+            lines.Add("2) Поставить персонажа с нужным предметом первым в отряде");
+
+            return BuildStyledLordItemQuestDeskFrame(
+                lines,
+                contentWidth,
+                criticalWarningStartLine,
+                criticalWarningEndLine);
+        }
+
+        private static string BuildStyledLordItemQuestDeskFrame(
+            IReadOnlyList<string> lines,
+            int contentWidth,
+            int criticalWarningStartLine,
+            int criticalWarningEndLine)
+        {
+            contentWidth = Math.Max(contentWidth, 1);
+            string border = new string('=', contentWidth + 6);
+            string separator = new string('-', contentWidth);
+            string separatorFrameLine = $"|| {separator} ||";
+            string fullSeparatorFrameLine = $"||{new string('-', contentWidth + 2)}||";
+
+            var sb = new StringBuilder();
+            AppendStyledLordItemQuestDeskFrameLine(sb, border, critical: false, appendLine: true);
+
+            for (int lineIndex = 0; lineIndex < (lines?.Count ?? 0); lineIndex++)
+            {
+                string line = lines[lineIndex] ?? string.Empty;
+                bool critical = lineIndex >= criticalWarningStartLine && lineIndex < criticalWarningEndLine;
+
+                foreach (string segment in WrapFrameLine(line, contentWidth))
+                {
+                    string frameLine;
+                    if (segment == separator)
+                    {
+                        frameLine = fullSeparatorFrameLine;
+                    }
+                    else
+                    {
+                        frameLine = "|| " +
+                            segment.PadRight(contentWidth) +
+                            (segment.Length > contentWidth ? "||" : " ||");
+                    }
+
+                    if (frameLine == separatorFrameLine)
+                        frameLine = fullSeparatorFrameLine;
+
+                    AppendStyledLordItemQuestDeskFrameLine(sb, frameLine, critical, appendLine: true);
+                }
+            }
+
+            AppendStyledLordItemQuestDeskFrameLine(sb, border, critical: false, appendLine: false);
+            return sb.ToString();
+        }
+
+        private static void AppendStyledLordItemQuestDeskFrameLine(
+            StringBuilder sb,
+            string frameLine,
+            bool critical,
+            bool appendLine)
+        {
+            string styledLine = critical
+                ? InlineNoteStyleCodec.EncodeCriticalWarningNoteText(frameLine)
+                : InlineNoteStyleCodec.EncodeWheelRewardExplanationText(frameLine);
+
+            if (appendLine)
+                sb.AppendLine(styledLine);
+            else
+                sb.Append(styledLine);
         }
 
         private static string TryBuildSorpigalLeprechaunGuideNote(

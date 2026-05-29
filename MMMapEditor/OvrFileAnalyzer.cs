@@ -401,6 +401,41 @@ namespace MMMapEditor
                 return true;
             }
 
+            if (IsBlackrsLordHackerQuestDispatcher(obj))
+            {
+                var variants = new Dictionary<int, PathVariantInfo>
+                {
+                    [0] = CreateCuratedTeleportTextVariant(
+                        0,
+                        "LORD HACKER SPEAKS:\n\"YOUR SERVICES ARE NEEDED!\"ACCEPT (Y/N)?",
+                        10,
+                        7),
+                    [1] = CreateCuratedTeleportTextVariant(
+                        1,
+                        "LORD HACKER SPEAKS:\n\"RETURN NOT UNTIL THY QUEST IS COMPLETE\"(LEADER SHOULD PRESENT ITEMS)",
+                        10,
+                        7),
+                    [2] = CreateCuratedTeleportTextVariant(
+                        2,
+                        "LORD HACKER SPEAKS:\n\"SORRY, YOU'RE ALREADY QUESTED.",
+                        10,
+                        7),
+                    [3] = CreateCuratedTeleportTextVariant(
+                        3,
+                        "LORD HACKER SPEAKS:\nWELL DONE, QUEST COMPLETE!",
+                        10,
+                        7),
+                    [4] = CreateCuratedTeleportTextVariant(
+                        4,
+                        "LORD HACKER SPEAKS:\nMY BREW IS COMPLETE, GUARDS TAKE THEIR\nITEMS AND SEND THEM TO THE PIT!",
+                        11,
+                        5)
+                };
+
+                PopulateObjectPathData(obj, variants);
+                return true;
+            }
+
             if (IsSorpigalLeprechaunGuide(obj))
             {
                 PopulateObjectPathData(obj, BuildSorpigalLeprechaunGuideVariants());
@@ -445,6 +480,16 @@ namespace MMMapEditor
                    obj.X == 7 &&
                    obj.Y == 4 &&
                    obj.PatchAddress == 0x028F;
+        }
+
+        private bool IsBlackrsLordHackerQuestDispatcher(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x054F &&
+                   obj != null &&
+                   obj.X == 11 &&
+                   obj.Y == 7 &&
+                   obj.PatchAddress == 0x0297;
         }
 
         private bool IsCave7VolcanoGodRiddle(OvrObject obj)

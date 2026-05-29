@@ -47,6 +47,7 @@ namespace MMMapEditor
         private const string BattleMonsterStrengthDecreaseTokenPrefix = "[[BATTLEPOWERDOWN:";
         private const string HpRestoredToMaximumTokenPrefix = "[[HPRESTORE:";
         private const string ItemNameTokenPrefix = "[[ITEMNAME:";
+        private const string CriticalWarningNoteTokenPrefix = "[[CRITWARN:";
         public const string RepeatedBattleWarningText =
             "!! ВНИМАНИЕ! Битва запускается два раза; результат каждого (победа или побег) не влияет на запуск следующего !!";
         private const string RandomEncounterRubiconWarningPrefix =
@@ -165,6 +166,11 @@ namespace MMMapEditor
         public static string EncodeItemNameText(string visibleText)
         {
             return EncodeTextStyleToken(ItemNameTokenPrefix, visibleText);
+        }
+
+        public static string EncodeCriticalWarningNoteText(string visibleText)
+        {
+            return EncodeTextStyleToken(CriticalWarningNoteTokenPrefix, visibleText);
         }
 
         public static StyledInlineNoteText RenderTextWithStyles(string rawText)
@@ -517,6 +523,25 @@ namespace MMMapEditor
                         Kind = NoteInlineStyleKind.ItemName
                     });
                     i += itemNameConsumedLength;
+                    continue;
+                }
+
+                if (TryConsumeTextStyleToken(
+                    rawText,
+                    i,
+                    CriticalWarningNoteTokenPrefix,
+                    out string criticalWarningText,
+                    out int criticalWarningConsumedLength))
+                {
+                    int start = visibleText.Length;
+                    visibleText.Append(criticalWarningText);
+                    rendered.Styles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = start,
+                        Length = criticalWarningText.Length,
+                        Kind = NoteInlineStyleKind.CriticalWarningNote
+                    });
+                    i += criticalWarningConsumedLength;
                     continue;
                 }
 
