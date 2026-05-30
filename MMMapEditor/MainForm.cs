@@ -3419,7 +3419,7 @@ namespace MMMapEditor
 
             var teleportMatches = Regex.Matches(
                 noteText,
-                @"Телепорт на (?:(случайную)\s+)?клетку \(X=(?:\??\d+|\d+\.\.\d+), Y=(?:\??\d+|\d+\.\.\d+)\)",
+                @"Телепорт на (?:(случайную)\s+)?клетку \(X=(?:\?|\d+\.\.\d+|\??\d+), Y=(?:\?|\d+\.\.\d+|\??\d+)\)",
                 RegexOptions.IgnoreCase);
 
             foreach (Match match in teleportMatches)
@@ -3433,6 +3433,46 @@ namespace MMMapEditor
                 {
                     rt.Select(match.Groups[1].Index, match.Groups[1].Length);
                     rt.SelectionColor = Color.FromArgb(120, 210, 255);
+                    rt.SelectionBackColor = Color.FromArgb(65, 35, 0);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic | FontStyle.Underline);
+                }
+            }
+
+            var mapTeleportMatches = Regex.Matches(
+                noteText,
+                @"Телепорт на карту (?<overlay>[^\r\n()]+?)(?: (?<metadata>\(MAP SECTOR:\s*[A-E]-[1-4](?:\s+SURFACE X=\s*\d+, Y=\s*\d+)?\)))? на (?:(?<random>случайную)\s+)?клетку \(X=\s*(?:\?|\d+\.\.\d+|\??\d+), Y=\s*(?:\?|\d+\.\.\d+|\??\d+)\)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in mapTeleportMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(150, 225, 235);
+                rt.SelectionBackColor = Color.FromArgb(0, 45, 58);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+
+                Group overlayGroup = match.Groups["overlay"];
+                if (overlayGroup.Success && overlayGroup.Length > 0)
+                {
+                    rt.Select(overlayGroup.Index, overlayGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(185, 200, 255);
+                    rt.SelectionBackColor = Color.FromArgb(35, 28, 85);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                }
+
+                Group metadataGroup = match.Groups["metadata"];
+                if (metadataGroup.Success && metadataGroup.Length > 0)
+                {
+                    rt.Select(metadataGroup.Index, metadataGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(180, 210, 215);
+                    rt.SelectionBackColor = Color.FromArgb(0, 38, 48);
+                    rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+                }
+
+                Group randomGroup = match.Groups["random"];
+                if (randomGroup.Success && randomGroup.Length > 0)
+                {
+                    rt.Select(randomGroup.Index, randomGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(150, 225, 235);
                     rt.SelectionBackColor = Color.FromArgb(65, 35, 0);
                     rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic | FontStyle.Underline);
                 }

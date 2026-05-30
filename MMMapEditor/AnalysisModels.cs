@@ -356,6 +356,36 @@ namespace MMMapEditor
         CriticalWarningNote = 28
     }
 
+    public sealed class OverlayTransitionInfo
+    {
+        public byte GlobalX { get; set; }
+        public byte GlobalY { get; set; }
+        public ushort MapSelector { get; set; }
+        public string LoadedOverlayName { get; set; }
+        public string LoadedMapSector { get; set; }
+        public byte? LoadedSurfaceX { get; set; }
+        public byte? LoadedSurfaceY { get; set; }
+
+        public string GetIdentityKey()
+        {
+            return $"{GlobalX}:{GlobalY}:{MapSelector}:{LoadedOverlayName ?? string.Empty}:{LoadedMapSector ?? string.Empty}:{LoadedSurfaceX}:{LoadedSurfaceY}";
+        }
+
+        public OverlayTransitionInfo Clone()
+        {
+            return new OverlayTransitionInfo
+            {
+                GlobalX = GlobalX,
+                GlobalY = GlobalY,
+                MapSelector = MapSelector,
+                LoadedOverlayName = LoadedOverlayName,
+                LoadedMapSector = LoadedMapSector,
+                LoadedSurfaceX = LoadedSurfaceX,
+                LoadedSurfaceY = LoadedSurfaceY
+            };
+        }
+    }
+
     public sealed class NoteInlineStyleSpan
     {
         public int Start { get; set; }
@@ -480,6 +510,7 @@ namespace MMMapEditor
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
         public List<uint> ExternalJumpTargets { get; set; } = new List<uint>();
+        public OverlayTransitionInfo OverlayTransition { get; set; }
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }

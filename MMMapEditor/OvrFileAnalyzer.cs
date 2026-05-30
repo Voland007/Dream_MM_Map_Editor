@@ -115,6 +115,7 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"\nВсего объектов после анализа: {objects.Count}");
             }
 
+            OverlayTransitionResolver.EnrichLoadedOverlayMetadata(objects, filename);
             return objects;
         }
 
@@ -306,6 +307,7 @@ namespace MMMapEditor
                     repeatedEventAnalysisMode: repeatedEventAnalysisMode);
 
                 finalVariants = ApplyRwl2LordArcherGoldVariants(ovrObject, finalVariants);
+                ApplyAreab3AncientTempleWhistleChoices(ovrObject, finalVariants);
 
                 PopulateObjectPathData(ovrObject, finalVariants);
                 ApplyResolvedVariantInfoToObject(ovrObject);
@@ -554,11 +556,11 @@ namespace MMMapEditor
                         new BranchChoice { Label = "ESC)", DisplayHeaderAnnotation = "ESC)" }
                     }
                 },
-                [1] = CreateSorpigalPaidLeprechaunTeleportVariant(1, 8, 5),
-                [2] = CreateSorpigalPaidLeprechaunTeleportVariant(2, 1, 12),
-                [3] = CreateSorpigalPaidLeprechaunTeleportVariant(3, 11, 13),
-                [4] = CreateSorpigalPaidLeprechaunTeleportVariant(4, 12, 8),
-                [5] = CreateSorpigalPaidLeprechaunTeleportVariant(5, 4, 6),
+                [1] = CreateSorpigalPaidLeprechaunTeleportVariant(1, 8, 5, "SORPIGAL.OVR", 4, 6, 1),
+                [2] = CreateSorpigalPaidLeprechaunTeleportVariant(2, 1, 12, "PORTSMIT.OVR", 3, 12, 1),
+                [3] = CreateSorpigalPaidLeprechaunTeleportVariant(3, 11, 13, "ALGARY.OVR", 3, 2, 1),
+                [4] = CreateSorpigalPaidLeprechaunTeleportVariant(4, 12, 8, "DUSK.OVR", 2, 8, 1),
+                [5] = CreateSorpigalPaidLeprechaunTeleportVariant(5, 4, 6, "ERLIQUIN.OVR", 26, 11, 1),
                 [6] = CreateSorpigalNoGemLeprechaunTeleportVariant()
             };
 
@@ -568,7 +570,11 @@ namespace MMMapEditor
         private static PathVariantInfo CreateSorpigalPaidLeprechaunTeleportVariant(
             int choice,
             byte teleportX,
-            byte teleportY)
+            byte teleportY,
+            string loadedOverlayName,
+            byte globalX,
+            byte globalY,
+            ushort mapSelector)
         {
             byte asciiChoice = (byte)('0' + choice);
             return new PathVariantInfo
@@ -580,6 +586,13 @@ namespace MMMapEditor
                 TeleportTargetY = teleportY,
                 TeleportTargetXRange = new ValueRange8(teleportX, teleportX),
                 TeleportTargetYRange = new ValueRange8(teleportY, teleportY),
+                OverlayTransition = new OverlayTransitionInfo
+                {
+                    GlobalX = globalX,
+                    GlobalY = globalY,
+                    MapSelector = mapSelector,
+                    LoadedOverlayName = loadedOverlayName
+                },
                 BranchChoices = new List<BranchChoice>
                 {
                     new BranchChoice
@@ -873,6 +886,127 @@ namespace MMMapEditor
                 return string.Equals(label, choiceLabel, StringComparison.OrdinalIgnoreCase) ||
                        string.Equals(label, choiceLabel + ")", StringComparison.OrdinalIgnoreCase);
             }) == true;
+        }
+
+        private void ApplyAreab3AncientTempleWhistleChoices(
+            OvrObject obj,
+            Dictionary<int, PathVariantInfo> finalVariants)
+        {
+            if (!IsAreab3AncientTempleWhistlePatch(obj) ||
+                finalVariants == null ||
+                finalVariants.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var variant in finalVariants.Values.Where(variant => variant != null))
+            {
+                if (IsAreab3SorpigalWrongWhistleCountVariant(variant))
+                {
+                    AddSyntheticBranchChoice(
+                        variant,
+                        "свистнул не правильное количество раз",
+                        "AREAB3 ancient temple: whistle count is not 2",
+                        insertBeforeInputChoice: true);
+                }
+                else if (VariantTextsContain(variant, "STAIRS GOING DOWN, ENTER (Y/N)?"))
+                {
+                    AddSyntheticBranchChoice(
+                        variant,
+                        "свистнул 2 раза",
+                        "AREAB3 ancient temple: whistle count is 2",
+                        insertBeforeInputChoice: true);
+                }
+            }
+        }
+
+        private bool IsAreab3AncientTempleWhistlePatch(OvrObject obj)
+        {
+            return _config != null &&
+                   _config.StartAddress == 0x0338 &&
+                   obj != null &&
+                   obj.X == 14 &&
+                   obj.Y == 2 &&
+                   obj.PatchAddress == 0x019E;
+        }
+
+        private static bool IsAreab3SorpigalWrongWhistleCountVariant(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return false;
+
+            if (string.Equals(
+                    variant.OverlayTransition?.LoadedOverlayName,
+                    "SORPIGAL.OVR",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return variant.TeleportTargetX == 8 &&
+                   variant.TeleportTargetY == 5 &&
+                   VariantTextsContain(variant, "BLOW IT (0-9 TIMES)?") &&
+                   !VariantTextsContain(variant, "STAIRS GOING DOWN, ENTER (Y/N)?");
+        }
+
+        private static bool VariantTextsContain(PathVariantInfo variant, string text)
+        {
+            if (variant?.Texts == null || string.IsNullOrWhiteSpace(text))
+                return false;
+
+            return variant.Texts.Any(candidate =>
+                !string.IsNullOrWhiteSpace(candidate) &&
+                candidate.IndexOf(text, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static void AddSyntheticBranchChoice(
+            PathVariantInfo variant,
+            string annotation,
+            string condition,
+            bool insertBeforeInputChoice)
+        {
+            if (variant == null || string.IsNullOrWhiteSpace(annotation))
+                return;
+
+            variant.BranchChoices ??= new List<BranchChoice>();
+            if (variant.BranchChoices.Any(choice =>
+                    string.Equals(
+                        choice?.DisplayHeaderAnnotation?.Trim(),
+                        annotation,
+                        StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(
+                        choice?.Condition,
+                        condition,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var branchChoice = new BranchChoice
+            {
+                DisplayHeaderAnnotation = annotation,
+                Condition = condition,
+                IsLinear = false
+            };
+
+            int insertIndex = -1;
+            if (insertBeforeInputChoice)
+                insertIndex = variant.BranchChoices.FindIndex(IsInputChoiceImplementationBranchChoice);
+
+            if (insertIndex >= 0)
+                variant.BranchChoices.Insert(insertIndex, branchChoice);
+            else
+                variant.BranchChoices.Add(branchChoice);
+
+            variant.OvrNotesRelevantBranchChoicesComputed = false;
+            variant.OvrNotesRelevantBranchChoices = null;
+        }
+
+        private static bool IsInputChoiceImplementationBranchChoice(BranchChoice choice)
+        {
+            return choice != null &&
+                   !string.IsNullOrWhiteSpace(choice.Label) &&
+                   choice.Label.StartsWith("InputChoice", StringComparison.OrdinalIgnoreCase);
         }
 
         private static Dictionary<int, PathVariantInfo> ReindexSourceVariants(
@@ -3613,7 +3747,7 @@ namespace MMMapEditor
                 (variant.DynamicRandomBoundDependencies?.Count ?? 0) > 0 ||
                 (variant.BattleMonsters?.Count ?? 0) > 0 ||
                 (variant.PartiallyDefinedBattles?.Count ?? 0) > 0);
-            int withTeleport = variants.Count(variant => variant.HasTeleportTarget);
+            int withTeleport = variants.Count(variant => variant.HasTeleportTarget || variant.OverlayTransition != null);
             int uniqueTextSets = variants
                 .Select(BuildRawLeafTextKey)
                 .Distinct(StringComparer.Ordinal)
@@ -3723,6 +3857,7 @@ namespace MMMapEditor
                 $"random:{variant.RandomEncounterMonsterPowerCap}-{variant.RandomEncounterMonsterLevelCap}-{variant.RandomEncounterMonsterBatchCountCap}-{variant.DarkeningLevel}-{variant.RandomEncounterChance}-{variant.RandomEncounterRubicon}-{variant.BattleMonsterStrengthAdjustment}",
                 $"calls:{variant.CallsRandomEncounter}/{variant.IsOnlyRandomEncounterJump}",
                 $"external:{BuildExternalJumpTargetsKey(variant)}",
+                $"overlay:{BuildOverlayTransitionKey(variant)}",
                 $"table:{variant.HasAnyTableLoad}",
                 $"loaded:{variant.LoadedValues?.Count ?? 0}",
                 $"term:{variant.TerminatedByRepeatedBackEdge}/{variant.TerminatedByTerminalRet}",
@@ -3810,20 +3945,22 @@ namespace MMMapEditor
 
         private string BuildRawLeafTeleportKey(PathVariantInfo variant)
         {
-            if (variant == null || !variant.HasTeleportTarget)
+            if (variant == null || (!variant.HasTeleportTarget && variant.OverlayTransition == null))
                 return "<NO_TELEPORT>";
 
             return $"x:{BuildRawLeafValueOrRangeKey(variant.TeleportTargetX, variant.TeleportTargetXRange)};" +
-                   $"y:{BuildRawLeafValueOrRangeKey(variant.TeleportTargetY, variant.TeleportTargetYRange)}";
+                   $"y:{BuildRawLeafValueOrRangeKey(variant.TeleportTargetY, variant.TeleportTargetYRange)};" +
+                   $"overlay:{BuildOverlayTransitionKey(variant)}";
         }
 
         private string BuildRawLeafTeleportText(PathVariantInfo variant)
         {
-            if (variant == null || !variant.HasTeleportTarget)
+            if (variant == null || (!variant.HasTeleportTarget && variant.OverlayTransition == null))
                 return "<none>";
 
             return $"X={BuildRawLeafValueOrRangeKey(variant.TeleportTargetX, variant.TeleportTargetXRange)}, " +
-                   $"Y={BuildRawLeafValueOrRangeKey(variant.TeleportTargetY, variant.TeleportTargetYRange)}";
+                   $"Y={BuildRawLeafValueOrRangeKey(variant.TeleportTargetY, variant.TeleportTargetYRange)}, " +
+                   $"overlay={BuildOverlayTransitionKey(variant)}";
         }
 
         private string BuildRawLeafValueOrRangeKey(byte? value, ValueRange8 range)
@@ -6924,6 +7061,7 @@ namespace MMMapEditor
                    variant.BattleMonsterStrengthAdjustment == 0 &&
                    !variant.CallsRandomEncounter &&
                    !HasSemanticExternalJumpTargets(variant) &&
+                   variant.OverlayTransition == null &&
                    !variant.TeleportTargetX.HasValue &&
                    !variant.TeleportTargetY.HasValue &&
                    variant.TeleportTargetXRange == null &&
@@ -6989,7 +7127,7 @@ namespace MMMapEditor
                     .Select(info => info.GetIdentityKey())
                     .OrderBy(key => key))
                 : "<NO_DYNAMIC_RANDOM_BOUNDS>";
-            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{progressionKey}|{dynamicBoundKey}|{BuildExternalJumpTargetsKey(variant)}";
+            string statKey = $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.CallsRandomEncounter}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|{variant.HasAnyTableLoad}|{progressionKey}|{dynamicBoundKey}|{BuildExternalJumpTargetsKey(variant)}|{BuildOverlayTransitionKey(variant)}";
 
             string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
                 ? string.Join(";", variant.BattleMonsters
@@ -7927,6 +8065,11 @@ namespace MMMapEditor
                 : "<NO_EXTERNAL_JUMPS>";
         }
 
+        private static string BuildOverlayTransitionKey(PathVariantInfo variant)
+        {
+            return variant?.OverlayTransition?.GetIdentityKey() ?? "<NO_OVERLAY_TRANSITION>";
+        }
+
         private static IEnumerable<uint> GetSemanticExternalJumpTargets(PathVariantInfo variant)
         {
             return (variant?.ExternalJumpTargets ?? Enumerable.Empty<uint>())
@@ -7976,6 +8119,7 @@ namespace MMMapEditor
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
                 ExternalJumpTargets = CloneExternalJumpTargets(source.ExternalJumpTargets),
+                OverlayTransition = source.OverlayTransition?.Clone(),
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -8227,6 +8371,7 @@ namespace MMMapEditor
                 variant.BattleMonsterStrengthAdjustment != 0 ||
                 variant.CallsRandomEncounter ||
                 (variant.ExternalJumpTargets?.Count ?? 0) > 0 ||
+                variant.OverlayTransition != null ||
                 variant.BattleMonsterCount.HasValue ||
                 variant.BattleMonsterCountRange != null ||
                 variant.IsBattleMonsterCountIndeterminate ||
@@ -8719,6 +8864,7 @@ namespace MMMapEditor
                 RandomEncounterInstructionAddress = source.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = source.RandomEncounterExecutionOrder,
                 ExternalJumpTargets = CloneExternalJumpTargets(source.ExternalJumpTargets),
+                OverlayTransition = source.OverlayTransition?.Clone(),
                 TeleportTargetX = source.TeleportTargetX,
                 TeleportTargetY = source.TeleportTargetY,
                 TeleportTargetXRange = source.TeleportTargetXRange == null ? null : new ValueRange8(source.TeleportTargetXRange.Min, source.TeleportTargetXRange.Max),
@@ -8837,6 +8983,16 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"        TeleportTarget: X={xText}, Y={yText}");
             }
 
+            if (variant.OverlayTransition != null)
+            {
+                string overlayName = string.IsNullOrWhiteSpace(variant.OverlayTransition.LoadedOverlayName)
+                    ? "unknown"
+                    : variant.OverlayTransition.LoadedOverlayName;
+                AnalysisDebug.WriteLine(
+                    $"        OverlayTransition: {overlayName}, global X={variant.OverlayTransition.GlobalX}, " +
+                    $"Y={variant.OverlayTransition.GlobalY}, selector={variant.OverlayTransition.MapSelector}");
+            }
+
             if (variant.BattleMonsterCountRange != null)
             {
                 if (variant.BattleMonsterCountRange.IsExact)
@@ -8942,6 +9098,7 @@ namespace MMMapEditor
             target.RandomEncounterInstructionAddress = 0;
             target.RandomEncounterExecutionOrder = 0;
             target.ExternalJumpTargets = new List<uint>();
+            target.OverlayTransition = null;
             target.BattleMonsterCount = null;
             target.BattleMonsterCountRange = null;
             target.IsBattleMonsterCountIndeterminate = false;
@@ -8967,6 +9124,7 @@ namespace MMMapEditor
             target.RandomEncounterInstructionAddress = variant.RandomEncounterInstructionAddress;
             target.RandomEncounterExecutionOrder = variant.RandomEncounterExecutionOrder;
             target.ExternalJumpTargets = CloneExternalJumpTargets(variant.ExternalJumpTargets);
+            target.OverlayTransition = variant.OverlayTransition?.Clone();
             target.BattleMonsterCount = variant.BattleMonsterCount;
             target.BattleMonsterCountRange = variant.BattleMonsterCountRange == null ? null : new ValueRange8(variant.BattleMonsterCountRange.Min, variant.BattleMonsterCountRange.Max);
             target.IsBattleMonsterCountIndeterminate = variant.IsBattleMonsterCountIndeterminate;
@@ -9270,6 +9428,7 @@ namespace MMMapEditor
                 RandomEncounterInstructionAddress = result.RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = result.RandomEncounterExecutionOrder,
                 ExternalJumpTargets = CloneExternalJumpTargets(result.ExternalJumpTargets),
+                OverlayTransition = result.OverlayTransition?.Clone(),
                 TeleportTargetX = result.TeleportTargetX,
                 TeleportTargetY = result.TeleportTargetY,
                 TeleportTargetXRange = result.TeleportTargetXRange == null ? null : new ValueRange8(result.TeleportTargetXRange.Min, result.TeleportTargetXRange.Max),

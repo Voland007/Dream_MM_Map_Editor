@@ -59,6 +59,7 @@ namespace MMMapEditor
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
         public List<uint> ExternalJumpTargets { get; set; } = new List<uint>();
+        public OverlayTransitionInfo OverlayTransition { get; set; }
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -416,7 +417,7 @@ namespace MMMapEditor
 
         public string GetTeleportDescription()
         {
-            if (!HasTeleportTarget)
+            if (!HasTeleportTarget && OverlayTransition == null)
                 return null;
 
             bool hasRandomX = TeleportTargetXRange != null && !TeleportTargetXRange.IsExact;
@@ -434,8 +435,42 @@ namespace MMMapEditor
                     ? $"Y={TeleportTargetYRange.Min}..{TeleportTargetYRange.Max}"
                     : "Y=?";
 
+            string mapPart = null;
+            if (OverlayTransition != null)
+            {
+                string overlayName = string.IsNullOrWhiteSpace(OverlayTransition.LoadedOverlayName)
+                    ? "неизвестный оверлей"
+                    : OverlayTransition.LoadedOverlayName;
+                mapPart = $"на карту {overlayName}";
+
+                var metadataParts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(OverlayTransition.LoadedMapSector))
+                    metadataParts.Add($"MAP SECTOR: {OverlayTransition.LoadedMapSector}");
+                if (OverlayTransition.LoadedSurfaceX.HasValue && OverlayTransition.LoadedSurfaceY.HasValue)
+                    metadataParts.Add($"SURFACE X={OverlayTransition.LoadedSurfaceX.Value}, Y={OverlayTransition.LoadedSurfaceY.Value}");
+
+                if (metadataParts.Count > 0)
+                    mapPart += $" ({string.Join("  ", metadataParts)})";
+            }
+
+            if (!HasTeleportTarget)
+            {
+                if (mapPart != null)
+                    return $"Телепорт {mapPart} на клетку (X={X}, Y={Y})";
+
+                return null;
+            }
+
             if (hasRandomX || hasRandomY)
+            {
+                if (mapPart != null)
+                    return $"Телепорт {mapPart} на случайную клетку ({xPart}, {yPart})";
+
                 return $"Телепорт на случайную клетку ({xPart}, {yPart})";
+            }
+
+            if (mapPart != null)
+                return $"Телепорт {mapPart} на клетку ({xPart}, {yPart})";
 
             return $"Телепорт на клетку ({xPart}, {yPart})";
         }
@@ -848,6 +883,7 @@ namespace MMMapEditor
             (DynamicRandomBoundDependencies != null && DynamicRandomBoundDependencies.Count > 0) ||
             HasAnyTableLoad ||
             CallsRandomEncounter ||
+            OverlayTransition != null ||
             (ExternalJumpTargets != null && ExternalJumpTargets.Count > 0);
 
         public bool ShouldKeepOriginalCentralOption
@@ -1062,6 +1098,7 @@ namespace MMMapEditor
         public uint RandomEncounterInstructionAddress { get; set; } = 0;
         public int RandomEncounterExecutionOrder { get; set; } = 0;
         public List<uint> ExternalJumpTargets { get; set; } = new List<uint>();
+        public OverlayTransitionInfo OverlayTransition { get; set; }
         public byte? TeleportTargetX { get; set; }
         public byte? TeleportTargetY { get; set; }
         public ValueRange8 TeleportTargetXRange { get; set; }
@@ -1120,6 +1157,7 @@ namespace MMMapEditor
             !RandomEncounterRubicon.HasValue &&
             BattleMonsterStrengthAdjustment == 0 &&
             (ExternalJumpTargets == null || ExternalJumpTargets.Count == 0) &&
+            OverlayTransition == null &&
             !HasTeleportTarget &&
             !BattleMonsterCount.HasValue &&
             BattleMonsterCountRange == null &&
@@ -1158,6 +1196,7 @@ namespace MMMapEditor
                 RandomEncounterInstructionAddress = RandomEncounterInstructionAddress,
                 RandomEncounterExecutionOrder = RandomEncounterExecutionOrder,
                 ExternalJumpTargets = ExternalJumpTargets?.Distinct().OrderBy(target => target).ToList() ?? new List<uint>(),
+                OverlayTransition = OverlayTransition?.Clone(),
                 TeleportTargetX = TeleportTargetX,
                 TeleportTargetY = TeleportTargetY,
                 TeleportTargetXRange = TeleportTargetXRange == null ? null : new ValueRange8(TeleportTargetXRange.Min, TeleportTargetXRange.Max),
@@ -1254,6 +1293,7 @@ namespace MMMapEditor
             HasBattleLikeInfo ||
             HasAnyTableLoad ||
             CallsRandomEncounter ||
+            OverlayTransition != null ||
             (ExternalJumpTargets != null && ExternalJumpTargets.Count > 0) ||
             HasProbabilityInfo ||
             HasOccurrenceInfo ||

@@ -156,6 +156,7 @@ namespace MMMapEditor
         private const uint DISPLAY_TEXT_ROUTINE_ADDRESS = 0x4FB5;
         private const uint CURRENT_MAP_EVENT_DISABLE_ROUTINE_ADDRESS = 0x4FC8;
         private const uint POSITIONED_TEXT_ROUTINE_ADDRESS = 0x4C60;
+        private const uint OVERLAY_TRANSITION_ROUTINE_ADDRESS = 0x5C1C;
         private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
         private const ushort TEXT_CURSOR_COLUMN_ADDRESS = 0x3BC4;
         private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
@@ -5596,6 +5597,7 @@ namespace MMMapEditor
                 result.RandomEncounterChance.HasValue ||
                 result.RandomEncounterRubicon.HasValue ||
                 result.HasTeleportTarget ||
+                result.OverlayTransition != null ||
                 hasFixedBattleSetup ||
                 (result.PartyEffects != null && result.PartyEffects.Count > 0);
 
@@ -5619,7 +5621,13 @@ namespace MMMapEditor
             }
         }
 
-        private void MarkExternalJump(PathAnalysisResult result, uint instructionAddress, uint jumpTarget, bool debugMode, string jumpKind)
+        private void MarkExternalJump(
+            PathAnalysisResult result,
+            RegisterTracker registerTracker,
+            uint instructionAddress,
+            uint jumpTarget,
+            bool debugMode,
+            string jumpKind)
         {
             if (result == null)
                 return;
@@ -5634,8 +5642,55 @@ namespace MMMapEditor
                     result.ExternalJumpTargets.Add(jumpTarget);
             }
 
+            if (jumpTarget == OVERLAY_TRANSITION_ROUTINE_ADDRESS)
+                TrackOverlayTransition(result, registerTracker, instructionAddress, debugMode);
+
             if (debugMode)
                 AnalysisDebug.WriteLine($"      {jumpKind} за пределы оверлея (0x{jumpTarget:X4}) - внешний обработчик игры");
+        }
+
+        private static void TrackOverlayTransition(
+            PathAnalysisResult result,
+            RegisterTracker registerTracker,
+            uint instructionAddress,
+            bool debugMode)
+        {
+            if (result == null || registerTracker == null)
+                return;
+
+            if (!registerTracker.TryGetByteRegisterValue("AL", out byte globalX))
+                return;
+
+            if (!registerTracker.TryGetByteRegisterValue("BL", out byte globalY))
+            {
+                if (registerTracker.TryGetRegisterValue("BX", out ushort bxValue))
+                    globalY = (byte)(bxValue & 0xFF);
+                else
+                    return;
+            }
+
+            if (!registerTracker.TryGetRegisterValue("BP", out ushort mapSelector))
+                return;
+
+            result.OverlayTransition = new OverlayTransitionInfo
+            {
+                GlobalX = globalX,
+                GlobalY = globalY,
+                MapSelector = mapSelector,
+                LoadedOverlayName = OverlayTransitionResolver.ResolveLoadedOverlayName(globalX, globalY, mapSelector)
+            };
+            result.HasSignificantCode = true;
+
+            if (debugMode)
+            {
+                string overlayName = string.IsNullOrWhiteSpace(result.OverlayTransition.LoadedOverlayName)
+                    ? "неизвестный оверлей"
+                    : result.OverlayTransition.LoadedOverlayName;
+                AnalysisDebug.WriteLine(
+                    $"      Обнаружена загрузка оверлея через JMP 0x{OVERLAY_TRANSITION_ROUTINE_ADDRESS:X4}: " +
+                    $"{overlayName}, global X={globalX}, Y={globalY}, selector={mapSelector} " +
+                    $"(инструкция 0x{instructionAddress:X4})");
+            }
         }
 
         /// <summary>
@@ -5656,7 +5711,7 @@ namespace MMMapEditor
 
             if (jumpTarget >= fileLength)
             {
-                MarkExternalJump(result, currentAddress, jumpTarget, debugMode, "JMP");
+                MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP");
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
 
@@ -5709,7 +5764,7 @@ namespace MMMapEditor
 
                 if (jumpTarget >= fileLength)
                 {
-                    MarkExternalJump(result, currentAddress, jumpTarget, debugMode, "JMP (по опкоду 0xE9)");
+                    MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP (по опкоду 0xE9)");
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
 
@@ -5778,7 +5833,7 @@ namespace MMMapEditor
                     return new ControlFlowResult { ShouldReturn = false, NextAddress = jumpTarget };
                 }
 
-                MarkExternalJump(result, currentAddress, jumpTarget, debugMode, "SHORT JMP");
+                MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "SHORT JMP");
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
 
@@ -6374,6 +6429,8 @@ namespace MMMapEditor
             target.CallsRandomEncounter = target.CallsRandomEncounter || source.CallsRandomEncounter;
             target.DisablesCurrentMapEvent = target.DisablesCurrentMapEvent || source.DisablesCurrentMapEvent;
             MergeExternalJumpTargets(target, source);
+            if (source.OverlayTransition != null)
+                target.OverlayTransition = source.OverlayTransition.Clone();
             MultiplyInlineProbability(target, source.InlineProbabilityNumerator, source.InlineProbabilityDenominator);
 
             if (source.RandomEncounterInstructionAddress != 0 &&
@@ -17662,6 +17719,7 @@ namespace MMMapEditor
                                          result.HasPartialBattlePattern ||
                                          result.CallsRandomEncounter ||
                                          result.HasTeleportTarget ||
+                                         result.OverlayTransition != null ||
                                          (result.PartyEffects != null && result.PartyEffects.Count > 0);
         }
     }

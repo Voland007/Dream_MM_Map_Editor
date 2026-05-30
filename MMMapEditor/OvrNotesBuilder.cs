@@ -131,6 +131,7 @@ namespace MMMapEditor
 
             var allObjects = preAnalyzedObjects?.ToList()
                 ?? OvrFileAnalyzer.AnalyzeOvrFile(filename, config, result.CentralOptions, cellsToBuild);
+            OverlayTransitionResolver.EnrichLoadedOverlayMetadata(allObjects, filename);
             var renderedNoteCache = !buildInlineStyleSpans
                 ? new Dictionary<RenderedObjectNoteCacheKey, string>()
                 : null;
@@ -2356,6 +2357,7 @@ namespace MMMapEditor
                 return true;
 
             if (variant.HasTeleportTarget ||
+                variant.OverlayTransition != null ||
                 variant.HasBattleLikeInfo ||
                 variant.CallsRandomEncounter ||
                 variant.HasMonsterStatChanges ||
@@ -2396,6 +2398,7 @@ namespace MMMapEditor
                    variant.BattleMonsterStrengthAdjustment != 0 ||
                    variant.CallsRandomEncounter ||
                    variant.HasTeleportTarget ||
+                   variant.OverlayTransition != null ||
                    variant.BattleMonsterCount.HasValue ||
                    variant.BattleMonsterCountRange != null ||
                    variant.IsBattleMonsterCountIndeterminate ||
@@ -2673,6 +2676,7 @@ namespace MMMapEditor
                    variant.BattleMonsterStrengthAdjustment != 0 ||
                    variant.CallsRandomEncounter ||
                    variant.HasTeleportTarget ||
+                   variant.OverlayTransition != null ||
                    variant.BattleMonsterCount.HasValue ||
                    variant.BattleMonsterCountRange != null ||
                    variant.IsBattleMonsterCountIndeterminate ||
@@ -4158,6 +4162,7 @@ namespace MMMapEditor
             bool hasSelfContainedOutcome =
                 (variant.Texts != null && variant.Texts.Count > 0) ||
                 variant.HasTeleportTarget ||
+                variant.OverlayTransition != null ||
                 (variant.BattleMonsters != null && variant.BattleMonsters.Count > 0) ||
                 (variant.PartyEffects != null && variant.PartyEffects.Count > 0);
 
@@ -4363,6 +4368,7 @@ namespace MMMapEditor
                 (variant.DynamicRandomBoundDependencies == null || variant.DynamicRandomBoundDependencies.Count == 0) &&
                 (variant.PartyEffects == null || variant.PartyEffects.Count == 0) &&
                 !variant.HasTeleportTarget &&
+                variant.OverlayTransition == null &&
                 !variant.HasAnyTableLoad &&
                 variant.BattleMonsterStrengthAdjustment == 0 &&
                 !variant.CallsRandomEncounter;
@@ -4397,6 +4403,7 @@ namespace MMMapEditor
                    (variant.PersistentCounterProgressions == null || variant.PersistentCounterProgressions.Count == 0) &&
                    (variant.PartyEffects == null || variant.PartyEffects.Count == 0) &&
                    !variant.HasTeleportTarget &&
+                   variant.OverlayTransition == null &&
                    !variant.HasAnyTableLoad;
         }
 
@@ -5417,6 +5424,7 @@ namespace MMMapEditor
                 variant.RandomEncounterRubicon.HasValue ||
                 variant.BattleMonsterStrengthAdjustment != 0 ||
                 variant.HasTeleportTarget ||
+                variant.OverlayTransition != null ||
                 (variant.PersistentCounterProgressions?.Count ?? 0) > 0 ||
                 (variant.DynamicRandomBoundDependencies?.Count ?? 0) > 0 ||
                 variant.HasAnyTableLoad ||
@@ -9954,7 +9962,8 @@ namespace MMMapEditor
             }
 
             if (lines.Any(line => line.IndexOf("WHIRLWIND", StringComparison.OrdinalIgnoreCase) >= 0) ||
-                item?.Variant?.HasTeleportTarget == true)
+                item?.Variant?.HasTeleportTarget == true ||
+                item?.Variant?.OverlayTransition != null)
             {
                 return ResourceRandomOutcomeKind.Whirlwind;
             }
@@ -15885,7 +15894,8 @@ namespace MMMapEditor
             if (variant == null)
                 return int.MaxValue;
 
-            if (variant.HasTeleportTarget && (variant.Texts == null || variant.Texts.Count == 0))
+            if ((variant.HasTeleportTarget || variant.OverlayTransition != null) &&
+                (variant.Texts == null || variant.Texts.Count == 0))
                 return 0;
 
             if (IsPureEmptyVariant(variant))
@@ -15945,6 +15955,7 @@ namespace MMMapEditor
                 variant.RandomEncounterRubicon.HasValue ||
                 variant.BattleMonsterStrengthAdjustment != 0 ||
                 variant.HasTeleportTarget ||
+                variant.OverlayTransition != null ||
                 variant.BattleMonsterCount.HasValue ||
                 variant.BattleMonsterCountRange != null ||
                 variant.IsBattleMonsterCountIndeterminate ||
@@ -19808,6 +19819,7 @@ namespace MMMapEditor
         private static bool HasGameplayInfo(OvrObject obj)
         {
             if (obj.HasTeleportTarget ||
+                obj.OverlayTransition != null ||
                 obj.CallsRandomEncounter ||
                 obj.RandomEncounterMonsterPowerCap.HasValue ||
                 obj.RandomEncounterMonsterLevelCap.HasValue ||
@@ -19835,6 +19847,7 @@ namespace MMMapEditor
         {
             return variant != null &&
                 (variant.HasTeleportTarget ||
+                 variant.OverlayTransition != null ||
                  variant.CallsRandomEncounter ||
                  variant.RandomEncounterMonsterPowerCap.HasValue ||
                  variant.RandomEncounterMonsterLevelCap.HasValue ||
