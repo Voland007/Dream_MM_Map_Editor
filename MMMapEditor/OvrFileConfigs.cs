@@ -121,6 +121,7 @@ namespace MMMapEditor
 
             return new OvrFileConfig
             {
+                GameExecutablePath = gameExecutablePath,
                 First16Lines = FormatMapLayerLines(mazeData, blockOffset),
                 Second16Lines = FormatMapLayerLines(mazeData, blockOffset + StaticMapLayerByteCount)
             }.WithStartAddress(resolvedLayout.StartAddress, resolvedLayout.HasObjectTable);
@@ -432,6 +433,7 @@ namespace MMMapEditor
 
         public bool HasResolvedStartAddress => _startAddress.HasValue;
         public bool HasObjectTable { get; private set; } = true;
+        public string GameExecutablePath { get; set; }
         public string[] First16Lines { get; set; } = Array.Empty<string>();
         public string[] Second16Lines { get; set; } = Array.Empty<string>();
         public int TextBaseAddr => OverlayTextStartAddress - StartAddress;
@@ -482,6 +484,7 @@ namespace MMMapEditor
             {
                 StartAddress = startAddress,
                 HasObjectTable = hasObjectTable,
+                GameExecutablePath = GameExecutablePath,
                 First16Lines = First16Lines,
                 Second16Lines = Second16Lines
             };

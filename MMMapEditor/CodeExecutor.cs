@@ -159,6 +159,14 @@ namespace MMMapEditor
         private const uint OVERLAY_TRANSITION_ROUTINE_ADDRESS = 0x5C1C;
         private const ushort ACTIVE_TEXT_POINTER_ADDRESS = 0x3BD4;
         private const ushort TEXT_CURSOR_COLUMN_ADDRESS = 0x3BC4;
+        private const int SORPIGAL_START_ADDRESS = 0x0386;
+        private const uint SORPIGAL_STATUE_RESIDENT_HANDLER_ADDRESS = 0x32EB;
+        private const ushort SORPIGAL_STATUE_INDEX_ADDRESS = 0xCD52;
+        private const ushort RESIDENT_STATUE_PREFIX_TEXT_ADDRESS = 0x1296;
+        private const ushort RESIDENT_STATUE_NAME_TABLE_ADDRESS = 0x12C1;
+        private const ushort RESIDENT_STATUE_PLAQUE_INTRO_TEXT_ADDRESS = 0x12AF;
+        private const ushort RESIDENT_STATUE_PLAQUE_TABLE_ADDRESS = 0x0E4F;
+        private const int RESIDENT_STATUE_COUNT = 8;
         private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
         private const int MAX_RANDOM_INDEX_SPLIT_OPTIONS = 16;
 
@@ -5527,7 +5535,7 @@ namespace MMMapEditor
             }
 
             if (insn.Bytes.Length >= 1 && insn.Bytes[0] == 0xE9)
-                return HandleJmpOpcodeE9(insn, br, fileLength, debugMode, result, currentAddress, visitedInThisPath, registerTracker);
+                return HandleJmpOpcodeE9(insn, br, fileLength, debugMode, result, currentAddress, visitedInThisPath, registerTracker, callDepth);
 
             if (insn.Bytes.Length >= 2 && insn.Bytes[0] == 0xEB)
                 return HandleShortJmp(insn, br, fileLength, debugMode, result, currentAddress, visitedInThisPath, registerTracker);
@@ -5535,7 +5543,7 @@ namespace MMMapEditor
             if (mnemonicUpper == "JMP" || mnemonicUpper == "JMPF" || mnemonicUpper == "JMPL" ||
                 mnemonicUpper == "JMPE" || mnemonicUpper == "JMPI")
             {
-                return HandleJmp(insn, br, fileLength, debugMode, result, currentAddress, visitedInThisPath, registerTracker);
+                return HandleJmp(insn, br, fileLength, debugMode, result, currentAddress, visitedInThisPath, registerTracker, callDepth);
             }
 
             if (mnemonicUpper.StartsWith("CALL"))
@@ -5649,6 +5657,112 @@ namespace MMMapEditor
                 AnalysisDebug.WriteLine($"      {jumpKind} за пределы оверлея (0x{jumpTarget:X4}) - внешний обработчик игры");
         }
 
+        private bool TryAddSorpigalStatueResidentText(
+            BinaryReader br,
+            PathAnalysisResult result,
+            RegisterTracker registerTracker,
+            uint jumpTarget,
+            uint instructionAddress,
+            int callDepth,
+            bool debugMode)
+        {
+            if (result == null ||
+                _config == null ||
+                _config.StartAddress != SORPIGAL_START_ADDRESS ||
+                jumpTarget != SORPIGAL_STATUE_RESIDENT_HANDLER_ADDRESS)
+            {
+                return false;
+            }
+
+            if (!TryResolveSorpigalStatueIndex(registerTracker, out byte statueIndex) ||
+                statueIndex >= RESIDENT_STATUE_COUNT)
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        Sorpigal statue resident handler: индекс статуи не определён");
+
+                return false;
+            }
+
+            ushort namePointerAddress = unchecked((ushort)(RESIDENT_STATUE_NAME_TABLE_ADDRESS + statueIndex * 2));
+            ushort plaquePointerAddress = unchecked((ushort)(RESIDENT_STATUE_PLAQUE_TABLE_ADDRESS + statueIndex * 2));
+
+            if (!OvrOverlayAddressReader.TryReadExecutableWord(_config, namePointerAddress, out ushort nameTextAddress) ||
+                !OvrOverlayAddressReader.TryReadExecutableWord(_config, plaquePointerAddress, out ushort plaqueTextAddress) ||
+                !OvrOverlayAddressReader.TryExtractExecutableText(_config, RESIDENT_STATUE_PREFIX_TEXT_ADDRESS, out string prefixText) ||
+                !OvrOverlayAddressReader.TryExtractExecutableText(_config, nameTextAddress, out string nameText) ||
+                !OvrOverlayAddressReader.TryExtractExecutableText(_config, RESIDENT_STATUE_PLAQUE_INTRO_TEXT_ADDRESS, out string plaqueIntroText) ||
+                !OvrOverlayAddressReader.TryExtractExecutableText(_config, plaqueTextAddress, out string plaqueText))
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        Sorpigal statue resident handler: не удалось прочитать текст из MM.EXE");
+
+                return false;
+            }
+
+            string combinedText =
+                prefixText +
+                nameText +
+                "\\r" +
+                plaqueIntroText +
+                "\\r" +
+                plaqueText;
+            string textEntry = $"Text at 0x{RESIDENT_STATUE_PREFIX_TEXT_ADDRESS:X4} (MM.EXE): {combinedText}";
+
+            if (HasOverlayTextEntry(result, textEntry))
+                return false;
+
+            bool isContextual = callDepth > 0;
+            AddLegacyText(result, textEntry, isContextual);
+
+            int nextOrder = result.OrderedTexts.Count == 0
+                ? 0
+                : result.OrderedTexts.Max(entry => entry?.Order ?? 0) + 1;
+
+            result.OrderedTexts.Add(new TextEntry
+            {
+                Text = textEntry,
+                IsContextual = isContextual,
+                Address = instructionAddress,
+                Order = nextOrder,
+                IsInferred = false,
+                DisplayRoutine = OverlayTextDisplayRoutineKind.Standard,
+                DisplayInstructionAddress = instructionAddress
+            });
+            result.HasSignificantCode = true;
+
+            if (result.FirstLocalTextAddress == uint.MaxValue && !isContextual)
+                result.FirstLocalTextAddress = instructionAddress;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Sorpigal statue resident handler: индекс {statueIndex}, " +
+                    $"name=0x{nameTextAddress:X4}, plaque=0x{plaqueTextAddress:X4}");
+            }
+
+            return true;
+        }
+
+        private bool TryResolveSorpigalStatueIndex(RegisterTracker registerTracker, out byte statueIndex)
+        {
+            statueIndex = 0;
+
+            if (registerTracker != null &&
+                registerTracker.TryGetRegisterValue("BP", out ushort bpValue))
+            {
+                statueIndex = (byte)(bpValue & 0xFF);
+                return true;
+            }
+
+            if (_emulatedMemory8.TryGetValue(SORPIGAL_STATUE_INDEX_ADDRESS, out byte emulatedValue))
+            {
+                statueIndex = emulatedValue;
+                return true;
+            }
+
+            return false;
+        }
+
         private static void TrackOverlayTransition(
             PathAnalysisResult result,
             RegisterTracker registerTracker,
@@ -5698,7 +5812,7 @@ namespace MMMapEditor
         /// </summary>
         private ControlFlowResult HandleJmp(X86Instruction insn, BinaryReader br, long fileLength,
             bool debugMode, PathAnalysisResult result, uint currentAddress, HashSet<uint> visitedInThisPath,
-            RegisterTracker registerTracker)
+            RegisterTracker registerTracker, int callDepth)
         {
             uint jumpTarget = GetInstructionTargetAddress(insn, fileLength);
 
@@ -5711,6 +5825,7 @@ namespace MMMapEditor
 
             if (jumpTarget >= fileLength)
             {
+                TryAddSorpigalStatueResidentText(br, result, registerTracker, jumpTarget, currentAddress, callDepth, debugMode);
                 MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP");
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
@@ -5745,7 +5860,7 @@ namespace MMMapEditor
         /// </summary>
         private ControlFlowResult HandleJmpOpcodeE9(X86Instruction insn, BinaryReader br, long fileLength,
             bool debugMode, PathAnalysisResult result, uint currentAddress, HashSet<uint> visitedInThisPath,
-            RegisterTracker registerTracker)
+            RegisterTracker registerTracker, int callDepth)
         {
             if (insn.Bytes.Length >= 3)
             {
@@ -5764,6 +5879,7 @@ namespace MMMapEditor
 
                 if (jumpTarget >= fileLength)
                 {
+                    TryAddSorpigalStatueResidentText(br, result, registerTracker, jumpTarget, currentAddress, callDepth, debugMode);
                     MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP (по опкоду 0xE9)");
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
