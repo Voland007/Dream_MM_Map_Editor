@@ -413,6 +413,8 @@ namespace MMMapEditor
     {
         public const int OverlayTextStartAddress = 0xC972;
         public const int PatchBase = 0x0B7F;
+        public const byte OutdoorOverlayIdFlag = 0x80;
+        internal const int SideLayoutRecordOffsetFromStartAddress = 0x32;
 
         private int? _startAddress;
 
@@ -440,10 +442,34 @@ namespace MMMapEditor
         public int RandomEncounterMonsterLevelCap => StartAddress - 3;
         public int DarkeningLevel => StartAddress - 4;
         public int RandomEncounterMonsterBatchCountCap => StartAddress - 16;
+        public int OverlayId => StartAddress - SideLayoutRecordOffsetFromStartAddress;
         public int SurfaceX => StartAddress - 8;
         public int SurfaceY => StartAddress - 7;
         public int SectorMapLetter => StartAddress - 15;
         public int SectorMapDigit => StartAddress - 14;
+
+        public bool TryReadOverlayId(byte[] fileData, out byte overlayId)
+        {
+            overlayId = 0;
+
+            int address = OverlayId;
+            if (fileData == null || address < 0 || address >= fileData.Length)
+                return false;
+
+            overlayId = fileData[address];
+            return true;
+        }
+
+        public bool TryIsOutdoorOverlay(byte[] fileData, out bool isOutdoorOverlay)
+        {
+            isOutdoorOverlay = false;
+
+            if (!TryReadOverlayId(fileData, out byte overlayId))
+                return false;
+
+            isOutdoorOverlay = (overlayId & OutdoorOverlayIdFlag) != 0;
+            return true;
+        }
 
         public OvrFileConfig WithStartAddress(int startAddress)
         {

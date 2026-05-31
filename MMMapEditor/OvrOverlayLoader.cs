@@ -45,6 +45,7 @@ namespace MMMapEditor
         public byte RandomEncounterChanceRaw { get; set; } // исходное шестнадцатеричное число из оверлейного файла
         public double RandomEncounterChancePercent { get; set; } // рассчитанный % на основании RandomEncounterChanceRaw
 
+        public bool IsOutdoorOverlay { get; set; }
         public Tuple<byte, byte> SurfaceCoords { get; set; }
         public string SectorMap { get; set; }
     }
@@ -67,6 +68,8 @@ namespace MMMapEditor
                 throw new InvalidOperationException(configError ?? $"Конфигурация для файла {fileNameOnly} не найдена.");
 
             byte[] fileData = File.ReadAllBytes(filename);
+            bool isOutdoorOverlay = config.TryIsOutdoorOverlay(fileData, out bool detectedOutdoorOverlay) &&
+                detectedOutdoorOverlay;
 
             var buildResult = OvrNotesBuilder.BuildNotes(
                 filename,
@@ -87,7 +90,8 @@ namespace MMMapEditor
                 MessageStates = buildResult.MessageStates,
                 TotalObjects = buildResult.TotalObjects,
                 TableObjects = buildResult.TableObjects,
-                SpecObjects = buildResult.SpecObjects
+                SpecObjects = buildResult.SpecObjects,
+                IsOutdoorOverlay = isOutdoorOverlay
             };
 
             result.MostDangerousCell = ReadCell(fileData, config.MostDangerousCell);
@@ -107,7 +111,9 @@ namespace MMMapEditor
             result.IsDarknessEnabled = OvrMapFlags.IsDarknessEnabled(result.MapFlagsRaw);
             result.IsTeleportSpellAllowed = OvrMapFlags.IsTeleportSpellAllowed(result.MapFlagsRaw);
             result.RandomEncounterMonsterBatchCountCap = ReadByte(fileData, config.RandomEncounterMonsterBatchCountCap);
-            result.SurfaceCoords = ReadSurface(fileData, config.SurfaceX, config.SurfaceY);
+            result.SurfaceCoords = isOutdoorOverlay
+                ? null
+                : ReadSurface(fileData, config.SurfaceX, config.SurfaceY);
             result.SectorMap = ReadSectorMap(fileData, config.SectorMapLetter, config.SectorMapDigit);
 
             return result;

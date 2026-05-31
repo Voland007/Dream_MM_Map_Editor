@@ -184,7 +184,6 @@ namespace MMMapEditor
                 }
             };
 
-        private const int SideLayoutRecordOffsetFromStartAddress = 0x32;
         private const int SideLayoutRecordLength = 0x14;
         private const int SideLayoutTrailingBytesOffset = 0x08;
         private const int SideLayoutTrailingBytesLength = SideLayoutRecordLength - SideLayoutTrailingBytesOffset;
@@ -399,7 +398,7 @@ namespace MMMapEditor
             if (fileData == null)
                 throw new ArgumentNullException(nameof(fileData));
 
-            int offset = config.StartAddress - SideLayoutRecordOffsetFromStartAddress;
+            int offset = config.StartAddress - OvrFileConfig.SideLayoutRecordOffsetFromStartAddress;
             if (offset < 0 || offset + SideLayoutRecordLength > fileData.Length)
             {
                 throw new InvalidOperationException(

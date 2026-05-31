@@ -1244,11 +1244,18 @@ namespace MMMapEditor
                 ? $"X = {loadResult.SurfaceCoords.Item1} Y = {loadResult.SurfaceCoords.Item2}"
                 : "X = 0 Y = 0";
 
+            var metadataLines = new List<string>
+            {
+                $"Название файла: {Path.GetFileName(filename)}",
+                $"MAP SECTOR: {loadResult.SectorMap}"
+            };
+
+            if (!loadResult.IsOutdoorOverlay)
+                metadataLines.Add($"SURFACE: {surfaceText}");
+
             // Формируем сообщение для отображения
             string message =
-                $"Название файла: {Path.GetFileName(filename)}\n" +
-                $"MAP SECTOR: {loadResult.SectorMap}\n" +
-                $"SURFACE: {surfaceText}\n\n" +
+                string.Join("\n", metadataLines) + "\n\n" +
                 $"Самая опасная клетка: {loadResult.MostDangerousCell}\n" +
                 $"Самая безопасная клетка: {loadResult.MostPeacefulCell}\n\n" +
                 $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
@@ -1361,6 +1368,13 @@ namespace MMMapEditor
             int surfaceYAddress = config.SurfaceY;
 
             byte[] fileData = File.ReadAllBytes(filename);
+
+            if (config.TryIsOutdoorOverlay(fileData, out bool isOutdoorOverlay) && isOutdoorOverlay)
+            {
+                surface = "";
+                Console.WriteLine($"Оверлей {fileNameOnly} является наружным и не содержит SURFACE.");
+                return null;
+            }
 
             if (surfaceXAddress >= fileData.Length || surfaceYAddress >= fileData.Length)
             {

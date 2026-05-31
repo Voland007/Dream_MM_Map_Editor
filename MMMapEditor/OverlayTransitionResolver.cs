@@ -22,9 +22,16 @@ namespace MMMapEditor
 {
     internal static class OverlayTransitionResolver
     {
+        private const string GameExecutableFileName = "MM.EXE";
+        private const int ExecutableOverlayEntryCount = 55;
+        private const int ExecutableOverlayCoordinateTableOffset = 0x10B2B;
+        private const int ExecutableOverlayPointerTableOffset = 0x10B99;
+        private const int ExecutableOverlayNameBaseOffset = 0x109B0;
+
         private sealed class LoadedOverlayMetadata
         {
             public string MapSector { get; set; }
+            public bool IsOutdoorOverlay { get; set; }
             public byte? SurfaceX { get; set; }
             public byte? SurfaceY { get; set; }
         }
@@ -50,59 +57,25 @@ namespace MMMapEditor
                 = new Dictionary<string, List<ReverseOutdoorTarget>>(StringComparer.Ordinal);
         }
 
-        private static readonly Dictionary<string, string> KnownInteriorTargets =
-            new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                { BuildKey(4, 6, 1), "SORPIGAL.OVR" },
-                { BuildKey(17, 10, 1), "CAVE1.OVR" },
-                { BuildKey(1, 0, 1), "CAVE2.OVR" },
-                { BuildKey(1, 12, 1), "CAVE3.OVR" },
-                { BuildKey(2, 2, 1), "CAVE4.OVR" },
-                { BuildKey(5, 0, 1), "CAVE5.OVR" },
-                { BuildKey(27, 5, 1), "CAVE6.OVR" },
-                { BuildKey(18, 2, 1), "CAVE7.OVR" },
-                { BuildKey(1, 6, 1), "CAVE8.OVR" },
-                { BuildKey(0, 10, 1), "CAVE9.OVR" },
-                { BuildKey(3, 12, 1), "PORTSMIT.OVR" },
-                { BuildKey(3, 2, 1), "ALGARY.OVR" },
-                { BuildKey(2, 8, 1), "DUSK.OVR" },
-                { BuildKey(26, 11, 1), "ERLIQUIN.OVR" },
-                { BuildKey(8, 5, 3), "BLACKRS.OVR" },
-                { BuildKey(8, 15, 3), "BLACKRN.OVR" },
-                { BuildKey(6, 7, 3), "DOOM.OVR" },
-                { BuildKey(1, 15, 3), "PP1.OVR" },
-                { BuildKey(1, 7, 3), "PP2.OVR" },
-                { BuildKey(0, 14, 3), "PP3.OVR" },
-                { BuildKey(1, 2, 3), "PP4.OVR" },
-                { BuildKey(3, 15, 3), "QVL1.OVR" },
-                { BuildKey(3, 7, 3), "QVL2.OVR" },
-                { BuildKey(2, 15, 3), "RWL1.OVR" },
-                { BuildKey(2, 7, 3), "RWL2.OVR" },
-                { BuildKey(4, 15, 3), "ENF1.OVR" },
-                { BuildKey(4, 7, 3), "ENF2.OVR" },
-                { BuildKey(18, 4, 3), "DEMON.OVR" },
-                { BuildKey(26, 11, 3), "DEMON.OVR" },
-                { BuildKey(7, 11, 3), "ALAMAR.OVR" },
-                { BuildKey(17, 10, 3), "WHITEW.OVR" },
-                { BuildKey(7, 1, 3), "DRAGAD.OVR" },
-                { BuildKey(5, 15, 3), "UDRAG1.OVR" },
-                { BuildKey(0, 10, 3), "UDRAG2.OVR" },
-                { BuildKey(5, 7, 3), "UDRAG3.OVR" }
-            };
+        private sealed class ExecutableOverlayTable
+        {
+            public Dictionary<string, string> Entries { get; }
+                = new Dictionary<string, string>(StringComparer.Ordinal);
+        }
 
         private static readonly object ReverseOutdoorTargetIndexLock = new object();
         private static readonly Dictionary<string, ReverseOutdoorTargetIndex> ReverseOutdoorTargetIndexes =
             new Dictionary<string, ReverseOutdoorTargetIndex>(StringComparer.OrdinalIgnoreCase);
         private static readonly HashSet<string> ReverseOutdoorTargetIndexesInProgress =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly object ExecutableOverlayTableLock = new object();
+        private static readonly Dictionary<string, ExecutableOverlayTable> ExecutableOverlayTables =
+            new Dictionary<string, ExecutableOverlayTable>(StringComparer.OrdinalIgnoreCase);
 
         public static string ResolveLoadedOverlayName(byte globalX, byte globalY, ushort mapSelector)
         {
             if (mapSelector == 2)
                 return ResolveOutdoorSectorOverlayName(globalX, globalY);
-
-            if (KnownInteriorTargets.TryGetValue(BuildKey(globalX, globalY, mapSelector), out string knownName))
-                return knownName;
 
             return null;
         }
@@ -123,6 +96,7 @@ namespace MMMapEditor
             foreach (var context in EnumerateTransitionContexts(objects))
             {
                 var transition = context.Transition;
+                ApplyExecutableOverlayTableResolution(sourceDirectory, context);
                 ApplySourceOutdoorSectorCorrection(sourceDirectory, sourceOverlayName, sourceMetadata, context);
                 TryApplyReverseOutdoorTargetCorrection(sourceDirectory, sourceOverlayName, context);
 
@@ -173,6 +147,187 @@ namespace MMMapEditor
                     }
                 }
             }
+        }
+
+        private static void ApplyExecutableOverlayTableResolution(
+            string sourceDirectory,
+            OverlayTransitionContext context)
+        {
+            if (string.IsNullOrWhiteSpace(sourceDirectory) ||
+                context?.Transition == null)
+            {
+                return;
+            }
+
+            string overlayName = ResolveLoadedOverlayNameFromExecutable(
+                sourceDirectory,
+                context.Transition.GlobalX,
+                context.Transition.GlobalY,
+                context.Transition.MapSelector);
+
+            if (string.IsNullOrWhiteSpace(overlayName) ||
+                string.Equals(context.Transition.LoadedOverlayName, overlayName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            context.Transition.LoadedOverlayName = overlayName;
+            context.Transition.LoadedMapSector = null;
+            context.Transition.LoadedSurfaceX = null;
+            context.Transition.LoadedSurfaceY = null;
+        }
+
+        private static string ResolveLoadedOverlayNameFromExecutable(
+            string sourceDirectory,
+            byte globalX,
+            byte globalY,
+            ushort mapSelector)
+        {
+            var table = GetExecutableOverlayTable(sourceDirectory);
+            if (table == null)
+                return null;
+
+            return table.Entries.TryGetValue(BuildKey(globalX, globalY, mapSelector), out string overlayName)
+                ? overlayName
+                : null;
+        }
+
+        private static ExecutableOverlayTable GetExecutableOverlayTable(string sourceDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(sourceDirectory))
+                return null;
+
+            string exePath = Path.Combine(sourceDirectory, GameExecutableFileName);
+            if (!File.Exists(exePath))
+                return null;
+
+            string cacheKey;
+            try
+            {
+                cacheKey = Path.GetFullPath(exePath);
+            }
+            catch
+            {
+                cacheKey = exePath;
+            }
+
+            lock (ExecutableOverlayTableLock)
+            {
+                if (ExecutableOverlayTables.TryGetValue(cacheKey, out var cachedTable))
+                    return cachedTable;
+            }
+
+            ExecutableOverlayTable table = TryReadExecutableOverlayTable(exePath);
+
+            lock (ExecutableOverlayTableLock)
+            {
+                ExecutableOverlayTables[cacheKey] = table;
+                return table;
+            }
+        }
+
+        private static ExecutableOverlayTable TryReadExecutableOverlayTable(string exePath)
+        {
+            if (string.IsNullOrWhiteSpace(exePath))
+                return null;
+
+            byte[] fileData;
+            try
+            {
+                fileData = File.ReadAllBytes(exePath);
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (!CanReadExecutableOverlayTables(fileData))
+                return null;
+
+            var table = new ExecutableOverlayTable();
+            AddExecutableOverlayTableRange(fileData, table, 1, 0, 14);
+            AddExecutableOverlayTableRange(fileData, table, 2, 14, 20);
+            AddExecutableOverlayTableRange(fileData, table, 3, 34, 21);
+            return table.Entries.Count == 0 ? null : table;
+        }
+
+        private static bool CanReadExecutableOverlayTables(byte[] fileData)
+        {
+            if (fileData == null)
+                return false;
+
+            int coordinateTableEnd = ExecutableOverlayCoordinateTableOffset + ExecutableOverlayEntryCount * 2;
+            int pointerTableEnd = ExecutableOverlayPointerTableOffset + ExecutableOverlayEntryCount * 2;
+            return coordinateTableEnd <= fileData.Length &&
+                   pointerTableEnd <= fileData.Length &&
+                   ExecutableOverlayNameBaseOffset >= 0 &&
+                   ExecutableOverlayNameBaseOffset < fileData.Length;
+        }
+
+        private static void AddExecutableOverlayTableRange(
+            byte[] fileData,
+            ExecutableOverlayTable table,
+            ushort mapSelector,
+            int startIndex,
+            int count)
+        {
+            if (fileData == null || table == null || startIndex < 0 || count <= 0)
+                return;
+
+            int endIndex = startIndex + count;
+            if (endIndex > ExecutableOverlayEntryCount)
+                return;
+
+            for (int index = startIndex; index < endIndex; index++)
+            {
+                int coordinateOffset = ExecutableOverlayCoordinateTableOffset + index * 2;
+                int pointerOffset = ExecutableOverlayPointerTableOffset + index * 2;
+
+                byte globalX = fileData[coordinateOffset];
+                byte globalY = fileData[coordinateOffset + 1];
+                ushort namePointer = BitConverter.ToUInt16(fileData, pointerOffset);
+                string overlayName = ReadExecutableOverlayName(fileData, namePointer);
+
+                if (string.IsNullOrWhiteSpace(overlayName))
+                    continue;
+
+                table.Entries[BuildKey(globalX, globalY, mapSelector)] = overlayName;
+            }
+        }
+
+        private static string ReadExecutableOverlayName(byte[] fileData, ushort namePointer)
+        {
+            if (fileData == null)
+                return null;
+
+            int offset = ExecutableOverlayNameBaseOffset + namePointer;
+            if (offset < 0 || offset >= fileData.Length)
+                return null;
+
+            int end = offset;
+            while (end < fileData.Length && fileData[end] != 0)
+                end++;
+
+            if (end == offset || end >= fileData.Length)
+                return null;
+
+            var chars = new char[end - offset];
+            for (int i = 0; i < chars.Length; i++)
+            {
+                byte value = fileData[offset + i];
+                if (!IsExecutableOverlayNameByte(value))
+                    return null;
+
+                chars[i] = (char)value;
+            }
+
+            return new string(chars).ToUpperInvariant() + ".OVR";
+        }
+
+        private static bool IsExecutableOverlayNameByte(byte value)
+        {
+            return (value >= (byte)'a' && value <= (byte)'z') ||
+                   (value >= (byte)'0' && value <= (byte)'9');
         }
 
         private static void ApplySourceOutdoorSectorCorrection(
@@ -508,11 +663,15 @@ namespace MMMapEditor
                 return null;
             }
 
+            bool isOutdoorOverlay = config.TryIsOutdoorOverlay(fileData, out bool detectedOutdoorOverlay) &&
+                detectedOutdoorOverlay;
+
             return new LoadedOverlayMetadata
             {
                 MapSector = ReadSectorMap(fileData, config.SectorMapLetter, config.SectorMapDigit),
-                SurfaceX = ReadMetadataByte(fileData, config.SurfaceX),
-                SurfaceY = ReadMetadataByte(fileData, config.SurfaceY)
+                IsOutdoorOverlay = isOutdoorOverlay,
+                SurfaceX = isOutdoorOverlay ? null : ReadMetadataByte(fileData, config.SurfaceX),
+                SurfaceY = isOutdoorOverlay ? null : ReadMetadataByte(fileData, config.SurfaceY)
             };
         }
 
