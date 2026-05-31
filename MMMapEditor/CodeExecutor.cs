@@ -167,6 +167,25 @@ namespace MMMapEditor
         private const ushort RESIDENT_STATUE_PLAQUE_INTRO_TEXT_ADDRESS = 0x12AF;
         private const ushort RESIDENT_STATUE_PLAQUE_TABLE_ADDRESS = 0x0E4F;
         private const int RESIDENT_STATUE_COUNT = 8;
+        private const int PORTSMIT_START_ADDRESS = 0x0412;
+        private const int ALGARY_START_ADDRESS = 0x041D;
+        private const int DUSK_START_ADDRESS = 0x03D8;
+        private const int ERLIQUIN_START_ADDRESS = 0x0489;
+        private const uint RESIDENT_EQUIPMENT_SHOP_HANDLER_ADDRESS = 0x2D15;
+        private const uint RESIDENT_FOOD_SHOP_HANDLER_ADDRESS = 0x2972;
+        private const ushort RESIDENT_SHOP_INVENTORY_POINTER_TABLE_ADDRESS = 0x1538;
+        private const ushort RESIDENT_FOOD_PRICE_TABLE_ADDRESS = 0x13D6;
+        private const int RESIDENT_TOWN_SHOP_COUNT = 5;
+        private const int RESIDENT_SHOP_CATEGORY_COUNT = 3;
+        private const int RESIDENT_SHOP_CATEGORY_ITEM_COUNT = 6;
+        private const int ITEM_PRICE_HIGH_OFFSET = 20;
+        private const int ITEM_PRICE_LOW_OFFSET = 21;
+        private static readonly string[] ResidentShopCategoryHeaders =
+        {
+            "WEAPONS",
+            "ARMOR",
+            "MISC"
+        };
         private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
         private const int MAX_RANDOM_INDEX_SPLIT_OPTIONS = 16;
 
@@ -5743,6 +5762,204 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryAddTownShopResidentText(
+            PathAnalysisResult result,
+            uint jumpTarget,
+            uint instructionAddress,
+            int callDepth,
+            bool debugMode)
+        {
+            if (result == null ||
+                _config == null ||
+                (jumpTarget != RESIDENT_EQUIPMENT_SHOP_HANDLER_ADDRESS &&
+                 jumpTarget != RESIDENT_FOOD_SHOP_HANDLER_ADDRESS))
+            {
+                return false;
+            }
+
+            if (!TryResolveResidentTownIndex(_config.StartAddress, out int townIndex, out string townName))
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        Resident shop handler: город для текущего overlay не определён");
+
+                return false;
+            }
+
+            ushort sourceAddress;
+            string shopText;
+            if (jumpTarget == RESIDENT_EQUIPMENT_SHOP_HANDLER_ADDRESS)
+            {
+                sourceAddress = RESIDENT_SHOP_INVENTORY_POINTER_TABLE_ADDRESS;
+                if (!TryBuildEquipmentShopInventoryText(townIndex, out shopText))
+                {
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("        Resident equipment shop handler: не удалось прочитать ассортимент из MM.EXE");
+
+                    return false;
+                }
+            }
+            else
+            {
+                sourceAddress = RESIDENT_FOOD_PRICE_TABLE_ADDRESS;
+                if (!TryBuildFoodShopInventoryText(townIndex, out shopText))
+                {
+                    if (debugMode)
+                        AnalysisDebug.WriteLine("        Resident food shop handler: не удалось прочитать цену еды из MM.EXE");
+
+                    return false;
+                }
+            }
+
+            string textEntry = $"Text at 0x{sourceAddress:X4} (MM.EXE): {shopText}";
+
+            if (HasOverlayTextEntry(result, textEntry))
+                return false;
+
+            bool isContextual = callDepth > 0;
+            AddLegacyText(result, textEntry, isContextual);
+
+            int nextOrder = result.OrderedTexts.Count == 0
+                ? 0
+                : result.OrderedTexts.Max(entry => entry?.Order ?? 0) + 1;
+
+            result.OrderedTexts.Add(new TextEntry
+            {
+                Text = textEntry,
+                IsContextual = isContextual,
+                Address = instructionAddress,
+                Order = nextOrder,
+                IsInferred = false,
+                DisplayRoutine = OverlayTextDisplayRoutineKind.Standard,
+                DisplayInstructionAddress = instructionAddress
+            });
+            result.HasSignificantCode = true;
+
+            if (result.FirstLocalTextAddress == uint.MaxValue && !isContextual)
+                result.FirstLocalTextAddress = instructionAddress;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Resident shop handler: {townName}, jump=0x{jumpTarget:X4}, " +
+                    $"source=0x{sourceAddress:X4}");
+            }
+
+            return true;
+        }
+
+        private static bool TryResolveResidentTownIndex(int startAddress, out int townIndex, out string townName)
+        {
+            switch (startAddress)
+            {
+                case SORPIGAL_START_ADDRESS:
+                    townIndex = 0;
+                    townName = "SORPIGAL";
+                    return true;
+                case PORTSMIT_START_ADDRESS:
+                    townIndex = 1;
+                    townName = "PORTSMIT";
+                    return true;
+                case ALGARY_START_ADDRESS:
+                    townIndex = 2;
+                    townName = "ALGARY";
+                    return true;
+                case DUSK_START_ADDRESS:
+                    townIndex = 3;
+                    townName = "DUSK";
+                    return true;
+                case ERLIQUIN_START_ADDRESS:
+                    townIndex = 4;
+                    townName = "ERLIQUIN";
+                    return true;
+                default:
+                    townIndex = -1;
+                    townName = string.Empty;
+                    return false;
+            }
+        }
+
+        private bool TryBuildEquipmentShopInventoryText(int townIndex, out string shopText)
+        {
+            shopText = string.Empty;
+
+            if (townIndex < 0 || townIndex >= RESIDENT_TOWN_SHOP_COUNT)
+                return false;
+
+            var sb = new StringBuilder();
+            sb.Append("SHOP INVENTORY:");
+
+            for (int categoryIndex = 0; categoryIndex < RESIDENT_SHOP_CATEGORY_COUNT; categoryIndex++)
+            {
+                int shopTableIndex = categoryIndex * RESIDENT_TOWN_SHOP_COUNT + townIndex;
+                ushort pointerAddress = unchecked((ushort)(RESIDENT_SHOP_INVENTORY_POINTER_TABLE_ADDRESS + shopTableIndex * 2));
+
+                if (!OvrOverlayAddressReader.TryReadExecutableWord(_config, pointerAddress, out ushort itemListAddress))
+                    return false;
+
+                sb.Append("\\r");
+                sb.Append(ResidentShopCategoryHeaders[categoryIndex]);
+                sb.Append(":");
+
+                bool addedItem = false;
+                for (int itemOffset = 0; itemOffset < RESIDENT_SHOP_CATEGORY_ITEM_COUNT; itemOffset++)
+                {
+                    ushort itemCodeAddress = unchecked((ushort)(itemListAddress + itemOffset));
+                    if (!OvrOverlayAddressReader.TryReadExecutableByte(_config, itemCodeAddress, out byte itemCode) ||
+                        itemCode == 0)
+                    {
+                        continue;
+                    }
+
+                    string itemName = ItemDatabase.GetItemName(itemCode - 1);
+                    int price = GetResidentShopItemPrice(itemCode);
+                    char itemLetter = (char)('A' + itemOffset);
+
+                    sb.Append("\\r  ");
+                    sb.Append(itemLetter);
+                    sb.Append(") ");
+                    sb.Append(itemName);
+                    sb.Append(" - ");
+                    sb.Append(price);
+                    sb.Append(" GOLD");
+                    addedItem = true;
+                }
+
+                if (!addedItem)
+                    return false;
+            }
+
+            shopText = sb.ToString();
+            return true;
+        }
+
+        private bool TryBuildFoodShopInventoryText(int townIndex, out string shopText)
+        {
+            shopText = string.Empty;
+
+            if (townIndex < 0 || townIndex >= RESIDENT_TOWN_SHOP_COUNT)
+                return false;
+
+            ushort priceAddress = unchecked((ushort)(RESIDENT_FOOD_PRICE_TABLE_ADDRESS + townIndex));
+            if (!OvrOverlayAddressReader.TryReadExecutableByte(_config, priceAddress, out byte foodPrice))
+                return false;
+
+            shopText = $"SHOP INVENTORY:\\r  A) FOOD - {foodPrice} GP/EA";
+            return true;
+        }
+
+        private static int GetResidentShopItemPrice(byte itemCode)
+        {
+            var item = itemCode == 0
+                ? null
+                : ItemDatabase.GetItemByIndex(itemCode - 1);
+
+            byte[] rawData = item?.RawData ?? Array.Empty<byte>();
+            if (rawData.Length <= ITEM_PRICE_LOW_OFFSET)
+                return 0;
+
+            return (rawData[ITEM_PRICE_HIGH_OFFSET] << 8) | rawData[ITEM_PRICE_LOW_OFFSET];
+        }
+
         private bool TryResolveSorpigalStatueIndex(RegisterTracker registerTracker, out byte statueIndex)
         {
             statueIndex = 0;
@@ -5826,6 +6043,7 @@ namespace MMMapEditor
             if (jumpTarget >= fileLength)
             {
                 TryAddSorpigalStatueResidentText(br, result, registerTracker, jumpTarget, currentAddress, callDepth, debugMode);
+                TryAddTownShopResidentText(result, jumpTarget, currentAddress, callDepth, debugMode);
                 MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP");
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
@@ -5880,6 +6098,7 @@ namespace MMMapEditor
                 if (jumpTarget >= fileLength)
                 {
                     TryAddSorpigalStatueResidentText(br, result, registerTracker, jumpTarget, currentAddress, callDepth, debugMode);
+                    TryAddTownShopResidentText(result, jumpTarget, currentAddress, callDepth, debugMode);
                     MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP (по опкоду 0xE9)");
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
