@@ -397,6 +397,7 @@ namespace MMMapEditor
 
                 AddGoldEffectStyleSpans(finalNoteText, inlineStyles);
                 AppendRawOverlayTextSpans(finalNoteText, inlineStyles, rawOverlayTexts);
+                AddResidentTavernOtherCityTipStyleSpans(finalNoteText, inlineStyles);
 
                 result.NotesPerCell[pos] = finalNoteText;
                 if (buildInlineStyleSpans)
@@ -18913,6 +18914,115 @@ namespace MMMapEditor
                 inlineStyles,
                 GoldGrantedEffectLine,
                 NoteInlineStyleKind.GoldGrantedEffectNote);
+        }
+
+        private static void AddResidentTavernOtherCityTipStyleSpans(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles)
+        {
+            if (string.IsNullOrEmpty(noteText) || inlineStyles == null)
+                return;
+
+            var groups = new[]
+            {
+                (Header: "Подсказки Портсмита (", Kind: NoteInlineStyleKind.TavernPortsmithTip),
+                (Header: "Подсказки Алгари (", Kind: NoteInlineStyleKind.TavernAlgaryTip),
+                (Header: "Подсказки Даска (", Kind: NoteInlineStyleKind.TavernDuskTip),
+                (Header: "Подсказки Эрликвина (", Kind: NoteInlineStyleKind.TavernErliquinTip),
+                (Header: "Подсказки LISTEN FOR RUMORS (", Kind: NoteInlineStyleKind.TavernListenForRumorsTip),
+                (Header: "Запредельные (технически доступные, но практически недостижимые) подсказки:", Kind: NoteInlineStyleKind.TavernFarTip)
+            };
+
+            foreach (var group in groups)
+                AddResidentTavernOtherCityTipStyleSpans(noteText, inlineStyles, group.Header, group.Kind);
+        }
+
+        private static void AddResidentTavernOtherCityTipStyleSpans(
+            string noteText,
+            List<NoteInlineStyleSpan> inlineStyles,
+            string header,
+            NoteInlineStyleKind kind)
+        {
+            int searchStart = 0;
+            while (searchStart < noteText.Length)
+            {
+                int headerIndex = noteText.IndexOf(header, searchStart, StringComparison.Ordinal);
+                if (headerIndex < 0)
+                    break;
+
+                int lineStart = noteText.LastIndexOf('\n', headerIndex);
+                lineStart = lineStart < 0 ? 0 : lineStart + 1;
+                int end = FindResidentTavernOtherCityTipGroupEnd(noteText, lineStart);
+                if (end > lineStart)
+                {
+                    inlineStyles.Add(new NoteInlineStyleSpan
+                    {
+                        Start = lineStart,
+                        Length = end - lineStart,
+                        Kind = kind
+                    });
+                }
+
+                searchStart = Math.Max(headerIndex + header.Length, end);
+            }
+        }
+
+        private static int FindResidentTavernOtherCityTipGroupEnd(string noteText, int start)
+        {
+            int current = Math.Max(0, start);
+            int end = current;
+            bool isFirstLine = true;
+
+            while (current < noteText.Length)
+            {
+                int lineEnd = noteText.IndexOf('\n', current);
+                if (lineEnd < 0)
+                    lineEnd = noteText.Length;
+
+                string line = noteText.Substring(current, lineEnd - current).TrimEnd('\r');
+                if (!isFirstLine &&
+                    (IsBlankResidentTavernFrameLine(line) ||
+                     IsResidentTavernFrameBorderLine(line)))
+                {
+                    break;
+                }
+
+                end = lineEnd;
+                if (lineEnd >= noteText.Length)
+                    break;
+
+                current = lineEnd + 1;
+                isFirstLine = false;
+            }
+
+            return end;
+        }
+
+        private static bool IsResidentTavernFrameBorderLine(string line)
+        {
+            if (string.IsNullOrEmpty(line))
+                return false;
+
+            string trimmed = line.Trim();
+            return trimmed.Length >= 10 &&
+                   trimmed.All(ch => ch == '=');
+        }
+
+        private static bool IsBlankResidentTavernFrameLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return true;
+
+            string trimmed = line.Trim();
+            if (!trimmed.StartsWith("||", StringComparison.Ordinal) ||
+                !trimmed.EndsWith("||", StringComparison.Ordinal) ||
+                trimmed.Length < 4)
+            {
+                return false;
+            }
+
+            string inner = trimmed.Substring(2, trimmed.Length - 4);
+            return string.IsNullOrWhiteSpace(inner);
         }
 
         private static void AddExactTextStyleSpans(

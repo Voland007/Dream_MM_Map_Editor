@@ -2700,6 +2700,30 @@ namespace MMMapEditor
                         ApplyCriticalWarningNoteStyle(rt);
                         break;
 
+                    case NoteInlineStyleKind.TavernPortsmithTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(33, 92, 96));
+                        break;
+
+                    case NoteInlineStyleKind.TavernAlgaryTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(74, 61, 116));
+                        break;
+
+                    case NoteInlineStyleKind.TavernDuskTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(86, 82, 39));
+                        break;
+
+                    case NoteInlineStyleKind.TavernErliquinTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(104, 50, 63));
+                        break;
+
+                    case NoteInlineStyleKind.TavernListenForRumorsTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(38, 70, 118));
+                        break;
+
+                    case NoteInlineStyleKind.TavernFarTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(105, 66, 34));
+                        break;
+
                     case NoteInlineStyleKind.WheelRewardExplanation:
                         ApplyWheelRewardExplanationStyle(rt);
                         break;
@@ -2877,6 +2901,12 @@ namespace MMMapEditor
             rt.SelectionColor = Color.FromArgb(255, 238, 220);
             rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
             rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Bold);
+        }
+
+        private void ApplyTavernOtherCityTipStyle(RichTextBox rt, Color backgroundColor)
+        {
+            rt.SelectionColor = Color.FromArgb(248, 246, 232);
+            rt.SelectionBackColor = backgroundColor;
         }
 
         private void ApplyRepeatedBattleWarningStyle(RichTextBox rt)
@@ -3066,7 +3096,7 @@ namespace MMMapEditor
             if (rt == null || string.IsNullOrEmpty(noteText))
                 return;
 
-            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К (?:КОЛЕСУ|СТАТУЕ СУДА|LORD IRONFIST))[\s\S]*?^={10,}$";
+            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К (?:КОЛЕСУ|БАРУ|HAVE A DRINK|LISTEN FOR RUMORS|СТАТУЕ СУДА|LORD IRONFIST))[\s\S]*?^={10,}$";
 
             foreach (Match match in Regex.Matches(
                 noteText,

@@ -353,7 +353,13 @@ namespace MMMapEditor
         LostDirectionEffectNote = 25,
         GoldClearedEffectNote = 26,
         GoldGrantedEffectNote = 27,
-        CriticalWarningNote = 28
+        CriticalWarningNote = 28,
+        TavernPortsmithTip = 29,
+        TavernAlgaryTip = 30,
+        TavernDuskTip = 31,
+        TavernErliquinTip = 32,
+        TavernListenForRumorsTip = 33,
+        TavernFarTip = 34
     }
 
     public sealed class OverlayTransitionInfo

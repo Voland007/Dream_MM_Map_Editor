@@ -173,11 +173,26 @@ namespace MMMapEditor
         private const int ERLIQUIN_START_ADDRESS = 0x0489;
         private const uint RESIDENT_EQUIPMENT_SHOP_HANDLER_ADDRESS = 0x2D15;
         private const uint RESIDENT_FOOD_SHOP_HANDLER_ADDRESS = 0x2972;
+        private const uint RESIDENT_TAVERN_HANDLER_ADDRESS = 0x30C3;
         private const ushort RESIDENT_SHOP_INVENTORY_POINTER_TABLE_ADDRESS = 0x1538;
         private const ushort RESIDENT_FOOD_PRICE_TABLE_ADDRESS = 0x13D6;
+        private const ushort RESIDENT_TAVERN_TIP_POINTER_TABLE_ADDRESS = 0x0E45;
+        private const ushort RESIDENT_TAVERN_RUMOR_TEXT_ADDRESS = 0xC416;
+        private const ushort RESIDENT_TAVERN_NO_RUMORS_TEXT_ADDRESS = 0x0DAE;
+        private const ushort RESIDENT_TAVERN_DRINK_OK_TEXT_ADDRESS = 0x0DBF;
+        private const ushort RESIDENT_TAVERN_DRINK_SICK_TEXT_ADDRESS = 0x0DCC;
+        private const ushort RESIDENT_TAVERN_NO_DRINK_TIP_TEXT_ADDRESS = 0x0DDC;
+        private const ushort RESIDENT_TAVERN_TIP_RETRY_TEXT_ADDRESS = 0x0DFB;
+        private const ushort RESIDENT_TAVERN_TOO_SICK_TEXT_ADDRESS = 0x0E1D;
         private const int RESIDENT_TOWN_SHOP_COUNT = 5;
         private const int RESIDENT_SHOP_CATEGORY_COUNT = 3;
         private const int RESIDENT_SHOP_CATEGORY_ITEM_COUNT = 6;
+        private const int RESIDENT_TAVERN_LOCAL_TIP_COUNT = 4;
+        // The resident random routine returns 1..AL, so AL=0x0D selects 13 rumor strings.
+        private const int RESIDENT_TAVERN_RUMOR_COUNT = 13;
+        private const string RESIDENT_TAVERN_RUMOR_SUFFIX = "!";
+        private const int RESIDENT_TAVERN_DRINK_COST = 1;
+        private const int RESIDENT_TAVERN_TIP_COST = 1;
         private const int ITEM_PRICE_HIGH_OFFSET = 20;
         private const int ITEM_PRICE_LOW_OFFSET = 21;
         private static readonly string[] ResidentShopCategoryHeaders =
@@ -185,6 +200,14 @@ namespace MMMapEditor
             "WEAPONS",
             "ARMOR",
             "MISC"
+        };
+        private static readonly string[] ResidentTavernCityTipGroupNames =
+        {
+            "Сорпигаля",
+            "Портсмита",
+            "Алгари",
+            "Даска",
+            "Эрликвина"
         };
         private const int MAX_TEXT_POINTER_TABLE_OPTIONS = 16;
         private const int MAX_RANDOM_INDEX_SPLIT_OPTIONS = 16;
@@ -5847,6 +5870,73 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryAddTownTavernResidentText(
+            PathAnalysisResult result,
+            uint jumpTarget,
+            uint instructionAddress,
+            int callDepth,
+            bool debugMode)
+        {
+            if (result == null ||
+                _config == null ||
+                jumpTarget != RESIDENT_TAVERN_HANDLER_ADDRESS)
+            {
+                return false;
+            }
+
+            if (!TryResolveResidentTownIndex(_config.StartAddress, out int townIndex, out string townName))
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        Resident tavern handler: город для текущего overlay не определён");
+
+                return false;
+            }
+
+            if (!TryBuildTavernResidentText(townIndex, out string tavernText))
+            {
+                if (debugMode)
+                    AnalysisDebug.WriteLine("        Resident tavern handler: не удалось прочитать данные бара из MM.EXE");
+
+                return false;
+            }
+
+            string textEntry = $"Text at 0x{RESIDENT_TAVERN_TIP_POINTER_TABLE_ADDRESS:X4} (MM.EXE): {tavernText}";
+
+            if (HasOverlayTextEntry(result, textEntry))
+                return false;
+
+            bool isContextual = callDepth > 0;
+            AddLegacyText(result, textEntry, isContextual);
+
+            int nextOrder = result.OrderedTexts.Count == 0
+                ? 0
+                : result.OrderedTexts.Max(entry => entry?.Order ?? 0) + 1;
+
+            result.OrderedTexts.Add(new TextEntry
+            {
+                Text = textEntry,
+                IsContextual = isContextual,
+                Address = instructionAddress,
+                Order = nextOrder,
+                IsInferred = false,
+                DisplayRoutine = OverlayTextDisplayRoutineKind.Standard,
+                DisplayInstructionAddress = instructionAddress
+            });
+            result.HasSignificantCode = true;
+
+            if (result.FirstLocalTextAddress == uint.MaxValue && !isContextual)
+                result.FirstLocalTextAddress = instructionAddress;
+
+            if (debugMode)
+            {
+                AnalysisDebug.WriteLine(
+                    $"        Resident tavern handler: {townName}, " +
+                    $"tips=0x{RESIDENT_TAVERN_TIP_POINTER_TABLE_ADDRESS:X4}, rumors=0x{RESIDENT_TAVERN_RUMOR_TEXT_ADDRESS:X4}");
+            }
+
+            return true;
+        }
+
         private static bool TryResolveResidentTownIndex(int startAddress, out int townIndex, out string townName)
         {
             switch (startAddress)
@@ -5947,6 +6037,438 @@ namespace MMMapEditor
             return true;
         }
 
+        private bool TryBuildTavernResidentText(int townIndex, out string tavernText)
+        {
+            tavernText = string.Empty;
+
+            if (!TryReadExecutableTextSequenceEntry(RESIDENT_TAVERN_TOO_SICK_TEXT_ADDRESS, out string tooSickText, out _) ||
+                !TryReadExecutableTextSequenceEntry(RESIDENT_TAVERN_DRINK_OK_TEXT_ADDRESS, out string drinkOkText, out _) ||
+                !TryReadExecutableTextSequenceEntry(RESIDENT_TAVERN_DRINK_SICK_TEXT_ADDRESS, out string drinkSickText, out _) ||
+                !TryReadExecutableTextSequenceEntry(RESIDENT_TAVERN_NO_DRINK_TIP_TEXT_ADDRESS, out string noDrinkTipText, out _) ||
+                !TryReadExecutableTextSequenceEntry(RESIDENT_TAVERN_TIP_RETRY_TEXT_ADDRESS, out string tipRetryText, out _) ||
+                !TryReadExecutableTextSequenceEntry(RESIDENT_TAVERN_NO_RUMORS_TEXT_ADDRESS, out string noRumorsText, out _))
+            {
+                return false;
+            }
+
+            var drinkTipLines = new List<string>
+            {
+                "ПОЯСНЕНИЕ К HAVE A DRINK И TIP BARTENDER",
+                "",
+                "A) HAVE A DRINK увеличивает счётчик выпивки текущего персонажа.",
+                "Первые две выпивки проходят без проверки:"
+            };
+            AppendResidentTavernGameText(drinkTipLines, "  ", drinkOkText);
+            drinkTipLines.Add("Начиная с третьей выпивки игра сравнивает случайное число");
+            drinkTipLines.Add("1..(счётчик выпивки + 10) с временным ENDURANCE персонажа.");
+            drinkTipLines.Add("Если проверка прошла (случайное число меньше ENDURANCE), снова выводится:");
+            AppendResidentTavernGameText(drinkTipLines, "  ", drinkOkText);
+            drinkTipLines.Add("Если проверка провалилась, персонаж получает плохое состояние");
+            drinkTipLines.Add("(CONDITION = POISONED) с соответствующим сообщением:");
+            AppendResidentTavernGameText(drinkTipLines, "  ", drinkSickText);
+            drinkTipLines.Add("После этого A) и B) для этого персонажа сразу отвечают:");
+            AppendResidentTavernGameText(drinkTipLines, "  ", tooSickText);
+
+            drinkTipLines.Add("");
+            drinkTipLines.Add("B) TIP BARTENDER сам счётчик выпивки не увеличивает.");
+            drinkTipLines.Add("Если персонаж ещё не пил, бармен отвечает:");
+            AppendResidentTavernGameText(drinkTipLines, "  ", noDrinkTipText);
+            drinkTipLines.Add("Если персонаж уже выпил (счётчик выпивки 1+), то полезная");
+            drinkTipLines.Add("подсказка выпадает только с шансом 1/3 (33,33%).");
+            drinkTipLines.Add("В остальных случаях бармен говорит:");
+            AppendResidentTavernGameText(drinkTipLines, "  ", tipRetryText);
+            drinkTipLines.Add("При успехе выбирается строка по текущему счётчику выпивки.");
+            drinkTipLines.Add("При счётчике 0 бармен подсказку не даёт.");
+
+            if (!TryAppendTavernBartenderTips(drinkTipLines, townIndex))
+                return false;
+
+            var rumorLines = new List<string>
+            {
+                "ПОЯСНЕНИЕ К LISTEN FOR RUMORS",
+                "",
+                "C) LISTEN FOR RUMORS не стоит денег и не требует выпивки.",
+                "Раз в день при первом успешном срабатывании выбирается один слух.",
+                "Если он уже был услышан или шанс успеха 1/2 (50%) не сработал, игра выводит:"
+            };
+            AppendResidentTavernGameText(rumorLines, "  ", noRumorsText);
+            rumorLines.Add("Список возможных слухов:");
+
+            ushort textAddress = RESIDENT_TAVERN_RUMOR_TEXT_ADDRESS;
+            for (int rumorIndex = 0; rumorIndex < RESIDENT_TAVERN_RUMOR_COUNT; rumorIndex++)
+            {
+                if (!TryReadExecutableTextSequenceEntry(textAddress, out string rumorText, out ushort nextTextAddress))
+                    return false;
+
+                char rumorLetter = (char)('A' + rumorIndex);
+                AppendResidentTavernGameText(
+                    rumorLines,
+                    $"  {rumorLetter}) ",
+                    rumorText,
+                    RESIDENT_TAVERN_RUMOR_SUFFIX);
+
+                textAddress = nextTextAddress;
+            }
+
+            string menuText = BuildResidentTavernMenuText();
+            string drinkTipFrameText = InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
+                BuildResidentTavernExplanationFrame(drinkTipLines, 88));
+            string rumorFrameText = InlineNoteStyleCodec.EncodeWheelRewardExplanationText(
+                BuildResidentTavernExplanationFrame(rumorLines, 88));
+
+            tavernText = string.Join("\\r\\r", menuText, drinkTipFrameText, rumorFrameText);
+            return true;
+        }
+
+        private static string BuildResidentTavernMenuText()
+        {
+            return string.Join(
+                "\\r",
+                $"A) HAVE A DRINK - {RESIDENT_TAVERN_DRINK_COST} GOLD",
+                $"B) TIP BARTENDER - {RESIDENT_TAVERN_TIP_COST} GOLD",
+                "C) LISTEN FOR RUMORS");
+        }
+
+        private bool TryAppendTavernBartenderTips(List<string> lines, int townIndex)
+        {
+            if (lines == null ||
+                townIndex < 0 ||
+                townIndex >= RESIDENT_TOWN_SHOP_COUNT)
+            {
+                return false;
+            }
+
+            ushort pointerAddress = unchecked((ushort)(RESIDENT_TAVERN_TIP_POINTER_TABLE_ADDRESS + townIndex * 2));
+            if (!TryReadExecutableWord(pointerAddress, out ushort textAddress))
+                return false;
+
+            int relativeTipIndex = 1;
+
+            lines.Add("");
+            lines.Add($"Подсказки для {ResidentTavernCityTipGroupNames[townIndex]}:");
+
+            for (int localTipIndex = 0; localTipIndex < RESIDENT_TAVERN_LOCAL_TIP_COUNT; localTipIndex++)
+            {
+                if (!TryReadExecutableTextSequenceEntry(
+                        textAddress,
+                        out string tipText,
+                        out ushort nextTextAddress,
+                        requireDisplayText: true))
+                    return false;
+
+                AppendResidentTavernGameText(
+                    lines,
+                    $"  {FormatResidentTavernTipDrinkRange(relativeTipIndex)}: ",
+                    tipText,
+                    RESIDENT_TAVERN_RUMOR_SUFFIX);
+
+                textAddress = nextTextAddress;
+                relativeTipIndex++;
+            }
+
+            for (int otherTownIndex = townIndex + 1; otherTownIndex < RESIDENT_TOWN_SHOP_COUNT; otherTownIndex++)
+            {
+                lines.Add("");
+                lines.Add($"Подсказки {ResidentTavernCityTipGroupNames[otherTownIndex]} (так же доступны из {ResidentTavernCityTipGroupNames[townIndex]} при большом счётчике выпивок):");
+
+                for (int localTipIndex = 0; localTipIndex < RESIDENT_TAVERN_LOCAL_TIP_COUNT; localTipIndex++)
+                {
+                    if (!TryReadExecutableTextSequenceEntry(
+                            textAddress,
+                            out string tipText,
+                            out ushort nextTextAddress,
+                            requireDisplayText: true))
+                        return false;
+
+                    AppendResidentTavernGameText(
+                        lines,
+                        $"  {FormatResidentTavernTipDrinkRange(relativeTipIndex)}: ",
+                        tipText,
+                        RESIDENT_TAVERN_RUMOR_SUFFIX);
+
+                    textAddress = nextTextAddress;
+                    relativeTipIndex++;
+                }
+            }
+
+            bool passedRumorPool = false;
+            bool appendedFarTipHeader = false;
+            while (true)
+            {
+                if (textAddress == RESIDENT_TAVERN_RUMOR_TEXT_ADDRESS)
+                {
+                    lines.Add("");
+                    lines.Add($"Подсказки LISTEN FOR RUMORS (так же доступны из {ResidentTavernCityTipGroupNames[townIndex]} при большом счётчике выпивок):");
+
+                    for (int rumorIndex = 0; rumorIndex < RESIDENT_TAVERN_RUMOR_COUNT; rumorIndex++)
+                    {
+                        if (!TryReadExecutableTextSequenceEntry(
+                                textAddress,
+                                out string rumorText,
+                                out ushort nextRumorTextAddress,
+                                requireDisplayText: true))
+                            return false;
+
+                        AppendResidentTavernGameText(
+                            lines,
+                            $"  {FormatResidentTavernTipDrinkRange(relativeTipIndex)}: ",
+                            rumorText,
+                            RESIDENT_TAVERN_RUMOR_SUFFIX);
+
+                        textAddress = nextRumorTextAddress;
+                        relativeTipIndex++;
+                    }
+
+                    passedRumorPool = true;
+                    continue;
+                }
+
+                if (!TryReadExecutableTextSequenceEntry(
+                        textAddress,
+                        out string tipText,
+                        out ushort nextTextAddress,
+                        requireDisplayText: true))
+                    break;
+
+                if (passedRumorPool)
+                {
+                    if (!appendedFarTipHeader)
+                    {
+                        lines.Add("");
+                        lines.Add("Запредельные (технически доступные, но практически недостижимые) подсказки:");
+                        appendedFarTipHeader = true;
+                    }
+
+                    AppendResidentTavernGameText(
+                        lines,
+                        $"  {FormatResidentTavernTipDrinkRange(relativeTipIndex)}: ",
+                        tipText,
+                        RESIDENT_TAVERN_RUMOR_SUFFIX);
+                }
+
+                textAddress = nextTextAddress;
+                relativeTipIndex++;
+            }
+
+            return true;
+        }
+
+        private static string FormatResidentTavernTipDrinkRange(int relativeTipIndex)
+        {
+            if (relativeTipIndex <= 1)
+                return "счётчик выпивки 1-3";
+
+            int minDrinks = (relativeTipIndex - 1) * 4;
+            int maxDrinks = relativeTipIndex * 4 - 1;
+            return $"счётчик выпивки {minDrinks}-{maxDrinks}";
+        }
+
+        private static string FormatResidentTavernTipDrinkRange(int firstRelativeTipIndex, int lastRelativeTipIndex)
+        {
+            int minDrinks = firstRelativeTipIndex <= 1
+                ? 1
+                : (firstRelativeTipIndex - 1) * 4;
+            int maxDrinks = lastRelativeTipIndex * 4 - 1;
+            return $"счётчик выпивки {minDrinks}-{maxDrinks}";
+        }
+
+        private static void AppendResidentTavernGameText(
+            List<string> lines,
+            string prefix,
+            string text,
+            string suffix = "")
+        {
+            if (lines == null)
+                return;
+
+            string[] parts = SplitResidentTavernDisplayLines(text);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string linePrefix = i == 0
+                    ? prefix ?? string.Empty
+                    : new string(' ', (prefix ?? string.Empty).Length);
+                string lineSuffix = i == parts.Length - 1
+                    ? suffix ?? string.Empty
+                    : string.Empty;
+                lines.Add(linePrefix + parts[i] + lineSuffix);
+            }
+        }
+
+        private static string[] SplitResidentTavernDisplayLines(string text)
+        {
+            return (text ?? string.Empty)
+                .Replace("\\n", "\\r")
+                .Split(new[] { "\\r" }, StringSplitOptions.None);
+        }
+
+        private static string BuildResidentTavernExplanationFrame(IEnumerable<string> lines, int contentWidth)
+        {
+            contentWidth = Math.Max(contentWidth, 1);
+            var sb = new StringBuilder();
+            string border = new string('=', contentWidth + 6);
+
+            sb.Append(border);
+
+            foreach (string line in lines ?? Enumerable.Empty<string>())
+            {
+                foreach (string segment in WrapResidentTavernFrameLine(line ?? string.Empty, contentWidth))
+                {
+                    sb.Append("\\r|| ");
+                    sb.Append(segment.PadRight(contentWidth));
+                    sb.Append(segment.Length > contentWidth ? "||" : " ||");
+                }
+            }
+
+            sb.Append("\\r");
+            sb.Append(border);
+            return sb.ToString();
+        }
+
+        private static IEnumerable<string> WrapResidentTavernFrameLine(string line, int contentWidth)
+        {
+            if (string.IsNullOrEmpty(line))
+            {
+                yield return string.Empty;
+                yield break;
+            }
+
+            if (line.Length <= contentWidth + 1)
+            {
+                yield return line;
+                yield break;
+            }
+
+            int index = 0;
+            while (index < line.Length)
+            {
+                int take = Math.Min(contentWidth, line.Length - index);
+                if (take == contentWidth && index + take < line.Length)
+                {
+                    int breakAt = line.LastIndexOf(' ', index + take - 1, take);
+                    if (breakAt > index)
+                        take = breakAt - index;
+                }
+
+                string segment = line.Substring(index, take).TrimEnd();
+                yield return segment;
+
+                index += take;
+                while (index < line.Length && line[index] == ' ')
+                    index++;
+            }
+        }
+
+        private bool TryReadExecutableTextSequenceEntry(
+            ushort textAddress,
+            out string text,
+            out ushort nextTextAddress)
+        {
+            return TryReadExecutableTextSequenceEntry(
+                textAddress,
+                out text,
+                out nextTextAddress,
+                requireDisplayText: false);
+        }
+
+        private bool TryReadExecutableTextSequenceEntry(
+            ushort textAddress,
+            out string text,
+            out ushort nextTextAddress,
+            bool requireDisplayText)
+        {
+            text = string.Empty;
+            nextTextAddress = textAddress;
+
+            var bytes = new List<byte>();
+            const int maxLength = 1000;
+            for (int offset = 0; offset < maxLength; offset++)
+            {
+                ushort currentAddress = unchecked((ushort)(textAddress + offset));
+                if (!OvrOverlayAddressReader.TryReadExecutableByte(_config, currentAddress, out byte value))
+                    return false;
+
+                if (value == 0)
+                {
+                    if (bytes.Count == 0)
+                        return false;
+
+                    nextTextAddress = unchecked((ushort)(currentAddress + 1));
+                    if (requireDisplayText && !IsResidentTavernDisplayText(bytes))
+                        return false;
+
+                    text = DecodeResidentTavernText(bytes);
+                    return !string.IsNullOrEmpty(text);
+                }
+
+                bytes.Add(value);
+            }
+
+            return false;
+        }
+
+        private static bool IsResidentTavernDisplayText(IEnumerable<byte> bytes)
+        {
+            bool hasDisplayByte = false;
+            foreach (byte value in bytes ?? Enumerable.Empty<byte>())
+            {
+                if (value == 0x0D ||
+                    value == 0x8D ||
+                    value == 0x0A ||
+                    value == 0x09)
+                {
+                    continue;
+                }
+
+                if (value < 0x20 || value > 0x7E)
+                    return false;
+
+                hasDisplayByte = true;
+            }
+
+            return hasDisplayByte;
+        }
+
+        private bool TryReadExecutableWord(ushort textAddress, out ushort value)
+        {
+            value = 0;
+
+            if (!OvrOverlayAddressReader.TryReadExecutableByte(_config, textAddress, out byte low) ||
+                !OvrOverlayAddressReader.TryReadExecutableByte(_config, unchecked((ushort)(textAddress + 1)), out byte high))
+            {
+                return false;
+            }
+
+            value = (ushort)(low | (high << 8));
+            return true;
+        }
+
+        private static string DecodeResidentTavernText(IEnumerable<byte> bytes)
+        {
+            var sb = new StringBuilder();
+            foreach (byte value in bytes ?? Enumerable.Empty<byte>())
+            {
+                if (value == 0x8D)
+                {
+                    sb.Append("\\r");
+                    continue;
+                }
+
+                sb.Append(OvrOverlayAddressReader.DecodeText(new[] { value }));
+            }
+
+            return sb.ToString();
+        }
+
+        private static string IndentResidentTavernRumorText(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text;
+
+            return text
+                .Replace("\\r", "\\r     ")
+                .Replace("\\n", "\\n     ");
+        }
+
         private static int GetResidentShopItemPrice(byte itemCode)
         {
             var item = itemCode == 0
@@ -6044,6 +6566,7 @@ namespace MMMapEditor
             {
                 TryAddSorpigalStatueResidentText(br, result, registerTracker, jumpTarget, currentAddress, callDepth, debugMode);
                 TryAddTownShopResidentText(result, jumpTarget, currentAddress, callDepth, debugMode);
+                TryAddTownTavernResidentText(result, jumpTarget, currentAddress, callDepth, debugMode);
                 MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP");
                 return new ControlFlowResult { ShouldReturn = true, Result = result };
             }
@@ -6099,6 +6622,7 @@ namespace MMMapEditor
                 {
                     TryAddSorpigalStatueResidentText(br, result, registerTracker, jumpTarget, currentAddress, callDepth, debugMode);
                     TryAddTownShopResidentText(result, jumpTarget, currentAddress, callDepth, debugMode);
+                    TryAddTownTavernResidentText(result, jumpTarget, currentAddress, callDepth, debugMode);
                     MarkExternalJump(result, registerTracker, currentAddress, jumpTarget, debugMode, "JMP (по опкоду 0xE9)");
                     return new ControlFlowResult { ShouldReturn = true, Result = result };
                 }
