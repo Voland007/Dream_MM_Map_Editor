@@ -28,6 +28,8 @@ namespace MMMapEditor
             new ConditionalWeakTable<OvrObject, VariantRenderPreparationCache>();
         private const string SpoilerAnswerLinePrefix = "[ !!! ВНИМАНИЕ СПОЙЛЕР !!! ] ПРАВИЛЬНЫЙ ОТВЕТ: ";
         private const string RiddleAnswerPrompt = "ANSWER:>";
+        private const string CorrectAnswerHeaderAnnotation = "Введён правильный ответ";
+        private const string WrongAnswerHeaderAnnotation = "Введён не правильный ответ";
         private const string ResponseAnswerPrompt = "RESPONSE:";
         private static readonly Regex QuestionAnswerPromptRegex =
             new Regex(@"\?\s*:>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -6403,6 +6405,7 @@ namespace MMMapEditor
                 return null;
 
             AppendLineToFirstMeaningfulVariantItem(items, specialSpoilerLine);
+            AddImplicitAnswerOutcomeHeaderAnnotations(items);
 
             var sourceItems = items
                 .Select(CloneVariantRenderItemForSourceMatch)
@@ -6412,6 +6415,8 @@ namespace MMMapEditor
             var groups = BuildTopLevelVariantGroups(obj, items);
             if (groups.Count == 0)
                 return null;
+
+            AddImplicitAnswerOutcomeHeaderAnnotations(CollectVariantRenderItems(groups));
 
             return new SemanticVariantRenderAnalysis
             {
@@ -6426,6 +6431,34 @@ namespace MMMapEditor
                     (group?.Items?.Count ?? 0) > 1 &&
                     (group.TreeRoot?.CommonLines?.Any(line => !string.IsNullOrWhiteSpace(line)) ?? false))
             };
+        }
+
+        private static List<VariantRenderItem> CollectVariantRenderItems(IEnumerable<TopLevelVariantGroup> groups)
+        {
+            var result = new List<VariantRenderItem>();
+            foreach (var group in groups ?? Enumerable.Empty<TopLevelVariantGroup>())
+            {
+                result.AddRange((group?.Items ?? new List<VariantRenderItem>())
+                    .Where(item => item != null));
+                CollectVariantRenderItems(group?.TreeRoot, result);
+            }
+
+            return result
+                .Where(item => item != null)
+                .Distinct()
+                .ToList();
+        }
+
+        private static void CollectVariantRenderItems(VariantTreeNode node, List<VariantRenderItem> result)
+        {
+            if (node == null || result == null)
+                return;
+
+            result.AddRange((node.DirectVariants ?? new List<VariantRenderItem>())
+                .Where(item => item != null));
+
+            foreach (var child in node.Children ?? new List<VariantTreeNode>())
+                CollectVariantRenderItems(child, result);
         }
 
         private static string BuildFlatSemanticVariantNotesFromAnalysis(
@@ -7962,11 +7995,19 @@ namespace MMMapEditor
                 if (ShouldSkipHierarchicalVariant(lines, narrativeLines))
                     continue;
 
+                var headerAnnotations = new List<string>();
+                string answerOutcomeAnnotation = BuildAnswerOutcomeHeaderAnnotation(lines);
+                if (string.IsNullOrWhiteSpace(answerOutcomeAnnotation))
+                    answerOutcomeAnnotation = BuildAnswerOutcomeHeaderAnnotation(narrativeLines);
+                if (!string.IsNullOrWhiteSpace(answerOutcomeAnnotation))
+                    AddDistinctHeaderAnnotations(headerAnnotations, new[] { answerOutcomeAnnotation });
+
                 items.Add(new VariantRenderItem
                 {
                     Variant = displayVariant,
                     Lines = lines,
-                    NarrativeLines = narrativeLines
+                    NarrativeLines = narrativeLines,
+                    HeaderAnnotations = headerAnnotations
                 });
             }
 
@@ -9353,8 +9394,295 @@ namespace MMMapEditor
 
             return Regex.IsMatch(
                 line.TrimStart(),
-                @"^WRONG\b",
+                @"^(?:""|')?\s*(?:WRONG\b|IMPROPER\s+ACCESS\s+CODE\b|INCORRECT\s+ACCESS\s+CODE\b)",
                 RegexOptions.IgnoreCase);
+        }
+
+        private static string BuildAnswerOutcomeHeaderAnnotation(IEnumerable<string> lines)
+        {
+            foreach (var line in (lines ?? Enumerable.Empty<string>()).SelectMany(SplitDisplayLines))
+            {
+                if (IsCorrectPartyScanAnswerLine(line))
+                    return CorrectAnswerHeaderAnnotation;
+
+                if (IsWrongPartyScanAnswerLine(line))
+                    return WrongAnswerHeaderAnnotation;
+            }
+
+            return null;
+        }
+
+        private static void AddImplicitAnswerOutcomeHeaderAnnotations(List<VariantRenderItem> items)
+        {
+            AddImplicitCorrectAnswerHeaderAnnotations(items);
+            AddImplicitCorrectAnswerHeaderAnnotationsFromPromptGroups(items);
+            AddImplicitWrongAnswerHeaderAnnotations(items);
+        }
+
+        private static void AddImplicitCorrectAnswerHeaderAnnotations(List<VariantRenderItem> items)
+        {
+            var wrongAnswerSpoilerKeys = BuildWrongAnswerSpoilerKeys(items);
+            if (wrongAnswerSpoilerKeys.Count == 0)
+                return;
+
+            foreach (var item in items ?? new List<VariantRenderItem>())
+            {
+                if (item == null || HasAnswerOutcomeHeaderAnnotation(item))
+                    continue;
+
+                if (IsImplicitCorrectAnswerVariant(item.Lines, item.NarrativeLines, wrongAnswerSpoilerKeys))
+                    AddDistinctHeaderAnnotations(item.HeaderAnnotations, new[] { CorrectAnswerHeaderAnnotation });
+            }
+        }
+
+        private static void AddImplicitCorrectAnswerHeaderAnnotationsFromPromptGroups(List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .Select(item => new
+                {
+                    Item = item,
+                    PromptKey = BuildAnswerPromptOutcomeFamilyKey(item),
+                    HasCorrect = HasAnswerOutcomeLine(item, correct: true),
+                    HasWrong = HasAnswerOutcomeLine(item, correct: false),
+                    HasSpoiler = HasSpoilerAnswerLine(item)
+                })
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.PromptKey))
+                .ToList();
+
+            foreach (var group in source.GroupBy(entry => entry.PromptKey, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!group.Any(entry => entry.HasWrong))
+                    continue;
+
+                foreach (var entry in group)
+                {
+                    if (entry.HasCorrect ||
+                        entry.HasWrong ||
+                        !entry.HasSpoiler ||
+                        HasAnswerOutcomeHeaderAnnotation(entry.Item))
+                    {
+                        continue;
+                    }
+
+                    AddDistinctHeaderAnnotations(entry.Item.HeaderAnnotations, new[] { CorrectAnswerHeaderAnnotation });
+                }
+            }
+        }
+
+        private static void AddImplicitWrongAnswerHeaderAnnotations(List<VariantRenderItem> items)
+        {
+            var source = (items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .Select(item => new
+                {
+                    Item = item,
+                    PromptKey = BuildAnswerPromptOutcomeFamilyKey(item),
+                    HasCorrect = HasAnswerOutcomeLine(item, correct: true),
+                    HasWrong = HasAnswerOutcomeLine(item, correct: false)
+                })
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.PromptKey))
+                .ToList();
+
+            foreach (var group in source.GroupBy(entry => entry.PromptKey, StringComparer.OrdinalIgnoreCase))
+            {
+                if (!group.Any(entry => entry.HasCorrect))
+                    continue;
+
+                foreach (var entry in group)
+                {
+                    if (entry.HasCorrect ||
+                        entry.HasWrong ||
+                        HasAnswerOutcomeHeaderAnnotation(entry.Item) ||
+                        !HasDisplayOutcomeAfterAnswerPrompt(entry.Item))
+                    {
+                        continue;
+                    }
+
+                    AddDistinctHeaderAnnotations(entry.Item.HeaderAnnotations, new[] { WrongAnswerHeaderAnnotation });
+                }
+            }
+        }
+
+        private static bool HasAnswerOutcomeHeaderAnnotation(VariantRenderItem item)
+        {
+            return (item?.HeaderAnnotations ?? new List<string>())
+                .Any(annotation =>
+                    string.Equals(annotation, CorrectAnswerHeaderAnnotation, StringComparison.Ordinal) ||
+                    string.Equals(annotation, WrongAnswerHeaderAnnotation, StringComparison.Ordinal));
+        }
+
+        private static bool HasAnswerOutcomeLine(VariantRenderItem item, bool correct)
+        {
+            var lines = GetAnswerOutcomeDisplayLines(item?.Lines, item?.NarrativeLines);
+            return correct
+                ? lines.Any(IsCorrectPartyScanAnswerLine)
+                : lines.Any(IsWrongPartyScanAnswerLine);
+        }
+
+        private static bool HasSpoilerAnswerLine(VariantRenderItem item)
+        {
+            return GetAnswerOutcomeDisplayLines(item?.Lines, item?.NarrativeLines)
+                .Any(IsSpoilerAnswerLine);
+        }
+
+        private static HashSet<string> BuildWrongAnswerSpoilerKeys(IEnumerable<VariantRenderItem> items)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in items ?? Enumerable.Empty<VariantRenderItem>())
+            {
+                var lines = GetAnswerOutcomeDisplayLines(item?.Lines, item?.NarrativeLines);
+                if (!lines.Any(IsWrongPartyScanAnswerLine) &&
+                    !string.Equals(
+                        BuildAnswerOutcomeHeaderAnnotation(lines),
+                        WrongAnswerHeaderAnnotation,
+                        StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                foreach (string key in GetSpoilerAnswerKeys(lines))
+                    result.Add(key);
+            }
+
+            return result;
+        }
+
+        private static bool IsImplicitCorrectAnswerVariant(
+            IEnumerable<string> lines,
+            IEnumerable<string> narrativeLines,
+            IReadOnlySet<string> wrongAnswerSpoilerKeys)
+        {
+            if (wrongAnswerSpoilerKeys == null || wrongAnswerSpoilerKeys.Count == 0)
+                return false;
+
+            var displayLines = GetAnswerOutcomeDisplayLines(lines, narrativeLines);
+
+            if (displayLines.Any(IsCorrectPartyScanAnswerLine) ||
+                displayLines.Any(IsWrongPartyScanAnswerLine))
+            {
+                return false;
+            }
+
+            return GetSpoilerAnswerKeys(displayLines)
+                .Any(wrongAnswerSpoilerKeys.Contains);
+        }
+
+        private static List<string> GetAnswerOutcomeDisplayLines(
+            IEnumerable<string> lines,
+            IEnumerable<string> narrativeLines)
+        {
+            return (lines ?? Enumerable.Empty<string>())
+                .Concat(narrativeLines ?? Enumerable.Empty<string>())
+                .SelectMany(SplitDisplayLines)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+        }
+
+        private static IEnumerable<string> GetSpoilerAnswerKeys(IEnumerable<string> lines)
+        {
+            foreach (var line in lines ?? Enumerable.Empty<string>())
+            {
+                string trimmed = line?.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed) ||
+                    !trimmed.StartsWith(SpoilerAnswerLinePrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string key = NormalizeSpoilerAnswerKey(trimmed.Substring(SpoilerAnswerLinePrefix.Length));
+                if (!string.IsNullOrWhiteSpace(key))
+                    yield return key;
+            }
+        }
+
+        private static string NormalizeSpoilerAnswerKey(string answer)
+        {
+            if (string.IsNullOrWhiteSpace(answer))
+                return null;
+
+            return Regex.Replace(answer.Trim(), @"\s+", " ").ToUpperInvariant();
+        }
+
+        private static string BuildAnswerPromptOutcomeFamilyKey(VariantRenderItem item)
+        {
+            var lines = GetAnswerPromptFamilyDisplayLines(item?.Lines, item?.NarrativeLines);
+            int promptIndex = FindLastAnswerPromptLineIndex(lines);
+            if (promptIndex < 0)
+                return null;
+
+            return string.Join(
+                "\n",
+                lines.Take(promptIndex + 1)
+                    .Select(NormalizeAnswerPromptFamilyLine)
+                    .Where(line => !string.IsNullOrWhiteSpace(line)));
+        }
+
+        private static bool HasDisplayOutcomeAfterAnswerPrompt(VariantRenderItem item)
+        {
+            var lines = GetAnswerPromptFamilyDisplayLines(item?.Lines, item?.NarrativeLines);
+            int promptIndex = FindLastAnswerPromptLineIndex(lines);
+            if (promptIndex < 0)
+                return false;
+
+            return lines
+                .Skip(promptIndex + 1)
+                .Any(line => !IsSpoilerAnswerLine(line));
+        }
+
+        private static List<string> GetAnswerPromptFamilyDisplayLines(
+            IEnumerable<string> lines,
+            IEnumerable<string> narrativeLines)
+        {
+            return (narrativeLines ?? Enumerable.Empty<string>())
+                .Concat(lines ?? Enumerable.Empty<string>())
+                .SelectMany(SplitDisplayLines)
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line => line.Trim())
+                .ToList();
+        }
+
+        private static int FindLastAnswerPromptLineIndex(IReadOnlyList<string> lines)
+        {
+            int promptIndex = -1;
+            for (int i = 0; i < (lines?.Count ?? 0); i++)
+            {
+                string line = lines[i];
+                if (IsPartyScanAnswerLine(line))
+                    break;
+
+                if (IsAnswerInputPromptLine(line))
+                    promptIndex = i;
+            }
+
+            return promptIndex;
+        }
+
+        private static bool IsAnswerInputPromptLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.Trim();
+            return trimmed.IndexOf(RiddleAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   trimmed.IndexOf(ResponseAnswerPrompt, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   trimmed.IndexOf("ACCESS CODE", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   QuestionAnswerPromptRegex.IsMatch(trimmed);
+        }
+
+        private static bool IsSpoilerAnswerLine(string line)
+        {
+            return !string.IsNullOrWhiteSpace(line) &&
+                   line.TrimStart().StartsWith(SpoilerAnswerLinePrefix, StringComparison.Ordinal);
+        }
+
+        private static string NormalizeAnswerPromptFamilyLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return null;
+
+            return Regex.Replace(line.Trim(), @"\s+", " ").ToUpperInvariant();
         }
 
         private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(
@@ -18011,12 +18339,12 @@ namespace MMMapEditor
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
             sb.AppendLine(clueTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("Вариант 3 (выбор B):");
+            sb.AppendLine($"Вариант 3 (выбор B; {CorrectAnswerHeaderAnnotation}):");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
             AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine));
             sb.AppendLine(riddleTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("Вариант 4 (выбор B):");
+            sb.AppendLine($"Вариант 4 (выбор B; {WrongAnswerHeaderAnnotation}):");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
             AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine));
             return sb.ToString().TrimEnd('\r', '\n');
@@ -18041,10 +18369,10 @@ namespace MMMapEditor
             sb.AppendLine("   Вариант 1.3: B)");
             AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine, "      "));
             sb.AppendLine();
-            sb.AppendLine("      Вариант 1.3.1:");
+            sb.AppendLine($"      Вариант 1.3.1 ({CorrectAnswerHeaderAnnotation}):");
             sb.AppendLine("         " + riddleTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("      Вариант 1.3.2:");
+            sb.AppendLine($"      Вариант 1.3.2 ({WrongAnswerHeaderAnnotation}):");
             return sb.ToString().TrimEnd('\r', '\n');
         }
 
@@ -18114,13 +18442,13 @@ namespace MMMapEditor
             sb.AppendLine("OG SAYS, \"BEGONE!\"");
             sb.AppendLine("Телепорт на клетку (X=7, Y=7)");
             sb.AppendLine();
-            sb.AppendLine("Вариант 2:");
+            sb.AppendLine($"Вариант 2 ({WrongAnswerHeaderAnnotation}):");
             AppendLines(sb, BuildAreaD4OgPromptLines(""));
             sb.AppendLine(spoilerLine);
             sb.AppendLine("OG SAYS, \"BEGONE!\"");
             sb.AppendLine("Телепорт на клетку (X=7, Y=7)");
             sb.AppendLine();
-            sb.AppendLine("Вариант 3:");
+            sb.AppendLine($"Вариант 3 ({CorrectAnswerHeaderAnnotation}):");
             AppendLines(sb, BuildAreaD4OgPromptLines(""));
             sb.AppendLine(spoilerLine);
             AppendLines(sb, BuildAreaD4OgSuccessLines(""));
@@ -18140,11 +18468,11 @@ namespace MMMapEditor
             AppendLines(sb, BuildAreaD4OgPromptLines("   "));
             sb.AppendLine("   " + spoilerLine);
             sb.AppendLine();
-            sb.AppendLine("   Вариант 2.1:");
+            sb.AppendLine($"   Вариант 2.1 ({WrongAnswerHeaderAnnotation}):");
             sb.AppendLine("      OG SAYS, \"BEGONE!\"");
             sb.AppendLine("      Телепорт на клетку (X=7, Y=7)");
             sb.AppendLine();
-            sb.AppendLine("   Вариант 2.2:");
+            sb.AppendLine($"   Вариант 2.2 ({CorrectAnswerHeaderAnnotation}):");
             AppendLines(sb, BuildAreaD4OgSuccessLines("      "));
             sb.AppendLine("      Телепорт на клетку (X=7, Y=7)");
             return sb.ToString().TrimEnd('\r', '\n');
