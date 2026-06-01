@@ -444,8 +444,7 @@ namespace MMMapEditor
                 return true;
             }
 
-            if (IsCave7VolcanoGodRiddle(obj) ||
-                IsAreaD4OgSightRestoration(obj))
+            if (IsAreaD4OgSightRestoration(obj))
             {
                 PopulateObjectPathData(obj, new Dictionary<int, PathVariantInfo>());
                 return true;
@@ -492,16 +491,6 @@ namespace MMMapEditor
                    obj.X == 11 &&
                    obj.Y == 7 &&
                    obj.PatchAddress == 0x0297;
-        }
-
-        private bool IsCave7VolcanoGodRiddle(OvrObject obj)
-        {
-            return _config != null &&
-                   _config.StartAddress == 0x033D &&
-                   obj != null &&
-                   obj.X == 7 &&
-                   obj.Y == 11 &&
-                   obj.PatchAddress == 0x005C;
         }
 
         private bool IsAreaD4OgSightRestoration(OvrObject obj)

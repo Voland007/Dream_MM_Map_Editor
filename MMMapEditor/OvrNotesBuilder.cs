@@ -17938,61 +17938,113 @@ namespace MMMapEditor
             string spoilerLine = string.IsNullOrWhiteSpace(inlineSpecialSpoilerLine)
                 ? BuildSpoilerAnswerLine("GALA")
                 : inlineSpecialSpoilerLine;
+            string clueTeleportLine = TryGetCave7VolcanoGodTeleportDescription(obj, 0, 5, preferOverlay: false)
+                ?? "Телепорт на клетку (X=0, Y=5)";
+            string riddleTeleportLine = TryGetCave7VolcanoGodTeleportDescription(obj, 8, 5, preferOverlay: true)
+                ?? "Телепорт на клетку (X=8, Y=5)";
 
             return useHierarchical
-                ? BuildCave7VolcanoGodHierarchicalNote(spoilerLine)
-                : BuildCave7VolcanoGodFlatNote(spoilerLine);
+                ? BuildCave7VolcanoGodHierarchicalNote(spoilerLine, clueTeleportLine, riddleTeleportLine)
+                : BuildCave7VolcanoGodFlatNote(spoilerLine, clueTeleportLine, riddleTeleportLine);
         }
 
-        private static string BuildCave7VolcanoGodFlatNote(string spoilerLine)
+        private static string TryGetCave7VolcanoGodTeleportDescription(
+            OvrObject obj,
+            byte targetX,
+            byte targetY,
+            bool preferOverlay)
+        {
+            if (obj?.PathVariants == null)
+                return null;
+
+            var candidates = obj.PathVariants.Values
+                .Where(variant =>
+                    variant != null &&
+                    variant.HasTeleportTarget &&
+                    IsExactTeleportTarget(variant, targetX, targetY))
+                .OrderByDescending(variant =>
+                    preferOverlay
+                        ? variant.OverlayTransition != null
+                        : variant.OverlayTransition == null)
+                .ThenBy(variant => variant.PathOrderKey);
+
+            foreach (var variant in candidates)
+            {
+                string description = variant
+                    .ToOvrObject(obj.X, obj.Y, obj.DirectionByte)
+                    .GetTeleportDescription();
+                if (!string.IsNullOrWhiteSpace(description))
+                    return description;
+            }
+
+            return null;
+        }
+
+        private static bool IsExactTeleportTarget(PathVariantInfo variant, byte targetX, byte targetY)
+        {
+            bool xMatches =
+                (variant.TeleportTargetX.HasValue && variant.TeleportTargetX.Value == targetX) ||
+                (variant.TeleportTargetXRange != null &&
+                 variant.TeleportTargetXRange.IsExact &&
+                 variant.TeleportTargetXRange.Min == targetX);
+            bool yMatches =
+                (variant.TeleportTargetY.HasValue && variant.TeleportTargetY.Value == targetY) ||
+                (variant.TeleportTargetYRange != null &&
+                 variant.TeleportTargetYRange.IsExact &&
+                 variant.TeleportTargetYRange.Min == targetY);
+
+            return xMatches && yMatches;
+        }
+
+        private static string BuildCave7VolcanoGodFlatNote(
+            string spoilerLine,
+            string clueTeleportLine,
+            string riddleTeleportLine)
         {
             var sb = new StringBuilder();
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
-            sb.AppendLine("Вариант 1 (только при 2-м и последующих наступлениях):");
-            sb.AppendLine("Телепорт на клетку (X=8, Y=5)");
-            sb.AppendLine();
-            sb.AppendLine("Вариант 2 (выбор A):");
+            sb.AppendLine("Вариант 1 (выбор A):");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
             AppendLines(sb, BuildCave7VolcanoGodBattleLines(""));
             sb.AppendLine();
-            sb.AppendLine("Вариант 3 (выбор C):");
+            sb.AppendLine("Вариант 2 (выбор C):");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
-            sb.AppendLine("Телепорт на клетку (X=0, Y=5)");
+            sb.AppendLine(clueTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("Вариант 4 (выбор B):");
+            sb.AppendLine("Вариант 3 (выбор B):");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
             AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine));
-            sb.AppendLine("Телепорт на клетку (X=8, Y=5)");
+            sb.AppendLine(riddleTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("Вариант 5 (выбор B):");
+            sb.AppendLine("Вариант 4 (выбор B):");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines());
             AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine));
             return sb.ToString().TrimEnd('\r', '\n');
         }
 
-        private static string BuildCave7VolcanoGodHierarchicalNote(string spoilerLine)
+        private static string BuildCave7VolcanoGodHierarchicalNote(
+            string spoilerLine,
+            string clueTeleportLine,
+            string riddleTeleportLine)
         {
             var sb = new StringBuilder();
             sb.AppendLine("Эта ячейка содержит различные варианты текста:");
-            sb.AppendLine("Вариант 1 (только при 2-м и последующих наступлениях):");
-            sb.AppendLine("   Телепорт на клетку (X=8, Y=5)");
-            sb.AppendLine();
-            sb.AppendLine("Вариант 2:");
+            sb.AppendLine("Вариант 1:");
             AppendLines(sb, BuildCave7VolcanoGodPromptLines("   "));
             sb.AppendLine();
-            sb.AppendLine("   Вариант 2.1: A)");
+            sb.AppendLine("   Вариант 1.1: A)");
             AppendLines(sb, BuildCave7VolcanoGodBattleLines("      "));
             sb.AppendLine();
-            sb.AppendLine("   Вариант 2.2: C)");
-            sb.AppendLine("      Телепорт на клетку (X=0, Y=5)");
+            sb.AppendLine("   Вариант 1.2: C)");
+            sb.AppendLine("      " + clueTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("   Вариант 2.3: B)");
+            sb.AppendLine("   Вариант 1.3: B)");
             AppendLines(sb, BuildCave7VolcanoGodRiddleLines(spoilerLine, "      "));
             sb.AppendLine();
-            sb.AppendLine("      Вариант 2.3.1:");
-            sb.AppendLine("         Телепорт на клетку (X=8, Y=5)");
+            sb.AppendLine("      Вариант 1.3.1:");
+            sb.AppendLine("         " + riddleTeleportLine);
             sb.AppendLine();
-            sb.AppendLine("      Вариант 2.3.2:");
+            sb.AppendLine("      Вариант 1.3.2:");
             return sb.ToString().TrimEnd('\r', '\n');
         }
 

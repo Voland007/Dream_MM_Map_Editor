@@ -17,6 +17,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using Gee.External.Capstone.X86;
@@ -1956,6 +1957,9 @@ namespace MMMapEditor
                                     CollapseRedundantPartyLoopTextVariants(branchInsensitiveUnique.Values)))))))
                 .ToList();
 
+            collapsedVariants = CollapseContinuationOnlyVariants(collapsedVariants)
+                .ToList();
+
             bool preferPromptOnlyBeforeMixedPartyScan = collapsedVariants.Any(IsMixedPartyScanSubsetSummaryVariant);
 
             var orderedUniqueVariants = collapsedVariants
@@ -1970,6 +1974,200 @@ namespace MMMapEditor
             }
 
             return finalVariants;
+        }
+
+        private IEnumerable<PathVariantInfo> CollapseContinuationOnlyVariants(IEnumerable<PathVariantInfo> variants)
+        {
+            if (variants == null)
+                return Enumerable.Empty<PathVariantInfo>();
+
+            var variantList = variants
+                .Where(variant => variant != null)
+                .OrderBy(GetPathOrderKey)
+                .ToList();
+
+            if (variantList.Count < 2)
+                return variantList;
+
+            var result = new List<PathVariantInfo>();
+            foreach (var candidate in variantList)
+            {
+                if (IsStateGuardedDisabledEventNoOp(candidate, variantList))
+                {
+                    result.Add(candidate);
+                    continue;
+                }
+
+                bool isContinuationOnly = variantList.Any(other =>
+                    !ReferenceEquals(candidate, other) &&
+                    IsContinuationOnlyVariantShadowedBy(candidate, other));
+
+                if (!isContinuationOnly)
+                    result.Add(candidate);
+            }
+
+            return result.Count > 0 ? result : variantList;
+        }
+
+        private bool IsContinuationOnlyVariantShadowedBy(PathVariantInfo candidate, PathVariantInfo shadowingVariant)
+        {
+            if (candidate == null || shadowingVariant == null)
+                return false;
+
+            if (!IsStrictPathOrderAncestor(candidate, shadowingVariant))
+                return false;
+
+            if (!HasTextPrefix(candidate, shadowingVariant))
+                return false;
+
+            if (!IsBranchHistoryCoveredBy(
+                    BuildContinuationBranchChoiceKeySet(candidate),
+                    BuildContinuationBranchChoiceKeySet(shadowingVariant)))
+            {
+                return false;
+            }
+
+            if (!HasAnyOutcome(candidate))
+                return true;
+
+            return string.Equals(
+                BuildContinuationOutcomeKey(candidate),
+                BuildContinuationOutcomeKey(shadowingVariant),
+                StringComparison.Ordinal);
+        }
+
+        private static bool IsStrictPathOrderAncestor(PathVariantInfo candidate, PathVariantInfo shadowingVariant)
+        {
+            string candidateKey = FormatPathOrderForPrefix(candidate);
+            string shadowingKey = FormatPathOrderForPrefix(shadowingVariant);
+
+            return candidateKey.Length > 0 &&
+                   shadowingKey.Length > candidateKey.Length &&
+                   shadowingKey.StartsWith(candidateKey, StringComparison.Ordinal);
+        }
+
+        private static string FormatPathOrderForPrefix(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return string.Empty;
+
+            decimal orderKey = GetPathOrderKey(variant);
+            if (orderKey <= 0 || orderKey == decimal.MaxValue)
+                return string.Empty;
+
+            return orderKey.ToString("0", CultureInfo.InvariantCulture);
+        }
+
+        private static bool HasTextPrefix(PathVariantInfo prefixVariant, PathVariantInfo candidate)
+        {
+            var prefixTexts = prefixVariant?.Texts ?? new List<string>();
+            if (prefixTexts.Count == 0)
+                return true;
+
+            var candidateTexts = candidate?.Texts ?? new List<string>();
+            if (candidateTexts.Count < prefixTexts.Count)
+                return false;
+
+            for (int i = 0; i < prefixTexts.Count; i++)
+            {
+                if (!string.Equals(prefixTexts[i], candidateTexts[i], StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
+        }
+
+        private bool IsStateGuardedDisabledEventNoOp(
+            PathVariantInfo candidate,
+            IEnumerable<PathVariantInfo> variants)
+        {
+            // A disabled map event can legitimately become an empty guarded outcome on later visits.
+            if (candidate == null)
+                return false;
+
+            if ((candidate.Texts?.Count ?? 0) > 0 || HasAnyOutcome(candidate))
+                return false;
+
+            var guardAddresses = GetNonEmptyStateConstraintAddresses(candidate)
+                .ToHashSet();
+            if (guardAddresses.Count == 0)
+                return false;
+
+            return variants?.Any(other =>
+                !ReferenceEquals(candidate, other) &&
+                other?.DisablesCurrentMapEvent == true &&
+                VariantTouchesAnyStateAddress(other, guardAddresses)) == true;
+        }
+
+        private static IEnumerable<ushort> GetNonEmptyStateConstraintAddresses(PathVariantInfo variant)
+        {
+            return variant?.StateValueConstraints?
+                .Where(kvp => kvp.Value != null && !kvp.Value.IsEmpty)
+                .Select(kvp => kvp.Key) ?? Enumerable.Empty<ushort>();
+        }
+
+        private static bool VariantTouchesAnyStateAddress(
+            PathVariantInfo variant,
+            HashSet<ushort> addresses)
+        {
+            if (variant == null || addresses == null || addresses.Count == 0)
+                return false;
+
+            return (variant.AdjustedMemoryAddresses != null &&
+                    variant.AdjustedMemoryAddresses.Overlaps(addresses)) ||
+                   (variant.PendingPersistentCounterProgressions != null &&
+                    variant.PendingPersistentCounterProgressions.Keys.Any(addresses.Contains)) ||
+                   (variant.PersistentCounterProgressions != null &&
+                    variant.PersistentCounterProgressions.Any(info =>
+                        info != null && addresses.Contains(info.CounterAddress))) ||
+                   (variant.ExitEmulatedMemory8 != null &&
+                    variant.ExitEmulatedMemory8.Keys.Any(addresses.Contains));
+        }
+
+        private HashSet<string> BuildContinuationBranchChoiceKeySet(PathVariantInfo variant)
+        {
+            return variant?.BranchChoices?
+                .Where(choice => choice != null && !IsLoopLocalBranchChoiceForIdentity(choice))
+                .Select(choice => choice.GetIdentityKey())
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal) ?? new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private string BuildContinuationOutcomeKey(PathVariantInfo variant)
+        {
+            if (variant == null)
+                return "<NULL_VARIANT>";
+
+            string statKey =
+                $"{variant.RandomEncounterMonsterPowerCap}|{variant.RandomEncounterMonsterLevelCap}|{variant.RandomEncounterMonsterBatchCountCap}|" +
+                $"{variant.DarkeningLevel}|{variant.RandomEncounterChance}|{variant.RandomEncounterRubicon}|{variant.BattleMonsterStrengthAdjustment}|" +
+                $"{variant.CallsRandomEncounter}|{variant.IsOnlyRandomEncounterJump}|{BuildExternalJumpTargetsKey(variant)}|{BuildOverlayTransitionKey(variant)}|" +
+                $"{variant.TeleportTargetX}|{variant.TeleportTargetY}|{variant.TeleportTargetXRange?.Min}-{variant.TeleportTargetXRange?.Max}|" +
+                $"{variant.TeleportTargetYRange?.Min}-{variant.TeleportTargetYRange?.Max}|{variant.BattleMonsterCount}|" +
+                $"{variant.BattleMonsterCountRange?.Min}-{variant.BattleMonsterCountRange?.Max}|{variant.IsBattleMonsterCountIndeterminate}|" +
+                $"{variant.HasAnyTableLoad}|{BuildPersistentCounterProgressionKey(variant)}|{BuildDynamicRandomBoundDependencyKey(variant)}";
+
+            string battleKey = variant.BattleMonsters != null && variant.BattleMonsters.Count > 0
+                ? string.Join(";", variant.BattleMonsters
+                    .OrderBy(m => m.Index)
+                    .Select(m => $"{m.Index}:{m.MonsterIndex1:X2}:{m.MonsterIndex2:X2}:{m.IsIndeterminate}"))
+                : "<NO_BATTLE>";
+
+            string partialKey = variant.PartiallyDefinedBattles != null && variant.PartiallyDefinedBattles.Count > 0
+                ? string.Join(";", variant.PartiallyDefinedBattles
+                    .OrderBy(p => p.BxIndex)
+                    .Select(BuildPartialBattleKey))
+                : "<NO_PARTIAL>";
+
+            string loadKey = variant.LoadedValues != null && variant.LoadedValues.Count > 0
+                ? string.Join(";", variant.LoadedValues
+                    .OrderBy(v => v.BxIndex)
+                    .ThenBy(v => v.SourceAddr)
+                    .ThenBy(v => v.RegName)
+                    .Select(v => $"{v.BxIndex}:{v.RegName}:{v.Value:X2}:{v.SourceAddr:X4}:{v.IsFirstTable}:{v.IsSaved}"))
+                : "<NO_LOADS>";
+
+            return $"{statKey}||{battleKey}||{partialKey}||{loadKey}||{BuildPartyEffectsKey(variant)}||{BuildStaticMapDataReadKey(variant)}";
         }
 
         public PathVariantInfo FindCanonicalVariantForLeaf(
