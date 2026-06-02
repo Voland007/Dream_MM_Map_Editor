@@ -47,7 +47,16 @@ namespace MMMapEditor
         private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
         private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
         private const string BorderTypeSwamp = "\u0411\u043E\u043B\u043E\u0442\u043E";
+        private const string AnyObjectOption = "AnyObject";
+        private const string AnyObjectSpecOption = "AnyObjectSpec";
         private const string TechObjectOption = "TechObject";
+        private static readonly Dictionary<string, string> InternalCentralOptionLabels =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { AnyObjectOption, "Объект .OVR" },
+                { AnyObjectSpecOption, "Default-объект .OVR" },
+                { TechObjectOption, "Технический объект .OVR" }
+            };
         private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
             new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
@@ -81,6 +90,7 @@ namespace MMMapEditor
         private PictureBox magnifierPictureBox; // Объявление картинки, увеличивающей выделенную ячейку
         private ComboBox passTopComboBox, passBottomComboBox, passLeftComboBox, passRightComboBox; // Комбобоксы для прохода
         private ComboBox centerComboBox; //Комбобокс для тела клетки
+        private Label centerInternalOptionLabel;
         Dictionary<string, string> colorsMap = new Dictionary<string, string>()
         {
             {"72,0,0", "-1,-1,-1"},
@@ -292,6 +302,9 @@ namespace MMMapEditor
                     foreach (JObject obj in array)
                     {
                         string name = obj["Name"].ToString();
+                        if (IsInternalCentralOption(name))
+                            continue;
+
                         _objectsData[name] = obj;
                     }
                 }
@@ -321,15 +334,6 @@ namespace MMMapEditor
                 new JProperty("BodyPixels", new JArray())
             );
 
-            _objectsData[TechObjectOption] = new JObject(
-                new JProperty("Name", TechObjectOption),
-                new JProperty("LeftMargin", 0),
-                new JProperty("RightMargin", 0),
-                new JProperty("FilterLevel", 0),
-                new JProperty("IconBase64", ""),
-                new JProperty("BodyPixels", new JArray())
-            );
-
         }
 
         private void LoadNamesFromJson()
@@ -339,10 +343,11 @@ namespace MMMapEditor
                 // Очистим старый список
                 centerComboBox.Items.Clear();
 
-                // Добавляем имена из нашего словаря _objectsData
+                // Добавляем только пользовательские имена из нашего словаря _objectsData
                 foreach (var entry in _objectsData.Keys)
                 {
-                    centerComboBox.Items.Add(entry);
+                    if (IsUserSelectableCentralOption(entry))
+                        centerComboBox.Items.Add(entry);
                 }
 
                 // Устанавливаем первое значение по умолчанию
@@ -350,10 +355,58 @@ namespace MMMapEditor
                 {
                     centerComboBox.SelectedIndex = 0;
                 }
+
+                if (selectedPosition.HasValue &&
+                    centralOptions.TryGetValue(selectedPosition.Value, out var centralOption))
+                {
+                    UpdateCenterComboBoxForCell(centralOption);
+                }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка при чтении JSON: {ex.Message}");
+            }
+        }
+
+        private bool IsInternalCentralOption(string option)
+        {
+            return !string.IsNullOrEmpty(option) && InternalCentralOptionLabels.ContainsKey(option);
+        }
+
+        private bool IsUserSelectableCentralOption(string option)
+        {
+            return !IsInternalCentralOption(option) && _objectsData.ContainsKey(option);
+        }
+
+        private string GetInternalCentralOptionLabel(string option)
+        {
+            return !string.IsNullOrEmpty(option) &&
+                InternalCentralOptionLabels.TryGetValue(option, out var label)
+                    ? label
+                    : "";
+        }
+
+        private void UpdateCenterComboBoxForCell(string centralOption)
+        {
+            string internalLabel = GetInternalCentralOptionLabel(centralOption);
+            if (!string.IsNullOrEmpty(internalLabel))
+            {
+                centerComboBox.SelectedIndex = -1;
+                centerInternalOptionLabel.Text = internalLabel;
+                centerInternalOptionLabel.Visible = true;
+                return;
+            }
+
+            centerInternalOptionLabel.Text = "";
+            centerInternalOptionLabel.Visible = false;
+
+            if (!string.IsNullOrEmpty(centralOption) && centerComboBox.Items.Contains(centralOption))
+            {
+                centerComboBox.SelectedItem = centralOption;
+            }
+            else
+            {
+                centerComboBox.SelectedIndex = -1;
             }
         }
 
@@ -898,11 +951,22 @@ namespace MMMapEditor
                 centerComboBox.SelectedIndex = 0;
             }
 
+            centerInternalOptionLabel = new Label
+            {
+                AutoSize = false,
+                Location = new Point(centerComboBox.Left, centerComboBox.Bottom + 2),
+                Width = centerComboBox.Width,
+                Height = 18,
+                ForeColor = Color.LightSkyBlue,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Visible = false
+            };
+
             isDangerCheckBox = new CheckBox
             {
                 Text = "Опасно",
                 AutoSize = true,
-                Location = new Point(centerComboBox.Left, centerComboBox.Bottom + 5),
+                Location = new Point(centerComboBox.Left, centerInternalOptionLabel.Bottom + 2),
                 ForeColor = Color.White,
                 Appearance = Appearance.Normal,
                 //ImageAlign = ContentAlignment.MiddleCenter,
@@ -965,6 +1029,7 @@ namespace MMMapEditor
 
             topPanel.Controls.Add(centerLabel);
             topPanel.Controls.Add(centerComboBox);
+            topPanel.Controls.Add(centerInternalOptionLabel);
             topPanel.Controls.Add(isDangerCheckBox);
             topPanel.Controls.Add(noMagicCheckBox);
             topPanel.Controls.Add(darkeningGroupBox);
@@ -3853,7 +3918,7 @@ namespace MMMapEditor
                     Point pos = new Point(coordX, coordY);
 
                     // Заменяем центральный объект на "AnyObject"
-                    centralOptions[pos] = "AnyObject";
+                    centralOptions[pos] = AnyObjectOption;
                     processedObjects++;
 
                     Debug.WriteLine($"Объект {i}: X={coordX}, Y={coordY}");
@@ -4034,7 +4099,7 @@ namespace MMMapEditor
                             Debug.WriteLine($"Координата {i}: 0x{hexCoord:X2} -> X={coordX}, Y={coordY}");
 
                             Point newPos = new Point(coordX, coordY);
-                            centralOptions[newPos] = "AnyObject";
+                            centralOptions[newPos] = AnyObjectOption;
                         }
                         catch (Exception ex)
                         {
@@ -5165,7 +5230,7 @@ namespace MMMapEditor
             //Считываем значение из тела ячейки
             if (centralOptions.TryGetValue(pos, out var centralOption))
             {
-                centerComboBox.SelectedItem = centralOption;
+                UpdateCenterComboBoxForCell(centralOption);
             }
 
             SetNotesTextProgrammatically(notesPerCell[pos]);
@@ -7125,7 +7190,11 @@ namespace MMMapEditor
             // Центральный объект клетки
             if (centralOptions.TryGetValue(pos, out var centralOption))
             {
-                if (_objectsData.TryGetValue(centralOption, out JObject obj))
+                if (centralOption == TechObjectOption)
+                {
+                    DrawTechObject(g, bounds);
+                }
+                else if (_objectsData.TryGetValue(centralOption, out JObject obj))
                 {
                     int leftMargin = obj["LeftMargin"].ToObject<int>();
                     int rightMargin = obj["RightMargin"].ToObject<int>();
@@ -7146,8 +7215,6 @@ namespace MMMapEditor
                     if (centralOption == "Пустота") { }
                     else if (centralOption == "Не исследовано")
                         DrawUnexplored(g, bounds, pos);
-                    else if (centralOption == TechObjectOption)
-                        DrawTechObject(g, bounds);
                     else
                     {
                         // Если изображение доступно, создаем массив пикселей
@@ -7164,21 +7231,15 @@ namespace MMMapEditor
                 }
                 else
                 {
-                    if (centralOption == TechObjectOption)
-                    {
-                        DrawTechObject(g, bounds);
-                    }
-                    else
-                    {
-                        // Если центральный объект не найден, рисуем вопросительный знак
-                        Font questionFont = new Font("Arial", 24, FontStyle.Bold);
-                        Brush questionBrush = centralOption == "AnyObjectSpec"
-                            ? Brushes.LightSkyBlue
-                            : centralOption == "AnyObject"
-                                ? Brushes.White
-                                : Brushes.Yellow;
+                    // Если центральный объект не найден, рисуем вопросительный знак
+                    Font questionFont = new Font("Arial", 24, FontStyle.Bold);
+                    Brush questionBrush = centralOption == AnyObjectSpecOption
+                        ? Brushes.LightSkyBlue
+                        : centralOption == AnyObjectOption
+                            ? Brushes.White
+                            : Brushes.Yellow;
 
-                        g.DrawString("?", questionFont, questionBrush, new PointF(
+                    g.DrawString("?", questionFont, questionBrush, new PointF(
                 bounds.X + bounds.Width / 2, // центр по горизонтали
                 bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
                                                ), new StringFormat()
@@ -7186,7 +7247,6 @@ namespace MMMapEditor
                                                    Alignment = StringAlignment.Center,
                                                    LineAlignment = StringAlignment.Center
                                                });
-                    }
                 }
             }
 
@@ -7545,13 +7605,14 @@ namespace MMMapEditor
 
         private void CenterComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
+            if (selectedPosition.HasValue && centerComboBox.SelectedItem != null)
             {
                 Point pos = selectedPosition.Value;
                 string previousCentralOption = centralOptions.TryGetValue(pos, out var prev) ? prev : "";
 
                 // Обновляем значение в словаре
                 centralOptions[pos] = centerComboBox.SelectedItem.ToString();
+                UpdateCenterComboBoxForCell(centralOptions[pos]);
 
                 // Проверка на изменение
                 bool hasChanged = previousCentralOption != centralOptions[pos];
