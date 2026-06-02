@@ -63,8 +63,25 @@ namespace MMMapEditor
                 { 0x3C99, new[] { "PROTECTION FROM ACID отсутствует", "PROTECTION FROM ACID активно" } },
                 { 0x3C9E, new[] { "LEVITATE отсутствует", "LEVITATE активно" } },
                 { 0x3CA1, new[] { "PSYCHIC PROTECTION отсутствует", "PSYCHIC PROTECTION активно" } },
+                { 0xCAFE, new[] { "Кнопка на клетке (11,7) нажата", "Кнопка на клетке (11,7) не нажата" } },
+                { 0xCAFF, new[] { "Партия не упала в кислотную лужу после скольжения", "Партия упала в кислотную лужу после скольжения" } },
+                { 0xCDA8, new[] { "ни один персонаж партии не является мужчиной", "хотя бы один персонаж партии является мужчиной" } },
+                { 0xCD0B, new[] { "Городская сокровищница не ограблена", "Городская сокровищница ограблена" } },
+                { 0xCE16, new[] { "ловушка на клетке (8,2) не активирована", "ловушка на клетке (8,2) активирована" } },
                 { 0xC980, new[] { "квест не взят", "квест взят" } }
             };
+        private static readonly ushort[] KnownContextualBinaryStateConditionAddresses =
+        {
+            0xC9E3,
+            0xC9AB,
+            0xC9D4,
+            0xC98F,
+            0xC98B,
+            0xCAE0,
+            0xCB3F,
+            0xCAAB,
+            0xCC7F
+        };
         private static readonly string[] KnownProtectiveSpellConditionNames =
         {
             "PROTECTION FROM FIRE",
@@ -256,6 +273,7 @@ namespace MMMapEditor
                 {
                     hierarchicalNotes = useHierarchical
                         ? BuildHierarchicalVariantNotes(
+                            fileNameOnly,
                             obj,
                             defaultRandomEncounterMonsterPowerCap,
                             defaultRandomEncounterMonsterLevelCap,
@@ -267,6 +285,7 @@ namespace MMMapEditor
                         : string.Empty;
                     flatSemanticNotes = !useHierarchical
                         ? BuildFlatSemanticVariantNotes(
+                            fileNameOnly,
                             obj,
                             defaultRandomEncounterMonsterPowerCap,
                             defaultRandomEncounterMonsterLevelCap,
@@ -302,6 +321,7 @@ namespace MMMapEditor
                 else
                 {
                     Dictionary<int, List<string>> variantContents = BuildVariantContents(
+                        fileNameOnly,
                         obj,
                         defaultRandomEncounterMonsterPowerCap,
                         defaultRandomEncounterMonsterLevelCap,
@@ -890,6 +910,7 @@ namespace MMMapEditor
         }
 
         private static Dictionary<int, List<string>> BuildVariantContents(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -901,6 +922,7 @@ namespace MMMapEditor
             if (obj.PathVariants != null && obj.PathVariants.Count > 0)
             {
                 return BuildVariantContentsFromPathVariants(
+                    fileNameOnly,
                     obj,
                     defaultRandomEncounterMonsterPowerCap,
                     defaultRandomEncounterMonsterLevelCap,
@@ -921,6 +943,7 @@ namespace MMMapEditor
         }
 
         private static Dictionary<int, List<string>> BuildVariantContentsFromPathVariants(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -942,6 +965,7 @@ namespace MMMapEditor
                 return variantContents;
 
             var semanticTreeContents = BuildFlatSemanticTreeVariantContents(
+                fileNameOnly,
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -2490,6 +2514,7 @@ namespace MMMapEditor
         }
 
         private static Dictionary<int, List<string>> BuildFlatSemanticTreeVariantContents(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -2526,7 +2551,7 @@ namespace MMMapEditor
                 .ToList();
             var sourceItemsByKey = BuildSourceVariantItemMap(obj, sourceItems);
 
-            var groups = BuildTopLevelVariantGroups(obj, items);
+            var groups = BuildTopLevelVariantGroups(fileNameOnly, obj, items);
             if (groups.Count == 0)
                 return null;
 
@@ -5259,6 +5284,9 @@ namespace MMMapEditor
             AddDistinctHeaderAnnotations(
                 annotations,
                 BuildVariantHeaderAnnotations(variant, suppressedGuardKey: effectiveSuppressedGuardKey));
+            AddDistinctHeaderAnnotations(
+                annotations,
+                BuildContextualVariantHeaderAnnotations(obj, variant));
             return SuppressContextualOccurrenceHeaderAnnotations(obj, variant, annotations);
         }
 
@@ -5313,7 +5341,76 @@ namespace MMMapEditor
             AddDistinctHeaderAnnotations(
                 annotations,
                 variantAnnotations);
+            AddDistinctHeaderAnnotations(
+                annotations,
+                BuildContextualVariantHeaderAnnotations(obj, item?.Variant)
+                    .Where(annotation => !ContainsHeaderAnnotation(visibleAnnotations, annotation)));
             return SuppressSemanticallyRedundantHeaderAnnotations(annotations);
+        }
+
+        private static IEnumerable<string> BuildContextualVariantHeaderAnnotations(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            if (IsAreaB4TriviaEntranceAlreadyUsedNoOpVariant(obj, variant))
+                yield return "Дёрнут сук на клетке (15,15) или вход уже оплачен";
+
+            if (IsAreaB4TriviaEntranceAvailableVariant(obj, variant))
+                yield return "Сук на клетке (15,15) не дёрнут и вход ещё не оплачен";
+        }
+
+        private static bool IsAreaB4TriviaEntranceAlreadyUsedNoOpVariant(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            return obj != null &&
+                   variant != null &&
+                   obj.X == 8 &&
+                   obj.Y == 2 &&
+                   obj.PatchAddress == 0x0126 &&
+                   (variant.Texts == null || !variant.Texts.Any(text => !string.IsNullOrWhiteSpace(text))) &&
+                   HasNonZeroStateValueConstraint(variant, 0xCAE0);
+        }
+
+        private static bool IsAreaB4TriviaEntranceAvailableVariant(
+            OvrObject obj,
+            PathVariantInfo variant)
+        {
+            return obj != null &&
+                   variant != null &&
+                   obj.X == 8 &&
+                   obj.Y == 2 &&
+                   obj.PatchAddress == 0x0126 &&
+                   variant.Texts?.Any(text =>
+                       !string.IsNullOrWhiteSpace(text) &&
+                       text.IndexOf("TRIVIA ISLAND! 500 GOLD, ENTER (Y/N)?", StringComparison.Ordinal) >= 0) == true &&
+                   HasZeroStateValueConstraint(variant, 0xCAE0);
+        }
+
+        private static bool HasNonZeroStateValueConstraint(PathVariantInfo variant, ushort address)
+        {
+            if (variant?.StateValueConstraints == null ||
+                !variant.StateValueConstraints.TryGetValue(address, out var constraint) ||
+                constraint == null)
+            {
+                return false;
+            }
+
+            return constraint.ExcludedValues?.Contains(0) == true ||
+                   constraint.LowerInclusiveValues?.Any(value => value > 0) == true;
+        }
+
+        private static bool HasZeroStateValueConstraint(PathVariantInfo variant, ushort address)
+        {
+            if (variant?.StateValueConstraints == null ||
+                !variant.StateValueConstraints.TryGetValue(address, out var constraint) ||
+                constraint == null)
+            {
+                return false;
+            }
+
+            return constraint.ExactValues?.Contains(0) == true ||
+                   constraint.UpperInclusiveValues?.Contains(0) == true;
         }
 
         private static List<string> SuppressContextualOccurrenceHeaderAnnotations(
@@ -6090,6 +6187,15 @@ namespace MMMapEditor
             public VariantTreeNode Node { get; set; }
             public ushort Address { get; set; }
             public StateConditionPolarity Polarity { get; set; }
+            public string SourceAnnotation { get; set; }
+        }
+
+        private sealed class TopLevelStateConditionBranchInfo
+        {
+            public TopLevelVariantGroup Group { get; set; }
+            public ushort Address { get; set; }
+            public StateConditionPolarity Polarity { get; set; }
+            public string SourceAnnotation { get; set; }
         }
 
         private sealed class SharedPartyHoistBranch
@@ -6177,6 +6283,7 @@ namespace MMMapEditor
         }
 
         private static string BuildHierarchicalVariantNotes(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -6220,6 +6327,7 @@ namespace MMMapEditor
                 return null;
 
             var noteModel = GetSemanticNoteModel(
+                fileNameOnly,
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -6265,6 +6373,7 @@ namespace MMMapEditor
         }
 
         private static string BuildFlatSemanticVariantNotes(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -6308,6 +6417,7 @@ namespace MMMapEditor
                 return null;
 
             var noteModel = GetSemanticNoteModel(
+                fileNameOnly,
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -6337,6 +6447,7 @@ namespace MMMapEditor
         }
 
         private static SemanticNoteModel BuildSemanticNoteModel(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -6347,6 +6458,7 @@ namespace MMMapEditor
             string specialSpoilerLine = null)
         {
             var analysis = BuildSemanticVariantRenderAnalysis(
+                fileNameOnly,
                 obj,
                 defaultRandomEncounterMonsterPowerCap,
                 defaultRandomEncounterMonsterLevelCap,
@@ -6370,6 +6482,7 @@ namespace MMMapEditor
         }
 
         private static SemanticVariantRenderAnalysis BuildSemanticVariantRenderAnalysis(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -6412,7 +6525,7 @@ namespace MMMapEditor
                 .Where(item => item != null)
                 .ToList();
 
-            var groups = BuildTopLevelVariantGroups(obj, items);
+            var groups = BuildTopLevelVariantGroups(fileNameOnly, obj, items);
             if (groups.Count == 0)
                 return null;
 
@@ -6617,6 +6730,7 @@ namespace MMMapEditor
         }
 
         private static SemanticNoteModel GetSemanticNoteModel(
+            string fileNameOnly,
             OvrObject obj,
             byte defaultRandomEncounterMonsterPowerCap,
             byte defaultRandomEncounterMonsterLevelCap,
@@ -6640,7 +6754,8 @@ namespace MMMapEditor
                 defaultDarkeningLevel,
                 defaultRandomEncounterChance,
                 inlineSpecialSpoilerLine,
-                specialSpoilerLine);
+                specialSpoilerLine,
+                fileNameOnly);
 
             lock (cache.Sync)
             {
@@ -6649,6 +6764,7 @@ namespace MMMapEditor
                 {
                     preparation.SemanticNoteModelComputed = true;
                     preparation.SemanticNoteModel = BuildSemanticNoteModel(
+                        fileNameOnly,
                         obj,
                         defaultRandomEncounterMonsterPowerCap,
                         defaultRandomEncounterMonsterLevelCap,
@@ -6684,7 +6800,8 @@ namespace MMMapEditor
             byte defaultDarkeningLevel,
             byte defaultRandomEncounterChance,
             string inlineSpecialSpoilerLine,
-            string specialSpoilerLine = null)
+            string specialSpoilerLine = null,
+            string fileNameOnly = null)
         {
             return string.Join(
                 "\u001F",
@@ -6695,7 +6812,8 @@ namespace MMMapEditor
                 defaultDarkeningLevel.ToString(CultureInfo.InvariantCulture),
                 defaultRandomEncounterChance.ToString(CultureInfo.InvariantCulture),
                 inlineSpecialSpoilerLine ?? string.Empty,
-                specialSpoilerLine ?? string.Empty);
+                specialSpoilerLine ?? string.Empty,
+                fileNameOnly ?? string.Empty);
         }
 
         private static Dictionary<int, List<string>> CloneVariantContents(
@@ -9686,6 +9804,7 @@ namespace MMMapEditor
         }
 
         private static List<TopLevelVariantGroup> BuildTopLevelVariantGroups(
+            string fileNameOnly,
             OvrObject obj,
             List<VariantRenderItem> items)
         {
@@ -9714,14 +9833,16 @@ namespace MMMapEditor
                 })
                 .ToList();
 
+            PromoteBinaryStateConditionTopLevelGroups(groups, fileNameOnly, obj);
+
             foreach (var group in groups)
             {
                 var root = BuildVariantTree(group.Items, group.GroupedByChoice ? group.ConsumedTopChoiceKey : null);
-                PromoteBinaryStateConditionBranches(root);
+                PromoteBinaryStateConditionBranches(root, fileNameOnly, obj);
                 IntroduceComplementaryInventoryPresenceBranches(root);
                 IntroduceGuardedNoOpComplementOutcomes(root);
                 ComputeCommonLines(root);
-                IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(root);
+                IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(root, fileNameOnly, obj);
                 IntroduceSharedLineHierarchy(root);
                 AttachChoiceChildrenToSiblingPromptParents(root);
                 IntroduceSharedPromptHierarchyFromChoiceChildContent(root);
@@ -11566,7 +11687,204 @@ namespace MMMapEditor
             return RemoveLineOccurrences(item.Lines, linesToRemove);
         }
 
-        private static void PromoteBinaryStateConditionBranches(VariantTreeNode node)
+        private static void PromoteBinaryStateConditionTopLevelGroups(
+            List<TopLevelVariantGroup> groups,
+            string fileNameOnly,
+            OvrObject contextObject)
+        {
+            if (groups == null || groups.Count < 2)
+                return;
+
+            var conditionGroups = groups
+                .Select(group => TryBuildStateConditionTopLevelGroupInfo(group, out var info) ? info : null)
+                .Where(info => info != null)
+                .ToList();
+
+            var binaryGroups = conditionGroups
+                .GroupBy(info => info.Address)
+                .Where(group =>
+                    group.Any(info => info.Polarity == StateConditionPolarity.Zero) &&
+                    group.Any(info => info.Polarity == StateConditionPolarity.NonZero));
+
+            foreach (var group in binaryGroups)
+            {
+                var entries = group.ToList();
+                bool allowTechnicalFallback = entries.Any(info =>
+                    IsEmptyOrUserVisibleNoOpTopLevelGroup(info.Group));
+
+                foreach (var info in entries)
+                {
+                    if (TryBuildStateConditionDisplayAnnotation(
+                            info.Address,
+                            info.Polarity,
+                            info.SourceAnnotation,
+                            allowTechnicalFallback,
+                            fileNameOnly,
+                            contextObject,
+                            out string annotation))
+                    {
+                        info.Group.HeaderAnnotation = annotation;
+                    }
+                }
+            }
+
+            PromoteNoOpTechnicalConditionTopLevelGroups(groups, fileNameOnly, contextObject);
+        }
+
+        private static bool TryBuildStateConditionTopLevelGroupInfo(
+            TopLevelVariantGroup group,
+            out TopLevelStateConditionBranchInfo info)
+        {
+            info = null;
+            if (group == null ||
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(group.Label)) ||
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(group.HeaderAnnotation)))
+            {
+                return false;
+            }
+
+            if (!TryParseBinaryStateConditionAnnotation(
+                    group.HeaderAnnotation,
+                    out ushort address,
+                    out StateConditionPolarity polarity))
+            {
+                return false;
+            }
+
+            info = new TopLevelStateConditionBranchInfo
+            {
+                Group = group,
+                Address = address,
+                Polarity = polarity,
+                SourceAnnotation = group.HeaderAnnotation
+            };
+            return true;
+        }
+
+        private static bool IsEmptyOrUserVisibleNoOpTopLevelGroup(TopLevelVariantGroup group)
+        {
+            var items = (group?.Items ?? new List<VariantRenderItem>())
+                .Where(item => item != null)
+                .ToList();
+            return items.Count > 0 && items.All(IsEmptyOrUserVisibleNoOpVariant);
+        }
+
+        private static bool IsEmptyOrUserVisibleNoOpVariant(VariantRenderItem item)
+        {
+            if (item == null)
+                return false;
+
+            if (item.SupplementalLines != null &&
+                item.SupplementalLines.Any(line => !string.IsNullOrWhiteSpace(line)))
+            {
+                return false;
+            }
+
+            if (item.Lines == null || item.Lines.Count == 0)
+                return true;
+
+            return IsUserVisibleNoOpOnly(item.Lines);
+        }
+
+        private static void PromoteNoOpTechnicalConditionTopLevelGroups(
+            List<TopLevelVariantGroup> groups,
+            string fileNameOnly,
+            OvrObject contextObject)
+        {
+            var groupList = (groups ?? new List<TopLevelVariantGroup>())
+                .Where(group => group != null)
+                .ToList();
+
+            var conditionGroups = groupList
+                .Select(group => TryBuildNoOpTechnicalConditionTopLevelGroupInfo(group, out var info) ? info : null)
+                .Where(info => info != null)
+                .ToList();
+
+            var sourceGroups = new HashSet<TopLevelVariantGroup>(
+                conditionGroups.Select(info => info.Group));
+
+            foreach (var info in conditionGroups)
+            {
+                if (TryBuildTechnicalConditionFallbackAnnotation(
+                        info.SourceAnnotation,
+                        fileNameOnly,
+                        contextObject,
+                        out string annotation))
+                {
+                    info.Group.HeaderAnnotation = annotation;
+                }
+
+                if (TryBuildComplementaryUserVisibleStateConditionAnnotation(
+                        info.SourceAnnotation,
+                        fileNameOnly,
+                        contextObject,
+                        out string complementaryAnnotation))
+                {
+                    AddComplementaryStateConditionTopLevelGroupAnnotations(
+                        groupList,
+                        sourceGroups,
+                        complementaryAnnotation);
+                }
+            }
+        }
+
+        private static bool TryBuildNoOpTechnicalConditionTopLevelGroupInfo(
+            TopLevelVariantGroup group,
+            out TopLevelStateConditionBranchInfo info)
+        {
+            info = null;
+            if (group == null ||
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleChoiceLabel(group.Label)) ||
+                !string.IsNullOrWhiteSpace(NormalizeUserVisibleHeaderAnnotation(group.HeaderAnnotation)) ||
+                !IsEmptyOrUserVisibleNoOpTopLevelGroup(group))
+            {
+                return false;
+            }
+
+            if (!TryParseBinaryStateConditionAnnotation(
+                    group.HeaderAnnotation,
+                    out ushort address,
+                    out StateConditionPolarity polarity))
+            {
+                return false;
+            }
+
+            info = new TopLevelStateConditionBranchInfo
+            {
+                Group = group,
+                Address = address,
+                Polarity = polarity,
+                SourceAnnotation = group.HeaderAnnotation
+            };
+            return true;
+        }
+
+        private static void AddComplementaryStateConditionTopLevelGroupAnnotations(
+            List<TopLevelVariantGroup> groups,
+            HashSet<TopLevelVariantGroup> sourceGroups,
+            string annotation)
+        {
+            if (string.IsNullOrWhiteSpace(annotation))
+                return;
+
+            foreach (var group in groups ?? new List<TopLevelVariantGroup>())
+            {
+                if (group == null ||
+                    sourceGroups?.Contains(group) == true ||
+                    IsTechnicalHeaderAnnotation(group.HeaderAnnotation) ||
+                    ContainsHeaderAnnotation(new[] { group.HeaderAnnotation }, annotation))
+                {
+                    continue;
+                }
+
+                group.HeaderAnnotation = MergeHeaderAnnotations(group.HeaderAnnotation, annotation);
+            }
+        }
+
+        private static void PromoteBinaryStateConditionBranches(
+            VariantTreeNode node,
+            string fileNameOnly,
+            OvrObject contextObject)
         {
             if (node == null)
                 return;
@@ -11590,11 +11908,19 @@ namespace MMMapEditor
 
                 foreach (var group in binaryGroups)
                 {
-                    foreach (var info in group)
+                    var entries = group.ToList();
+                    bool allowTechnicalFallback = entries.Any(info =>
+                        IsEmptyOrUserVisibleNoOpStateConditionNode(info.Node));
+
+                    foreach (var info in entries)
                     {
-                        if (TryBuildUserVisibleStateConditionAnnotation(
+                        if (TryBuildStateConditionDisplayAnnotation(
                                 info.Address,
                                 info.Polarity,
+                                info.SourceAnnotation,
+                                allowTechnicalFallback,
+                                fileNameOnly,
+                                contextObject,
                                 out string annotation))
                         {
                             info.Node.HeaderAnnotation = annotation;
@@ -11603,8 +11929,10 @@ namespace MMMapEditor
                 }
             }
 
+            PromoteNoOpTechnicalConditionBranches(children, fileNameOnly, contextObject);
+
             foreach (var child in children)
-                PromoteBinaryStateConditionBranches(child);
+                PromoteBinaryStateConditionBranches(child, fileNameOnly, contextObject);
         }
 
         private static bool TryBuildStateConditionBranchInfo(
@@ -11627,17 +11955,217 @@ namespace MMMapEditor
             {
                 Node = node,
                 Address = address,
-                Polarity = polarity
+                Polarity = polarity,
+                SourceAnnotation = node.HeaderAnnotation
             };
             return true;
+        }
+
+        private static bool IsEmptyOrUserVisibleNoOpStateConditionNode(VariantTreeNode node)
+        {
+            return IsEmptyOrNoOpNode(node) ||
+                   TryBuildNoOpOnlyRenderNodeKey(node, out _);
+        }
+
+        private static void PromoteNoOpTechnicalConditionBranches(
+            List<VariantTreeNode> children,
+            string fileNameOnly,
+            OvrObject contextObject)
+        {
+            var childList = (children ?? new List<VariantTreeNode>())
+                .Where(child => child != null)
+                .ToList();
+
+            var conditionBranches = childList
+                .Select(child => TryBuildNoOpTechnicalConditionBranchInfo(child, out var info) ? info : null)
+                .Where(info => info != null)
+                .ToList();
+
+            var sourceBranches = new HashSet<VariantTreeNode>(
+                conditionBranches.Select(info => info.Node));
+
+            foreach (var info in conditionBranches)
+            {
+                if (TryBuildTechnicalConditionFallbackAnnotation(
+                        info.SourceAnnotation,
+                        fileNameOnly,
+                        contextObject,
+                        out string annotation))
+                {
+                    info.Node.HeaderAnnotation = annotation;
+                }
+
+                if (TryBuildComplementaryUserVisibleStateConditionAnnotation(
+                        info.SourceAnnotation,
+                        fileNameOnly,
+                        contextObject,
+                        out string complementaryAnnotation))
+                {
+                    AddComplementaryStateConditionBranchAnnotations(
+                        childList,
+                        sourceBranches,
+                        complementaryAnnotation);
+                }
+            }
+        }
+
+        private static bool TryBuildNoOpTechnicalConditionBranchInfo(
+            VariantTreeNode node,
+            out StateConditionBranchInfo info)
+        {
+            info = null;
+            if (node == null ||
+                HasUserVisibleNodeLabelOrAnnotation(node) ||
+                !IsEmptyOrUserVisibleNoOpStateConditionNode(node))
+            {
+                return false;
+            }
+
+            if (!TryParseBinaryStateConditionAnnotation(
+                    node.HeaderAnnotation,
+                    out ushort address,
+                    out StateConditionPolarity polarity))
+            {
+                return false;
+            }
+
+            info = new StateConditionBranchInfo
+            {
+                Node = node,
+                Address = address,
+                Polarity = polarity,
+                SourceAnnotation = node.HeaderAnnotation
+            };
+            return true;
+        }
+
+        private static void AddComplementaryStateConditionBranchAnnotations(
+            List<VariantTreeNode> children,
+            HashSet<VariantTreeNode> sourceBranches,
+            string annotation)
+        {
+            if (string.IsNullOrWhiteSpace(annotation))
+                return;
+
+            foreach (var child in children ?? new List<VariantTreeNode>())
+            {
+                if (child == null ||
+                    sourceBranches?.Contains(child) == true ||
+                    IsTechnicalHeaderAnnotation(child.HeaderAnnotation) ||
+                    ContainsHeaderAnnotation(new[] { child.HeaderAnnotation }, annotation))
+                {
+                    continue;
+                }
+
+                child.HeaderAnnotation = MergeHeaderAnnotations(child.HeaderAnnotation, annotation);
+            }
+        }
+
+        private static bool TryBuildStateConditionDisplayAnnotation(
+            ushort address,
+            StateConditionPolarity polarity,
+            string sourceAnnotation,
+            bool allowTechnicalFallback,
+            string fileNameOnly,
+            OvrObject contextObject,
+            out string annotation)
+        {
+            if (TryBuildUserVisibleStateConditionAnnotation(address, polarity, fileNameOnly, contextObject, out annotation))
+                return true;
+
+            annotation = null;
+            if (!allowTechnicalFallback)
+                return false;
+
+            string technicalCondition = StripGuardHeaderAnnotationPrefix(sourceAnnotation);
+            if (string.IsNullOrWhiteSpace(technicalCondition))
+                return false;
+
+            annotation = BuildTechnicalConditionFallbackAnnotation(technicalCondition);
+            return true;
+        }
+
+        private static bool TryBuildTechnicalConditionFallbackAnnotation(
+            string sourceAnnotation,
+            string fileNameOnly,
+            OvrObject contextObject,
+            out string annotation)
+        {
+            annotation = null;
+
+            if (TryParseBinaryStateConditionAnnotation(
+                    sourceAnnotation,
+                    out ushort address,
+                    out StateConditionPolarity polarity) &&
+                TryBuildUserVisibleStateConditionAnnotation(address, polarity, fileNameOnly, contextObject, out annotation))
+            {
+                return true;
+            }
+
+            if (!IsTechnicalHeaderAnnotation(sourceAnnotation))
+                return false;
+
+            string technicalCondition = StripGuardHeaderAnnotationPrefix(sourceAnnotation);
+            if (string.IsNullOrWhiteSpace(technicalCondition))
+                return false;
+
+            annotation = BuildTechnicalConditionFallbackAnnotation(technicalCondition);
+            return true;
+        }
+
+        private static bool TryBuildComplementaryUserVisibleStateConditionAnnotation(
+            string sourceAnnotation,
+            string fileNameOnly,
+            OvrObject contextObject,
+            out string annotation)
+        {
+            annotation = null;
+            if (!TryParseBinaryStateConditionAnnotation(
+                    sourceAnnotation,
+                    out ushort address,
+                    out StateConditionPolarity polarity))
+            {
+                return false;
+            }
+
+            return TryBuildUserVisibleStateConditionAnnotation(
+                address,
+                GetOppositeStateConditionPolarity(polarity),
+                fileNameOnly,
+                contextObject,
+                out annotation);
+        }
+
+        private static StateConditionPolarity GetOppositeStateConditionPolarity(StateConditionPolarity polarity)
+        {
+            return polarity == StateConditionPolarity.Zero
+                ? StateConditionPolarity.NonZero
+                : StateConditionPolarity.Zero;
+        }
+
+        private static string BuildTechnicalConditionFallbackAnnotation(string technicalCondition)
+        {
+            return "условие: " + technicalCondition;
         }
 
         private static bool TryBuildUserVisibleStateConditionAnnotation(
             ushort address,
             StateConditionPolarity polarity,
+            string fileNameOnly,
+            OvrObject contextObject,
             out string annotation)
         {
             annotation = null;
+            if (TryBuildContextualUserVisibleStateConditionAnnotation(
+                    address,
+                    polarity,
+                    fileNameOnly,
+                    contextObject,
+                    out annotation))
+            {
+                return true;
+            }
+
             if (!KnownBinaryStateConditionLabels.TryGetValue(address, out var labels) ||
                 labels == null ||
                 labels.Length < 2)
@@ -11649,6 +12177,148 @@ namespace MMMapEditor
                 ? labels[0]
                 : labels[1];
             return !string.IsNullOrWhiteSpace(annotation);
+        }
+
+        private static bool TryBuildContextualUserVisibleStateConditionAnnotation(
+            ushort address,
+            StateConditionPolarity polarity,
+            string fileNameOnly,
+            OvrObject contextObject,
+            out string annotation)
+        {
+            annotation = null;
+            if (address == 0xC9E3 &&
+                string.Equals(fileNameOnly, "CAVE4.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Силовые поля деактивированы (введён правильный пароль в терминал)"
+                    : "Силовые поля активны";
+                return true;
+            }
+
+            if (address == 0xC98B &&
+                string.Equals(fileNameOnly, "AREAE3.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                contextObject.X == 12 &&
+                contextObject.Y == 7)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Льву не сказан правильный пароль"
+                    : "Льву сказан правильный пароль";
+                return true;
+            }
+
+            if (address == 0xC98F &&
+                string.Equals(fileNameOnly, "AREAE2.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                ((contextObject.X == 2 && contextObject.Y == 11) ||
+                 (contextObject.X == 4 && contextObject.Y == 11) ||
+                 (contextObject.X == 3 && contextObject.Y == 12)))
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Стычка с пришельцем на клетке (3,11) уже произошла"
+                    : "Стычка с пришельцем на клетке (3,11) ещё не произошла";
+                return true;
+            }
+
+            if (address == 0xC9AB &&
+                string.Equals(fileNameOnly, "AREAC2.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                contextObject.X == 4 &&
+                contextObject.Y == 7)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Из фонтана ещё не пили"
+                    : "Из фонтана уже пили";
+                return true;
+            }
+
+            if (address == 0xC9D4 &&
+                string.Equals(fileNameOnly, "AREAA1.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                contextObject.X == 7 &&
+                contextObject.Y == 14)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Клетка (15,7) не была посещена"
+                    : "Клетка (15,7) была посещена";
+                return true;
+            }
+
+            if (address == 0xCB3F &&
+                string.Equals(fileNameOnly, "AREAA4.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                contextObject.X == 4 &&
+                contextObject.Y == 2)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Привратнику на мосту не был дан правильный ответ"
+                    : "Привратнику на мосту был дан правильный ответ";
+                return true;
+            }
+
+            if (address == 0xCAE0 &&
+                string.Equals(fileNameOnly, "AREAB4.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                contextObject.X == 8 &&
+                contextObject.Y == 2 &&
+                polarity == StateConditionPolarity.NonZero)
+            {
+                annotation = "Дёрнут сук на клетке (15,15) или вход уже оплачен";
+                return true;
+            }
+
+            if (address == 0xCAE0 &&
+                string.Equals(fileNameOnly, "AREAB4.OVR", StringComparison.OrdinalIgnoreCase) &&
+                TryGetAreaB4TriviaIndex(contextObject, out _))
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "TRIVIA ISLAND посещён нелегально (не через официальную клетку входа) или ответ уже был дан"
+                    : "TRIVIA ISLAND посещён легально и ответ ещё не был дан";
+                return true;
+            }
+
+            if (address == 0xCAAB &&
+                string.Equals(fileNameOnly, "RWL2.OVR", StringComparison.OrdinalIgnoreCase))
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Кнопка на клетке (15,4) не нажата"
+                    : "Кнопка на клетке (15,4) нажата";
+                return true;
+            }
+
+            if (address == 0xCC7F &&
+                string.Equals(fileNameOnly, "RWL2.OVR", StringComparison.OrdinalIgnoreCase) &&
+                contextObject != null &&
+                contextObject.X == 14 &&
+                contextObject.Y == 14)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Партия не проехала по конвейерной ленте с клетки (14,13) и не налетела на стену копий"
+                    : "Партия проехала по конвейерной ленте с клетки (14,13) и налетела на стену копий";
+                return true;
+            }
+
+            if (address != 0xCAFF || contextObject == null)
+                return false;
+
+            if (contextObject.X == 3 && contextObject.Y == 13)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Партия не проскользила с клетки (3,12) в кислотную лужу"
+                    : "Партия проскользила с клетки (3,12) и упала в кислотную лужу";
+                return true;
+            }
+
+            if (contextObject.X == 15 && contextObject.Y == 11)
+            {
+                annotation = polarity == StateConditionPolarity.Zero
+                    ? "Партия не проскользила с клетки (15,10) в кислотную лужу"
+                    : "Партия проскользила с клетки (15,10) и упала в кислотную лужу";
+                return true;
+            }
+
+            return false;
         }
 
         private static bool TryParseBinaryStateConditionAnnotation(
@@ -13736,16 +14406,19 @@ namespace MMMapEditor
                    HasAnyVariantItem(node);
         }
 
-        private static void IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(VariantTreeNode node)
+        private static void IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(
+            VariantTreeNode node,
+            string fileNameOnly,
+            OvrObject contextObject)
         {
             if (node == null)
                 return;
 
             foreach (var child in (node.Children ?? new List<VariantTreeNode>()).ToList())
-                IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(child);
+                IntroduceSharedLineHierarchyAcrossBinaryStateConditionChildren(child, fileNameOnly, contextObject);
 
             var candidates = (node.Children ?? new List<VariantTreeNode>())
-                .Select((child, index) => TryBuildVisibleStateConditionBranchInfo(child, out var info)
+                .Select((child, index) => TryBuildVisibleStateConditionBranchInfo(child, fileNameOnly, contextObject, out var info)
                     ? new { Child = child, Info = info, Index = index }
                     : null)
                 .Where(entry =>
@@ -13815,6 +14488,8 @@ namespace MMMapEditor
 
         private static bool TryBuildVisibleStateConditionBranchInfo(
             VariantTreeNode node,
+            string fileNameOnly,
+            OvrObject contextObject,
             out StateConditionBranchInfo info)
         {
             info = null;
@@ -13828,9 +14503,46 @@ namespace MMMapEditor
             if (string.IsNullOrWhiteSpace(annotation))
                 return false;
 
-            foreach (var kvp in KnownBinaryStateConditionLabels)
+            foreach (ushort address in KnownBinaryStateConditionLabels.Keys
+                .Concat(KnownContextualBinaryStateConditionAddresses)
+                .Distinct())
             {
-                var labels = kvp.Value;
+                KnownBinaryStateConditionLabels.TryGetValue(address, out var labels);
+
+                if (TryBuildContextualUserVisibleStateConditionAnnotation(
+                        address,
+                        StateConditionPolarity.Zero,
+                        fileNameOnly,
+                        contextObject,
+                        out string contextualZeroLabel) &&
+                    string.Equals(annotation, contextualZeroLabel, StringComparison.Ordinal))
+                {
+                    info = new StateConditionBranchInfo
+                    {
+                        Node = node,
+                        Address = address,
+                        Polarity = StateConditionPolarity.Zero
+                    };
+                    return true;
+                }
+
+                if (TryBuildContextualUserVisibleStateConditionAnnotation(
+                        address,
+                        StateConditionPolarity.NonZero,
+                        fileNameOnly,
+                        contextObject,
+                        out string contextualNonZeroLabel) &&
+                    string.Equals(annotation, contextualNonZeroLabel, StringComparison.Ordinal))
+                {
+                    info = new StateConditionBranchInfo
+                    {
+                        Node = node,
+                        Address = address,
+                        Polarity = StateConditionPolarity.NonZero
+                    };
+                    return true;
+                }
+
                 if (labels == null || labels.Length < 2)
                     continue;
 
@@ -13839,7 +14551,7 @@ namespace MMMapEditor
                     info = new StateConditionBranchInfo
                     {
                         Node = node,
-                        Address = kvp.Key,
+                        Address = address,
                         Polarity = StateConditionPolarity.Zero
                     };
                     return true;
@@ -13850,7 +14562,7 @@ namespace MMMapEditor
                     info = new StateConditionBranchInfo
                     {
                         Node = node,
-                        Address = kvp.Key,
+                        Address = address,
                         Polarity = StateConditionPolarity.NonZero
                     };
                     return true;
