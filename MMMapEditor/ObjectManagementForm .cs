@@ -26,12 +26,10 @@ namespace MMMapEditor
 {
     public partial class ObjectManagementForm : Form
     {
-        private const int AutoSaveDelayMs = 300;
         private const string FallbackObjectName = "Не исследовано";
 
         private readonly MainForm mainForm;
         private readonly ImageList iconList = new ImageList();
-        private readonly System.Windows.Forms.Timer autoSaveTimer = new System.Windows.Forms.Timer();
         private readonly ToolTip toolTip = new ToolTip();
         private readonly List<PendingReferenceReplacement> pendingReferenceReplacements =
             new List<PendingReferenceReplacement>();
@@ -60,7 +58,7 @@ namespace MMMapEditor
         private CentralObject selectedObject;
         private bool isUpdatingControls;
         private bool isUpdatingDefaultCheckbox;
-        private bool hasPendingSave;
+        private bool hasUnsavedChanges;
         private bool showWarningOnImport;
 
         public string ActiveProfileFileName { get; private set; }
@@ -73,10 +71,7 @@ namespace MMMapEditor
             ActiveProfileFileName = ResolveInitialProfilePath(activeConfigFile);
 
             BuildInterface();
-            ConfigureAutoSave();
             LoadObjectsFromProfile(ActiveProfileFileName);
-            if (File.Exists(ActiveProfileFileName))
-                ApplyCurrentProfileToMain();
             CheckAndUpdateDefaultFlag();
         }
 
@@ -92,8 +87,8 @@ namespace MMMapEditor
             MinimizeBox = false;
             ShowInTaskbar = false;
             BackColor = Color.FromArgb(242, 245, 249);
-            ClientSize = new Size(820, 560);
-            MinimumSize = new Size(820, 560);
+            ClientSize = new Size(820, 479);
+            MinimumSize = new Size(820, 479);
 
             iconList.ColorDepth = ColorDepth.Depth32Bit;
             iconList.ImageSize = new Size(32, 32);
@@ -106,47 +101,36 @@ namespace MMMapEditor
                 Padding = new Padding(14),
                 BackColor = BackColor
             };
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 365));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
 
-            root.Controls.Add(CreateHeaderPanel(), 0, 0);
-            root.Controls.Add(CreateContentPanel(), 0, 1);
+            root.Controls.Add(CreateContentPanel(), 0, 0);
+            root.Controls.Add(CreateProfilePathPanel(), 0, 1);
             root.Controls.Add(CreateFooterPanel(), 0, 2);
             Controls.Add(root);
 
             ResumeLayout(false);
         }
 
-        private Control CreateHeaderPanel()
+        private Control CreateProfilePathPanel()
         {
             var panel = new Panel
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(242, 245, 249)
-            };
-
-            var titleLabel = new Label
-            {
-                AutoSize = false,
-                Dock = DockStyle.Top,
-                Height = 30,
-                Text = "Управление объектами",
-                Font = new Font("Segoe UI Semibold", 16f, FontStyle.Bold),
-                ForeColor = Color.FromArgb(25, 35, 48)
+                BackColor = Color.FromArgb(242, 245, 249),
+                Padding = new Padding(0, 6, 0, 0)
             };
 
             profileLabel = new Label
             {
                 AutoSize = false,
-                Dock = DockStyle.Bottom,
-                Height = 28,
+                Dock = DockStyle.Fill,
                 ForeColor = Color.FromArgb(91, 103, 117),
                 AutoEllipsis = true
             };
 
             panel.Controls.Add(profileLabel);
-            panel.Controls.Add(titleLabel);
             return panel;
         }
 
@@ -154,7 +138,8 @@ namespace MMMapEditor
         {
             var layout = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
+                Height = 365,
                 BackColor = BackColor,
                 ColumnCount = 2,
                 RowCount = 1
@@ -169,8 +154,25 @@ namespace MMMapEditor
             var editorPanel = CreateEditorPanel();
             editorPanel.Margin = new Padding(0);
 
+            var rightColumn = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = BackColor,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = new Padding(0)
+            };
+            rightColumn.RowStyles.Add(new RowStyle(SizeType.Absolute, 225));
+            rightColumn.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var profileActionsPanel = CreateProfileActionsPanel();
+            profileActionsPanel.Margin = new Padding(0, 10, 0, 0);
+
+            rightColumn.Controls.Add(editorPanel, 0, 0);
+            rightColumn.Controls.Add(profileActionsPanel, 0, 1);
+
             layout.Controls.Add(objectListPanel, 0, 0);
-            layout.Controls.Add(editorPanel, 1, 0);
+            layout.Controls.Add(rightColumn, 1, 0);
             return layout;
         }
 
@@ -187,24 +189,31 @@ namespace MMMapEditor
                 ForeColor = Color.FromArgb(31, 41, 55)
             };
 
-            var buttons = new FlowLayoutPanel
+            var buttons = new TableLayoutPanel
             {
                 Dock = DockStyle.Bottom,
-                Height = 44,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Padding = new Padding(0, 8, 0, 0)
+                Height = 48,
+                ColumnCount = 2,
+                RowCount = 1,
+                Padding = new Padding(0, 12, 0, 0)
             };
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            buttons.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
 
             btnNew = CreatePrimaryButton("Новый", 96);
+            btnNew.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+            btnNew.Margin = new Padding(0);
             btnNew.Click += BtnNew_Click;
 
             btnDelete = CreateSecondaryButton("Удалить", 96);
+            btnDelete.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+            btnDelete.Margin = new Padding(0);
             btnDelete.Enabled = false;
             btnDelete.Click += BtnDelete_Click;
 
-            buttons.Controls.Add(btnNew);
-            buttons.Controls.Add(btnDelete);
+            buttons.Controls.Add(btnNew, 0, 0);
+            buttons.Controls.Add(btnDelete, 1, 0);
 
             listViewObjects = new ListView
             {
@@ -247,21 +256,28 @@ namespace MMMapEditor
                 ForeColor = Color.FromArgb(31, 41, 55)
             };
 
-            var layout = new TableLayoutPanel
+            var editorLayout = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 158,
-                ColumnCount = 2,
-                RowCount = 5,
-                Padding = new Padding(0, 8, 0, 0)
+                Height = 174,
+                ColumnCount = 1,
+                RowCount = 4,
+                Padding = new Padding(0, 6, 0, 0)
             };
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 14));
+            editorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            editorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 90));
+            editorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            editorLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 4));
+
+            var nameLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0)
+            };
+            nameLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            nameLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
             txtName = new TextBox
             {
@@ -287,85 +303,165 @@ namespace MMMapEditor
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
-            layout.Controls.Add(CreateFieldLabel("Название"), 0, 0);
-            layout.Controls.Add(txtName, 1, 0);
-            layout.Controls.Add(CreateFieldLabel("Отступ слева"), 0, 1);
-            layout.Controls.Add(nudLeftMargin, 1, 1);
-            layout.Controls.Add(CreateFieldLabel("Отступ справа"), 0, 2);
-            layout.Controls.Add(nudRightMargin, 1, 2);
-            layout.Controls.Add(CreateFieldLabel("Порог фильтра"), 0, 3);
-            layout.Controls.Add(nudFilterLevel, 1, 3);
-            layout.Controls.Add(validationLabel, 1, 4);
-
-            var iconPanel = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 94,
-                Padding = new Padding(0)
-            };
+            nameLayout.Controls.Add(CreateFieldLabel("Название"), 0, 0);
+            nameLayout.Controls.Add(txtName, 1, 0);
 
             picIcon = new PictureBox
             {
-                Location = new Point(0, 4),
+                Location = new Point(0, 0),
                 Size = new Size(82, 82),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BorderStyle = BorderStyle.FixedSingle,
                 BackColor = Color.FromArgb(248, 250, 252)
             };
 
-            btnChooseIcon = CreateSecondaryButton("Выбрать иконку", 140);
-            btnChooseIcon.Location = new Point(100, 8);
+            var detailsLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0)
+            };
+            detailsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+            detailsLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            var iconPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 2, 14, 0)
+            };
+            iconPanel.Controls.Add(picIcon);
+
+            var numericLayout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 3,
+                Margin = new Padding(0, 0, 0, 0)
+            };
+            numericLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+            numericLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            numericLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            numericLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            numericLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+
+            numericLayout.Controls.Add(CreateFieldLabel("Отступ слева"), 0, 0);
+            numericLayout.Controls.Add(nudLeftMargin, 1, 0);
+            numericLayout.Controls.Add(CreateFieldLabel("Отступ справа"), 0, 1);
+            numericLayout.Controls.Add(nudRightMargin, 1, 1);
+            numericLayout.Controls.Add(CreateFieldLabel("Порог фильтра"), 0, 2);
+            numericLayout.Controls.Add(nudFilterLevel, 1, 2);
+
+            detailsLayout.Controls.Add(iconPanel, 0, 0);
+            detailsLayout.Controls.Add(numericLayout, 1, 0);
+
+            var iconButtons = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                Margin = new Padding(0),
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            iconButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            iconButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            iconButtons.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+
+            btnChooseIcon = CreatePrimaryButton("Выбрать иконку", 140);
+            btnChooseIcon.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+            btnChooseIcon.Margin = new Padding(0);
             btnChooseIcon.Click += BtnChooseIcon_Click;
 
             btnClearIcon = CreateSecondaryButton("Очистить", 100);
-            btnClearIcon.Location = new Point(100, 46);
+            btnClearIcon.Anchor = AnchorStyles.Right | AnchorStyles.Top;
+            btnClearIcon.Margin = new Padding(0);
             btnClearIcon.Click += BtnClearIcon_Click;
 
-            iconPanel.Controls.Add(picIcon);
-            iconPanel.Controls.Add(btnChooseIcon);
-            iconPanel.Controls.Add(btnClearIcon);
+            iconButtons.Controls.Add(btnChooseIcon, 0, 0);
+            iconButtons.Controls.Add(btnClearIcon, 1, 0);
 
-            var profileButtons = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Bottom,
-                Height = 40,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                Padding = new Padding(0, 4, 0, 0)
-            };
+            validationLabel.Margin = new Padding(96, 0, 0, 0);
 
-            btnLoadProfile = CreateSecondaryButton("Загрузить", 96);
-            btnLoadProfile.Click += BtnLoadProfile_Click;
+            editorLayout.Controls.Add(nameLayout, 0, 0);
+            editorLayout.Controls.Add(detailsLayout, 0, 1);
+            editorLayout.Controls.Add(iconButtons, 0, 2);
+            editorLayout.Controls.Add(validationLabel, 0, 3);
 
-            btnSaveProfileAs = CreateSecondaryButton("Сохранить как", 120);
-            btnSaveProfileAs.Click += BtnSaveProfileAs_Click;
-
-            btnShowPath = CreateSecondaryButton("Путь", 64);
-            btnShowPath.Click += BtnShowPath_Click;
-
-            profileButtons.Controls.Add(btnLoadProfile);
-            profileButtons.Controls.Add(btnSaveProfileAs);
-            profileButtons.Controls.Add(btnShowPath);
-
-            chkUseAsDefault = new CheckBox
-            {
-                Dock = DockStyle.Bottom,
-                Height = 30,
-                Text = "Использовать этот набор по умолчанию",
-                AutoSize = false,
-                ForeColor = Color.FromArgb(55, 65, 81)
-            };
-            chkUseAsDefault.CheckedChanged += ChkUseAsDefault_CheckedChanged;
-
-            panel.Controls.Add(profileButtons);
-            panel.Controls.Add(chkUseAsDefault);
-            panel.Controls.Add(iconPanel);
-            panel.Controls.Add(layout);
+            panel.Controls.Add(editorLayout);
             panel.Controls.Add(header);
 
             toolTip.SetToolTip(nudLeftMargin, "Смещение пикселей слева при рисовании объекта.");
             toolTip.SetToolTip(nudRightMargin, "Смещение пикселей справа при рисовании объекта.");
             toolTip.SetToolTip(nudFilterLevel, "Порог яркости для пиксельного фильтра объекта.");
+
+            return panel;
+        }
+
+        private Control CreateProfileActionsPanel()
+        {
+            var panel = CreateSurfacePanel();
+
+            var header = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 28,
+                Text = "Набор объектов",
+                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(31, 41, 55)
+            };
+
+            var actions = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 38,
+                ColumnCount = 3,
+                RowCount = 1,
+                Margin = new Padding(0, 8, 0, 0)
+            };
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 32));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+
+            btnLoadProfile = CreateSecondaryButton("Загрузить", 104);
+            btnLoadProfile.Dock = DockStyle.Fill;
+            btnLoadProfile.Margin = new Padding(0, 0, 8, 0);
+            btnLoadProfile.Click += BtnLoadProfile_Click;
+
+            btnSaveProfileAs = CreateSecondaryButton("Сохранить как", 132);
+            btnSaveProfileAs.Dock = DockStyle.Fill;
+            btnSaveProfileAs.Margin = new Padding(0, 0, 8, 0);
+            btnSaveProfileAs.Click += BtnSaveProfileAs_Click;
+
+            btnShowPath = CreateSecondaryButton("Путь", 76);
+            btnShowPath.Dock = DockStyle.Fill;
+            btnShowPath.Margin = new Padding(0);
+            btnShowPath.Click += BtnShowPath_Click;
+
+            chkUseAsDefault = new CheckBox
+            {
+                Text = "Использовать этот набор по умолчанию",
+                AutoSize = true,
+                Dock = DockStyle.Top,
+                Margin = new Padding(0),
+                ForeColor = Color.FromArgb(55, 65, 81)
+            };
+            chkUseAsDefault.CheckedChanged += ChkUseAsDefault_CheckedChanged;
+
+            var defaultCheckPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 36,
+                Padding = new Padding(0, 14, 0, 0)
+            };
+            defaultCheckPanel.Controls.Add(chkUseAsDefault);
+
+            actions.Controls.Add(btnLoadProfile, 0, 0);
+            actions.Controls.Add(btnSaveProfileAs, 1, 0);
+            actions.Controls.Add(btnShowPath, 2, 0);
+
+            panel.Controls.Add(defaultCheckPanel);
+            panel.Controls.Add(actions);
+            panel.Controls.Add(header);
 
             return panel;
         }
@@ -387,7 +483,7 @@ namespace MMMapEditor
                 AutoEllipsis = true
             };
 
-            btnClose = CreatePrimaryButton("Закрыть", 104);
+            btnClose = CreatePrimaryButton("Применить и закрыть", 164);
             btnClose.Dock = DockStyle.Right;
             btnClose.Click += BtnClose_Click;
 
@@ -445,7 +541,8 @@ namespace MMMapEditor
                 Text = text,
                 Dock = DockStyle.Fill,
                 ForeColor = Color.FromArgb(75, 85, 99),
-                TextAlign = ContentAlignment.MiddleLeft
+                Padding = new Padding(0, 6, 0, 0),
+                TextAlign = ContentAlignment.TopLeft
             };
         }
 
@@ -453,19 +550,11 @@ namespace MMMapEditor
         {
             return new NumericUpDown
             {
-                Dock = DockStyle.Left,
-                Width = 96,
+                Dock = DockStyle.Fill,
                 Minimum = 0,
                 Maximum = 255,
                 Margin = new Padding(0, 4, 0, 0)
             };
-        }
-
-        private void ConfigureAutoSave()
-        {
-            autoSaveTimer.Interval = AutoSaveDelayMs;
-            autoSaveTimer.Tick += AutoSaveTimer_Tick;
-            FormClosing += ObjectManagementForm_FormClosing;
         }
 
         private string ResolveInitialProfilePath(string activeConfigFile)
@@ -482,6 +571,7 @@ namespace MMMapEditor
             try
             {
                 ActiveProfileFileName = Path.GetFullPath(profilePath);
+                pendingReferenceReplacements.Clear();
                 objects = File.Exists(ActiveProfileFileName)
                     ? DataManager.LoadObjects(ActiveProfileFileName)
                     : new List<CentralObject>();
@@ -489,7 +579,7 @@ namespace MMMapEditor
                 RefreshListView(objects.FirstOrDefault());
                 UpdateProfileLabel();
                 SetStatus(File.Exists(ActiveProfileFileName)
-                    ? "Набор объектов загружен и применен."
+                    ? "Набор объектов загружен."
                     : "Будет создан новый набор объектов.");
             }
             catch (Exception ex)
@@ -646,17 +736,16 @@ namespace MMMapEditor
             return true;
         }
 
-        private void ScheduleSaveAndApply(string statusText)
+        private void MarkUnsaved(string statusText)
         {
-            hasPendingSave = true;
+            hasUnsavedChanges = true;
             SetStatus(statusText);
-            autoSaveTimer.Stop();
-            autoSaveTimer.Start();
         }
 
-        private void SaveAndApplyNow(string successStatus)
+        private bool TryApplyAndClose()
         {
-            autoSaveTimer.Stop();
+            if (!ValidateCurrentEditor())
+                return false;
 
             try
             {
@@ -669,15 +758,35 @@ namespace MMMapEditor
                 if (chkUseAsDefault.Checked)
                     UpdateDefaultConfigFile(ActiveProfileFileName);
 
-                hasPendingSave = false;
+                hasUnsavedChanges = false;
                 UpdateProfileLabel();
                 CheckAndUpdateDefaultFlag();
-                SetStatus($"{successStatus} {DateTime.Now:HH:mm:ss}");
+                SetStatus($"Сохранено и применено. {DateTime.Now:HH:mm:ss}");
+                Close();
+                return true;
             }
             catch (Exception ex)
             {
                 SetStatus($"Ошибка сохранения: {ex.Message}", true);
+                return false;
             }
+        }
+
+        private bool ValidateCurrentEditor()
+        {
+            if (selectedObject == null)
+                return true;
+
+            string newName = txtName.Text.Trim();
+            if (TryValidateObjectName(newName, out string message))
+                return true;
+
+            validationLabel.Text = message;
+            txtName.BackColor = Color.FromArgb(254, 242, 242);
+            txtName.Focus();
+            txtName.SelectAll();
+            SetStatus("Исправьте название объекта перед применением.", true);
+            return false;
         }
 
         private void ApplyCurrentProfileToMain()
@@ -840,17 +949,6 @@ namespace MMMapEditor
                 MessageBoxIcon.Warning);
         }
 
-        private void AutoSaveTimer_Tick(object sender, EventArgs e)
-        {
-            SaveAndApplyNow("Сохранено и применено.");
-        }
-
-        private void ObjectManagementForm_FormClosing(object sender, FormClosingEventArgs e)
-        {
-            if (hasPendingSave)
-                SaveAndApplyNow("Сохранено и применено.");
-        }
-
         private void BtnNew_Click(object sender, EventArgs e)
         {
             var newObject = new CentralObject
@@ -863,7 +961,7 @@ namespace MMMapEditor
 
             objects.Add(newObject);
             RefreshListView(newObject);
-            SaveAndApplyNow("Новый объект добавлен и применен.");
+            MarkUnsaved("Новый объект добавлен. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
             txtName.Focus();
             txtName.SelectAll();
         }
@@ -892,7 +990,7 @@ namespace MMMapEditor
                 nextSelection = objects[Math.Min(selectedIndex, objects.Count - 1)];
 
             RefreshListView(nextSelection);
-            SaveAndApplyNow("Объект удален и изменения применены.");
+            MarkUnsaved("Объект удален. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
         }
 
         private void BtnChooseIcon_Click(object sender, EventArgs e)
@@ -915,7 +1013,7 @@ namespace MMMapEditor
 
                     picIcon.Image = selectedObject.Icon;
                     RefreshListView(selectedObject);
-                    SaveAndApplyNow("Иконка обновлена и применена.");
+                    MarkUnsaved("Иконка обновлена. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
                 }
                 catch (Exception ex)
                 {
@@ -932,7 +1030,7 @@ namespace MMMapEditor
             selectedObject.Icon = null;
             picIcon.Image = null;
             RefreshListView(selectedObject);
-            SaveAndApplyNow("Иконка очищена и изменения применены.");
+            MarkUnsaved("Иконка очищена. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
         }
 
         private void BtnLoadProfile_Click(object sender, EventArgs e)
@@ -960,9 +1058,8 @@ namespace MMMapEditor
 
                 showWarningOnImport = false;
                 LoadObjectsFromProfile(openFileDialog.FileName);
-                ApplyCurrentProfileToMain();
                 CheckAndUpdateDefaultFlag();
-                SetStatus("Набор объектов загружен и применен.");
+                MarkUnsaved("Набор объектов загружен. Нажмите \"Применить и закрыть\", чтобы применить его.");
             }
         }
 
@@ -982,7 +1079,9 @@ namespace MMMapEditor
                     return;
 
                 ActiveProfileFileName = Path.GetFullPath(saveFileDialog.FileName);
-                SaveAndApplyNow("Набор сохранен и применен.");
+                UpdateProfileLabel();
+                CheckAndUpdateDefaultFlag();
+                MarkUnsaved("Файл назначения выбран. Нажмите \"Применить и закрыть\", чтобы сохранить набор.");
             }
         }
 
@@ -994,24 +1093,17 @@ namespace MMMapEditor
 
         private void BtnClose_Click(object sender, EventArgs e)
         {
-            Close();
+            TryApplyAndClose();
         }
 
         private void ChkUseAsDefault_CheckedChanged(object sender, EventArgs e)
         {
-            if (isUpdatingDefaultCheckbox || !chkUseAsDefault.Checked)
+            if (isUpdatingDefaultCheckbox)
                 return;
 
-            try
-            {
-                UpdateDefaultConfigFile(ActiveProfileFileName);
-                CheckAndUpdateDefaultFlag();
-                SetStatus("Набор объектов назначен по умолчанию.");
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"Ошибка сохранения настройки по умолчанию: {ex.Message}", true);
-            }
+            MarkUnsaved(chkUseAsDefault.Checked
+                ? "Набор будет назначен по умолчанию после применения."
+                : "Назначение по умолчанию отменено для этого применения.");
         }
 
         private void TxtName_TextChanged(object sender, EventArgs e)
@@ -1037,7 +1129,7 @@ namespace MMMapEditor
             selectedObject.Name = newName;
             QueueReferenceReplacement(oldName, newName);
             UpdateSelectedListItem();
-            ScheduleSaveAndApply("Название обновляется...");
+            MarkUnsaved("Название изменено. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
         }
 
         private void NumericField_ValueChanged(object sender, EventArgs e)
@@ -1049,7 +1141,7 @@ namespace MMMapEditor
             selectedObject.RightMargin = (int)nudRightMargin.Value;
             selectedObject.FilterLevel = (int)nudFilterLevel.Value;
             UpdateSelectedListItem();
-            ScheduleSaveAndApply("Параметры объекта обновляются...");
+            MarkUnsaved("Параметры изменены. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
         }
 
         private void ListViewObjects_SelectedIndexChanged(object sender, EventArgs e)
@@ -1110,7 +1202,7 @@ namespace MMMapEditor
             objects.Insert(newIndex, movedObject);
 
             RefreshListView(movedObject);
-            SaveAndApplyNow("Порядок объектов обновлен и применен.");
+            MarkUnsaved("Порядок объектов изменен. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
         }
 
         private sealed class PendingReferenceReplacement
