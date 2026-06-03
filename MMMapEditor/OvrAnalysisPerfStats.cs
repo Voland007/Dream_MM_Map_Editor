@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 
@@ -22,6 +23,7 @@ namespace MMMapEditor
 {
     internal static class OvrAnalysisPerfStats
     {
+#if DEVELOPMENT_TOOLS
         private sealed class Entry
         {
             public int AnalyzeCalls { get; set; }
@@ -39,6 +41,7 @@ namespace MMMapEditor
         private static readonly Dictionary<string, Entry> Entries = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private static volatile bool Enabled;
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void Reset()
         {
             lock (Sync)
@@ -48,11 +51,13 @@ namespace MMMapEditor
             }
         }
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void Disable()
         {
             Enabled = false;
         }
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void RecordAnalyzeCall(string key, bool cacheHit)
         {
             if (!Enabled)
@@ -70,6 +75,7 @@ namespace MMMapEditor
             }
         }
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void RecordSingleOccurrencePass(string key)
         {
             if (!Enabled)
@@ -82,6 +88,7 @@ namespace MMMapEditor
                 GetOrCreate(key).SingleOccurrencePasses++;
         }
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void RecordCoordinateUsageCacheRejection(string key)
         {
             if (!Enabled)
@@ -94,6 +101,7 @@ namespace MMMapEditor
                 GetOrCreate(key).CacheRejectedByCoordinateUsage++;
         }
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void RecordFastForwardDecision(string key, string category)
         {
             if (!Enabled)
@@ -168,5 +176,41 @@ namespace MMMapEditor
 
             return entry;
         }
+#else
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void Reset()
+        {
+        }
+
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void Disable()
+        {
+        }
+
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void RecordAnalyzeCall(string key, bool cacheHit)
+        {
+        }
+
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void RecordSingleOccurrencePass(string key)
+        {
+        }
+
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void RecordCoordinateUsageCacheRejection(string key)
+        {
+        }
+
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void RecordFastForwardDecision(string key, string category)
+        {
+        }
+
+        public static string BuildSummary(int top = 20)
+        {
+            return string.Empty;
+        }
+#endif
     }
 }

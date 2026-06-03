@@ -1146,12 +1146,11 @@ namespace MMMapEditor
             ovrLoadSettingsMenuItem.Click += OvrLoadSettingsMenuItem_Click;
             settingMenuItem.DropDownItems.Add(ovrLoadSettingsMenuItem);
 
+#if REGRESSION_TESTS
             ToolStripMenuItem testMenuItem = new ToolStripMenuItem("Тестирование");
             ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Юнит-функциональные тесты");
             runAnalyzerTestsItem.Click += RunAnalyzerTests_Click;
-
-
-            menuStrip.Items.Add(testMenuItem);
+#endif
 
             // Подписываемся на событие Click для вызова формы
             toolStripMenuItemManageObjects.Click += toolStripMenuItemManageObjects_Click;
@@ -1161,11 +1160,14 @@ namespace MMMapEditor
             menuStrip.Items.Add(fileMenuItem);
             menuStrip.Items.Add(searchMenuItem);
             menuStrip.Items.Add(settingMenuItem);
-            menuStrip.Items.Add(testMenuItem);
+#if REGRESSION_TESTS
             testMenuItem.DropDownItems.Add(runAnalyzerTestsItem);
+            menuStrip.Items.Add(testMenuItem);
+#endif
             Controls.Add(menuStrip);
         }
 
+#if REGRESSION_TESTS
         private void RunAnalyzerTests_Click(object sender, EventArgs e)
         {
             string testsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OvrAnalyzerTests.json");
@@ -1205,6 +1207,7 @@ namespace MMMapEditor
             var viewer = new MMMapEditor.Tests.TestResultsViewer(results, testsFilePath);
             viewer.ShowDialog();
         }
+#endif
 
         private void OnMapsSearchItem_Click(object sender, EventArgs e)
         {

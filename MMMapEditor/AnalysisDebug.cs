@@ -25,6 +25,7 @@ namespace MMMapEditor
     /// </summary>
     public static class AnalysisDebug
     {
+#if DEVELOPMENT_TOOLS
         private static readonly AsyncLocal<(byte X, byte Y)?> _currentCell = new AsyncLocal<(byte X, byte Y)?>();
         private static int _suppressionDepth;
 
@@ -107,6 +108,7 @@ namespace MMMapEditor
             return obj == null ? new Scope(() => { }) : BeginCellScope(obj.X, obj.Y);
         }
 
+        [Conditional("DEVELOPMENT_TOOLS")]
         public static void WriteLine(string message)
         {
             if (Volatile.Read(ref _suppressionDepth) > 0)
@@ -147,5 +149,74 @@ namespace MMMapEditor
                 _onDispose?.Invoke();
             }
         }
+#else
+        public static bool EnableGlobalLogs => false;
+        public static bool DisableCacheForTargetCell => false;
+        public static bool Enabled => false;
+        public static byte? TargetX => null;
+        public static byte? TargetY => null;
+
+        public static void Configure(
+            bool enabled,
+            byte? targetX = null,
+            byte? targetY = null,
+            bool enableGlobalLogs = false,
+            bool disableCacheForTargetCell = true)
+        {
+        }
+
+        public static IDisposable Suppress()
+        {
+            return Scope.Instance;
+        }
+
+        public static bool IsEnabledFor(byte x, byte y)
+        {
+            return false;
+        }
+
+        public static bool IsEnabledFor(OvrObject obj)
+        {
+            return false;
+        }
+
+        public static bool ShouldDisableCacheFor(byte x, byte y)
+        {
+            return false;
+        }
+
+        public static bool ShouldDisableCacheFor(OvrObject obj)
+        {
+            return false;
+        }
+
+        public static IDisposable BeginCellScope(byte x, byte y)
+        {
+            return Scope.Instance;
+        }
+
+        public static IDisposable BeginCellScope(OvrObject obj)
+        {
+            return Scope.Instance;
+        }
+
+        [Conditional("DEVELOPMENT_TOOLS")]
+        public static void WriteLine(string message)
+        {
+        }
+
+        private sealed class Scope : IDisposable
+        {
+            public static readonly Scope Instance = new Scope();
+
+            private Scope()
+            {
+            }
+
+            public void Dispose()
+            {
+            }
+        }
+#endif
     }
 }
