@@ -1,4 +1,4 @@
-// Copyright (c) Voland007 2025. All rights reserved.
+﻿﻿﻿// Copyright (c) Voland007 2026. All rights reserved.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -21,12 +21,16 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Windows.Forms;
 using System.Diagnostics;
+using System.IO;
 using System.Xml;
 using Newtonsoft.Json; // Необходим пакет Newtonsoft.Json для сериализации
 using Newtonsoft.Json.Linq;
 using IniParser;
 using IniParser.Model;
 using IniParser.Parser;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace MMMapEditor
 {
@@ -34,6 +38,27 @@ namespace MMMapEditor
     {
         private const int GridSize = 16;
         private const int CellSize = 40;
+        private const int PassageTypeDoor = 1;
+        private const int PassageTypeGrate = 2;
+        private const int PassageTypeSecret = 3;
+        private const int PassageTypeRough = 8;
+        private const int PassageTypeDoor2 = 9;
+        private const int PassageTypeGrate2 = 10;
+        private const string BorderTypeWater = "\u0412\u043E\u0434\u0430";
+        private const string BorderTypeDesert = "\u041F\u0443\u0441\u0442\u044B\u043D\u044F";
+        private const string BorderTypeSwamp = "\u0411\u043E\u043B\u043E\u0442\u043E";
+        private const string AnyObjectOption = "AnyObject";
+        private const string AnyObjectSpecOption = "AnyObjectSpec";
+        private const string TechObjectOption = "TechObject";
+        private static readonly Dictionary<string, string> InternalCentralOptionLabels =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { AnyObjectOption, "Объект .OVR" },
+                { AnyObjectSpecOption, "Default-объект .OVR" },
+                { TechObjectOption, "Технический объект .OVR" }
+            };
+        private static readonly Lazy<HashSet<string>> KnownLootItemNamesForFormatting =
+            new Lazy<HashSet<string>>(BuildKnownLootItemNamesForFormatting);
         private Button[,] gridButtons;
         private bool[,] highlightedCells; // Массив для подсветки
         private Pen highlightPen = new Pen(Color.White, 2); // Пен для выделения
@@ -55,16 +80,17 @@ namespace MMMapEditor
             "Барьер"
         };
         private ComboBox topComboBox, bottomComboBox, leftComboBox, rightComboBox; // Комбобоксы для границ
-        private Dictionary<Point, Tuple<int, int, int, int>> settingsDict = new Dictionary<Point, Tuple<int, int, int, int>>();
+        private Dictionary<Point, Directions<int>> settingsDict = new Dictionary<Point, Directions<int>>();
         private Point? selectedPosition = null; // Текущая выделенная позиция
-        private Dictionary<Point, Tuple<string, string, string, string>> borders = new Dictionary<Point, Tuple<string, string, string, string>>();
-        private Dictionary<Point, Tuple<int, int, int, int>> passageDict = new Dictionary<Point, Tuple<int, int, int, int>>();
-        private Dictionary<Point, Tuple<bool, bool, bool, bool>> closedStates = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
-        private Dictionary<Point, Tuple<bool, bool, bool, bool>> messageStates = new Dictionary<Point, Tuple<bool, bool, bool, bool>>();
+        private Dictionary<Point, Directions<string>> borders = new Dictionary<Point, Directions<string>>();
+        private Dictionary<Point, Directions<int>> passageDict = new Dictionary<Point, Directions<int>>();
+        private Dictionary<Point, Directions<bool>> closedStates = new Dictionary<Point, Directions<bool>>();
+        private Dictionary<Point, Directions<bool>> messageStates = new Dictionary<Point, Directions<bool>>();
         private Dictionary<Point, string> centralOptions = new Dictionary<Point, string>(); // Словарь для хранения значения тела каждой ячейки
         private PictureBox magnifierPictureBox; // Объявление картинки, увеличивающей выделенную ячейку
         private ComboBox passTopComboBox, passBottomComboBox, passLeftComboBox, passRightComboBox; // Комбобоксы для прохода
         private ComboBox centerComboBox; //Комбобокс для тела клетки
+        private Label centerInternalOptionLabel;
         Dictionary<string, string> colorsMap = new Dictionary<string, string>()
         {
             {"72,0,0", "-1,-1,-1"},
@@ -94,6 +120,8 @@ namespace MMMapEditor
         private CheckBox topMessageCheck, bottomMessageCheck, leftMessageCheck, rightMessageCheck;
         private RichTextBox notesTextBox;
         private Dictionary<Point, string> notesPerCell = new Dictionary<Point, string>();
+        private Dictionary<Point, List<NoteInlineStyleSpan>> noteStyleSpansPerCell = new Dictionary<Point, List<NoteInlineStyleSpan>>();
+        private bool isUpdatingNotesTextBoxProgrammatically;
         private PictureBox cellImageBox;
         private Button bufferPasteImageButton;
         private Button deleteImageButton;
@@ -101,12 +129,13 @@ namespace MMMapEditor
         private CheckBox isDangerCheckBox, noMagicCheckBox;
         private Dictionary<Point, bool> isDangerStates = new Dictionary<Point, bool>();
         private Dictionary<Point, bool> noMagicStates = new Dictionary<Point, bool>();
-        private RadioButton lightRadioButton, darkRadioButton, darknessRadioButton;
-        private GroupBox lightingGroupBox;
-        private Dictionary<Point, Lighting> lightingLevels = new Dictionary<Point, Lighting>();
+        private RadioButton lightRadioButton, darkRadioButton, darkeningRadioButton;
+        private GroupBox darkeningGroupBox;
+        private Dictionary<Point, Lighting> darkeningLevels = new Dictionary<Point, Lighting>();
         private Image mainMapImage;
         private ToolStripMenuItem fileMenuItem;
         private ToolStripMenuItem newMapItem, saveAsItem, loadItem, saveItem;
+        private ToolStripMenuItem draftLaboratoryItem; //экспериментальный пункт меню
         private ToolStripMenuItem changeToMapsDropdown;
         private ToolStripMenuItem settingMenuItem;
         private ToolStripMenuItem toolStripMenuItemManageObjects;
@@ -119,8 +148,14 @@ namespace MMMapEditor
         private readonly Dictionary<string, JObject> _objectsData = new Dictionary<string, JObject>(); // Приватное поле для хранения данных объектов из JSON
         public string ActiveConfigObjectFile { get; set; }
         private LocalizedDirectionsForm localizedDirectionsForm; // Новые свойства для управления формой настроек
-        private string mapSector = ""; 
+        private string mapSector = "";
         private string surface = "";
+        private Point? mostDangerousCell; //флаг для поментки опасной клетки
+        private Point? mostPeacefulCell; // флаг для пометки безопасной клетки
+        private bool showSecretPassages = true;
+        private bool showDangerousWaterCells = true;
+        private bool showDangerousDesertCells = true;
+        private bool showDangerousSwampCells = true;
 
 
         public MainForm()
@@ -137,6 +172,10 @@ namespace MMMapEditor
             CreateControls(); // Функция для создания правой панели
             InitializeAllCells(); // Начальное задание свойств каждой клетки
             CreateContxtMenu();
+            showSecretPassages = GetBooleanSetting("DisplaySettings", "ShowSecretPassages", true);
+            showDangerousWaterCells = GetBooleanSetting("DisplaySettings", "ShowDangerousWaterCells", true);
+            showDangerousDesertCells = GetBooleanSetting("DisplaySettings", "ShowDangerousDesertCells", true);
+            showDangerousSwampCells = GetBooleanSetting("DisplaySettings", "ShowDangerousSwampCells", true);
 
             // Читаем файл по умолчанию из INI
             string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
@@ -221,11 +260,61 @@ namespace MMMapEditor
             }
         }
 
+        public static bool GetBooleanSetting(string section, string key, bool fallbackValue = false)
+        {
+            string rawValue = GetSetting(section, key, fallbackValue.ToString());
+            if (bool.TryParse(rawValue, out bool boolValue))
+                return boolValue;
+
+            if (int.TryParse(rawValue, out int intValue))
+                return intValue != 0;
+
+            return fallbackValue;
+        }
+
         public void ReloadData(string configCentralObjectFile)
         {
             _objectsData.Clear();
             LoadObjectsData(configCentralObjectFile);  // Новая загрузка данных объектов
             LoadNamesFromJson(); // Заполняем выпадающий список объектов из файла
+            InvalidateGridButtons();
+        }
+
+        public void ReplaceCentralObjectReferences(string oldName, string newName)
+        {
+            if (string.IsNullOrWhiteSpace(oldName) ||
+                string.IsNullOrWhiteSpace(newName) ||
+                string.Equals(oldName, newName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            bool changed = false;
+            foreach (Point position in centralOptions.Keys.ToList())
+            {
+                if (string.Equals(centralOptions[position], oldName, StringComparison.Ordinal))
+                {
+                    centralOptions[position] = newName;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+                return;
+
+            if (selectedPosition.HasValue &&
+                centralOptions.TryGetValue(selectedPosition.Value, out var centralOption))
+            {
+                UpdateCenterComboBoxForCell(centralOption);
+            }
+
+            InvalidateGridButtons();
+            UpdatePreview();
+            isMapModified = true;
+        }
+
+        private void InvalidateGridButtons()
+        {
             foreach (var button in gridButtons)
             {
                 button.Invalidate(); // вызываем перерисовку для каждой кнопки
@@ -246,6 +335,9 @@ namespace MMMapEditor
                     foreach (JObject obj in array)
                     {
                         string name = obj["Name"].ToString();
+                        if (IsInternalCentralOption(name))
+                            continue;
+
                         _objectsData[name] = obj;
                     }
                 }
@@ -256,25 +348,25 @@ namespace MMMapEditor
                 }
             }
 
-                // Если файл не указан, используем базовую конфигурацию
-                _objectsData["Пустота"] = new JObject(
-                    new JProperty("Name", "Пустота"),
-                    new JProperty("LeftMargin", 0),
-                    new JProperty("RightMargin", 0),
-                    new JProperty("FilterLevel", 0),
-                    new JProperty("IconBase64", ""),
-                    new JProperty("BodyPixels", new JArray())
-                );
+            // Если файл не указан, используем базовую конфигурацию
+            _objectsData["Пустота"] = new JObject(
+                new JProperty("Name", "Пустота"),
+                new JProperty("LeftMargin", 0),
+                new JProperty("RightMargin", 0),
+                new JProperty("FilterLevel", 0),
+                new JProperty("IconBase64", ""),
+                new JProperty("BodyPixels", new JArray())
+            );
 
-                _objectsData["Не исследовано"] = new JObject(
-                    new JProperty("Name", "Не исследовано"),
-                    new JProperty("LeftMargin", 0),
-                    new JProperty("RightMargin", 0),
-                    new JProperty("FilterLevel", 0),
-                    new JProperty("IconBase64", ""),
-                    new JProperty("BodyPixels", new JArray())
-                );
-            
+            _objectsData["Не исследовано"] = new JObject(
+                new JProperty("Name", "Не исследовано"),
+                new JProperty("LeftMargin", 0),
+                new JProperty("RightMargin", 0),
+                new JProperty("FilterLevel", 0),
+                new JProperty("IconBase64", ""),
+                new JProperty("BodyPixels", new JArray())
+            );
+
         }
 
         private void LoadNamesFromJson()
@@ -284,10 +376,11 @@ namespace MMMapEditor
                 // Очистим старый список
                 centerComboBox.Items.Clear();
 
-                // Добавляем имена из нашего словаря _objectsData
+                // Добавляем только пользовательские имена из нашего словаря _objectsData
                 foreach (var entry in _objectsData.Keys)
                 {
-                    centerComboBox.Items.Add(entry);
+                    if (IsUserSelectableCentralOption(entry))
+                        centerComboBox.Items.Add(entry);
                 }
 
                 // Устанавливаем первое значение по умолчанию
@@ -295,10 +388,58 @@ namespace MMMapEditor
                 {
                     centerComboBox.SelectedIndex = 0;
                 }
+
+                if (selectedPosition.HasValue &&
+                    centralOptions.TryGetValue(selectedPosition.Value, out var centralOption))
+                {
+                    UpdateCenterComboBoxForCell(centralOption);
+                }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Ошибка при чтении JSON: {ex.Message}");
+            }
+        }
+
+        private bool IsInternalCentralOption(string option)
+        {
+            return !string.IsNullOrEmpty(option) && InternalCentralOptionLabels.ContainsKey(option);
+        }
+
+        private bool IsUserSelectableCentralOption(string option)
+        {
+            return !IsInternalCentralOption(option) && _objectsData.ContainsKey(option);
+        }
+
+        private string GetInternalCentralOptionLabel(string option)
+        {
+            return !string.IsNullOrEmpty(option) &&
+                InternalCentralOptionLabels.TryGetValue(option, out var label)
+                    ? label
+                    : "";
+        }
+
+        private void UpdateCenterComboBoxForCell(string centralOption)
+        {
+            string internalLabel = GetInternalCentralOptionLabel(centralOption);
+            if (!string.IsNullOrEmpty(internalLabel))
+            {
+                centerComboBox.SelectedIndex = -1;
+                centerInternalOptionLabel.Text = internalLabel;
+                centerInternalOptionLabel.Visible = true;
+                return;
+            }
+
+            centerInternalOptionLabel.Text = "";
+            centerInternalOptionLabel.Visible = false;
+
+            if (!string.IsNullOrEmpty(centralOption) && centerComboBox.Items.Contains(centralOption))
+            {
+                centerComboBox.SelectedItem = centralOption;
+            }
+            else
+            {
+                centerComboBox.SelectedIndex = -1;
             }
         }
 
@@ -352,14 +493,14 @@ namespace MMMapEditor
                 Point pos = selectedPosition.Value;
 
                 // Вставляем состояние из буфера в текущую ячейку
-                borders[pos] = copiedCellInfo.Value.Borders;
-                passageDict[pos] = copiedCellInfo.Value.Passages;
-                closedStates[pos] = copiedCellInfo.Value.ClosedStates;
-                messageStates[pos] = copiedCellInfo.Value.Messages;
+                borders[pos] = copiedCellInfo.Value.Borders.Clone();
+                passageDict[pos] = copiedCellInfo.Value.Passages.Clone();
+                closedStates[pos] = copiedCellInfo.Value.ClosedStates.Clone();
+                messageStates[pos] = copiedCellInfo.Value.Messages.Clone();
                 centralOptions[pos] = copiedCellInfo.Value.CentralOption;
                 isDangerStates[pos] = copiedCellInfo.Value.IsDanger;
                 noMagicStates[pos] = copiedCellInfo.Value.NoMagic;
-                lightingLevels[pos] = copiedCellInfo.Value.LightingLevel;
+                darkeningLevels[pos] = copiedCellInfo.Value.DarkeningLevel;
                 imagesPerCell[pos] = copiedCellInfo.Value.CellImage;
                 notesPerCell[pos] = copiedCellInfo.Value.Notes;
 
@@ -380,14 +521,14 @@ namespace MMMapEditor
                 // Копируем текущее состояние выбранной ячейки
                 copiedCellInfo = new CopiedCellInfo
                 {
-                    Borders = borders[pos],
-                    Passages = passageDict[pos],
-                    ClosedStates = closedStates[pos],
-                    Messages = messageStates[pos],
+                    Borders = borders[pos].Clone(),
+                    Passages = passageDict[pos].Clone(),
+                    ClosedStates = closedStates[pos].Clone(),
+                    Messages = messageStates[pos].Clone(),
                     CentralOption = centralOptions[pos],
                     IsDanger = isDangerStates[pos],
                     NoMagic = noMagicStates[pos],
-                    LightingLevel = lightingLevels[pos],
+                    DarkeningLevel = darkeningLevels[pos],
                     CellImage = imagesPerCell[pos],
                     Notes = notesPerCell[pos]
                 };
@@ -418,20 +559,20 @@ namespace MMMapEditor
             imagesPerCell.Remove(pos);
             isDangerStates.Remove(pos);
             noMagicStates.Remove(pos);
-            lightingLevels.Remove(pos);
+            darkeningLevels.Remove(pos);
             centralOptions.Remove(pos);
 
             // Дополнительно можно добавить восстановление дефолтных значений, если это требуется
             // Например:
-            borders[pos] = new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
-            passageDict[pos] = new Tuple<int, int, int, int>(0, 0, 0, 0);
-            closedStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
-            messageStates[pos] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+            borders[pos] = DirectionUtilities.Filled("Пустота");
+            passageDict[pos] = DirectionUtilities.Filled(0);
+            closedStates[pos] = DirectionUtilities.Filled(false);
+            messageStates[pos] = DirectionUtilities.Filled(false);
             notesPerCell[pos] = "";
             imagesPerCell[pos] = null;
             isDangerStates[pos] = false;
             noMagicStates[pos] = false;
-            lightingLevels[pos] = Lighting.Light;
+            darkeningLevels[pos] = Lighting.Light;
             centralOptions[pos] = "Не исследовано";
         }
 
@@ -444,7 +585,7 @@ namespace MMMapEditor
             // Сброс радиокнопок (возвращаем состояние обратно к первому варианту)
             lightRadioButton.Checked = true;
             darkRadioButton.Checked = false;
-            darknessRadioButton.Checked = false;
+            darkeningRadioButton.Checked = false;
 
             // Сброс комбо-боксов
             topComboBox.SelectedIndex = 0;
@@ -459,6 +600,28 @@ namespace MMMapEditor
 
             // Очищаем тексты и заметки
             notesTextBox.Clear();
+        }
+
+        private void ClearCurrentMapState()
+        {
+            mapSector = "";
+            surface = "";
+            mostDangerousCell = null;
+            mostPeacefulCell = null;
+            copiedCellInfo = null;
+            lastSavedFilename = "";
+
+            InitializeAllCells();
+            ResetForm();
+            UpdatePreview();
+
+            foreach (var button in gridButtons)
+            {
+                button.Invalidate();
+            }
+
+            this.Text = "Редактор моей мечты";
+            isMapModified = false;
         }
 
         private void CreateGrid()
@@ -515,77 +678,47 @@ namespace MMMapEditor
             {
                 Point pos = selectedPosition.Value;
 
-                // 1. Сначала сохраним текущее состояние закрытыъ дверей и сообщений ячейки
-                Tuple<bool, bool, bool, bool>? previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed) ? prevClosed : null;
-                Tuple<bool, bool, bool, bool>? previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg) ? prevMsg : null;
+                Directions<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
+                    ? prevClosed.Clone()
+                    : DirectionUtilities.Filled(false);
+
+                Directions<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
+                    ? prevMsg.Clone()
+                    : DirectionUtilities.Filled(false);
 
                 CheckBox checkbox = (CheckBox)sender;
                 bool checkedState = checkbox.Checked;
 
-                // Индексация чекбоксов по порядку следования
-                int index = -1;
-                if (checkbox == topCheck) index = 0;
-                else if (checkbox == bottomCheck) index = 1;
-                else if (checkbox == leftCheck) index = 2;
-                else if (checkbox == rightCheck) index = 3;
-                else if (checkbox == topMessageCheck) index = 4;
-                else if (checkbox == bottomMessageCheck) index = 5;
-                else if (checkbox == leftMessageCheck) index = 6;
-                else if (checkbox == rightMessageCheck) index = 7;
+                if (checkbox == topCheck)
+                    closedStates[pos].Top = checkedState;
+                else if (checkbox == bottomCheck)
+                    closedStates[pos].Bottom = checkedState;
+                else if (checkbox == leftCheck)
+                    closedStates[pos].Left = checkedState;
+                else if (checkbox == rightCheck)
+                    closedStates[pos].Right = checkedState;
+                else if (checkbox == topMessageCheck)
+                    messageStates[pos].Top = checkedState;
+                else if (checkbox == bottomMessageCheck)
+                    messageStates[pos].Bottom = checkedState;
+                else if (checkbox == leftMessageCheck)
+                    messageStates[pos].Left = checkedState;
+                else if (checkbox == rightMessageCheck)
+                    messageStates[pos].Right = checkedState;
 
-                if (index >= 0 && index <= 3)
-                {
-                    // Обновляем состояние закрытых границ
-                    var existingClosed = closedStates.ContainsKey(pos)
-                                            ? closedStates[pos]
-                                            : new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                Directions<bool> currentClosedStates = closedStates[pos];
+                Directions<bool> currentMessageStates = messageStates[pos];
 
-                    var updatedClosed = index switch
-                    {
-                        0 => new Tuple<bool, bool, bool, bool>(checkedState, existingClosed.Item2, existingClosed.Item3, existingClosed.Item4),
-                        1 => new Tuple<bool, bool, bool, bool>(existingClosed.Item1, checkedState, existingClosed.Item3, existingClosed.Item4),
-                        2 => new Tuple<bool, bool, bool, bool>(existingClosed.Item1, existingClosed.Item2, checkedState, existingClosed.Item4),
-                        3 => new Tuple<bool, bool, bool, bool>(existingClosed.Item1, existingClosed.Item2, existingClosed.Item3, checkedState),
-                        _ => existingClosed
-                    };
-
-                    closedStates[pos] = updatedClosed;
-                }
-                else if (index >= 4 && index <= 7)
-                {
-                    // Обновляем состояние чекбоксов "Текст"
-                    var existingMessages = messageStates.ContainsKey(pos)
-                                              ? messageStates[pos]
-                                              : new Tuple<bool, bool, bool, bool>(false, false, false, false);
-
-                    var updatedMessages = index switch
-                    {
-                        4 => new Tuple<bool, bool, bool, bool>(checkedState, existingMessages.Item2, existingMessages.Item3, existingMessages.Item4),
-                        5 => new Tuple<bool, bool, bool, bool>(existingMessages.Item1, checkedState, existingMessages.Item3, existingMessages.Item4),
-                        6 => new Tuple<bool, bool, bool, bool>(existingMessages.Item1, existingMessages.Item2, checkedState, existingMessages.Item4),
-                        7 => new Tuple<bool, bool, bool, bool>(existingMessages.Item1, existingMessages.Item2, existingMessages.Item3, checkedState),
-                        _ => existingMessages
-                    };
-
-                    messageStates[pos] = updatedMessages;
-                }
-
-                Tuple<bool, bool, bool, bool> currentClosedStates = closedStates[pos];
-                Tuple<bool, bool, bool, bool> currentMessageStates = messageStates[pos];
-
-
-                // Теперь сравним сохранённые ранее значения с новыми
                 bool hasChanged =
                     !previousClosedStates.Equals(currentClosedStates) ||
                     !previousMessageStates.Equals(currentMessageStates);
 
                 if (hasChanged)
-                     {
-                    gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
-
+                {
+                    gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
                     UpdatePreview();
-                isMapModified = true;
-            }
+                    isMapModified = true;
+                }
             }
         }
 
@@ -625,18 +758,19 @@ namespace MMMapEditor
             };
 
             notesTextBox.TextChanged += NotesTextBox_TextChanged;
+            notesTextBox.MouseDoubleClick += NotesTextBox_MouseDoubleClick;
 
             mainMapImage = Properties.Resources.Unknown_Panno;
 
             bufferPasteImageButton = new Button
             {
-               // Text = "Вставить изображение",
+                // Text = "Вставить изображение",
                 Location = new Point(infoLabel.Left + 45, 400),
                 Width = 50,
                 Height = 50,
-                Image = Properties.Resources.BufferPasterButtonIcon, 
+                Image = Properties.Resources.BufferPasterButtonIcon,
                 ImageAlign = ContentAlignment.MiddleLeft, // Выравнивание изображения
-              //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
+                                                          //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
             };
 
             bufferPasteImageButton.Click += BufferPasteImageButton_Click;
@@ -647,7 +781,7 @@ namespace MMMapEditor
                 Location = new Point(bufferPasteImageButton.Right + 30, 400),
                 Width = 50,
                 Height = 50,
-                Image = Properties.Resources.TrashBasket, 
+                Image = Properties.Resources.TrashBasket,
                 ImageAlign = ContentAlignment.MiddleLeft, // Выравнивание изображения
                                                           //  TextImageRelation = TextImageRelation.ImageBeforeText // Расположение текста относительно изображения
             };
@@ -842,24 +976,35 @@ namespace MMMapEditor
                 FlatStyle = FlatStyle.Flat
             };
 
-            centerComboBox.Items.AddRange(new object[] { 
-                "Пустота", 
+            centerComboBox.Items.AddRange(new object[] {
+                "Пустота",
                 "Не исследовано" });
             if (centerComboBox.Items.Count > 0)
             {
                 centerComboBox.SelectedIndex = 0;
             }
 
+            centerInternalOptionLabel = new Label
+            {
+                AutoSize = false,
+                Location = new Point(centerComboBox.Left, centerComboBox.Bottom + 2),
+                Width = centerComboBox.Width,
+                Height = 18,
+                ForeColor = Color.LightSkyBlue,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Visible = false
+            };
+
             isDangerCheckBox = new CheckBox
             {
                 Text = "Опасно",
                 AutoSize = true,
-                Location = new Point(centerComboBox.Left, centerComboBox.Bottom + 5),
+                Location = new Point(centerComboBox.Left, centerInternalOptionLabel.Bottom + 2),
                 ForeColor = Color.White,
                 Appearance = Appearance.Normal,
-            //ImageAlign = ContentAlignment.MiddleCenter,
-            //BackgroundImageLayout = ImageLayout.Center
-        };
+                //ImageAlign = ContentAlignment.MiddleCenter,
+                //BackgroundImageLayout = ImageLayout.Center
+            };
             isDangerCheckBox.CheckedChanged += IsDangerCheckBox_CheckedChanged;
 
             noMagicCheckBox = new CheckBox
@@ -871,9 +1016,9 @@ namespace MMMapEditor
             };
             noMagicCheckBox.CheckedChanged += NoMagicCheckBox_CheckedChanged;
 
-            lightingGroupBox = new GroupBox
+            darkeningGroupBox = new GroupBox
             {
-                Text = "Освещение",
+                Text = "Затемнённость",
                 ForeColor = Color.White,
                 Location = new Point(isDangerCheckBox.Right + 5, isDangerCheckBox.Top),
                 Width = 90,
@@ -889,7 +1034,7 @@ namespace MMMapEditor
                 Checked = true, // По умолчанию выбран "светло"
                 Location = new Point(10, 15)
             };
-            lightRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
+            lightRadioButton.CheckedChanged += DarkeningRadioButton_CheckedChanged;
 
             darkRadioButton = new RadioButton
             {
@@ -898,28 +1043,29 @@ namespace MMMapEditor
                 ForeColor = Color.White,
                 Location = new Point(10, 35)
             };
-            darkRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
+            darkRadioButton.CheckedChanged += DarkeningRadioButton_CheckedChanged;
 
-            darknessRadioButton = new RadioButton
+            darkeningRadioButton = new RadioButton
             {
                 Text = "Мрак",
                 AutoSize = true,
                 ForeColor = Color.White,
                 Location = new Point(10, 55)
             };
-            darknessRadioButton.CheckedChanged += LightingRadioButton_CheckedChanged;
+            darkeningRadioButton.CheckedChanged += DarkeningRadioButton_CheckedChanged;
 
             // Добавляем радиокнопки внутрь группы
-            lightingGroupBox.Controls.Add(lightRadioButton);
-            lightingGroupBox.Controls.Add(darkRadioButton);
-            lightingGroupBox.Controls.Add(darknessRadioButton);
+            darkeningGroupBox.Controls.Add(lightRadioButton);
+            darkeningGroupBox.Controls.Add(darkRadioButton);
+            darkeningGroupBox.Controls.Add(darkeningRadioButton);
 
 
             topPanel.Controls.Add(centerLabel);
             topPanel.Controls.Add(centerComboBox);
+            topPanel.Controls.Add(centerInternalOptionLabel);
             topPanel.Controls.Add(isDangerCheckBox);
             topPanel.Controls.Add(noMagicCheckBox);
-            topPanel.Controls.Add(lightingGroupBox);
+            topPanel.Controls.Add(darkeningGroupBox);
 
             // Добавляем таблицу компоновки на правую панель
             rightPanel.Controls.Add(layout);
@@ -967,12 +1113,17 @@ namespace MMMapEditor
             metadataItem.Click += MetadataItem_Click;
             fileMenuItem.DropDownItems.Add(metadataItem);
 
+            // Добавляем пункт "Draft_Laboratory" в меню "Карта"
+            ToolStripMenuItem draftLaboratoryItem = new ToolStripMenuItem("Открыть оригинальный .OVR");
+            draftLaboratoryItem.Click += DraftLaboratoryItem_Click;
+            fileMenuItem.DropDownItems.Add(draftLaboratoryItem);
+
             searchMenuItem = new ToolStripMenuItem("Поиск");
             onMapsSearchItem = new ToolStripMenuItem("По картам");
             onMapsSearchItem.Click += OnMapsSearchItem_Click;
             searchMenuItem.DropDownItems.Add(onMapsSearchItem);
 
-          //  menuStrip.Items.Insert(menuStrip.Items.IndexOf(settingMenuItem), searchMenuItem);
+            //  menuStrip.Items.Insert(menuStrip.Items.IndexOf(settingMenuItem), searchMenuItem);
 
             settingMenuItem = new ToolStripMenuItem("Настройки");
             toolStripMenuItemManageObjects = new ToolStripMenuItem("Управление объектами");
@@ -986,6 +1137,21 @@ namespace MMMapEditor
             // Добавляем подпункт в меню "Настройки"
             settingMenuItem.DropDownItems.Add(directionsMenuItem);
 
+            ToolStripMenuItem displaySettingsMenuItem = new ToolStripMenuItem("Отображение");
+            displaySettingsMenuItem.Click += DisplaySettingsMenuItem_Click;
+            settingMenuItem.DropDownItems.Add(displaySettingsMenuItem);
+
+            // Создаем пункт меню "Загрузка .OVR файлов"
+            ToolStripMenuItem ovrLoadSettingsMenuItem = new ToolStripMenuItem("Загрузка .OVR файлов");
+            ovrLoadSettingsMenuItem.Click += OvrLoadSettingsMenuItem_Click;
+            settingMenuItem.DropDownItems.Add(ovrLoadSettingsMenuItem);
+
+#if REGRESSION_TESTS
+            ToolStripMenuItem testMenuItem = new ToolStripMenuItem("Тестирование");
+            ToolStripMenuItem runAnalyzerTestsItem = new ToolStripMenuItem("Юнит-функциональные тесты");
+            runAnalyzerTestsItem.Click += RunAnalyzerTests_Click;
+#endif
+
             // Подписываемся на событие Click для вызова формы
             toolStripMenuItemManageObjects.Click += toolStripMenuItemManageObjects_Click;
 
@@ -994,13 +1160,3242 @@ namespace MMMapEditor
             menuStrip.Items.Add(fileMenuItem);
             menuStrip.Items.Add(searchMenuItem);
             menuStrip.Items.Add(settingMenuItem);
+#if REGRESSION_TESTS
+            testMenuItem.DropDownItems.Add(runAnalyzerTestsItem);
+            menuStrip.Items.Add(testMenuItem);
+#endif
             Controls.Add(menuStrip);
         }
+
+#if REGRESSION_TESTS
+        private void RunAnalyzerTests_Click(object sender, EventArgs e)
+        {
+            string testsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "OvrAnalyzerTests.json");
+
+            var runner = new MMMapEditor.Tests.OvrAnalyzerTestRunner();
+            var testCases = runner.LoadTestCases(testsFilePath);
+
+            if (testCases.Count == 0)
+            {
+                // Создаём пример тестового файла, если его нет
+                var result = MessageBox.Show(
+                    "Файл с тестами не найден или имеет неверный формат.\n\n" +
+                    "Создать пример тестового файла?",
+                    "Файл тестов не найден",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Yes)
+                {
+                    //заглушка
+                    //runner.CreateExampleTestFile(testsFilePath);
+                    //MessageBox.Show(
+                    //    $"Создан пример файла тестов:\n{testsFilePath}\n\n" +
+                    //    $"Отредактируйте его и запустите тесты снова.\n\n" +
+                    //    $"ВАЖНО: Убедитесь, что файл содержит массив тестов (начинается с [ и заканчивается ]).",
+                    //    "Файл тестов создан",
+                    //    MessageBoxButtons.OK,
+                    //    MessageBoxIcon.Information);
+                }
+                return;
+            }
+
+            // Запускаем тесты
+            var results = runner.RunTests(testCases);
+
+            // Показываем результаты
+            var viewer = new MMMapEditor.Tests.TestResultsViewer(results, testsFilePath);
+            viewer.ShowDialog();
+        }
+#endif
 
         private void OnMapsSearchItem_Click(object sender, EventArgs e)
         {
             var searchForm = new SearchForm();
             searchForm.ShowDialog();
+        }
+
+        private void DraftLaboratoryItem_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.InitialDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                dialog.Filter = "OVR Files (*.ovr)|*.ovr|Text Files (*.txt)|*.txt|All files (*.*)|*.*";
+                dialog.Title = "Select a file to load as a Original Resource Overlay Map File";
+                dialog.DefaultExt = ".ovr";
+
+                if (dialog.ShowDialog() == DialogResult.OK)
+                {
+                    string filename = dialog.FileName;
+                    OpenOriginalResourceOverlayMapFile(filename);
+                    lastSavedFilename = "";
+                    UpdateWindowTitle();
+                }
+            }
+        }
+
+        private void OpenOriginalResourceOverlayMapFile(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            string fileExtension = Path.GetExtension(filename).ToUpper();
+
+            if (fileExtension != ".OVR")
+            {
+                MessageBox.Show(
+                    "Ошибка: ожидается файл с расширением .OVR.",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error
+                );
+                return;
+            }
+
+            ClearCurrentMapState();
+
+            // Определение общего количества строк (33 строки)
+            string[] lines = new string[33];
+
+            // Проверяем наличие конфигурации для данного файла
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config, out string configError))
+            {
+                MessageBox.Show(configError ?? $"Конфигурация для файла {fileNameOnly} не найдена.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Копируем первую половину данных из конфигурации
+            Array.Copy(config.First16Lines, 0, lines, 0, 16);
+            // Копируем вторую половину данных из конфигурации
+            Array.Copy(config.Second16Lines, 0, lines, 16, 16);
+
+            byte[] fileData;
+            CellDraftContext draftContext;
+
+            try
+            {
+                // Читаем бинарный файл
+                fileData = File.ReadAllBytes(filename);
+
+                // Получаем стартовый адрес данных из конфигурации
+                int startAddress = config.StartAddress;
+
+                // Проверяем длину файла
+                if (fileData.Length < startAddress)
+                {
+                    MessageBox.Show($"Файл слишком мал. Длина файла: {fileData.Length}, требуемый адрес: {startAddress}.", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
+                draftContext = BuildDraftContext(config, fileData, fileNameOnly);
+
+                // Формируем строку данных объектов
+                StringBuilder dataLine = new StringBuilder();
+
+                for (int i = startAddress; i < fileData.Length; i++)
+                {
+                    if (i > startAddress) dataLine.Append(" ");
+                    dataLine.AppendFormat("{0:X2}", fileData[i]);
+                }
+
+                lines[32] = dataLine.ToString();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при чтении бинарного файла: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            // Основной цикл обработки данных карты
+            for (int y = 0; y < 16; y++)
+            {
+                if (!string.IsNullOrWhiteSpace(lines[y]) && !string.IsNullOrWhiteSpace(lines[y + 16]))
+                {
+                    string[] cellValuesFirstLayer = lines[y].Split();
+                    string[] cellValuesSecondLayer = lines[y + 16].Split();
+
+                    // Проверяем правильность полученных данных
+                    if (cellValuesFirstLayer.Length == 16 && cellValuesSecondLayer.Length == 16)
+                    {
+                        for (int x = 0; x < 16; x++)
+                        {
+                            ProcessCellDraft(x, y, cellValuesFirstLayer[x], cellValuesSecondLayer[x], draftContext);
+                        }
+                    }
+                }
+            }
+
+            var loadResult = OvrOverlayLoader.Load(
+                filename,
+                centralOptions,
+                notesPerCell,
+                messageStates);
+
+            centralOptions = loadResult.CentralOptions;
+            notesPerCell = loadResult.NotesPerCell;
+            noteStyleSpansPerCell = loadResult.NoteStyleSpansPerCell ?? new Dictionary<Point, List<NoteInlineStyleSpan>>();
+            messageStates = loadResult.MessageStates;
+
+            this.mostDangerousCell = loadResult.MostDangerousCell;
+            this.mostPeacefulCell = loadResult.MostPeacefulCell;
+            mapSector = loadResult.SectorMap ?? "";
+            surface = loadResult.SurfaceCoords != null
+                ? $"X = {loadResult.SurfaceCoords.Item1} Y = {loadResult.SurfaceCoords.Item2}"
+                : "";
+
+            string surfaceText = loadResult.SurfaceCoords != null
+                ? $"X = {loadResult.SurfaceCoords.Item1} Y = {loadResult.SurfaceCoords.Item2}"
+                : "X = 0 Y = 0";
+
+            var metadataLines = new List<string>
+            {
+                $"Название файла: {Path.GetFileName(filename)}",
+                $"MAP SECTOR: {loadResult.SectorMap}"
+            };
+
+            if (!loadResult.IsOutdoorOverlay)
+                metadataLines.Add($"SURFACE: {surfaceText}");
+
+            // Формируем сообщение для отображения
+            string message =
+                string.Join("\n", metadataLines) + "\n\n" +
+                $"Самая опасная клетка: {loadResult.MostDangerousCell}\n" +
+                $"Самая безопасная клетка: {loadResult.MostPeacefulCell}\n\n" +
+                $"Шанс случайной встречи: {loadResult.RandomEncounterChancePercent:F2}% (0x{loadResult.RandomEncounterChanceRaw:X2})\n" +
+                $"Максимальная сила случайных монстров: {loadResult.RandomEncounterMonsterPowerCap}\n" +
+                $"Максимальный уровень случайных монстров: {loadResult.RandomEncounterMonsterLevelCap}\n" +
+                $"Максимальное кол-во случайных монстров в группе: {loadResult.RandomEncounterMonsterBatchCountCap}\n" +
+                $"Затемнение: {(loadResult.IsDarknessEnabled ? "включено" : "выключено")}\n" +
+                $"Телепорт (заклинание 5-5): {(loadResult.IsTeleportSpellAllowed ? "разрешён" : "запрещён")}";
+
+            // Перерисовываем интерфейс
+            foreach (var button in gridButtons)
+            {
+                button.Invalidate();
+            }
+
+            // Выводим сообщение в всплывающем окне
+            MessageBox.Show(
+                message,
+                "Оверлейные данные успешно загружены",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information
+            );
+
+            // Информационное сообщение о завершении загрузки
+            //MessageBox.Show("Лаборатория успешно загружена.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private byte ReadRandomEncounterMonsterPowerCap(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return 0;
+            }
+
+            int randomEncounterMonsterPowerCapAddress = config.RandomEncounterMonsterPowerCap;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (randomEncounterMonsterPowerCapAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес RandomEncounterMonsterPowerCap выходит за пределы файла.");
+                return 0;
+            }
+
+            byte power = fileData[randomEncounterMonsterPowerCapAddress];
+            Console.WriteLine($"Максимальная сила случайных монстров: {power}");
+            return power;
+        }
+
+        private byte ReadRandomEncounterMonsterLevelCap(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return 0;
+            }
+
+            int randomEncounterMonsterLevelCapAddress = config.RandomEncounterMonsterLevelCap;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (randomEncounterMonsterLevelCapAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес RandomEncounterMonsterLevelCap выходит за пределы файла.");
+                return 0;
+            }
+
+            byte level = fileData[randomEncounterMonsterLevelCapAddress];
+            Console.WriteLine($"Максимальный уровень случайных монстров: {level}");
+            return level;
+        }
+
+        private byte ReadRandomEncounterMonsterBatchCountCap(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return 0;
+            }
+
+            int batchCountAddress = config.RandomEncounterMonsterBatchCountCap;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (batchCountAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес RandomEncounterMonsterBatchCountCap выходит за пределы файла.");
+                return 0;
+            }
+
+            byte count = fileData[batchCountAddress];
+            Console.WriteLine($"Максимальное количество случайных монстров в группе: {count}");
+            return count;
+        }
+
+        private Tuple<byte, byte> ReadSurfaceCoordinates(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return null;
+            }
+
+            int surfaceXAddress = config.SurfaceX;
+            int surfaceYAddress = config.SurfaceY;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (config.TryIsOutdoorOverlay(fileData, out bool isOutdoorOverlay) && isOutdoorOverlay)
+            {
+                surface = "";
+                Console.WriteLine($"Оверлей {fileNameOnly} является наружным и не содержит SURFACE.");
+                return null;
+            }
+
+            if (surfaceXAddress >= fileData.Length || surfaceYAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адреса Surface выходят за пределы файла.");
+                return null;
+            }
+
+            byte x = fileData[surfaceXAddress];
+            byte y = fileData[surfaceYAddress];
+
+            Console.WriteLine($"Поверхностные координаты: X={x}, Y={y}");
+
+            surface = "X = " + x.ToString() + " Y = " + y.ToString();
+            return Tuple.Create(x, y);
+        }
+
+        private string ReadSectorMap(string filename)
+        {
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return null;
+            }
+
+            int sectorMapHighAddress = config.SectorMapLetter;
+            int sectorMapLowAddress = config.SectorMapDigit;
+
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            if (sectorMapHighAddress >= fileData.Length || sectorMapLowAddress >= fileData.Length)
+            {
+                Console.WriteLine($"Адреса глобального сектора выходят за пределы файла.");
+                return null;
+            }
+
+            byte highByte = fileData[sectorMapHighAddress];
+            byte lowByte = fileData[sectorMapLowAddress];
+
+            // Применяем шифрующую формулу
+            char highChar = (char)(highByte - 0xC1 + 65);
+            char lowChar = (char)(lowByte - 0xB1 + 49);
+
+            string sectorMap = $"{highChar}-{lowChar}";
+            Console.WriteLine($"Глобальный сектор карты: {sectorMap}");
+
+            mapSector = sectorMap;
+            return sectorMap;
+        }
+
+        private Point? ReadMostPeacefulCell(string filename)
+        {
+            // Получаем конфигурацию для файла
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return null;
+            }
+
+            int mostPeacefulCellAddress = config.MostPeacefulCell;
+
+            // Читаем файл
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            // Проверяем длину файла
+            if (mostPeacefulCellAddress + 1 >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес mostPeacefulCell выходит за пределы файла.");
+                return null;
+            }
+
+            // Читаем координаты X и Y
+            byte x = fileData[mostPeacefulCellAddress];
+            byte y = fileData[mostPeacefulCellAddress + 1];
+
+            // Координаты сохраняются в пределах от 0 до 15 включительно
+            int coordX = x & 0xF;
+            int coordY = y & 0xF;
+
+            // Преобразуем в точку
+            Point peacefulPoint = new Point(coordX, coordY);
+
+            // Запоминаем координаты самой безопасной клетки
+            mostPeacefulCell = peacefulPoint;
+
+            // Добавляем заметку обычным текстом салатовго цвета
+            if (notesPerCell.TryGetValue(peacefulPoint, out var currentNotes))
+            {
+                notesPerCell[peacefulPoint] =
+                    "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!\n" +
+                    currentNotes;
+            }
+            else
+            {
+                notesPerCell[peacefulPoint] =
+                    "ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!";
+            }
+            return peacefulPoint;
+        }
+
+        private Point? ReadMostDangerousCell(string filename)
+        {
+            // Получаем конфигурацию для файла
+            string fileNameOnly = Path.GetFileName(filename).ToUpper();
+            if (!OvrFileConfigs.TryGetConfigForFile(filename, out var config))
+            {
+                Console.WriteLine($"Конфигурация для файла {fileNameOnly} не найдена.");
+                return null;
+            }
+
+            int mostDangerousCellAddress = config.MostDangerousCell;
+
+            // Читаем файл
+            byte[] fileData = File.ReadAllBytes(filename);
+
+            // Проверяем длину файла
+            if (mostDangerousCellAddress + 1 >= fileData.Length)
+            {
+                Console.WriteLine($"Адрес mostDangerousCell выходит за пределы файла.");
+                return null;
+            }
+
+            // Читаем координаты X и Y
+            byte x = fileData[mostDangerousCellAddress];
+            byte y = fileData[mostDangerousCellAddress + 1];
+
+            // Координаты сохраняются в пределах от 0 до 15 включительно
+            int coordX = x & 0xF;
+            int coordY = y & 0xF;
+
+            // Преобразуем в точку
+            Point dangerousPoint = new Point(coordX, coordY);
+
+            // Запоминаем координаты самой опасной клетки
+            mostDangerousCell = dangerousPoint;
+
+            // Добавляем заметку обычной текстовой информацией
+            if (notesPerCell.TryGetValue(dangerousPoint, out var currentNotes))
+            {
+                notesPerCell[dangerousPoint] =
+                    "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!\n" +
+                    currentNotes;
+            }
+            else
+            {
+                notesPerCell[dangerousPoint] =
+                    "ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!";
+            }
+            return dangerousPoint;
+        }
+
+        private void ProcessOvrObjectsWithAdvancedAnalyzer(string filename)
+        {
+            try
+            {
+                bool useHierarchical = GetBooleanSetting("OvrLoadSettings", "Hierarchical", true);
+
+                var buildResult = OvrNotesBuilder.BuildNotes(
+                    filename,
+                    centralOptions,
+                    notesPerCell,
+                    messageStates,
+                    useHierarchical);
+
+                centralOptions = buildResult.CentralOptions;
+                notesPerCell = buildResult.NotesPerCell;
+                noteStyleSpansPerCell = buildResult.NoteStyleSpansPerCell ?? new Dictionary<Point, List<NoteInlineStyleSpan>>();
+                messageStates = buildResult.MessageStates;
+
+                foreach (var button in gridButtons)
+                    button.Invalidate();
+
+                if (selectedPosition.HasValue)
+                    UpdateNotesFormatting();
+
+                MessageBox.Show(
+                    $"Загружено объектов из анализа кода: Всего {buildResult.TotalObjects} " +
+                    $"(из таблицы: {buildResult.TableObjects}, AnyObjectSpec: {buildResult.SpecObjects})",
+                    "Отладочная информация",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"Ошибка при обработке OVR файла: {ex.Message}",
+                    "Ошибка",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
+        }
+
+        private void ApplyItalicSeaWaveStyle(RichTextBox rt, int startIndex, int length)
+        {
+            rt.Select(startIndex, length);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            rt.SelectionColor = Color.Orange; // Цвет шрифта для служебной информации
+        }
+
+        private void ApplyBoldRedStyle(RichTextBox rt, int startIndex, int length)
+        {
+            rt.Select(startIndex, length);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            rt.SelectionColor = Color.FromArgb(0xB539FF);
+        }
+
+        private void ApplyVariantHeaderStyle(RichTextBox rt, int startIndex, int length, string headerText)
+        {
+            rt.Select(startIndex, length);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            rt.SelectionColor = Color.FromArgb(0xB539FF);
+            rt.SelectionBackColor = rt.BackColor;
+
+            Match probabilityMatch = Regex.Match(headerText, @"\([^\r\n]*\)");
+            if (probabilityMatch.Success)
+            {
+                int probabilityStart = startIndex + probabilityMatch.Index;
+                int probabilityLength = probabilityMatch.Length;
+
+                rt.Select(probabilityStart, probabilityLength);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+                rt.SelectionColor = Color.FromArgb(210, 190, 255);
+                rt.SelectionBackColor = Color.FromArgb(45, 28, 60);
+            }
+
+            Match choiceMatch = Regex.Match(headerText, @":\s*(([A-ZА-ЯЁ]+|\d+)\)\s*)$");
+            if (choiceMatch.Success)
+            {
+                Group choiceGroup = choiceMatch.Groups[1];
+                int choiceStart = startIndex + choiceGroup.Index;
+                int choiceLength = choiceGroup.Length;
+
+                rt.Select(choiceStart, choiceLength);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                rt.SelectionColor = Color.FromArgb(255, 220, 120);
+                rt.SelectionBackColor = Color.FromArgb(60, 45, 20);
+            }
+        }
+
+        private void FormatRainbowPartysexNotes(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText))
+                return;
+
+            ApplyRainbowBackgroundToExactText(rt, noteText, "Меняется пол у женщин в партии");
+            ApplyRainbowBackgroundToExactText(rt, noteText, "Меняется пол у мужчин в партии");
+        }
+
+        private void ApplyRainbowBackgroundToExactText(RichTextBox rt, string noteText, string targetText)
+        {
+            int searchStart = 0;
+
+            while (searchStart < noteText.Length)
+            {
+                int matchIndex = noteText.IndexOf(targetText, searchStart, StringComparison.Ordinal);
+                if (matchIndex < 0)
+                    break;
+
+                ApplyRainbowBackgroundStyle(rt, matchIndex, targetText);
+                searchStart = matchIndex + targetText.Length;
+            }
+        }
+
+        private void FormatSpecialHighlightedNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            string[] targetTexts =
+            {
+                SpecialNoteTexts.SecretPassageToDoomCastle,
+                SpecialNoteTexts.RedDragonResurrection,
+                SpecialNoteTexts.WaterMonsterResurrection,
+                SpecialNoteTexts.GiantScorpionResurrection
+            };
+
+            foreach (string targetText in targetTexts)
+            {
+                int searchStart = 0;
+
+                while (searchStart < noteText.Length)
+                {
+                    int matchIndex = noteText.IndexOf(targetText, searchStart, StringComparison.Ordinal);
+                    if (matchIndex < 0)
+                        break;
+
+                    ApplySpecialHighlightedNoteStyle(rt, matchIndex, targetText.Length);
+                    searchStart = matchIndex + targetText.Length;
+                }
+            }
+        }
+
+        private void ApplySpecialHighlightedNoteStyle(RichTextBox rt, int startIndex, int length)
+        {
+            Color passageTextColor = Color.FromArgb(180, 255, 220);
+            Color passageBackColor = Color.FromArgb(22, 65, 48);
+
+            rt.Select(startIndex, length);
+            rt.SelectionColor = passageTextColor;
+            rt.SelectionBackColor = passageBackColor;
+            rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Bold);
+        }
+
+        private void ApplyRainbowBackgroundStyle(RichTextBox rt, int startIndex, string text)
+        {
+            Color[] rainbowStops = new Color[]
+            {
+                Color.FromArgb(230, 60, 60),
+                Color.FromArgb(255, 140, 0),
+                Color.FromArgb(255, 215, 0),
+                Color.FromArgb(70, 190, 110),
+                Color.FromArgb(70, 150, 255),
+                Color.FromArgb(75, 0, 130),
+                Color.FromArgb(180, 70, 220)
+            };
+
+            int coloredCharacterCount = 0;
+            foreach (char ch in text)
+            {
+                if (!char.IsWhiteSpace(ch))
+                    coloredCharacterCount++;
+            }
+
+            if (coloredCharacterCount == 0)
+                return;
+
+            int coloredCharacterIndex = 0;
+            Color currentBackgroundColor = rainbowStops[0];
+
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (!char.IsWhiteSpace(text[i]))
+                {
+                    double progress = coloredCharacterCount == 1
+                        ? 1.0
+                        : (double)coloredCharacterIndex / (coloredCharacterCount - 1);
+
+                    currentBackgroundColor = InterpolateRainbowColor(rainbowStops, progress);
+                    coloredCharacterIndex++;
+                }
+
+                rt.Select(startIndex + i, 1);
+                rt.SelectionBackColor = currentBackgroundColor;
+                rt.SelectionColor = GetReadableTextColor(currentBackgroundColor);
+            }
+        }
+
+        private Color InterpolateRainbowColor(Color[] rainbowStops, double progress)
+        {
+            if (rainbowStops == null || rainbowStops.Length == 0)
+                return Color.Black;
+
+            if (rainbowStops.Length == 1)
+                return rainbowStops[0];
+
+            if (progress <= 0)
+                return rainbowStops[0];
+
+            if (progress >= 1)
+                return rainbowStops[rainbowStops.Length - 1];
+
+            double scaledProgress = progress * (rainbowStops.Length - 1);
+            int leftIndex = (int)Math.Floor(scaledProgress);
+            int rightIndex = Math.Min(leftIndex + 1, rainbowStops.Length - 1);
+            double segmentProgress = scaledProgress - leftIndex;
+
+            Color leftColor = rainbowStops[leftIndex];
+            Color rightColor = rainbowStops[rightIndex];
+
+            return Color.FromArgb(
+                (int)Math.Round(leftColor.R + ((rightColor.R - leftColor.R) * segmentProgress)),
+                (int)Math.Round(leftColor.G + ((rightColor.G - leftColor.G) * segmentProgress)),
+                (int)Math.Round(leftColor.B + ((rightColor.B - leftColor.B) * segmentProgress)));
+        }
+
+        private Color GetReadableTextColor(Color backgroundColor)
+        {
+            double brightness = (backgroundColor.R * 0.299) +
+                (backgroundColor.G * 0.587) +
+                (backgroundColor.B * 0.114);
+
+            return brightness >= 150 ? Color.Black : Color.White;
+        }
+
+        // Теперь форматируем максимумы случайной встречи, затемнённость и шанс случайной встречи
+        private void FormatMapLevelMetaParameters(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            // Максимальная сила случайных монстров
+            var powerMatches = Regex.Matches(
+                noteText,
+                @"Максимальная сила случайных монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежней: \d+)"
+            );
+
+            foreach (Match match in powerMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(135, 206, 250); // светло-голубой
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Максимальный уровень случайных монстров
+            var levelMatches = Regex.Matches(
+                noteText,
+                @"Максимальный уровень случайных монстров (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+            );
+
+            foreach (Match match in levelMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(120, 180, 245); // более светлый голубой
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Максимальное количество случайных монстров в группе
+            var batchCountMatches = Regex.Matches(
+                noteText,
+                @"Максимальное количество случайных монстров в группе (увеличивается с \d+ до \d+|уменьшается с \d+ до \d+|остаётся прежним: \d+)"
+            );
+
+            foreach (Match match in batchCountMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(130, 200, 170);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Затемнение
+            var lightingMatches = Regex.Matches(
+                noteText,
+                @"Затемнение (включается|выключается|остаётся включённым|остаётся выключенным)"
+            );
+
+            foreach (Match match in lightingMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(145, 130, 235); // 
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Шанс случайной встречи
+            var chanceMatches = Regex.Matches(
+                noteText,
+                @"Шанс случайной встречи (увеличивается с [\d.,]+% \(0x[0-9A-F]{2}\) до [\d.,]+% \(0x[0-9A-F]{2}\)|уменьшается с [\d.,]+% \(0x[0-9A-F]{2}\) до [\d.,]+% \(0x[0-9A-F]{2}\)|остаётся прежним: [\d.,]+% \(0x[0-9A-F]{2}\))",
+                RegexOptions.IgnoreCase
+            );
+
+            foreach (Match match in chanceMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(150, 160, 175); // 
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+        }
+
+        /// <summary>
+        /// Форматирование информации о битве с конкретными монстрами
+        /// </summary>
+        private void FormatMonsterBattleInfo(RichTextBox rt, string noteText)
+        {
+            // Заголовок группы
+            var groupHeaderMatches = Regex.Matches(
+                noteText,
+                @"^([ \t]*)(Битва с группой монстров:)$",
+                RegexOptions.Multiline);
+
+            foreach (Match match in groupHeaderMatches)
+            {
+                Group textGroup = match.Groups[2];
+                rt.Select(textGroup.Index, textGroup.Length);
+                rt.SelectionColor = Color.LightYellow;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
+            // Строки с монстрами
+            var bulletMatches = Regex.Matches(
+                noteText,
+                @"^([ \t]*)(•\s+[^\n]+?\s+x(\d+|\d+-\d+|\? \(Random count\)))$",
+                RegexOptions.Multiline);
+
+            for (int bulletIndex = 0; bulletIndex < bulletMatches.Count; bulletIndex++)
+            {
+                Match match = bulletMatches[bulletIndex];
+                Group bulletTextGroup = match.Groups[2];
+
+                string bulletText = bulletTextGroup.Value;
+                bool isRandom = bulletText.Contains("x? (Random count)");
+
+                Color lineColor;
+                if (isRandom)
+                    lineColor = (bulletIndex % 2 == 0) ? Color.FromArgb(255, 71, 151) : Color.FromArgb(255, 96, 171);
+                else
+                    lineColor = (bulletIndex % 2 == 0) ? Color.FromArgb(240, 31, 111) : Color.FromArgb(255, 76, 146);
+
+                rt.Select(bulletTextGroup.Index, bulletTextGroup.Length);
+                rt.SelectionColor = lineColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                if (isRandom)
+                {
+                    int xPos = bulletText.LastIndexOf('x');
+                    if (xPos >= 0)
+                    {
+                        rt.Select(bulletTextGroup.Index + xPos, bulletText.Length - xPos);
+                        rt.SelectionColor = Color.FromArgb(255, 51, 131);
+                        rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                        int randomCountPos = bulletText.IndexOf("(Random count)");
+                        if (randomCountPos >= 0)
+                        {
+                            rt.Select(bulletTextGroup.Index + randomCountPos, "(Random count)".Length);
+                            rt.SelectionColor = Color.FromArgb(255, 51, 131);
+                            rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+                        }
+                    }
+                }
+                else
+                {
+                    var countMatch = Regex.Match(bulletText, @"x(\d+|\d+-\d+)$");
+                    if (countMatch.Success)
+                    {
+                        int countIndex = bulletTextGroup.Index + bulletText.LastIndexOf('x');
+                        rt.Select(countIndex, bulletText.Length - bulletText.LastIndexOf('x'));
+                        rt.SelectionColor = Color.FromArgb(255, 182, 193);
+                        rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Форматирование для loot-блоков
+        /// </summary>
+        private void FormatLootBlocks(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText))
+                return;
+
+            // Подчёркиваем только имя контейнера внутри строки:
+            // "На ячейке находится GOLD CHEST в котором лежит:"
+            var containerLineMatches = Regex.Matches(
+                noteText,
+                @"На ячейке находится\s+(.*?)\s+в котором лежит:",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+            foreach (Match match in containerLineMatches)
+            {
+                if (!match.Success || match.Groups.Count < 2)
+                    continue;
+
+                // Сначала перекрашиваем всю строку контейнера в холодный оттенок,
+                // чтобы она заметно отличалась от тёплого цвета ITEM/предметов
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(170, 205, 255);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group containerNameGroup = match.Groups[1];
+                if (containerNameGroup.Length <= 0)
+                    continue;
+
+                // Затем усиливаем только имя контейнера
+                rt.Select(containerNameGroup.Index, containerNameGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 215, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
+            var numberedLootMatches = Regex.Matches(noteText, @"^(\s*\d+[\)\.]\s+)([^\n]+)$", RegexOptions.Multiline);
+            foreach (Match match in numberedLootMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 236, 139);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group numberGroup = match.Groups[1];
+                rt.Select(numberGroup.Index, numberGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 170, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                string body = match.Groups[2].Value;
+                int bodyStart = match.Groups[2].Index;
+
+                var valueMatch = Regex.Match(body, @"\b(\d+(?:-\d+)?\s+GEMS?|GEMS?[:\s]+\d+(?:-\d+)?|\d+(?:-\d+)?\s+GOLD|GOLD[:\s]+\d+(?:-\d+)?)\b", RegexOptions.IgnoreCase);
+                if (valueMatch.Success)
+                {
+                    string valueText = valueMatch.Value;
+                    Color lootValueColor = Regex.IsMatch(valueText, @"GEMS?", RegexOptions.IgnoreCase)
+                        ? Color.FromArgb(105, 228, 185)
+                        : Color.FromArgb(165, 235, 120);
+
+                    rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
+                    rt.SelectionColor = lootValueColor;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                var itemMatch = Regex.Match(body, @"^(предмет\b|ITEM\b[:\s]*)", RegexOptions.IgnoreCase);
+                if (itemMatch.Success)
+                {
+                    rt.Select(bodyStart + itemMatch.Index, itemMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+                }
+            }
+
+            var singleLootValueMatches = Regex.Matches(noteText, @"^\s*(предмет\b.*|ITEM[: ].*|\d+(?:-\d+)?\s+GEMS?$|GEMS?[:\s]+\d+(?:-\d+)?$|\d+(?:-\d+)?\s+GOLD$|GOLD[:\s]+\d+(?:-\d+)?$)$", RegexOptions.Multiline | RegexOptions.IgnoreCase);
+            foreach (Match match in singleLootValueMatches)
+            {
+                bool startsWithNumbering = Regex.IsMatch(match.Value, @"^\s*\d+[\)\.]\s+");
+                if (startsWithNumbering)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 236, 139);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                string body = match.Value.TrimStart();
+                int bodyStart = match.Index + (match.Value.Length - body.Length);
+
+                var valueMatch = Regex.Match(body, @"\b(\d+(?:-\d+)?\s+GEMS?|GEMS?[:\s]+\d+(?:-\d+)?|\d+(?:-\d+)?\s+GOLD|GOLD[:\s]+\d+(?:-\d+)?)\b", RegexOptions.IgnoreCase);
+                if (valueMatch.Success)
+                {
+                    string valueText = valueMatch.Value;
+                    Color lootValueColor = Regex.IsMatch(valueText, @"GEMS?", RegexOptions.IgnoreCase)
+                        ? Color.FromArgb(105, 228, 185)
+                        : Color.FromArgb(165, 235, 120);
+
+                    rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
+                    rt.SelectionColor = lootValueColor;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                var itemMatch = Regex.Match(body, @"^(предмет\b|ITEM\b[:\s]*)", RegexOptions.IgnoreCase);
+                if (itemMatch.Success)
+                {
+                    rt.Select(bodyStart + itemMatch.Index, itemMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+                }
+            }
+
+            var probabilityHeaderMatches = Regex.Matches(
+                noteText,
+                @"^(\s*)(\d+[\)\.]\s+)?(Возможный предмет:|Возможные предметы:|Possible item:|Possible items:|Случайный предмет:)$",
+                RegexOptions.Multiline | RegexOptions.IgnoreCase);
+
+            foreach (Match match in probabilityHeaderMatches)
+            {
+                if (!match.Success || match.Groups.Count < 4)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 236, 139);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group numberGroup = match.Groups[2];
+                if (numberGroup.Success && numberGroup.Length > 0)
+                {
+                    rt.Select(numberGroup.Index, numberGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 170, 0);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                Group headerGroup = match.Groups[3];
+                rt.Select(headerGroup.Index, headerGroup.Length);
+                rt.SelectionColor = Color.Black;
+                rt.SelectionBackColor = Color.FromArgb(180, 230, 255);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+            }
+
+            var probabilitySubItemMatches = Regex.Matches(
+                noteText,
+                @"^(\s*•\s+)([^\n]+?)(\s+\(\d+(?:[\.,]\d+)?%\))$",
+                RegexOptions.Multiline);
+
+            foreach (Match match in probabilitySubItemMatches)
+            {
+                if (!match.Success || match.Groups.Count < 4)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(210, 230, 255);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                Group bulletGroup = match.Groups[1];
+                rt.Select(bulletGroup.Index, bulletGroup.Length);
+                rt.SelectionColor = Color.FromArgb(120, 180, 245);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group itemGroup = match.Groups[2];
+                rt.Select(itemGroup.Index, itemGroup.Length);
+                rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group probabilityGroup = match.Groups[3];
+                rt.Select(probabilityGroup.Index, probabilityGroup.Length);
+                rt.SelectionColor = Color.FromArgb(165, 235, 120);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            FormatUnnumberedLootPayloadsInsideContainerBlocks(rt, noteText);
+        }
+
+        private void FormatUnnumberedLootPayloadsInsideContainerBlocks(RichTextBox rt, string noteText)
+        {
+            bool insideLootBlock = false;
+            int lineStart = 0;
+            string[] lines = noteText.Split('\n');
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string rawLine = lines[i];
+                string line = rawLine.TrimEnd('\r');
+
+                if (IsFormattingContainerLootIntroLine(line))
+                {
+                    insideLootBlock = true;
+                }
+                else if (insideLootBlock)
+                {
+                    if (string.IsNullOrWhiteSpace(line))
+                    {
+                        insideLootBlock = false;
+                    }
+                    else if (Regex.IsMatch(line, @"^\s*\d+[\)\.]\s+"))
+                    {
+                        // Уже отформатировано как нумерованная запись выше.
+                    }
+                    else if (IsFormattingProbabilityLootHeader(line))
+                    {
+                        ApplyStandaloneProbabilityHeaderStyle(rt, lineStart, line);
+                    }
+                    else if (IsFormattingExplicitLootValueLine(line) || IsFormattingPlainLootItemLine(line))
+                    {
+                        ApplyStandaloneLootPayloadStyle(rt, lineStart, line);
+                    }
+                    else if (!IsFormattingProbabilityLootItemLine(line))
+                    {
+                        insideLootBlock = false;
+                    }
+                }
+
+                lineStart += rawLine.Length;
+                if (i < lines.Length - 1)
+                    lineStart++;
+            }
+        }
+
+        private void ApplyStandaloneProbabilityHeaderStyle(RichTextBox rt, int lineStart, string line)
+        {
+            rt.Select(lineStart, line.Length);
+            rt.SelectionColor = Color.FromArgb(255, 236, 139);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+            string header = line.TrimStart();
+            int headerStart = lineStart + (line.Length - header.Length);
+
+            rt.Select(headerStart, header.Length);
+            rt.SelectionColor = Color.Black;
+            rt.SelectionBackColor = Color.FromArgb(180, 230, 255);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+        }
+
+        private void ApplyStandaloneLootPayloadStyle(RichTextBox rt, int lineStart, string line)
+        {
+            rt.Select(lineStart, line.Length);
+            rt.SelectionColor = Color.FromArgb(255, 236, 139);
+            rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+            string body = line.TrimStart();
+            int bodyStart = lineStart + (line.Length - body.Length);
+
+            var valueMatch = Regex.Match(
+                body,
+                @"\b(\d+(?:-\d+)?\s+GEMS?|GEMS?[:\s]+\d+(?:-\d+)?|\d+(?:-\d+)?\s+GOLD|GOLD[:\s]+\d+(?:-\d+)?)\b",
+                RegexOptions.IgnoreCase);
+            if (valueMatch.Success)
+            {
+                string valueText = valueMatch.Value;
+                Color lootValueColor = Regex.IsMatch(valueText, @"GEMS?", RegexOptions.IgnoreCase)
+                    ? Color.FromArgb(105, 228, 185)
+                    : Color.FromArgb(165, 235, 120);
+
+                rt.Select(bodyStart + valueMatch.Index, valueMatch.Length);
+                rt.SelectionColor = lootValueColor;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var itemMatch = Regex.Match(body, @"^(предмет\b|ITEM\b[:\s]*)", RegexOptions.IgnoreCase);
+            if (itemMatch.Success)
+            {
+                rt.Select(bodyStart + itemMatch.Index, itemMatch.Length);
+                rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+            }
+        }
+
+        private static bool IsFormattingContainerLootIntroLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = line.Trim();
+            return trimmed.StartsWith("На ячейке находится ", StringComparison.OrdinalIgnoreCase)
+                && trimmed.EndsWith("в котором лежит:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsFormattingProbabilityLootHeader(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingLootNumbering(line.Trim());
+            return trimmed.Equals("Возможный предмет:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Случайный предмет:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Возможные предметы:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Possible item:", StringComparison.OrdinalIgnoreCase)
+                || trimmed.Equals("Possible items:", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsFormattingProbabilityLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingProbabilityBullet(RemoveFormattingLootNumbering(line.Trim()));
+            return Regex.IsMatch(
+                trimmed,
+                @"^[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 '\-\+\.]{1,60}\s+\(\d+(?:[.,]\d+)?%\)$",
+                RegexOptions.CultureInvariant);
+        }
+
+        private static bool IsFormattingExplicitLootValueLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingLootNumbering(line.Trim());
+            string upper = trimmed.ToUpperInvariant();
+
+            if (trimmed.StartsWith("предмет", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (upper.StartsWith("ITEM ") || upper.StartsWith("ITEM:"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^\d+(?:-\d+)?\s+GEMS?$"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^GEMS?[:\s]+\d+(?:-\d+)?$"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^\d+(?:-\d+)?\s+GOLD$"))
+                return true;
+
+            if (Regex.IsMatch(upper, @"^GOLD[:\s]+\d+(?:-\d+)?$"))
+                return true;
+
+            return false;
+        }
+
+        private static bool IsFormattingPlainLootItemLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return false;
+
+            string trimmed = RemoveFormattingLootNumbering(line.Trim());
+            if (trimmed.Length == 0)
+                return false;
+
+            if (IsFormattingContainerLootIntroLine(trimmed) || IsFormattingProbabilityLootHeader(trimmed))
+                return false;
+
+            if (IsFormattingExplicitLootValueLine(trimmed) || IsFormattingProbabilityLootItemLine(trimmed))
+                return false;
+
+            if (trimmed.Length > 60)
+                return false;
+
+            if (trimmed.Contains("\"") || trimmed.Contains("...") || trimmed.Contains("! ") || trimmed.Contains("? "))
+                return false;
+
+            if (trimmed.Contains(":") || trimmed.Contains(";") || trimmed.Contains(",") || trimmed.Contains("(") || trimmed.Contains(")"))
+                return false;
+
+            string normalized = NormalizeFormattingLootItemIdentity(trimmed);
+            return normalized.Length > 0 && KnownLootItemNamesForFormatting.Value.Contains(normalized);
+        }
+
+        private static HashSet<string> BuildKnownLootItemNamesForFormatting()
+        {
+            var result = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var item in ItemDatabase.Items)
+            {
+                string normalized = NormalizeFormattingLootItemIdentity(item?.Name);
+                if (!string.IsNullOrEmpty(normalized))
+                    result.Add(normalized);
+            }
+
+            return result;
+        }
+
+        private static string NormalizeFormattingLootItemIdentity(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return string.Empty;
+
+            string normalized = RemoveFormattingProbabilityBullet(RemoveFormattingLootNumbering(value.Trim()));
+            if (normalized.Length == 0)
+                return string.Empty;
+
+            normalized = Regex.Replace(normalized, @"\s+", " ");
+            return normalized.ToUpperInvariant();
+        }
+
+        private static string RemoveFormattingLootNumbering(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+            Match match = Regex.Match(trimmed, @"^\d+[\)\.]\s+");
+            return match.Success ? trimmed.Substring(match.Length) : trimmed;
+        }
+
+        private static string RemoveFormattingProbabilityBullet(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return line;
+
+            string trimmed = line.TrimStart();
+            Match match = Regex.Match(trimmed, @"^•\s+");
+            return match.Success ? trimmed.Substring(match.Length) : trimmed;
+        }
+
+        /// <summary>
+        /// Вспомогательный метод для определения номера строки по позиции в тексте
+        /// </summary>
+        private int GetLineNumber(string text, int position)
+        {
+            int lineNumber = 0;
+            int currentPos = 0;
+
+            while (currentPos < position && currentPos < text.Length)
+            {
+                int nextNewLine = text.IndexOf('\n', currentPos);
+                if (nextNewLine == -1) break;
+
+                if (position <= nextNewLine)
+                    break;
+
+                currentPos = nextNewLine + 1;
+                lineNumber++;
+            }
+
+            return lineNumber;
+        }
+
+        private void UpdateNotesFormatting()
+        {
+            if (selectedPosition.HasValue)
+            {
+                Point pos = selectedPosition.Value;
+                string sourceNoteText = notesPerCell[pos];
+                string noteText = NormalizeNoteLineEndings(sourceNoteText);
+
+                // Очищаем выделение
+                SetNotesTextProgrammatically(noteText);
+                notesTextBox.BackColor = Color.Black;
+                notesTextBox.ForeColor = Color.White;
+
+                // Курсив и морская волна для фразы "Эта ячейка содержит различные варианты текста"
+                int introIndex = noteText.IndexOf("Эта ячейка содержит различные варианты текста");
+                if (introIndex >= 0)
+                {
+                    ApplyItalicSeaWaveStyle(notesTextBox, introIndex, "Эта ячейка содержит различные варианты текста".Length);
+                }
+
+                // Форматирование заголовков вариантов и вероятности в скобках
+                MatchCollection matches = Regex.Matches(
+                    noteText,
+                    @"^[ \t]*Вариант\s+\d+(?:\.\d+)*(?:\s*\([^\r\n]*\))?(?::\s*(?:[A-ZА-ЯЁ]+|\d+)\)|:)",
+                    RegexOptions.Multiline
+                );
+                foreach (Match match in matches)
+                {
+                    ApplyVariantHeaderStyle(notesTextBox, match.Index, match.Length, match.Value);
+                }
+
+                // Форматирование заметки "Ничего не происходит" и пояснения в скобках
+                MatchCollection nothingHappensMatches = Regex.Matches(
+                    noteText,
+                    @"Ничего не происходит(?:\s*\((не выполнены условия для наступления ни одного варианта)\))?"
+                );
+                foreach (Match match in nothingHappensMatches)
+                {
+                    notesTextBox.Select(match.Index, match.Length);
+                    notesTextBox.SelectionColor = Color.Black;
+                    notesTextBox.SelectionBackColor = Color.White;
+                    notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+
+                    if (match.Groups[1].Success)
+                    {
+                        notesTextBox.Select(match.Groups[1].Index - 1, match.Groups[1].Length + 2);
+                        notesTextBox.SelectionColor = Color.Black;
+                        notesTextBox.SelectionBackColor = Color.White;
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Italic);
+                    }
+                }
+
+                // Проверяем, является ли данная клетка самой опасной
+                if (mostDangerousCell.HasValue && pos == mostDangerousCell.Value)
+                {
+                    int importantStart = noteText.IndexOf("ВНИМАНИЕ! ЭТО САМАЯ ОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                    if (importantStart >= 0)
+                    {
+                        int importantEnd = noteText.IndexOf("\n", importantStart);
+                        if (importantEnd < 0) importantEnd = noteText.Length;
+
+                        notesTextBox.Select(importantStart, importantEnd - importantStart);
+                        notesTextBox.SelectionColor = Color.FromArgb(0xFF3824);
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+                    }
+                }
+
+                // Проверяем, является ли данная клетка самой безопасной
+                if (mostPeacefulCell.HasValue && pos == mostPeacefulCell.Value)
+                {
+                    int importantStart = noteText.IndexOf("ЭТО САМАЯ БЕЗОПАСНАЯ КЛЕТКА НА КАРТЕ!");
+                    if (importantStart >= 0)
+                    {
+                        int importantEnd = noteText.IndexOf("\n", importantStart);
+                        if (importantEnd < 0) importantEnd = noteText.Length;
+
+                        notesTextBox.Select(importantStart, importantEnd - importantStart);
+                        notesTextBox.SelectionColor = Color.LimeGreen;
+                        notesTextBox.SelectionFont = new Font(notesTextBox.Font, FontStyle.Bold);
+                    }
+                }
+
+                // Форматирование для силы, уровня, затемнённости и шанса случайной встречи
+                FormatMapLevelMetaParameters(notesTextBox, noteText);
+
+                // Форматирование для информации о битве с монстрами
+                FormatMonsterBattleInfo(notesTextBox, noteText);
+
+                // Форматирование для частично определённых битв
+                FormatPartiallyDefinedBattles(notesTextBox, noteText);
+
+                // Форматирование для служебных предупреждений
+                FormatServiceWarnings(notesTextBox, noteText);
+
+                // Форматирование для временных технических заметок
+                FormatTemporaryTechnicalNotes(notesTextBox, noteText);
+
+                // Форматирование для служебных рендер-патчей
+                FormatTechnicalRenderPatchNotes(notesTextBox, noteText);
+
+                // Форматирование для агрегированной временной характеристики
+                FormatAggregateTemporaryStatNotes(notesTextBox, noteText);
+
+                // Форматирование для loot-блоков
+                FormatLootBlocks(notesTextBox, noteText);
+
+                // Радужный фон для заметок о смене пола в партии
+                FormatRainbowPartysexNotes(notesTextBox, noteText);
+
+                // Отдельная подсветка специальных заметок
+                FormatSpecialHighlightedNotes(notesTextBox, noteText);
+
+                FormatRandomEncounterRubiconWarnings(notesTextBox, noteText);
+                FormatRepeatedBattleWarnings(notesTextBox, noteText);
+                FormatBattleMonsterStrengthAdjustmentNotes(notesTextBox, noteText);
+
+                // Семантические пользовательские заметки могут прийти из старых/ручных карт без inline-spans.
+                FormatGeneratedSemanticNotes(notesTextBox, noteText);
+
+                // Подсветка остаётся рабочей и для plain-text копий заметки без inline-spans.
+                FormatWheelRewardExplanationBlocks(notesTextBox, noteText);
+
+                if (noteStyleSpansPerCell.TryGetValue(pos, out var inlineSpans) && inlineSpans != null && inlineSpans.Count > 0)
+                {
+                    var displayInlineSpans = NormalizeInlineStyleSpansForDisplayText(sourceNoteText, noteText, inlineSpans);
+                    ApplyInlineNoteStyles(notesTextBox, noteText, displayInlineSpans);
+                    ResetRawOverlayTextFormatting(notesTextBox, noteText, displayInlineSpans);
+                }
+            }
+        }
+
+        private void SetNotesTextProgrammatically(string noteText)
+        {
+            bool previous = isUpdatingNotesTextBoxProgrammatically;
+            isUpdatingNotesTextBoxProgrammatically = true;
+            try
+            {
+                notesTextBox.DeselectAll();
+                notesTextBox.Text = noteText ?? string.Empty;
+            }
+            finally
+            {
+                isUpdatingNotesTextBoxProgrammatically = previous;
+            }
+        }
+
+        private static string NormalizeNoteLineEndings(string text)
+        {
+            return string.IsNullOrEmpty(text)
+                ? string.Empty
+                : text.Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        private static List<NoteInlineStyleSpan> NormalizeInlineStyleSpansForDisplayText(
+            string sourceText,
+            string displayText,
+            List<NoteInlineStyleSpan> inlineSpans)
+        {
+            if (string.IsNullOrEmpty(sourceText) ||
+                sourceText == displayText ||
+                inlineSpans == null ||
+                inlineSpans.Count == 0)
+            {
+                return inlineSpans;
+            }
+
+            int[] indexMap = BuildLineEndingNormalizationIndexMap(sourceText);
+            return inlineSpans
+                .Where(span => span != null)
+                .Select(span =>
+                {
+                    var clone = span.Clone();
+                    if (clone.Length <= 0 || clone.Start < 0 || clone.Start >= sourceText.Length)
+                        return clone;
+
+                    int sourceStart = Math.Min(clone.Start, sourceText.Length);
+                    int sourceEnd = Math.Min(clone.Start + clone.Length, sourceText.Length);
+                    int displayStart = indexMap[sourceStart];
+                    int displayEnd = indexMap[sourceEnd];
+
+                    clone.Start = displayStart;
+                    clone.Length = Math.Max(0, displayEnd - displayStart);
+                    return clone;
+                })
+                .ToList();
+        }
+
+        private static int[] BuildLineEndingNormalizationIndexMap(string sourceText)
+        {
+            var indexMap = new int[sourceText.Length + 1];
+            int sourceIndex = 0;
+            int normalizedIndex = 0;
+
+            while (sourceIndex < sourceText.Length)
+            {
+                indexMap[sourceIndex] = normalizedIndex;
+
+                if (sourceText[sourceIndex] == '\r')
+                {
+                    if (sourceIndex + 1 < sourceText.Length && sourceText[sourceIndex + 1] == '\n')
+                    {
+                        indexMap[sourceIndex + 1] = normalizedIndex;
+                        sourceIndex += 2;
+                    }
+                    else
+                    {
+                        sourceIndex++;
+                    }
+
+                    normalizedIndex++;
+                }
+                else
+                {
+                    sourceIndex++;
+                    normalizedIndex++;
+                }
+            }
+
+            indexMap[sourceText.Length] = normalizedIndex;
+            return indexMap;
+        }
+
+        private void ResetRawOverlayTextFormatting(RichTextBox rt, string noteText, List<NoteInlineStyleSpan> inlineSpans)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText) || inlineSpans == null || inlineSpans.Count == 0)
+                return;
+
+            foreach (var span in inlineSpans)
+            {
+                if (span == null ||
+                    span.Kind != NoteInlineStyleKind.RawOverlayText ||
+                    span.Length <= 0 ||
+                    span.Start < 0 ||
+                    span.Start >= noteText.Length)
+                {
+                    continue;
+                }
+
+                int length = Math.Min(span.Length, noteText.Length - span.Start);
+                if (length <= 0)
+                    continue;
+
+                rt.Select(span.Start, length);
+                rt.SelectionColor = Color.White;
+                rt.SelectionBackColor = Color.Black;
+                rt.SelectionFont = rt.Font;
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void ApplyInlineNoteStyles(RichTextBox rt, string noteText, List<NoteInlineStyleSpan> inlineSpans)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText) || inlineSpans == null || inlineSpans.Count == 0)
+                return;
+
+            foreach (var span in inlineSpans)
+            {
+                if (span == null ||
+                    span.Length <= 0 ||
+                    span.Start < 0 ||
+                    span.Start >= noteText.Length)
+                {
+                    continue;
+                }
+
+                int length = Math.Min(span.Length, noteText.Length - span.Start);
+                if (length <= 0)
+                    continue;
+
+                rt.Select(span.Start, length);
+                switch (span.Kind)
+                {
+                    case NoteInlineStyleKind.InverseVideo:
+                        rt.SelectionColor = Color.Black;
+                        rt.SelectionBackColor = Color.White;
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatHighlight:
+                        rt.SelectionColor = Color.FromArgb(228, 236, 238);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Italic);
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatGroup:
+                        rt.SelectionColor = Color.FromArgb(154, 219, 210);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatTemporaryWord:
+                        rt.SelectionColor = Color.FromArgb(255, 205, 160);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                        break;
+
+                    case NoteInlineStyleKind.AggregateTemporaryStatValue:
+                        rt.SelectionColor = Color.FromArgb(255, 232, 176);
+                        rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                        rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                        break;
+
+                    case NoteInlineStyleKind.RandomEncounterRubiconWarning:
+                        ApplyRandomEncounterRubiconWarningStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.RandomEncounterRubiconThreshold:
+                        ApplyRandomEncounterRubiconThresholdStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.PersistentCounterProgressionNote:
+                        ApplyPersistentCounterProgressionNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.PersistentCounterProgressionValue:
+                        ApplyPersistentCounterProgressionValueStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.DynamicRandomBoundDependencyNote:
+                        ApplyDynamicRandomBoundDependencyNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.DynamicRandomBoundDependencyFormula:
+                        ApplyDynamicRandomBoundDependencyFormulaStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.MutedParentheticalNote:
+                        ApplyMutedParentheticalNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.SubtleMechanicsNote:
+                        ApplySubtleMechanicsNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.ConditionalRewardMechanicsNote:
+                        ApplyConditionalRewardMechanicsNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.TechnicalRenderPatchNote:
+                        ApplyTechnicalRenderPatchNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.AgeChangeNote:
+                        ApplyAgeChangeNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.GeneratedOverlaySubstitution:
+                        ApplyGeneratedOverlaySubstitutionStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.LostDirectionEffectNote:
+                        ApplyLostDirectionEffectNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.GoldClearedEffectNote:
+                        ApplyGoldClearedEffectNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.GoldGrantedEffectNote:
+                        ApplyGoldGrantedEffectNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.CriticalWarningNote:
+                        ApplyCriticalWarningNoteStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.TavernPortsmithTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(33, 92, 96));
+                        break;
+
+                    case NoteInlineStyleKind.TavernAlgaryTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(74, 61, 116));
+                        break;
+
+                    case NoteInlineStyleKind.TavernDuskTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(86, 82, 39));
+                        break;
+
+                    case NoteInlineStyleKind.TavernErliquinTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(104, 50, 63));
+                        break;
+
+                    case NoteInlineStyleKind.TavernListenForRumorsTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(38, 70, 118));
+                        break;
+
+                    case NoteInlineStyleKind.TavernFarTip:
+                        ApplyTavernOtherCityTipStyle(rt, Color.FromArgb(105, 66, 34));
+                        break;
+
+                    case NoteInlineStyleKind.WheelRewardExplanation:
+                        ApplyWheelRewardExplanationStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.RepeatedBattleWarning:
+                        ApplyRepeatedBattleWarningStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.BattleMonsterStrengthIncrease:
+                        ApplyBattleMonsterStrengthIncreaseStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.BattleMonsterStrengthDecrease:
+                        ApplyBattleMonsterStrengthDecreaseStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.HpRestoredToMaximum:
+                        ApplyHpRestoredToMaximumStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.AlignmentRestoreKeyword:
+                        ApplyAlignmentRestoreKeywordStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.ItemName:
+                        ApplyItemNameStyle(rt);
+                        break;
+
+                    case NoteInlineStyleKind.RawOverlayText:
+                        break;
+                }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatRandomEncounterRubiconWarnings(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            const string pattern = @"Внимание: Если сумма уровней активной партии\s+(\d+)\s+или больше, то к битве будут ещё добавлены случайные монстры";
+
+            foreach (Match match in Regex.Matches(noteText, pattern, RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyRandomEncounterRubiconWarningStyle(rt);
+
+                Group threshold = match.Groups[1];
+                if (threshold.Success && threshold.Length > 0)
+                {
+                    rt.Select(threshold.Index, threshold.Length);
+                    ApplyRandomEncounterRubiconThresholdStyle(rt);
+                }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void ApplyRandomEncounterRubiconWarningStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 238, 220);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyRandomEncounterRubiconThresholdStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 245, 150);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyPersistentCounterProgressionNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(218, 232, 221);
+            rt.SelectionBackColor = Color.FromArgb(35, 51, 42);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Regular);
+        }
+
+        private void ApplyPersistentCounterProgressionValueStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(238, 218, 167);
+            rt.SelectionBackColor = Color.FromArgb(35, 51, 42);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyDynamicRandomBoundDependencyNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(234, 222, 228);
+            rt.SelectionBackColor = Color.FromArgb(58, 45, 53);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyDynamicRandomBoundDependencyFormulaStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(212, 232, 196);
+            rt.SelectionBackColor = Color.FromArgb(58, 45, 53);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.5f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyMutedParentheticalNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(145, 145, 145);
+            rt.SelectionBackColor = rt.BackColor;
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplySubtleMechanicsNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(150, 150, 150);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(170, 185, 190), 0.16);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyConditionalRewardMechanicsNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(164, 176, 185);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(118, 139, 150), 0.28);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.75f, 6.0f), FontStyle.Italic);
+        }
+
+        private void ApplyTechnicalRenderPatchNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(150, 150, 150);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(170, 185, 190), 0.16);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyAgeChangeNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 230, 165);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(112, 70, 18), 0.34);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyGeneratedOverlaySubstitutionStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(186, 225, 255);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(32, 78, 116), 0.42);
+            rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyLostDirectionEffectNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(206, 224, 214);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(48, 80, 68), 0.34);
+            rt.SelectionFont = new Font("Segoe UI", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+        }
+
+        private void ApplyGoldClearedEffectNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 222, 190);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(132, 28, 30), 0.50);
+        }
+
+        private void ApplyGoldGrantedEffectNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 235, 128);
+            rt.SelectionBackColor = BlendColor(rt.BackColor, Color.FromArgb(128, 92, 10), 0.44);
+        }
+
+        private void ApplyWheelRewardExplanationStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(238, 241, 226);
+            rt.SelectionBackColor = Color.FromArgb(35, 49, 40);
+            rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Regular);
+        }
+
+        private void ApplyCriticalWarningNoteStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 238, 220);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Consolas", 11.0f, FontStyle.Bold);
+        }
+
+        private void ApplyTavernOtherCityTipStyle(RichTextBox rt, Color backgroundColor)
+        {
+            rt.SelectionColor = Color.FromArgb(248, 246, 232);
+            rt.SelectionBackColor = backgroundColor;
+        }
+
+        private void ApplyRepeatedBattleWarningStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 86, 86);
+            rt.SelectionBackColor = Color.FromArgb(82, 58, 18);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyBattleMonsterStrengthIncreaseStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 238, 220);
+            rt.SelectionBackColor = Color.FromArgb(90, 43, 38);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 1.25f, 6.0f), FontStyle.Bold);
+        }
+
+        private void ApplyBattleMonsterStrengthDecreaseStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(202, 244, 205);
+            rt.SelectionBackColor = Color.FromArgb(28, 70, 42);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 1.25f, 6.0f), FontStyle.Bold);
+        }
+
+        private void ApplyHpRestoredToMaximumStyle(RichTextBox rt)
+        {
+            Color warningTextColor = Color.FromArgb(255, 80, 80);
+            Color warningBackColor = Color.FromArgb(70, 0, 0);
+            rt.SelectionColor = InvertColor(warningTextColor);
+            rt.SelectionBackColor = GetHpRestoredToMaximumBackColor(rt);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private void ApplyAlignmentRestoreKeywordStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 245, 160);
+            rt.SelectionBackColor = GetHpRestoredToMaximumBackColor(rt);
+            rt.SelectionFont = new Font("Segoe UI Semibold", Math.Max(rt.Font.Size - 0.25f, 7.0f), FontStyle.Bold);
+        }
+
+        private static Color GetHpRestoredToMaximumBackColor(RichTextBox rt)
+        {
+            Color warningBackColor = Color.FromArgb(70, 0, 0);
+            return BlendColor(rt.BackColor, InvertColor(warningBackColor), 0.12);
+        }
+
+        private static Color InvertColor(Color color)
+        {
+            return Color.FromArgb(255 - color.R, 255 - color.G, 255 - color.B);
+        }
+
+        private static Color BlendColor(Color background, Color foreground, double foregroundRatio)
+        {
+            foregroundRatio = Math.Max(0.0, Math.Min(1.0, foregroundRatio));
+            double backgroundRatio = 1.0 - foregroundRatio;
+
+            return Color.FromArgb(
+                (int)Math.Round(background.R * backgroundRatio + foreground.R * foregroundRatio),
+                (int)Math.Round(background.G * backgroundRatio + foreground.G * foregroundRatio),
+                (int)Math.Round(background.B * backgroundRatio + foreground.B * foregroundRatio));
+        }
+
+        private void ApplyItemNameStyle(RichTextBox rt)
+        {
+            rt.SelectionColor = Color.FromArgb(255, 236, 139);
+        }
+
+        private void FormatRepeatedBattleWarnings(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            int startIndex = 0;
+            while (startIndex < noteText.Length)
+            {
+                int matchIndex = noteText.IndexOf(
+                    InlineNoteStyleCodec.RepeatedBattleWarningText,
+                    startIndex,
+                    StringComparison.Ordinal);
+                if (matchIndex < 0)
+                    break;
+
+                rt.Select(matchIndex, InlineNoteStyleCodec.RepeatedBattleWarningText.Length);
+                ApplyRepeatedBattleWarningStyle(rt);
+                startIndex = matchIndex + InlineNoteStyleCodec.RepeatedBattleWarningText.Length;
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatBattleMonsterStrengthAdjustmentNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"Монстры битвы усиливаются на \+\d+",
+                RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyBattleMonsterStrengthIncreaseStyle(rt);
+            }
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"Монстры битвы слабеют на -\d+",
+                RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyBattleMonsterStrengthDecreaseStyle(rt);
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatGeneratedSemanticNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            FormatPersistentCounterProgressionNotes(rt, noteText);
+            FormatDynamicRandomBoundDependencyNotes(rt, noteText);
+            FormatMutedParentheticalNotes(rt, noteText);
+            FormatHpRestoredToMaximumNotes(rt, noteText);
+            FormatAlignmentRestoredNotes(rt, noteText);
+            rt.Select(0, 0);
+        }
+
+        private void FormatHpRestoredToMaximumNotes(RichTextBox rt, string noteText)
+        {
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"^[^\r\n]*HP[^\r\n]*восстанавливается до максимального значения[^\r\n]*$",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyHpRestoredToMaximumStyle(rt);
+            }
+        }
+
+        private void FormatAlignmentRestoredNotes(RichTextBox rt, string noteText)
+        {
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"^[^\r\n]*ALIGNMENT[^\r\n]*восстанавливается до[^\r\n]*ALIGNMENT[^\r\n]*$",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyHpRestoredToMaximumStyle(rt);
+                FormatAlignmentRestoreKeywords(rt, noteText, match.Index, match.Length);
+            }
+        }
+
+        private void FormatAlignmentRestoreKeywords(RichTextBox rt, string noteText, int startIndex, int length)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText) || length <= 0)
+                return;
+
+            string segment = noteText.Substring(startIndex, Math.Min(length, noteText.Length - startIndex));
+            foreach (Match keywordMatch in Regex.Matches(
+                segment,
+                @"\b(?:[Тт]екущ(?:ий|его)|врожд[её]нн(?:ый|ого))\b",
+                RegexOptions.CultureInvariant))
+            {
+                if (!keywordMatch.Success || keywordMatch.Length <= 0)
+                    continue;
+
+                rt.Select(startIndex + keywordMatch.Index, keywordMatch.Length);
+                ApplyAlignmentRestoreKeywordStyle(rt);
+            }
+        }
+
+        private void FormatWheelRewardExplanationBlocks(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            const string pattern = @"^={10,}\r?\n(?=[\s\S]*?ПОЯСНЕНИЕ К (?:КОЛЕСУ|БАРУ|HAVE A DRINK|LISTEN FOR RUMORS|СТАТУЕ СУДА|LORD IRONFIST))[\s\S]*?^={10,}$";
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                pattern,
+                RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyWheelRewardExplanationStyle(rt);
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatMutedParentheticalNotes(RichTextBox rt, string noteText)
+        {
+            var noteMatches = Regex.Matches(
+                noteText,
+                @"^\([^\r\n]*Количество доступных вариантов рассчитывается по формуле:[^\r\n]+\)$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+            foreach (Match match in noteMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyMutedParentheticalNoteStyle(rt);
+            }
+        }
+
+        private void FormatPersistentCounterProgressionNotes(RichTextBox rt, string noteText)
+        {
+            var noteMatches = Regex.Matches(
+                noteText,
+                @"^[^\r\n]*Количество увеличивается на\s+\d+\s+при каждом следующем наступлении этой битвы,\s+максимум\s+x\d+[^\r\n]*$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+            foreach (Match match in noteMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyPersistentCounterProgressionNoteStyle(rt);
+
+                foreach (Match numericValue in Regex.Matches(
+                    match.Value,
+                    @"(?<![\p{L}\p{N}_])x?\d+\b",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                {
+                    if (!numericValue.Success || numericValue.Length <= 0)
+                        continue;
+
+                    rt.Select(match.Index + numericValue.Index, numericValue.Length);
+                    ApplyPersistentCounterProgressionValueStyle(rt);
+                }
+            }
+        }
+
+        private void FormatDynamicRandomBoundDependencyNotes(RichTextBox rt, string noteText)
+        {
+            var noteMatches = Regex.Matches(
+                noteText,
+                @"^[^\r\n]*Количество вариантов зависит от[^\r\n]*рассчитывается по формуле:\s*[^\r\n]+$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+            foreach (Match match in noteMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyDynamicRandomBoundDependencyNoteStyle(rt);
+
+                int formulaSeparator = match.Value.LastIndexOf(": ", StringComparison.Ordinal);
+                int formulaStart = formulaSeparator >= 0
+                    ? formulaSeparator + 2
+                    : -1;
+
+                if (formulaStart < 0 || formulaStart >= match.Value.Length)
+                    continue;
+
+                rt.Select(match.Index + formulaStart, match.Value.Length - formulaStart);
+                ApplyDynamicRandomBoundDependencyFormulaStyle(rt);
+            }
+        }
+
+        private void FormatAggregateTemporaryStatNotes(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText))
+                return;
+
+            const string statGroupPattern = @"\(INTELLECT/MIGHT/PERSONALITY/ENDURANCE/SPEED/ACCURANCY/LUCK/LEVEL\)|\(INTELLECT\)|\(MIGHT\)|\(PERSONALITY\)|\(ENDURANCE\)|\(SPEED\)|\(ACCURANCY\)|\(LUCK\)|\(LEVEL\)";
+            var lineMatches = Regex.Matches(
+                noteText,
+                $@"^[^\r\n]*{statGroupPattern}[^\r\n]*$",
+                RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+            foreach (Match match in lineMatches)
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                if (match.Value.IndexOf("времен", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(228, 236, 238);
+                rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Italic);
+
+                Match statGroup = Regex.Match(match.Value, statGroupPattern, RegexOptions.IgnoreCase);
+                if (statGroup.Success)
+                {
+                    rt.Select(match.Index + statGroup.Index, statGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(154, 219, 210);
+                    rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                    rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                }
+
+                foreach (Match temporaryWord in Regex.Matches(match.Value, @"\bВРЕМЕННО\b|\bвременн\w*\b", RegexOptions.IgnoreCase))
+                {
+                    rt.Select(match.Index + temporaryWord.Index, temporaryWord.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 205, 160);
+                    rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                    rt.SelectionFont = new Font("Segoe UI Semibold", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                }
+
+                Match valueMatch = Regex.Match(match.Value, @"\b\d+\b(?!.*\b\d+\b)", RegexOptions.CultureInvariant);
+                if (valueMatch.Success)
+                {
+                    rt.Select(match.Index + valueMatch.Index, valueMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 232, 176);
+                    rt.SelectionBackColor = Color.FromArgb(34, 52, 62);
+                    rt.SelectionFont = new Font("Consolas", rt.Font.Size, FontStyle.Bold);
+                }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        /// <summary>
+        /// Форматирование для частично определённых битв
+        /// </summary>
+        private void FormatPartiallyDefinedBattles(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            // Ищем заголовки "Частично определённая битва"
+            var headerMatches = Regex.Matches(noteText, @"Частично определённая битва[^\n]*");
+            foreach (Match match in headerMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 165, 0); // Оранжевый
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Ищем варианты монстров (• Вариант X: Имя монстра)
+            var variantMatches = Regex.Matches(noteText, @"  • Вариант \d+: [^\n]*");
+            foreach (Match match in variantMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(180, 230, 255); // Светло-голубой
+                rt.SelectionBackColor = rt.BackColor;
+
+                // Выделяем номер варианта жирным
+                int colonIndex = match.Value.IndexOf(':');
+                if (colonIndex > 0)
+                {
+                    rt.Select(match.Index, colonIndex + 1);
+                    rt.SelectionColor = Color.FromArgb(100, 200, 255);
+                    rt.SelectionBackColor = rt.BackColor;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                // Слегка подсвечиваем голубым фон количества монстров в конце строки
+                var countMatch = Regex.Match(match.Value, @"x(\d+|\d+-\d+|\? \(Random count\))$");
+                if (countMatch.Success)
+                {
+                    rt.Select(match.Index + countMatch.Index, countMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(210, 240, 255);
+                    rt.SelectionBackColor = Color.FromArgb(35, 70, 105);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+
+                // Сбрасываем выделение
+                rt.Select(match.Index + match.Length, 0);
+            }
+
+            // Ищем информацию о загрузке из таблиц [Загрузка из таблиц для BX=X]:
+            var tableHeaderMatches = Regex.Matches(noteText, @"\[Загрузка из таблиц для BX=\d+\]:");
+            foreach (Match match in tableHeaderMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.Gray;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            // Ищем строки с адресами таблиц (• CDA9+ → 3C58: 0xXX из [XXXX])
+            var tableAddrMatches = Regex.Matches(noteText, @"    • (CDA9\+|CDB1\+) → 3C[0-9A-F]{2}: 0x[0-9A-F]{2} from \[[0-9A-F]{4}\]");
+            foreach (Match match in tableAddrMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.DarkGray;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                // Выделяем адрес жирным
+                int addrIndex = match.Value.LastIndexOf('[');
+                if (addrIndex >= 0)
+                {
+                    rt.Select(match.Index + addrIndex, match.Length - addrIndex);
+                    rt.SelectionColor = Color.Gray;
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                }
+            }
+
+            // Ищем информацию о неполной загрузке
+            var incompleteMatches = Regex.Matches(noteText, @"Неполная загрузка из таблиц \(BX=\d+\):");
+            foreach (Match match in incompleteMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 140, 0); // Тёмно-оранжевый
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            // Ищем строки с описанием таблиц в неполной загрузке
+            var tableDescMatches = Regex.Matches(noteText, @"  • Загружено из (CDA9\+|CDB1\+) → сохранено в 3C[0-9A-F]{2}\+");
+            foreach (Match match in tableDescMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(200, 200, 100); // Желтоватый
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            // Ищем строки с конкретными значениями регистров
+            var regValueMatches = Regex.Matches(noteText, @"    (AL|CL|DL|BL|AH|CH|DH|BH) = 0x[0-9A-F]{2} из \[[0-9A-F]{4}\] \([^\)]+\)");
+            foreach (Match match in regValueMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.LightGreen;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Regular);
+
+                // Выделяем значение жирным
+                int equalIndex = match.Value.IndexOf('=');
+                if (equalIndex >= 0)
+                {
+                    int valueStart = match.Index + equalIndex + 1;
+                    int valueEnd = match.Value.IndexOf(' ', equalIndex);
+                    if (valueEnd > 0)
+                    {
+                        rt.Select(valueStart, valueEnd - equalIndex - 1);
+                        rt.SelectionColor = Color.White;
+                        rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+                    }
+                }
+            }
+
+            // Сбрасываем выделение
+            rt.Select(0, 0);
+        }
+
+        private void FormatServiceWarnings(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            var serviceWarningMatches = Regex.Matches(
+                noteText,
+                @"⚠Вызывается random encounter ⚠|У партии персонажей уменьшается FOOD на 1|!{1,2} (?:HP|SP) (?:мужчин в партии|каждого мужчины в партии|каждого персонажа партии) уменьшается [^\r\n!]+ !{1,2}|! У каждого персонажа партии отнимается \d+ (?:HP|SP) !|!{1,4} (?:HP|SP) (?:каждого мужчины в партии|каждого персонажа партии|случайного персонажа партии) обнуляется !{1,4}",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in serviceWarningMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                if (string.Equals(
+                        match.Value,
+                        "У партии персонажей уменьшается FOOD на 1",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    rt.SelectionColor = Color.FromArgb(255, 220, 90);
+                    continue;
+                }
+
+                bool isWholePartySpZeroing = string.Equals(
+                    match.Value,
+                    "! SP каждого персонажа партии обнуляется !",
+                    StringComparison.OrdinalIgnoreCase);
+
+                rt.SelectionColor = isWholePartySpZeroing
+                    ? Color.FromArgb(120, 210, 255)
+                    : Color.FromArgb(255, 80, 80);
+                rt.SelectionBackColor = isWholePartySpZeroing
+                    ? Color.FromArgb(120, 0, 0)
+                    : Color.FromArgb(70, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            var quarterMatches = Regex.Matches(
+                noteText,
+                @"ДО ЧЕТВЕРТИ",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in quarterMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 205, 205);
+                rt.SelectionBackColor = Color.FromArgb(120, 18, 32);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+            }
+
+            var conditionStatusMatches = Regex.Matches(
+                noteText,
+                @"CONDITION [^\r\n]+? изменяется на (?<statuses>[^\r\n]+)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in conditionStatusMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 170, 130);
+                rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group statusesGroup = match.Groups["statuses"];
+                if (!statusesGroup.Success || statusesGroup.Length == 0)
+                    continue;
+
+                var statusWordMatches = Regex.Matches(
+                    statusesGroup.Value,
+                    @"GOOD|DISEASED|POISONED|PARALYZED|UNCONSCIOUS|DEAD|ERADICATED",
+                    RegexOptions.IgnoreCase);
+
+                foreach (Match statusMatch in statusWordMatches)
+                {
+                    rt.Select(statusesGroup.Index + statusMatch.Index, statusMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(255, 245, 180);
+                    rt.SelectionBackColor = Color.FromArgb(100, 20, 20);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                }
+            }
+
+            var conditionCheckMatches = Regex.Matches(
+                noteText,
+                @"ПРОВЕРКА УСЛОВИЯ:\s*(?:Проверяется, совпадают ли [^\r\n]+|Сравнивается [^\r\n]+? с [^\r\n]+)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in conditionCheckMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(145, 145, 145);
+                rt.SelectionBackColor = Color.FromArgb(60, 45, 20);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+
+                Match predicateMatch = Regex.Match(match.Value, @"^ПРОВЕРКА УСЛОВИЯ:", RegexOptions.IgnoreCase);
+                if (predicateMatch.Success)
+                {
+                    rt.Select(match.Index + predicateMatch.Index, predicateMatch.Length);
+                    rt.SelectionColor = Color.FromArgb(145, 145, 145);
+                    rt.SelectionBackColor = Color.FromArgb(85, 60, 20);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Italic | FontStyle.Underline);
+                }
+            }
+
+            var teleportMatches = Regex.Matches(
+                noteText,
+                @"Телепорт на (?:(случайную)\s+)?клетку \(X=(?:\?|\d+\.\.\d+|\??\d+), Y=(?:\?|\d+\.\.\d+|\??\d+)\)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in teleportMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(120, 210, 255);
+                rt.SelectionBackColor = Color.FromArgb(0, 35, 70);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+
+                if (match.Groups.Count > 1 && match.Groups[1].Success)
+                {
+                    rt.Select(match.Groups[1].Index, match.Groups[1].Length);
+                    rt.SelectionColor = Color.FromArgb(120, 210, 255);
+                    rt.SelectionBackColor = Color.FromArgb(65, 35, 0);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic | FontStyle.Underline);
+                }
+            }
+
+            var mapTeleportMatches = Regex.Matches(
+                noteText,
+                @"Телепорт на карту (?<overlay>[^\r\n()]+?)(?: (?<metadata>\(MAP SECTOR:\s*[A-E]-[1-4](?:\s+SURFACE X=\s*\d+, Y=\s*\d+)?\)))? на (?:(?<random>случайную)\s+)?клетку \(X=\s*(?:\?|\d+\.\.\d+|\??\d+), Y=\s*(?:\?|\d+\.\.\d+|\??\d+)\)",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in mapTeleportMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(150, 225, 235);
+                rt.SelectionBackColor = Color.FromArgb(0, 45, 58);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic);
+
+                Group overlayGroup = match.Groups["overlay"];
+                if (overlayGroup.Success && overlayGroup.Length > 0)
+                {
+                    rt.Select(overlayGroup.Index, overlayGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(185, 200, 255);
+                    rt.SelectionBackColor = Color.FromArgb(35, 28, 85);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Underline);
+                }
+
+                Group metadataGroup = match.Groups["metadata"];
+                if (metadataGroup.Success && metadataGroup.Length > 0)
+                {
+                    rt.Select(metadataGroup.Index, metadataGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(180, 210, 215);
+                    rt.SelectionBackColor = Color.FromArgb(0, 38, 48);
+                    rt.SelectionFont = new Font("Consolas", Math.Max(rt.Font.Size - 1.0f, 7.0f), FontStyle.Italic);
+                }
+
+                Group randomGroup = match.Groups["random"];
+                if (randomGroup.Success && randomGroup.Length > 0)
+                {
+                    rt.Select(randomGroup.Index, randomGroup.Length);
+                    rt.SelectionColor = Color.FromArgb(150, 225, 235);
+                    rt.SelectionBackColor = Color.FromArgb(65, 35, 0);
+                    rt.SelectionFont = new Font(rt.Font, FontStyle.Bold | FontStyle.Italic | FontStyle.Underline);
+                }
+            }
+
+            var lootWarningMatches = Regex.Matches(
+                noteText,
+                @"!!! (Контейнер с лутом(?: на полу)? уничтожен|Предмет(?: на полу)? уничтожен|GOLD(?: на полу)? уничтожено|GEMS(?: на полу)? уничтожены) !!!",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in lootWarningMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(255, 80, 80);
+                rt.SelectionBackColor = Color.FromArgb(70, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Italic);
+            }
+
+            var spoilerPasswordMatches = Regex.Matches(
+                noteText,
+                @"(?:\[\s*!!! ВНИМАНИЕ СПОЙЛЕР !!!\s*\]\s*ПРАВИЛЬНЫЙ ОТВЕТ:\s*(?<answer>[^\r\n]+)|!!! ВНИМАНИЕ СПОЙЛЕР !!! ТРЕБУЕМЫЙ ПАРОЛЬ:\s*(?<answer>[^\r\n]+))",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in spoilerPasswordMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(170, 170, 170);
+                rt.SelectionBackColor = Color.FromArgb(150, 0, 0);
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+
+                Group passwordGroup = match.Groups["answer"];
+                if (!passwordGroup.Success || passwordGroup.Length == 0)
+                    continue;
+
+                rt.Select(passwordGroup.Index, passwordGroup.Length);
+                rt.SelectionColor = Color.Black;
+                rt.SelectionBackColor = Color.Black;
+                rt.SelectionFont = new Font(rt.Font, FontStyle.Bold);
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatTemporaryTechnicalNotes(RichTextBox rt, string noteText)
+        {
+            if (string.IsNullOrEmpty(noteText)) return;
+
+            Color technicalBackColor = Color.FromArgb(46, 28, 64);
+            Color questNumberColor = Color.FromArgb(225, 214, 255);
+            Color lordNameColor = Color.FromArgb(255, 196, 255);
+
+            var technicalNoteMatches = Regex.Matches(
+                noteText,
+                @"-=\*[^\r\n]*\*=-",
+                RegexOptions.IgnoreCase);
+
+            foreach (Match match in technicalNoteMatches)
+            {
+                rt.Select(match.Index, match.Length);
+                rt.SelectionColor = Color.FromArgb(145, 145, 145);
+                rt.SelectionBackColor = technicalBackColor;
+                rt.SelectionFont = new Font("Segoe UI Light", rt.Font.Size, FontStyle.Italic);
+
+                Match questNumberMatch = Regex.Match(match.Value, @"\bквест(?:ы)?\s+([0-9,\s]+)", RegexOptions.IgnoreCase);
+                if (questNumberMatch.Success && questNumberMatch.Groups.Count > 1)
+                {
+                    Group questNumberGroup = questNumberMatch.Groups[1];
+                    rt.Select(match.Index + questNumberGroup.Index, questNumberGroup.Length);
+                    rt.SelectionColor = questNumberColor;
+                    rt.SelectionBackColor = technicalBackColor;
+                    rt.SelectionFont = new Font("Segoe UI", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                }
+
+                foreach (Match lordMatch in Regex.Matches(match.Value, @"\b(?:Лорда\d+|LORD INSPECTRON|LORD HACKER|LORD IRONFIST)\b", RegexOptions.IgnoreCase))
+                {
+                    rt.Select(match.Index + lordMatch.Index, lordMatch.Length);
+                    rt.SelectionColor = lordNameColor;
+                    rt.SelectionBackColor = technicalBackColor;
+                    rt.SelectionFont = new Font("Segoe UI", rt.Font.Size, FontStyle.Bold | FontStyle.Italic);
+                }
+            }
+
+            rt.Select(0, 0);
+        }
+
+        private void FormatTechnicalRenderPatchNotes(RichTextBox rt, string noteText)
+        {
+            if (rt == null || string.IsNullOrEmpty(noteText))
+                return;
+
+            foreach (Match match in Regex.Matches(
+                noteText,
+                @"^=\*\*\* Техническая клетка без игрового эффекта:[^\r\n]* \*\*\*=$",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            {
+                if (!match.Success || match.Length <= 0)
+                    continue;
+
+                rt.Select(match.Index, match.Length);
+                ApplyTechnicalRenderPatchNoteStyle(rt);
+            }
+
+            rt.Select(0, 0);
+        }
+
+        // Новый метод для обработки текстовых записей
+        private string ProcessTextEntry(string textEntry)
+        {
+            if (string.IsNullOrEmpty(textEntry))
+                return "";
+
+            // Формат из OvrFileAnalyzer: "Text at 0xXXXX: "encoded_text""
+            // Нужно: удалить "Text at 0xXXXX: " и декодировать
+
+            // Шаг 1: Находим двоеточие
+            int colonIndex = textEntry.IndexOf(':');
+            if (colonIndex < 0)
+                return textEntry; // Возвращаем как есть
+
+            // Шаг 2: Извлекаем текст после двоеточия
+            string textAfterColon = textEntry.Substring(colonIndex + 1).Trim();
+
+            // Шаг 3: Убираем кавычки если они есть
+            if (textAfterColon.Length >= 2 &&
+                textAfterColon.StartsWith("\"") &&
+                textAfterColon.EndsWith("\""))
+            {
+                textAfterColon = textAfterColon.Substring(1, textAfterColon.Length - 2);
+            }
+
+            // Шаг 4: Декодируем escape-последовательности
+            return DecodeTextString(textAfterColon);
+        }
+
+        // Метод для декодирования текста с escape-последовательностями
+        private string DecodeTextString(string encodedText)
+        {
+            if (string.IsNullOrEmpty(encodedText))
+                return "";
+
+            // Простая декодировка escape-последовательностей
+            return encodedText
+                .Replace("\\r", "\r")
+                .Replace("\\n", "\n")
+                .Replace("\\t", "\t")
+                .Replace("\\\"", "\"")
+                .Replace("\\\\", "\\");
+        }
+
+        // Вспомогательный метод для добавления текстов пути
+        private void AddTextsForPath(Point pos, HashSet<string> texts, string prefix)
+        {
+            if (texts == null || texts.Count == 0)
+                return;
+
+            var sortedTexts = texts.OrderBy(t => t).ToList();
+            foreach (var text in sortedTexts)
+            {
+                string cleanText = ExtractCleanTextFromEntry(text);
+                if (!string.IsNullOrEmpty(cleanText))
+                {
+                    string decodedText = DecodeTextString(cleanText);
+                    if (!string.IsNullOrEmpty(decodedText))
+                    {
+                        notesPerCell[pos] += prefix + decodedText + "\n";
+                    }
+                }
+            }
+        }
+
+        // Метод для группировки путей с одинаковыми наборами текстов
+        private Dictionary<int, HashSet<string>> GroupSimilarPaths(Dictionary<int, HashSet<string>> pathTexts)
+        {
+            var groupedPaths = new Dictionary<int, HashSet<string>>();
+            var processedSets = new List<HashSet<string>>();
+
+            // Сортируем пути по номеру для детерминированного результата
+            var sortedPaths = pathTexts.OrderBy(kvp => kvp.Key).ToList();
+
+            foreach (var kvp in sortedPaths)
+            {
+                bool foundGroup = false;
+
+                // Ищем группу с таким же набором текстов
+                for (int i = 0; i < processedSets.Count; i++)
+                {
+                    if (AreTextSetsEqual(processedSets[i], kvp.Value))
+                    {
+                        // Нашли существующую группу - используем минимальный номер пути из этой группы
+                        var existingGroup = groupedPaths.First(g => AreTextSetsEqual(g.Value, kvp.Value));
+
+                        // Если текущий путь имеет меньший номер, чем существующий в группе,
+                        // то мы должны были уже обработать его раньше (из-за сортировки),
+                        // поэтому просто пропускаем этот путь (он уже в группе)
+                        foundGroup = true;
+                        break;
+                    }
+                }
+
+                if (!foundGroup)
+                {
+                    // Создаем новую группу с этим уникальным набором текстов
+                    groupedPaths[kvp.Key] = kvp.Value;
+                    processedSets.Add(kvp.Value);
+                }
+            }
+
+            return groupedPaths;
+        }
+
+        // Метод для сравнения двух наборов текстов
+        private bool AreTextSetsEqual(HashSet<string> set1, HashSet<string> set2)
+        {
+            if (set1 == null || set2 == null) return false;
+            if (set1.Count != set2.Count) return false;
+
+            // Сортируем и сравниваем как строки
+            var sorted1 = set1.OrderBy(t => t).ToList();
+            var sorted2 = set2.OrderBy(t => t).ToList();
+
+            for (int i = 0; i < sorted1.Count; i++)
+            {
+                if (sorted1[i] != sorted2[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        // Метод для извлечения чистого текста из записи
+        private string ExtractCleanTextFromEntry(string textEntry)
+        {
+            if (string.IsNullOrEmpty(textEntry))
+                return "";
+
+            // Формат: "Text at 0xXXXX: "text""
+            // Ищем двоеточие и текст после него
+            int colonIndex = textEntry.IndexOf(':');
+            if (colonIndex >= 0 && colonIndex + 1 < textEntry.Length)
+            {
+                string textPart = textEntry.Substring(colonIndex + 1).Trim();
+
+                // Убираем кавычки если есть
+                if (textPart.StartsWith("\"") && textPart.EndsWith("\""))
+                {
+                    textPart = textPart.Substring(1, textPart.Length - 2);
+                }
+
+                return textPart;
+            }
+
+            // Если формат другой, возвращаем как есть
+            return textEntry;
+        }
+
+        private List<string> ExtractMessagesFromBytes(List<byte> dataBytes, int startIndex)
+        {
+            List<string> messages = new List<string>();
+            List<byte> currentMessageBytes = new List<byte>();
+
+            for (int i = startIndex; i < dataBytes.Count; i++)
+            {
+                byte b = dataBytes[i];
+
+                // Разделитель сообщений 0x00
+                if (b == 0x00)
+                {
+                    if (currentMessageBytes.Count > 0)
+                    {
+                        try
+                        {
+                            // Преобразуем байты в hex строку
+                            StringBuilder hexBuilder = new StringBuilder();
+                            foreach (byte msgByte in currentMessageBytes)
+                            {
+                                if (hexBuilder.Length > 0) hexBuilder.Append(" ");
+                                hexBuilder.AppendFormat("{0:X2}", msgByte);
+                            }
+
+                            string messageText = HexToAscii(hexBuilder.ToString());
+                            messages.Add(messageText);
+                            Debug.WriteLine($"Сообщение {messages.Count}: {messageText}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Ошибка преобразования сообщения: {ex.Message}");
+                            messages.Add($"[Ошибка преобразования]");
+                        }
+                        currentMessageBytes.Clear();
+                    }
+                }
+                else
+                {
+                    currentMessageBytes.Add(b);
+                }
+            }
+
+            // Добавляем последнее сообщение, если есть
+            if (currentMessageBytes.Count > 0)
+            {
+                try
+                {
+                    StringBuilder hexBuilder = new StringBuilder();
+                    foreach (byte msgByte in currentMessageBytes)
+                    {
+                        if (hexBuilder.Length > 0) hexBuilder.Append(" ");
+                        hexBuilder.AppendFormat("{0:X2}", msgByte);
+                    }
+
+                    string messageText = HexToAscii(hexBuilder.ToString());
+                    messages.Add(messageText);
+                }
+                catch { }
+            }
+
+            return messages;
+        }
+
+        private void ProcessObjectsWithTexts(List<byte> coordinates, List<byte> directions, List<string> messages)
+        {
+            int messageIndex = 0;
+            int processedObjects = 0;
+            int objectsWithMessages = 0;
+
+            for (int i = 0; i < coordinates.Count; i++)
+            {
+                byte coordByte = coordinates[i];
+                int coordY = (coordByte >> 4) & 0xF;
+                int coordX = coordByte & 0xF;
+
+                // Проверяем, что координаты в допустимом диапазоне (0-15)
+                if (coordX >= 0 && coordX < 16 && coordY >= 0 && coordY < 16)
+                {
+                    Point pos = new Point(coordX, coordY);
+
+                    // Заменяем центральный объект на "AnyObject"
+                    centralOptions[pos] = AnyObjectOption;
+                    processedObjects++;
+
+                    Debug.WriteLine($"Объект {i}: X={coordX}, Y={coordY}");
+
+                    // Обрабатываем направления, если есть
+                    if (i < directions.Count)
+                    {
+                        byte dirByte = directions[i];
+                        bool hasAnyMessage = false;
+
+                        Debug.WriteLine($"  Направления: 0x{dirByte:X2} (бинар: {Convert.ToString(dirByte, 2).PadLeft(8, '0')})");
+
+                        IReadOnlyList<Direction> messageDirections = DirectionUtilities.GetMessageDirections(
+                            dirByte,
+                            DirectionByteLayout.LegacyTextImport);
+
+                        foreach (Direction directionFlag in messageDirections)
+                        {
+                            hasAnyMessage = true;
+                            Debug.WriteLine($"    Сообщение в направлении: {directionFlag}");
+                        }
+
+                        if (hasAnyMessage)
+                        {
+                            var currentMessages = messageStates.TryGetValue(pos, out var prev)
+                                ? prev
+                                : DirectionUtilities.Filled(false);
+
+                            DirectionUtilities.MergeMessages(currentMessages, messageDirections);
+                            messageStates[pos] = currentMessages;
+                        }
+
+                        // Добавляем текст сообщения, если объект имеет сообщение
+                        if (hasAnyMessage && messageIndex < messages.Count)
+                        {
+                            if (!notesPerCell.ContainsKey(pos))
+                                notesPerCell[pos] = "";
+
+                            notesPerCell[pos] += messages[messageIndex] + "\n";
+                            objectsWithMessages++;
+                            Debug.WriteLine($"    Добавлено сообщение: {messages[messageIndex]}");
+                            messageIndex++;
+                        }
+                    }
+                }
+                else
+                {
+                    Debug.WriteLine($"Некорректные координаты объекта {i}: X={coordX}, Y={coordY}");
+                }
+            }
+
+            Debug.WriteLine($"Итоги обработки:");
+            Debug.WriteLine($"  Обработано объектов: {processedObjects}");
+            Debug.WriteLine($"  Объектов с сообщениями: {objectsWithMessages}");
+            Debug.WriteLine($"  Использовано сообщений: {messageIndex} из {messages.Count}");
+        }
+
+        // Преобразует шестнадцатеричную строку в ASCII-текст
+        private string HexToAscii(string hex)
+        {
+            // Нормализуем строку, удаляя лишние пробелы и ненужные символы
+            hex = Regex.Replace(hex, @"\s+", "");
+
+            // Проверьте, что длина нормализованной строки делится на 2
+            if (hex.Length % 2 != 0)
+            {
+                throw new FormatException("Длина строки должна быть чётной!");
+            }
+
+            // Конвертировать строку в массив байтов
+            var bytes = new byte[hex.Length / 2];
+            for (int i = 0; i < hex.Length; i += 2)
+            {
+                bytes[i / 2] = Convert.ToByte(hex.Substring(i, 2), 16);
+            }
+
+            // Преобразуем байты в ASCII-текст
+            return Encoding.ASCII.GetString(bytes);
+        }
+
+        //Временный костыль до тех пор пока я не разберусь в правильной логике; 
+        public static void TransformMessages(List<string> messages)
+        {
+            for (int i = 0; i < messages.Count; i++)
+            {
+                // Проверяем конец строки на символ '0D'
+                if (messages[i].EndsWith("0D"))
+                {
+                    // Сохраняем текст удаляемого элемента
+                    string removedText = messages[i];
+
+                    // Удаляем элемент из списка
+                    messages.RemoveAt(i);
+
+                    // Обновляем последующие элементы
+                    for (int j = 0; j < 3 && i + j < messages.Count; j++)
+                    {
+                        messages[i + j] = removedText + messages[i + j];
+                    }
+                }
+            }
+        }
+
+        private void DefineCellObjectWithDirectionAndText(string[] lines)
+        {
+            if (lines.Length > 34 && !string.IsNullOrWhiteSpace(lines[32]) && !string.IsNullOrWhiteSpace(lines[33]))
+            {
+                try
+                {
+                    // Строка 32 (индекс 32) - координаты
+                    string coordinatesLine = lines[32].Trim();
+                    string[] coordinateElements = coordinatesLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    Debug.WriteLine($"Элементов координат: {coordinateElements.Length}");
+                    if (coordinateElements.Length > 0)
+                    {
+                        Debug.WriteLine($"Первый элемент координат: {coordinateElements[0]}");
+                    }
+
+                    // Строка 33 (индекс 33) - направления
+                    string directionsLine = lines[33].Trim();
+                    string[] directionElements = directionsLine.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    Debug.WriteLine($"Элементов направлений: {directionElements.Length}");
+
+                    // Строка 34 (индекс 34) - сообщения (может быть пустой)
+                    string messagesLine = lines.Length > 34 ? lines[34].Trim() : "";
+                    string[] messages = Array.Empty<string>();
+
+                    if (!string.IsNullOrWhiteSpace(messagesLine))
+                    {
+                        // Разделяем по "00", но нужно быть осторожным с пробелами
+                        messages = messagesLine.Split(new[] { "00" }, StringSplitOptions.RemoveEmptyEntries);
+
+                        // Преобразуем каждое сообщение из HEX в ASCII
+                        for (int i = 0; i < messages.Length; i++)
+                        {
+                            try
+                            {
+                                messages[i] = HexToAscii(messages[i].Trim());
+                                Debug.WriteLine($"Сообщение {i}: {messages[i]}");
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.WriteLine($"Ошибка преобразования сообщения {i}: {ex.Message}");
+                                messages[i] = $"[Ошибка: {messages[i].Trim()}]";
+                            }
+                        }
+                    }
+
+                    if (coordinateElements.Length == 0 || directionElements.Length == 0)
+                    {
+                        Debug.WriteLine("Недостаточно данных в строках координат или направлений");
+                        return;
+                    }
+
+                    // Первая цифра в первой строке — это общее количество пар
+                    if (!int.TryParse(coordinateElements[0], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int totalPairs))
+                    {
+                        Debug.WriteLine($"Не удалось распарсить количество пар: '{coordinateElements[0]}'");
+                        return;
+                    }
+
+                    Debug.WriteLine($"Всего пар: {totalPairs}");
+                    Debug.WriteLine($"Координат: {coordinateElements.Length - 1} (должно быть {totalPairs * 2})");
+                    Debug.WriteLine($"Направлений: {directionElements.Length} (должно быть {totalPairs})");
+
+                    // Обрабатываем координаты и выставляем AnyObject
+                    int maxCoordIndex = Math.Min(coordinateElements.Length - 1, totalPairs * 2);
+                    for (int i = 1; i <= maxCoordIndex; i++)
+                    {
+                        try
+                        {
+                            int hexCoord = Convert.ToInt32(coordinateElements[i], 16);
+                            int coordY = (hexCoord >> 4) & 0xF; // Старшие 4 бита - Y
+                            int coordX = hexCoord & 0xF;        // Младшие 4 бита - X
+
+                            Debug.WriteLine($"Координата {i}: 0x{hexCoord:X2} -> X={coordX}, Y={coordY}");
+
+                            Point newPos = new Point(coordX, coordY);
+                            centralOptions[newPos] = AnyObjectOption;
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Ошибка обработки координаты {i}: {ex.Message}");
+                        }
+                    }
+
+                    // Обрабатываем направления и сообщения
+                    int messageIndex = 0;
+                    int maxDirIndex = Math.Min(directionElements.Length, totalPairs);
+
+                    for (int i = 0; i < maxDirIndex; i++)
+                    {
+                        try
+                        {
+                            int hexDir = Convert.ToInt32(directionElements[i], 16);
+                            Debug.WriteLine($"Направление {i}: 0x{hexDir:X2} (бинар: {Convert.ToString(hexDir, 2).PadLeft(8, '0')})");
+
+                            IReadOnlyList<Direction> messageDirections = DirectionUtilities.GetMessageDirections(
+                                (byte)hexDir,
+                                DirectionByteLayout.LegacyTextImport);
+
+                            // Получаем соответствующие координаты
+                            int coordIndex = i + 1; // +1 потому что 0-й элемент - количество пар
+                            if (coordIndex < coordinateElements.Length)
+                            {
+                                int hexCoord = Convert.ToInt32(coordinateElements[coordIndex], 16);
+                                int coordY = (hexCoord >> 4) & 0xF;
+                                int coordX = hexCoord & 0xF;
+                                Point newPos = new Point(coordX, coordY);
+
+                                Debug.WriteLine($"  Ячейка: X={coordX}, Y={coordY}");
+
+                                var currentMessages = messageStates.TryGetValue(newPos, out var prev)
+                                    ? prev
+                                    : DirectionUtilities.Filled(false);
+
+                                foreach (Direction directionFlag in messageDirections)
+                                {
+                                    Debug.WriteLine($"  Направление {directionFlag} имеет сообщение");
+                                    currentMessages.Set(directionFlag, true);
+
+                                    // Добавляем текст сообщения, если есть
+                                    if (messageIndex < messages.Length)
+                                    {
+                                        if (!notesPerCell.ContainsKey(newPos))
+                                            notesPerCell[newPos] = "";
+
+                                        string messageToAdd = messages[messageIndex];
+                                        notesPerCell[newPos] += messageToAdd + "\n";
+                                        Debug.WriteLine($"  Добавлено сообщение: {messageToAdd}");
+                                        messageIndex++;
+                                    }
+                                }
+
+                                messageStates[newPos] = currentMessages;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Ошибка обработки направления {i}: {ex.Message}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"Общая ошибка в DefineCellObjectWithDirectionAndText: {ex.Message}");
+                }
+            }
+            else
+            {
+                Debug.WriteLine($"Недостаточно строк или пустые данные. lines.Length={lines.Length}, lines[32]={(lines.Length > 32 ? "не пусто" : "нет")}, lines[33]={(lines.Length > 33 ? "не пусто" : "нет")}");
+            }
+        }
+        private sealed class DirectionBits
+        {
+            public int StructureBits { get; init; }
+            public bool SecondLowBit { get; init; }
+            public bool SecondHighBit { get; init; }
+        }
+
+        private sealed class DirectionState
+        {
+            public string BorderType { get; init; } = "Пустота";
+            public int PassageType { get; init; }
+            public bool IsClosed { get; init; }
+        }
+
+        private sealed class CellDraftContext
+        {
+            public OvrSideLayout SideLayout { get; init; }
+        }
+
+        private static readonly (Direction Side, int HighBit, int LowBit)[] DraftSideMappings =
+        {
+            (Direction.Left, 2, 1),
+            (Direction.Bottom, 4, 3),
+            (Direction.Right, 6, 5),
+            (Direction.Top, 8, 7)
+        };
+
+        private static bool IsBitSet(int value, int bitFromRight)
+        {
+            int zeroBased = bitFromRight - 1;
+            return (value & (1 << zeroBased)) != 0;
+        }
+
+        private CellDraftContext BuildDraftContext(OvrFileConfig config, byte[] fileData, string fileNameOnly)
+        {
+            return new CellDraftContext
+            {
+                SideLayout = OvrSideElementRegistry.ReadLayout(fileData, config, fileNameOnly)
+            };
+        }
+
+        private DirectionBits ReadDirectionBits(int firstLayerValue, int secondLayerValue, int highBitFromRight, int lowBitFromRight)
+        {
+            bool hasDoorBit = IsBitSet(firstLayerValue, highBitFromRight);
+            bool hasWallBit = IsBitSet(firstLayerValue, lowBitFromRight);
+
+            return new DirectionBits
+            {
+                StructureBits = (hasWallBit ? 1 : 0) | (hasDoorBit ? 2 : 0),
+                SecondHighBit = IsBitSet(secondLayerValue, highBitFromRight),
+                SecondLowBit = IsBitSet(secondLayerValue, lowBitFromRight)
+            };
+        }
+
+        private DirectionState ResolveDirectionState(DirectionBits bits, CellDraftContext context)
+        {
+            if (bits.StructureBits == 0)
+            {
+                return new DirectionState
+                {
+                    BorderType = bits.SecondLowBit ? "Барьер" : "Пустота"
+                };
+            }
+
+            OvrSideElementDefinition definition = context?.SideLayout?.GetDefinition(bits.StructureBits);
+            if (definition == null)
+            {
+                return new DirectionState
+                {
+                    BorderType = "Пустота"
+                };
+            }
+
+            int passageType = definition.PassageType;
+            if (passageType == 0 && IsImplicitSecretPassage(bits, definition))
+                passageType = PassageTypeSecret;
+
+            if (definition.SuppressPassageWhenSecondLowBitSet && bits.SecondLowBit)
+                passageType = 0;
+
+            passageType = ApplyRoughTerrainPassageRules(definition, passageType);
+
+            return new DirectionState
+            {
+                BorderType = definition.BorderType,
+                PassageType = passageType,
+                IsClosed = definition.MarkClosedWhenSecondLowBitSet && bits.SecondLowBit
+            };
+        }
+
+        private static int ApplyRoughTerrainPassageRules(OvrSideElementDefinition definition, int passageType)
+        {
+            if (!IsRoughTerrainBorder(definition.BorderType))
+                return passageType;
+
+            if (passageType == PassageTypeSecret)
+                return 0;
+
+            return passageType == 0 ? PassageTypeRough : passageType;
+        }
+
+        private static bool IsRoughTerrainBorder(string borderType)
+        {
+            return string.Equals(borderType, BorderTypeWater, StringComparison.Ordinal) ||
+                   string.Equals(borderType, BorderTypeDesert, StringComparison.Ordinal) ||
+                   string.Equals(borderType, BorderTypeSwamp, StringComparison.Ordinal);
+        }
+
+        private static bool IsImplicitSecretPassage(DirectionBits bits, OvrSideElementDefinition definition)
+        {
+            return definition != null &&
+                   definition.PassageType == 0 &&
+                   bits.StructureBits != 0 &&
+                   !bits.SecondLowBit;
+        }
+
+        private void ApplyDirectionState(
+            Direction side,
+            DirectionState state,
+            Directions<string> currentBorders,
+            Directions<int> currentPassages,
+            Directions<bool> currentClosedStates)
+        {
+            currentBorders.Set(side, state.BorderType);
+
+            if (state.PassageType != 0)
+                currentPassages.Set(side, state.PassageType);
+
+            if (state.IsClosed)
+                currentClosedStates.Set(side, true);
+        }
+
+        private void ApplyCellWideDraftFlags(Point pos, int secondLayerValue)
+        {
+            isDangerStates[pos] = IsBitSet(secondLayerValue, 4);
+            noMagicStates[pos] = IsBitSet(secondLayerValue, 2);
+            darkeningLevels[pos] = IsBitSet(secondLayerValue, 6)
+                ? Lighting.Dark
+                : Lighting.Light;
+            centralOptions[pos] = IsBitSet(secondLayerValue, 8)
+                ? "Случайная встреча"
+                : "Пустота";
+        }
+
+        private void ResetDraftTransientState(Point pos)
+        {
+            messageStates[pos] = DirectionUtilities.Filled(false);
+            notesPerCell[pos] = "";
+            imagesPerCell[pos] = null;
+        }
+
+        private void ProcessCellDraft(int x, int y, string hexValueFirstLayer, string hexValueSecondLayer, CellDraftContext context)
+        {
+            int firstLayerValue = Convert.ToInt32(hexValueFirstLayer, 16);
+            int secondLayerValue = Convert.ToInt32(hexValueSecondLayer, 16);
+
+            Point pos = new Point(x, y);
+
+            var currentBorders = borders[pos];
+            var currentPassages = passageDict[pos];
+            var currentClosedStates = closedStates[pos];
+
+            foreach (var mapping in DraftSideMappings)
+            {
+                DirectionBits bits = ReadDirectionBits(
+                    firstLayerValue,
+                    secondLayerValue,
+                    mapping.HighBit,
+                    mapping.LowBit);
+
+                DirectionState state = ResolveDirectionState(bits, context);
+
+                ApplyDirectionState(
+                    mapping.Side,
+                    state,
+                    currentBorders,
+                    currentPassages,
+                    currentClosedStates);
+            }
+
+            borders[pos] = currentBorders;
+            passageDict[pos] = currentPassages;
+            closedStates[pos] = currentClosedStates;
+
+            ApplyCellWideDraftFlags(pos, secondLayerValue);
+            ResetDraftTransientState(pos);
         }
 
         // Обработчик события пункта меню "Метаданные"
@@ -1012,24 +4407,28 @@ namespace MMMapEditor
                 mapSector = metadataForm.SelectedMapSector;
                 surface = metadataForm.SelectedSurface;
 
-                // Обновляем заголовок окна
-                if (string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
-                {
-                    this.Text = Path.GetFileNameWithoutExtension(lastSavedFilename);
-                }
-                else if (string.IsNullOrEmpty(mapSector))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - SURFACE: {surface}";
-                }
-                else if (string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}";
-                }
-                else
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
-                }
+                UpdateWindowTitle();
+            }
+        }
 
+        private void UpdateWindowTitle()
+        {
+            // Обновляем заголовок окна
+            if (string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
+            {
+                this.Text = Path.GetFileNameWithoutExtension(lastSavedFilename);
+            }
+            else if (string.IsNullOrEmpty(mapSector))
+            {
+                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - SURFACE: {surface}";
+            }
+            else if (string.IsNullOrEmpty(surface))
+            {
+                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}";
+            }
+            else
+            {
+                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
             }
         }
 
@@ -1048,6 +4447,30 @@ namespace MMMapEditor
                 localizedDirectionsForm.LocalizationChanged += LocalizedDirectionsForm_LocalizationChanged;
             }
             localizedDirectionsForm.Show();
+        }
+
+        private void OvrLoadSettingsMenuItem_Click(object sender, EventArgs e)
+        {
+            using (var form = new OvrLoadSettingsForm())
+            {
+                form.ShowDialog();
+            }
+        }
+
+        private void DisplaySettingsMenuItem_Click(object sender, EventArgs e)
+        {
+            using (var form = new DisplaySettingsForm())
+            {
+                if (form.ShowDialog() == DialogResult.OK)
+                {
+                    showSecretPassages = form.ShowSecretPassages;
+                    showDangerousWaterCells = form.ShowDangerousWaterCells;
+                    showDangerousDesertCells = form.ShowDangerousDesertCells;
+                    showDangerousSwampCells = form.ShowDangerousSwampCells;
+                    InvalidateGridButtons();
+                    UpdatePreview();
+                }
+            }
         }
 
         // Обработчик события обновления локализации направления
@@ -1316,19 +4739,19 @@ namespace MMMapEditor
                 Point pos = new Point(i % GridSize, i / GridSize);
 
                 // Границы: приводим значения к строкам
-                borders[pos] = new Tuple<string, string, string, string>(
+                borders[pos] = new Directions<string>(
                     (string)cellInfo.Borders.Item1, (string)cellInfo.Borders.Item2, (string)cellInfo.Borders.Item3, (string)cellInfo.Borders.Item4);
 
                 // Проходы: приводим значения к целочисленным
-                passageDict[pos] = new Tuple<int, int, int, int>(
+                passageDict[pos] = new Directions<int>(
                     (int)cellInfo.Passages.Item1, (int)cellInfo.Passages.Item2, (int)cellInfo.Passages.Item3, (int)cellInfo.Passages.Item4);
 
                 // Закрытость: приводим значения к булевым
-                closedStates[pos] = new Tuple<bool, bool, bool, bool>(
+                closedStates[pos] = new Directions<bool>(
                     (bool)cellInfo.ClosedStates.Item1, (bool)cellInfo.ClosedStates.Item2, (bool)cellInfo.ClosedStates.Item3, (bool)cellInfo.ClosedStates.Item4);
 
                 // Сообщения: приводим значения к булевым
-                messageStates[pos] = new Tuple<bool, bool, bool, bool>(
+                messageStates[pos] = new Directions<bool>(
                     (bool)cellInfo.Messages.Item1, (bool)cellInfo.Messages.Item2, (bool)cellInfo.Messages.Item3, (bool)cellInfo.Messages.Item4);
 
                 // Центральный элемент
@@ -1338,8 +4761,9 @@ namespace MMMapEditor
                 isDangerStates[pos] = (bool)cellInfo.IsDanger;
                 noMagicStates[pos] = (bool)cellInfo.NoMagic;
 
-                // Освещение: приводим значение к перечислению
-                lightingLevels[pos] = (Lighting)Enum.Parse(typeof(Lighting), (string)cellInfo.Lighting);
+                // Затемнённость: поддерживаем и новое поле Darkening, и старое Lighting
+                var darkeningToken = cellInfo.Darkening ?? cellInfo.Lighting;
+                darkeningLevels[pos] = (Lighting)Enum.Parse(typeof(Lighting), (string)darkeningToken);
 
                 // Примечания
                 notesPerCell[pos] = (string)cellInfo.Note;
@@ -1368,23 +4792,7 @@ namespace MMMapEditor
                 mapSector = (string)data.MetaData.MapSector;
                 surface = (string)data.MetaData.Surface;
 
-                // Устанавливаем заголовок окна
-                if (!string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - MAP SECTOR: {mapSector}";
-                }
-                else if (string.IsNullOrEmpty(mapSector) && !string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - SURFACE: {surface}";
-                }
-                else if (!string.IsNullOrEmpty(mapSector) && !string.IsNullOrEmpty(surface))
-                {
-                    this.Text = $"{Path.GetFileNameWithoutExtension(filename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
-                }
-                else
-                {
-                    this.Text = Path.GetFileNameWithoutExtension(filename);
-                }
+                UpdateWindowTitle();
             }
             else
             {
@@ -1400,7 +4808,7 @@ namespace MMMapEditor
             }
 
             // Показываем уведомление о выполнении загрузки
-          //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void SaveAsItem_Click(object sender, EventArgs e)
@@ -1422,9 +4830,8 @@ namespace MMMapEditor
                     filename = dialog.FileName;
                     SaveMap(filename);
 
-                    // Меняем заголовок окна на имя файла
-                    this.Text = Path.GetFileNameWithoutExtension(filename);
                     lastSavedFilename = filename; // Запоминаем путь к файлу
+                    UpdateWindowTitle();
 
                     // Показываем уведомление о завершении
                     MessageBox.Show("Карта успешно сохранена", "Сохранение выполнено", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1434,38 +4841,38 @@ namespace MMMapEditor
             }
         }
 
-private void SaveMap(string filename)
-    {
-        // Создаем контейнер для данных карты
-        var mapData = new Dictionary<string, object>();
-
-        // Состояние каждой ячейки будем собирать в отдельную структуру
-        var cellsData = new List<object>();
-
-        for (int y = 0; y < GridSize; y++)
+        private void SaveMap(string filename)
         {
-            for (int x = 0; x < GridSize; x++)
-            {
-                Point pos = new Point(x, y);
-                var cellInfo = new Dictionary<string, object>()
-                {
-                    ["Borders"] = borders[pos],
-                    ["Passages"] = passageDict[pos],
-                    ["ClosedStates"] = closedStates[pos],
-                    ["Messages"] = messageStates[pos],
-                    ["CentralOption"] = centralOptions[pos],
-                    ["IsDanger"] = isDangerStates[pos],
-                    ["NoMagic"] = noMagicStates[pos],
-                    ["Lighting"] = lightingLevels[pos],
-                    ["Note"] = notesPerCell[pos],
-                    ["Image"] = imagesPerCell[pos]?.ToBase64String() // Сериализуем изображение в Base64
-                };
-                cellsData.Add(cellInfo);
-            }
-        }
+            // Создаем контейнер для данных карты
+            var mapData = new Dictionary<string, object>();
 
-        // Добавляем список ячеек в главный контейнер
-        mapData["Cells"] = cellsData;
+            // Состояние каждой ячейки будем собирать в отдельную структуру
+            var cellsData = new List<object>();
+
+            for (int y = 0; y < GridSize; y++)
+            {
+                for (int x = 0; x < GridSize; x++)
+                {
+                    Point pos = new Point(x, y);
+                    var cellInfo = new Dictionary<string, object>()
+                    {
+                        ["Borders"] = borders[pos],
+                        ["Passages"] = passageDict[pos],
+                        ["ClosedStates"] = closedStates[pos],
+                        ["Messages"] = messageStates[pos],
+                        ["CentralOption"] = centralOptions[pos],
+                        ["IsDanger"] = isDangerStates[pos],
+                        ["NoMagic"] = noMagicStates[pos],
+                        ["Darkening"] = darkeningLevels[pos],
+                        ["Note"] = notesPerCell[pos],
+                        ["Image"] = imagesPerCell[pos]?.ToBase64String() // Сериализуем изображение в Base64
+                    };
+                    cellsData.Add(cellInfo);
+                }
+            }
+
+            // Добавляем список ячеек в главный контейнер
+            mapData["Cells"] = cellsData;
 
             // Добавляем MetaData с необходимыми полями
             mapData["MetaData"] = new Dictionary<string, object>()
@@ -1477,10 +4884,11 @@ private void SaveMap(string filename)
             // Сериализуем данные и сохраняем в файл
             string jsonContent = JsonConvert.SerializeObject(mapData, Newtonsoft.Json.Formatting.Indented);
             File.WriteAllText(filename, jsonContent);
-    }
 
-    // Обработчик клика по пункту "Создать новую(карту)"
-    private void NewMapItem_Click(object sender, EventArgs e)
+        }
+
+        // Обработчик клика по пункту "Создать новую(карту)"
+        private void NewMapItem_Click(object sender, EventArgs e)
         {
             if (isMapModified)
             {
@@ -1493,39 +4901,12 @@ private void SaveMap(string filename)
 
                 if (result == DialogResult.OK)
                 {
-                    // Сбрасываем метаданные
-                    mapSector = "";
-                    surface = "";
-                    // Обновляем заголовок окна
-                    this.Text = "Редактор моей мечты";
-                    lastSavedFilename = "";
-
-                    InitializeAllCells();
-                    ResetForm();
-                    UpdatePreview();
-                    foreach (var button in gridButtons)
-                    {
-                        button.Invalidate(); // вызываем перерисовку для каждой кнопки
-                    }
-                    isMapModified = false;
+                    ClearCurrentMapState();
                 }
             }
             else
             {
-                // Сбрасываем метаданные
-                mapSector = "";
-                surface = "";
-                // Обновляем заголовок окна
-                this.Text = "Редактор моей мечты";
-                lastSavedFilename = "";
-                InitializeAllCells();
-                ResetForm();
-                UpdatePreview();
-                foreach (var button in gridButtons)
-                {
-                    button.Invalidate(); // вызываем перерисовку для каждой кнопки
-                }
-                isMapModified = false;
+                ClearCurrentMapState();
             }
         }
 
@@ -1574,33 +4955,33 @@ private void SaveMap(string filename)
             }
         }
 
-        private void LightingRadioButton_CheckedChanged(object sender, EventArgs e)
+        private void DarkeningRadioButton_CheckedChanged(object sender, EventArgs e)
         {
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                Lighting previousLighting = lightingLevels.TryGetValue(pos, out var prev) ? prev : Lighting.Light;
+                Lighting previousDarkening = darkeningLevels.TryGetValue(pos, out var prev) ? prev : Lighting.Light;
 
 
                 RadioButton rb = (RadioButton)sender;
                 if (rb.Checked)
                 {
-                    // Обновляем освещение для выбранной ячейки
+                    // Обновляем затемнённость для выбранной ячейки
                     if (rb == lightRadioButton)
                     {
-                        ApplyLightingEffect(pos, Lighting.Light);
+                        ApplyDarkeningEffect(pos, Lighting.Light);
                     }
                     else if (rb == darkRadioButton)
                     {
-                        ApplyLightingEffect(pos, Lighting.Dark);
+                        ApplyDarkeningEffect(pos, Lighting.Dark);
                     }
-                    else if (rb == darknessRadioButton)
+                    else if (rb == darkeningRadioButton)
                     {
-                        ApplyLightingEffect(pos, Lighting.Darkness);
+                        ApplyDarkeningEffect(pos, Lighting.Darkness);
                     }
 
                     // Проверка на изменение
-                    bool hasChanged = previousLighting != lightingLevels[pos];
+                    bool hasChanged = previousDarkening != darkeningLevels[pos];
 
                     if (hasChanged)
                     {
@@ -1613,10 +4994,10 @@ private void SaveMap(string filename)
                 }
             }
         }
-        private void ApplyLightingEffect(Point pos, Lighting level)
+        private void ApplyDarkeningEffect(Point pos, Lighting level)
         {
-            // Устанавливаем уровень освещенности для данной позиции
-            lightingLevels[pos] = level;
+            // Устанавливаем уровень затемнённости для данной позиции
+            darkeningLevels[pos] = level;
         }
 
         private void BufferPasteImageButton_Click(object sender, EventArgs e)
@@ -1654,7 +5035,7 @@ private void SaveMap(string filename)
                     bool hasChanged = previousImage != imagesPerCell[pos];
 
                     if (hasChanged)
-                    isMapModified = true;
+                        isMapModified = true;
                 }
                 else
                 {
@@ -1733,7 +5114,7 @@ private void SaveMap(string filename)
                 FlatStyle = FlatStyle.Flat
             };
 
-            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход" });
+            comboBox.Items.AddRange(new object[] { "Нет", "Дверь", "Решётка", "Секрет", "Лестница вверх", "Лестница вниз", "Портал", "Выход", "Девятый вал", "Дверь 2", "Решётка 2" });
 
             if (comboBox.Items.Count > 0)
             {
@@ -1755,8 +5136,8 @@ private void SaveMap(string filename)
                 //AutoSize = true,
                 Height = 20,
                 ForeColor = Color.White,
-               // Anchor = AnchorStyles.Left // Прикрепляем к левому краю и вершине
-                                                              //  Location = new Point(10,10)
+                // Anchor = AnchorStyles.Left // Прикрепляем к левому краю и вершине
+                //  Location = new Point(10,10)
 
             };
 
@@ -1791,8 +5172,37 @@ private void SaveMap(string filename)
             return new Point(button.Location.X / CellSize, GridSize - 1 - (button.Location.Y / CellSize));
         }
 
+        private void NotesTextBox_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            if (!selectedPosition.HasValue)
+                return;
+
+            Point pos = selectedPosition.Value;
+
+            using (var editorForm = new NotesEditorForm(this, notesTextBox))
+            {
+                if (editorForm.ShowDialog(this) == DialogResult.OK)
+                {
+                    string newNoteText = editorForm.EditedText;
+                    string previousNote = notesPerCell.TryGetValue(pos, out var prev) ? prev : "";
+
+                    if (previousNote != newNoteText)
+                    {
+                        notesPerCell[pos] = newNoteText;
+                        noteStyleSpansPerCell.Remove(pos);
+                        SetNotesTextProgrammatically(newNoteText);
+                        UpdateNotesFormatting();
+                        isMapModified = true;
+                    }
+                }
+            }
+        }
+
         private void NotesTextBox_TextChanged(object sender, EventArgs e)
         {
+            if (isUpdatingNotesTextBoxProgrammatically)
+                return;
+
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
@@ -1804,7 +5214,10 @@ private void SaveMap(string filename)
                 bool hasChanged = previousNote != notesPerCell[pos];
 
                 if (hasChanged)
-                  isMapModified = true;
+                {
+                    noteStyleSpansPerCell.Remove(pos);
+                    isMapModified = true;
+                }
             }
         }
 
@@ -1814,49 +5227,49 @@ private void SaveMap(string filename)
             if (borders.TryGetValue(pos, out var borderValues))
             {
                 // Устанавливаем значения комбинационных списков
-                topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item1);
-                bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item2);
-                leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item3);
-                rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Item4);
+                topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Top);
+                bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Bottom);
+                leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Left);
+                rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Right);
             }
 
             // Проверяем, существует ли запись в словаре переходов
             if (passageDict.TryGetValue(pos, out var passageValues))
             {
                 // Устанавливаем значения комбинационных списков перехода
-                passTopComboBox.SelectedIndex = passageValues.Item1;
-                passBottomComboBox.SelectedIndex = passageValues.Item2;
-                passLeftComboBox.SelectedIndex = passageValues.Item3;
-                passRightComboBox.SelectedIndex = passageValues.Item4;
+                passTopComboBox.SelectedIndex = passageValues.Top;
+                passBottomComboBox.SelectedIndex = passageValues.Bottom;
+                passLeftComboBox.SelectedIndex = passageValues.Left;
+                passRightComboBox.SelectedIndex = passageValues.Right;
             }
 
             // Проверяем, существует ли запись в словаре закрытых состояний
             if (closedStates.TryGetValue(pos, out var closedValues))
             {
                 // Устанавливаем состояние чекбоксов закрытия
-                topCheck.Checked = closedValues.Item1;
-                bottomCheck.Checked = closedValues.Item2;
-                leftCheck.Checked = closedValues.Item3;
-                rightCheck.Checked = closedValues.Item4;
+                topCheck.Checked = closedValues.Top;
+                bottomCheck.Checked = closedValues.Bottom;
+                leftCheck.Checked = closedValues.Left;
+                rightCheck.Checked = closedValues.Right;
             }
 
             // Проверяем, существует ли запись в словаре сообщений
             if (messageStates.TryGetValue(pos, out var messageValues))
             {
                 // Устанавливаем состояние чекбоксов сообщений
-                topMessageCheck.Checked = messageValues.Item1;
-                bottomMessageCheck.Checked = messageValues.Item2;
-                leftMessageCheck.Checked = messageValues.Item3;
-                rightMessageCheck.Checked = messageValues.Item4;
+                topMessageCheck.Checked = messageValues.Top;
+                bottomMessageCheck.Checked = messageValues.Bottom;
+                leftMessageCheck.Checked = messageValues.Left;
+                rightMessageCheck.Checked = messageValues.Right;
             }
 
             //Считываем значение из тела ячейки
             if (centralOptions.TryGetValue(pos, out var centralOption))
             {
-                centerComboBox.SelectedItem = centralOption;
+                UpdateCenterComboBoxForCell(centralOption);
             }
 
-            notesTextBox.Text = notesPerCell[pos];
+            SetNotesTextProgrammatically(notesPerCell[pos]);
             // Обновляем изображение в PictureBox
             if (imagesPerCell.TryGetValue(pos, out var image))
             {
@@ -1877,10 +5290,10 @@ private void SaveMap(string filename)
                 noMagicCheckBox.Checked = noMagicState;
             }
 
-            // Восстановление состояния освещения
-            if (lightingLevels.TryGetValue(pos, out var lightingLevel))
+            // Восстановление состояния затемнённости
+            if (darkeningLevels.TryGetValue(pos, out var darkeningLevel))
             {
-                switch (lightingLevel)
+                switch (darkeningLevel)
                 {
                     case Lighting.Light:
                         lightRadioButton.Checked = true;
@@ -1889,12 +5302,13 @@ private void SaveMap(string filename)
                         darkRadioButton.Checked = true;
                         break;
                     case Lighting.Darkness:
-                        darknessRadioButton.Checked = true;
+                        darkeningRadioButton.Checked = true;
                         break;
                 }
             }
 
             UpdatePreview(); // Обновляем предварительное изображение
+            UpdateNotesFormatting();
         }
 
         private Point ParseCurrentPosition()
@@ -1929,23 +5343,23 @@ private void SaveMap(string filename)
             if (selectedPosition.HasValue)
             {
                 Point pos = selectedPosition.Value;
-                Tuple<string, string, string, string> previousBorders = borders.TryGetValue(pos, out var prev) ? prev : new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
+                Directions<string> previousBorders = borders.TryGetValue(pos, out var prev)
+                    ? prev.Clone()
+                    : DirectionUtilities.Filled("Пустота");
 
-                borders[pos] = new Tuple<string, string, string, string>(
+                borders[pos] = new Directions<string>(
                     topComboBox.SelectedItem?.ToString() ?? "",
                     bottomComboBox.SelectedItem?.ToString() ?? "",
                     leftComboBox.SelectedItem?.ToString() ?? "",
                     rightComboBox.SelectedItem?.ToString() ?? ""
                 );
 
-                // Проверка на изменение
                 bool hasChanged = !previousBorders.Equals(borders[pos]);
 
                 if (hasChanged)
                 {
-                    gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
+                    gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
                     UpdatePreview();
-
                     isMapModified = true;
                 }
             }
@@ -1957,26 +5371,24 @@ private void SaveMap(string filename)
             {
                 Point pos = selectedPosition.Value;
 
-                // Сначала сохраним текущее состояние данных о проходах
-                Tuple<int, int, int, int> previousPassages = passageDict.TryGetValue(pos, out var prev) ? prev : new Tuple<int, int, int, int>(0, 0, 0, 0);
+                Directions<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
+                    ? prev.Clone()
+                    : DirectionUtilities.Filled(0);
 
-                passageDict[selectedPosition.Value] = new Tuple<int, int, int, int>(
+                passageDict[selectedPosition.Value] = new Directions<int>(
                     passTopComboBox.SelectedIndex,
                     passBottomComboBox.SelectedIndex,
                     passLeftComboBox.SelectedIndex,
                     passRightComboBox.SelectedIndex
                 );
 
-                // Проверка на изменение
                 bool hasChanged = !previousPassages.Equals(passageDict[pos]);
 
                 if (hasChanged)
-                {     
-
-                // Обновляем соответствующую ячейку на карте
-                gridButtons[selectedPosition.Value.X, GridSize - 1 - (selectedPosition.Value.Y)].Invalidate();
-                UpdatePreview();
-                isMapModified = true;
+                {
+                    gridButtons[selectedPosition.Value.X, GridSize - 1 - selectedPosition.Value.Y].Invalidate();
+                    UpdatePreview();
+                    isMapModified = true;
                 }
             }
         }
@@ -2106,7 +5518,7 @@ private void SaveMap(string filename)
         }
 
         // Метод для нанесения эффекта "Мрак"
-        private void PaintDarknessArea(Graphics g, Rectangle bounds)
+        private void PaintDarkeningArea(Graphics g, Rectangle bounds)
         {
             // Центральная область для закрашивания (размер 26x26 пикселей)
             int innerSquareSize = 40;
@@ -2230,14 +5642,14 @@ private void SaveMap(string filename)
                     break;
                 case Direction.Bottom:
                     targetRect = new Rectangle(
-                        bounds.X, 
+                        bounds.X,
                         bounds.Bottom - exitWordBitmap.Height,                // начало снизу
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
                     break;
                 case Direction.Left:
                     targetRect = new Rectangle(
-                        bounds.X,                                        
+                        bounds.X,
                         bounds.Y,                                       // начало сверху
                         exitWordBitmap.Width, exitWordBitmap.Height
                     );
@@ -2255,6 +5667,59 @@ private void SaveMap(string filename)
 
             // Отрисовка картинки
             g.DrawImage(exitWordBitmap, targetRect);
+        }
+
+        private void DrawRoughWord(Graphics g, Rectangle bounds, Direction direction, Color roughWordColor)
+        {
+            int[,] roughWordPatternToUse = Passage_Pixels_Patterns.rough_word;
+
+            Bitmap roughWordBitmap = new Bitmap(roughWordPatternToUse.GetLength(1), roughWordPatternToUse.GetLength(0));
+            using (Graphics roughGraphics = Graphics.FromImage(roughWordBitmap))
+            using (SolidBrush roughBrush = new SolidBrush(roughWordColor))
+            {
+                roughGraphics.Clear(Color.Transparent);
+
+                for (int y = 0; y < roughWordPatternToUse.GetLength(0); y++)
+                {
+                    for (int x = 0; x < roughWordPatternToUse.GetLength(1); x++)
+                    {
+                        if (roughWordPatternToUse[y, x] == 1)
+                        {
+                            roughGraphics.FillRectangle(roughBrush, x, y, 1, 1);
+                        }
+                    }
+                }
+            }
+
+            if (direction == Direction.Left)
+            {
+                roughWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipXY);
+            }
+            if (direction == Direction.Right)
+            {
+                roughWordBitmap.RotateFlip(RotateFlipType.Rotate90FlipNone);
+            }
+
+            Rectangle targetRect;
+            switch (direction)
+            {
+                case Direction.Top:
+                    targetRect = new Rectangle(bounds.X, bounds.Y, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                case Direction.Bottom:
+                    targetRect = new Rectangle(bounds.X, bounds.Bottom - roughWordBitmap.Height, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                case Direction.Left:
+                    targetRect = new Rectangle(bounds.X, bounds.Y + 1, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                case Direction.Right:
+                    targetRect = new Rectangle(bounds.Right - roughWordBitmap.Width, bounds.Y, roughWordBitmap.Width, roughWordBitmap.Height);
+                    break;
+                default:
+                    return;
+            }
+
+            g.DrawImage(roughWordBitmap, targetRect);
         }
 
         //Метод для отрисовки портала
@@ -2352,8 +5817,8 @@ private void SaveMap(string filename)
             // Чёрный пиксель в верхнем левом углу внешних ворот
             using (SolidBrush blackBrush = new SolidBrush(Color.Black))
             {
-                graphics.FillRectangle(blackBrush, dx-1, dy-1, 1, 1); // Верхний левый угол
-                graphics.FillRectangle(blackBrush, dx + gateWidth, dy-1, 1, 1); // Верхний правый угол
+                graphics.FillRectangle(blackBrush, dx - 1, dy - 1, 1, 1); // Верхний левый угол
+                graphics.FillRectangle(blackBrush, dx + gateWidth, dy - 1, 1, 1); // Верхний правый угол
             }
 
             // Средний слой получает цвет внешних ворот
@@ -2395,17 +5860,17 @@ private void SaveMap(string filename)
                     case Direction.Bottom:
                         // Левая и правая вертикальные линии
                         graphics.DrawLine(blackPen, dx - 2, dy - 1, dx - 2, dy + gateHeight);
-                        graphics.DrawLine(blackPen, dx + gateWidth+1, dy - 1, dx + gateWidth+1, dy + gateHeight);
+                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy - 1, dx + gateWidth + 1, dy + gateHeight);
                         break;
                     case Direction.Left:
                         // Левая и правая горизонтальные линии (после поворота) в левой части ячейки
                         graphics.DrawLine(blackPen, dx - 1, dy - 1, dx - 1, dy + gateHeight);                   // Левая сторона
-                        graphics.DrawLine(blackPen, dx + gateWidth+2, dy - 1, dx + gateWidth+2, dy + gateHeight); // Правая сторона
+                        graphics.DrawLine(blackPen, dx + gateWidth + 2, dy - 1, dx + gateWidth + 2, dy + gateHeight); // Правая сторона
                         break;
                     case Direction.Right:
                         // Левая и правая горизонтальные линии (после поворота) в правой части ячейки
-                        graphics.DrawLine(blackPen, dx - 2 , dy , dx - 2, dy + gateHeight+1);                   // Левая сторона
-                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy, dx + gateWidth + 1, dy + gateHeight+1); // Правая сторона
+                        graphics.DrawLine(blackPen, dx - 2, dy, dx - 2, dy + gateHeight + 1);                   // Левая сторона
+                        graphics.DrawLine(blackPen, dx + gateWidth + 1, dy, dx + gateWidth + 1, dy + gateHeight + 1); // Правая сторона
                         break;
 
                 }
@@ -2438,7 +5903,7 @@ private void SaveMap(string filename)
         // Метод для отрисовки лестницы вверх
         private void DrawStairsUp(Graphics g, Rectangle bounds, Direction direction)
         {
-           
+
             // Выбор массива в зависимости от направления
             int[,] stairsPatternToUse = direction == Direction.Top ?
                 Passage_Pixels_Patterns.stairs_pattern_rotated270 : // Используем зеркальный массив для направления Top
@@ -2523,14 +5988,7 @@ private void SaveMap(string filename)
         // Функция для получения противоположённого направления
         private Direction GetOppositeDirection(Direction direction)
         {
-            switch (direction)
-            {
-                case Direction.Top: return Direction.Bottom;
-                case Direction.Bottom: return Direction.Top;
-                case Direction.Left: return Direction.Right;
-                case Direction.Right: return Direction.Left;
-                default: return direction;
-            }
+            return DirectionUtilities.Opposite(direction);
         }
 
         // Метод для отрисовки лестницы вниз
@@ -2597,8 +6055,19 @@ private void SaveMap(string filename)
         // Метод для отрисовки надписи SECRET
         private void DrawSecretWord(Graphics g, Rectangle bounds, Direction direction)
         {
+            DrawPassageWord(g, bounds, direction, "SECRET");
+        }
+
+        // Метод для отрисовки надписи ROUGH
+        private void DrawRoughWord(Graphics g, Rectangle bounds, Direction direction)
+        {
+            DrawPassageWord(g, bounds, direction, "ROUGH");
+        }
+
+        private void DrawPassageWord(Graphics g, Rectangle bounds, Direction direction, string word)
+        {
             // Вычисляем максимальный допустимый размер шрифта
-            float maxFontSize = CalculateOptimalFontSize(g, "SECRET", bounds.Width, bounds.Height);
+            float maxFontSize = CalculateOptimalFontSize(g, word, bounds.Width, bounds.Height);
 
             // Создаем оптимальный шрифт
             Font font = new Font(FontFamily.GenericSansSerif, maxFontSize, FontStyle.Bold);
@@ -2623,12 +6092,19 @@ private void SaveMap(string filename)
                 bufferG.Clear(Color.Transparent);
 
                 // Предварительно выводим текст
-                bufferG.DrawString("SECRE", font, Brushes.HotPink, bounds, format);
-                SizeF textSize = bufferG.MeasureString("SECRE", font);
-                float extraSpace = 3f; // Интервал между "E" и "T"
-                float nextX = bounds.X + textSize.Width + extraSpace;
-                float nextY = bounds.Y + (bounds.Height - textSize.Height) / 2;
-                bufferG.DrawString("T", font, Brushes.HotPink, nextX, nextY);
+                if (word == "SECRET")
+                {
+                    bufferG.DrawString("SECRE", font, Brushes.HotPink, bounds, format);
+                    SizeF textSize = bufferG.MeasureString("SECRE", font);
+                    float extraSpace = 3f; // Интервал между "E" и "T"
+                    float nextX = bounds.X + textSize.Width + extraSpace;
+                    float nextY = bounds.Y + (bounds.Height - textSize.Height) / 2;
+                    bufferG.DrawString("T", font, Brushes.HotPink, nextX, nextY);
+                }
+                else
+                {
+                    bufferG.DrawString(word, font, Brushes.HotPink, bounds, format);
+                }
             }
 
             // Основа: наносим подготовленный буфер на изображение с учётом направления
@@ -2726,7 +6202,7 @@ private void SaveMap(string filename)
             {
                 case Direction.Top:
                     SafeSetPixel(letterC, 15, 5, Color.FromArgb(255, 255, 105, 180));
-                    SafeSetPixel(letterC, 18, 6, Color.Transparent);   
+                    SafeSetPixel(letterC, 18, 6, Color.Transparent);
                     break;
                 case Direction.Bottom:
                     SafeSetPixel(letterC, 15, 5 + 32, Color.FromArgb(255, 255, 105, 180));
@@ -2764,7 +6240,7 @@ private void SaveMap(string filename)
                     Color pixel = bmp.GetPixel(x, y);
                     if (pixel == oldColor)
                     {
-                        SafeSetPixel(bmp,x, y, newColor);
+                        SafeSetPixel(bmp, x, y, newColor);
                     }
                 }
             }
@@ -2772,16 +6248,34 @@ private void SaveMap(string filename)
 
         void DrawFilteredHotPinkSecret(Graphics g, Rectangle bounds, Direction direction)
         {
+            DrawFilteredHotPinkPassageWord(g, bounds, direction, "SECRET", true);
+        }
+
+        void DrawFilteredHotPinkRough(Graphics g, Rectangle bounds, Direction direction)
+        {
+            DrawFilteredHotPinkPassageWord(g, bounds, direction, "ROUGH", false, GetRoughPassageOffset(direction));
+        }
+
+        void DrawFilteredHotPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC)
+        {
+            DrawFilteredHotPinkPassageWord(g, bounds, direction, word, correctLetterC, Point.Empty);
+        }
+
+        void DrawFilteredHotPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC, Point offset)
+        {
             // Предполагаем, что DrawSecret создает изображение с размерами bounds
             Bitmap originaSecretTextImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originaSecretTextImage))
             {
-                DrawSecretWord(imgG, bounds, direction); // РИСУЕМ оригинальное изображение
+                DrawPassageWord(imgG, bounds, direction, word); // РИСУЕМ оригинальное изображение
             }
 
             // Применяем фильтр, оставляем только горячий розовый цвет
             FilterColors(originaSecretTextImage, colorsMap);
-            CorrectLetterC(originaSecretTextImage, direction);
+            if (correctLetterC)
+            {
+                CorrectLetterC(originaSecretTextImage, direction);
+            }
 
             Rectangle targetRect;
             int secretTextWidth = originaSecretTextImage.Width;
@@ -2805,6 +6299,8 @@ private void SaveMap(string filename)
                     return; // Недопустимое направление
             }
 
+            targetRect.Offset(offset);
+
             // Выводим итоговое изображение двери на холст
             g.DrawImage(originaSecretTextImage, targetRect);
         }
@@ -2812,11 +6308,26 @@ private void SaveMap(string filename)
         //Отображение надписи SECRET для белых поверхностией
         private void DrawFilteredDarkPinkSecret(Graphics g, Rectangle bounds, Direction direction)
         {
+            DrawFilteredDarkPinkPassageWord(g, bounds, direction, "SECRET", true);
+        }
+
+        private void DrawFilteredDarkPinkRough(Graphics g, Rectangle bounds, Direction direction)
+        {
+            DrawFilteredDarkPinkPassageWord(g, bounds, direction, "ROUGH", false, GetRoughPassageOffset(direction));
+        }
+
+        private void DrawFilteredDarkPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC)
+        {
+            DrawFilteredDarkPinkPassageWord(g, bounds, direction, word, correctLetterC, Point.Empty);
+        }
+
+        private void DrawFilteredDarkPinkPassageWord(Graphics g, Rectangle bounds, Direction direction, string word, bool correctLetterC, Point offset)
+        {
             // Исходное изображение SECRET
             Bitmap originalSecretTextImage = new Bitmap(bounds.Width, bounds.Height);
             using (Graphics imgG = Graphics.FromImage(originalSecretTextImage))
             {
-                DrawFilteredHotPinkSecret(imgG, bounds, direction); // Нарисовать оригинальный текст SECRET
+                DrawFilteredHotPinkPassageWord(imgG, bounds, direction, word, correctLetterC); // Нарисовать оригинальный текст
             }
 
             // Замена цвета розовых пикселей на тёмно-зелёный
@@ -2844,6 +6355,8 @@ private void SaveMap(string filename)
                 default:
                     return; // Некорректное направление
             }
+
+            targetRect.Offset(offset);
 
             g.DrawImage(originalSecretTextImage, targetRect);
         }
@@ -2977,6 +6490,9 @@ private void SaveMap(string filename)
         // Вспомогательная функция для правильного выбора метода рисования SECRET
         private void DrawCorrectSecret(Graphics g, Rectangle bounds, string wallType, Direction direction)
         {
+            if (!showSecretPassages)
+                return;
+
             if (wallType == "Кирпичная стена")
             {
                 DrawFilteredDarkPinkSecret(g, bounds, direction); // Новое условие для кирпичной стены
@@ -2984,6 +6500,35 @@ private void SaveMap(string filename)
             else
             {
                 DrawFilteredHotPinkSecret(g, bounds, direction); // Осталось как было раньше
+            }
+        }
+
+        // Вспомогательная функция для правильного выбора метода рисования ROUGH
+        private void DrawCorrectRough(Graphics g, Rectangle bounds, string wallType, Direction direction)
+        {
+            Color roughWordColor = wallType == "Кирпичная стена"
+                ? Color.FromArgb(0, 0, 255)
+                : string.Equals(wallType, BorderTypeDesert, StringComparison.Ordinal)
+                    ? Color.FromArgb(0, 50, 180)
+                    : Color.FromArgb(255, 105, 180);
+
+            DrawRoughWord(g, bounds, direction, roughWordColor);
+        }
+
+        private static Point GetRoughPassageOffset(Direction direction)
+        {
+            switch (direction)
+            {
+                case Direction.Top:
+                    return new Point(2, -2);
+                case Direction.Bottom:
+                    return new Point(2, 0);
+                case Direction.Left:
+                    return new Point(-2, 2);
+                case Direction.Right:
+                    return new Point(2, 2);
+                default:
+                    return Point.Empty;
             }
         }
 
@@ -3205,6 +6750,88 @@ private void SaveMap(string filename)
             g.DrawImage(originalGrateImage, targetRect);
         }
 
+        private void DrawGrate2(Graphics g, Rectangle bounds, Direction direction)
+        {
+            string[] pixels =
+            {
+                "0XXXXXXX0",
+                "XX21212XX",
+                "0X11111X0",
+                "XX21212XX",
+                "0X11111X0",
+                "XX21212XX",
+                "0XXXXXXX0"
+            };
+
+            int grateWidth = pixels[0].Length;
+            int grateHeight = pixels.Length;
+
+            using Bitmap grateImage = new Bitmap(grateWidth, grateHeight, PixelFormat.Format32bppArgb);
+            using (Graphics imgG = Graphics.FromImage(grateImage))
+            {
+                imgG.Clear(Color.Transparent);
+                imgG.InterpolationMode = InterpolationMode.NearestNeighbor;
+
+                for (int y = 0; y < pixels.Length; y++)
+                {
+                    for (int x = 0; x < pixels[y].Length; x++)
+                    {
+                        switch (pixels[y][x])
+                        {
+                            case 'X':
+                                imgG.FillRectangle(Brushes.Blue, x, y, 1, 1);
+                                break;
+                            case '1':
+                                imgG.FillRectangle(Brushes.Silver, x, y, 1, 1);
+                                break;
+                            case '2':
+                                imgG.FillRectangle(Brushes.Black, x, y, 1, 1);
+                                break;
+                        }
+                    }
+                }
+            }
+
+            Rectangle targetRect;
+            switch (direction)
+            {
+                case Direction.Top:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - grateWidth / 2,
+                        bounds.Y,
+                        grateWidth,
+                        grateHeight);
+                    break;
+                case Direction.Bottom:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - grateWidth / 2,
+                        bounds.Bottom - grateHeight,
+                        grateWidth,
+                        grateHeight);
+                    break;
+                case Direction.Left:
+                    grateImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.X,
+                        bounds.Y + bounds.Height / 2 - grateHeight / 2 - 2,
+                        grateHeight,
+                        grateWidth);
+                    break;
+                case Direction.Right:
+                    grateImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.Right - grateHeight,
+                        bounds.Y + bounds.Height / 2 - grateHeight / 2 - 2,
+                        grateHeight,
+                        grateWidth);
+                    break;
+                default:
+                    return;
+            }
+
+            g.DrawImage(grateImage, targetRect);
+        }
+
         private void ModifyGrate(Bitmap doorImage, Direction direction)
         {
             // Определим начало колонны для обработки
@@ -3294,7 +6921,7 @@ private void SaveMap(string filename)
         private void PrepareCellImage(Point pos, Graphics g, Rectangle bounds)
         {
             // Применяем специальные эффекты согласно состоянию клетки
-            if (isDangerStates.TryGetValue(pos, out var isDangerous) && isDangerous)
+            if (ShouldPaintDangerArea(pos))
             {
                 PaintDangerArea(g, bounds);
             }
@@ -3304,18 +6931,18 @@ private void SaveMap(string filename)
                 PaintNoMagicArea(g, bounds);
             }
 
-            // Обработка уровней освещённости
-            if (lightingLevels.TryGetValue(pos, out var lightingLevel))
+            // Обработка уровней затемнённости
+            if (darkeningLevels.TryGetValue(pos, out var darkeningLevel))
             {
-                switch (lightingLevel)
+                switch (darkeningLevel)
                 {
                     case Lighting.Light:
-                        break; // Ничего не делаем, нормальное освещение
+                        break; // Ничего не делаем, нормальная затемнённость
                     case Lighting.Dark:
                         PaintDarkArea(g, bounds);
                         break;
                     case Lighting.Darkness:
-                        PaintDarknessArea(g, bounds);
+                        PaintDarkeningArea(g, bounds);
                         break;
                 }
             }
@@ -3332,16 +6959,16 @@ private void SaveMap(string filename)
                     switch (i)
                     {
                         case 0:
-                            borderType = edgeTypes.Item1;
+                            borderType = edgeTypes.Top;
                             break;
                         case 1:
-                            borderType = edgeTypes.Item2;
+                            borderType = edgeTypes.Bottom;
                             break;
                         case 2:
-                            borderType = edgeTypes.Item3;
+                            borderType = edgeTypes.Left;
                             break;
                         case 3:
-                            borderType = edgeTypes.Item4;
+                            borderType = edgeTypes.Right;
                             break;
                         default:
                             throw new InvalidOperationException("Unexpected tuple item");
@@ -3395,149 +7022,198 @@ private void SaveMap(string filename)
                 if (passageDict.TryGetValue(pos, out var passageData))
                 {
                     // Проверяем каждое направление и рисуем тайник, если он найден
-                    if (passageData.Item1 == 3) // секретный проход сверху
+                    if (passageData.Top == PassageTypeSecret) // секретный проход сверху
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item1, Direction.Top);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Top, Direction.Top);
                     }
-                    if (passageData.Item2 == 3) //  секретный проход снизу
+                    if (passageData.Bottom == PassageTypeSecret) //  секретный проход снизу
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item2, Direction.Bottom);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Bottom, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 3) //  секретный проход слева
+                    if (passageData.Left == PassageTypeSecret) //  секретный проход слева
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item3, Direction.Left);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Left, Direction.Left);
                     }
-                    if (passageData.Item4 == 3) //  секретный проход справа
+                    if (passageData.Right == PassageTypeSecret) //  секретный проход справа
                     {
-                        DrawCorrectSecret(g, bounds, edgeTypes.Item4, Direction.Right);
+                        DrawCorrectSecret(g, bounds, edgeTypes.Right, Direction.Right);
+                    }
+
+                    if (passageData.Top == PassageTypeRough) // ROUGH проход сверху
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Top, Direction.Top);
+                    }
+                    if (passageData.Bottom == PassageTypeRough) // ROUGH проход снизу
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Bottom, Direction.Bottom);
+                    }
+                    if (passageData.Left == PassageTypeRough) // ROUGH проход слева
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Left, Direction.Left);
+                    }
+                    if (passageData.Right == PassageTypeRough) // ROUGH проход справа
+                    {
+                        DrawCorrectRough(g, bounds, edgeTypes.Right, Direction.Right);
                     }
 
                     // Остальные элементы (двери и решётки) остались прежними
-                    if (passageData.Item1 == 1) // Дверь сверху
+                    if (passageData.Top == PassageTypeDoor) // Дверь сверху
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item1, Direction.Top);
+                        DrawCorrectDoor(g, bounds, edgeTypes.Top, Direction.Top);
                     }
-                    else if (passageData.Item1 == 2) // Решётка сверху
+                    else if (passageData.Top == PassageTypeGrate) // Решётка сверху
                     {
                         DrawRoundedGrate(g, bounds, Direction.Top);
                     }
-
-                    if (passageData.Item2 == 1) // Дверь снизу
+                    else if (passageData.Top == PassageTypeDoor2) // Дверь 2 сверху
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item2, Direction.Bottom);
+                        DrawDoor2(g, bounds, Direction.Top);
                     }
-                    else if (passageData.Item2 == 2) // Решётка снизу
+                    else if (passageData.Top == PassageTypeGrate2) // Решётка 2 сверху
+                    {
+                        DrawGrate2(g, bounds, Direction.Top);
+                    }
+
+                    if (passageData.Bottom == PassageTypeDoor) // Дверь снизу
+                    {
+                        DrawCorrectDoor(g, bounds, edgeTypes.Bottom, Direction.Bottom);
+                    }
+                    else if (passageData.Bottom == PassageTypeGrate) // Решётка снизу
                     {
                         DrawRoundedGrate(g, bounds, Direction.Bottom);
                     }
-
-                    if (passageData.Item3 == 1) // Дверь слева
+                    else if (passageData.Bottom == PassageTypeDoor2) // Дверь 2 снизу
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item3, Direction.Left);
+                        DrawDoor2(g, bounds, Direction.Bottom);
                     }
-                    else if (passageData.Item3 == 2) // Решётка слева
+                    else if (passageData.Bottom == PassageTypeGrate2) // Решётка 2 снизу
+                    {
+                        DrawGrate2(g, bounds, Direction.Bottom);
+                    }
+
+                    if (passageData.Left == PassageTypeDoor) // Дверь слева
+                    {
+                        DrawCorrectDoor(g, bounds, edgeTypes.Left, Direction.Left);
+                    }
+                    else if (passageData.Left == PassageTypeGrate) // Решётка слева
                     {
                         DrawRoundedGrate(g, bounds, Direction.Left);
                     }
-
-                    if (passageData.Item4 == 1) // Дверь справа
+                    else if (passageData.Left == PassageTypeDoor2) // Дверь 2 слева
                     {
-                        DrawCorrectDoor(g, bounds, edgeTypes.Item4, Direction.Right);
+                        DrawDoor2(g, bounds, Direction.Left);
                     }
-                    else if (passageData.Item4 == 2) // Решётка справа
+                    else if (passageData.Left == PassageTypeGrate2) // Решётка 2 слева
+                    {
+                        DrawGrate2(g, bounds, Direction.Left);
+                    }
+
+                    if (passageData.Right == PassageTypeDoor) // Дверь справа
+                    {
+                        DrawCorrectDoor(g, bounds, edgeTypes.Right, Direction.Right);
+                    }
+                    else if (passageData.Right == PassageTypeGrate) // Решётка справа
                     {
                         DrawRoundedGrate(g, bounds, Direction.Right);
                     }
+                    else if (passageData.Right == PassageTypeDoor2) // Дверь 2 справа
+                    {
+                        DrawDoor2(g, bounds, Direction.Right);
+                    }
+                    else if (passageData.Right == PassageTypeGrate2) // Решётка 2 справа
+                    {
+                        DrawGrate2(g, bounds, Direction.Right);
+                    }
 
                     // Проверка и отрисовка лестниц вверх
-                    if (passageData.Item1 == 4) // Лестница вверх сверху
+                    if (passageData.Top == 4) // Лестница вверх сверху
                     {
                         DrawStairsUp(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 4) // Лестница вверх снизу
+                    if (passageData.Bottom == 4) // Лестница вверх снизу
                     {
                         DrawStairsUp(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 4) // Лестница вверх слева
+                    if (passageData.Left == 4) // Лестница вверх слева
                     {
                         DrawStairsUp(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 4) // Лестница вверх справа
+                    if (passageData.Right == 4) // Лестница вверх справа
                     {
                         DrawStairsUp(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка лестниц вниз
-                    if (passageData.Item1 == 5) // Лестница вниз сверху
+                    if (passageData.Top == 5) // Лестница вниз сверху
                     {
                         DrawStairsDown(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 5) // Лестница вниз снизу
+                    if (passageData.Bottom == 5) // Лестница вниз снизу
                     {
                         DrawStairsDown(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 5) // Лестница вниз слева
+                    if (passageData.Left == 5) // Лестница вниз слева
                     {
                         DrawStairsDown(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 5) // Лестница вниз справа
+                    if (passageData.Right == 5) // Лестница вниз справа
                     {
                         DrawStairsDown(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка портала
-                    if (passageData.Item1 == 6) // Портал сверху
+                    if (passageData.Top == 6) // Портал сверху
                     {
                         DrawPortal(g, bounds, Direction.Top);
                     }
-                    if (passageData.Item2 == 6) // Портал снизу
+                    if (passageData.Bottom == 6) // Портал снизу
                     {
                         DrawPortal(g, bounds, Direction.Bottom);
                     }
-                    if (passageData.Item3 == 6) // Портал слева
+                    if (passageData.Left == 6) // Портал слева
                     {
                         DrawPortal(g, bounds, Direction.Left);
                     }
-                    if (passageData.Item4 == 6) // Портал справа
+                    if (passageData.Right == 6) // Портал справа
                     {
                         DrawPortal(g, bounds, Direction.Right);
                     }
 
                     // Проверка и отрисовка надписи "Выход"
-                    if (passageData.Item1 == 7) // Выход сверху
+                    if (passageData.Top == 7) // Выход сверху
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item1 == "Кирпичная стена")
+                            if (borderValues.Top == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Top, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Top, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Top, Color.LightSkyBlue);
                     }
-                    if (passageData.Item2 == 7) // Выход снизу
+                    if (passageData.Bottom == 7) // Выход снизу
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item2 == "Кирпичная стена")
+                            if (borderValues.Bottom == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Bottom, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Bottom, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Bottom, Color.LightSkyBlue);
                     }
-                    if (passageData.Item3 == 7) // Выход слева
+                    if (passageData.Left == 7) // Выход слева
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item3 == "Кирпичная стена")
+                            if (borderValues.Left == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Left, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Left, Color.LightSkyBlue);
                         else
                             DrawExitWord(g, bounds, Direction.Left, Color.LightSkyBlue);
                     }
-                    if (passageData.Item4 == 7) // Выход справа
+                    if (passageData.Right == 7) // Выход справа
                     {
                         if (borders.TryGetValue(pos, out var borderValues))
-                            if (borderValues.Item4 == "Кирпичная стена")
+                            if (borderValues.Right == "Кирпичная стена")
                                 DrawExitWord(g, bounds, Direction.Right, ColorTranslator.FromHtml("#FF0000"));
                             else
                                 DrawExitWord(g, bounds, Direction.Right, Color.LightSkyBlue);
@@ -3550,7 +7226,11 @@ private void SaveMap(string filename)
             // Центральный объект клетки
             if (centralOptions.TryGetValue(pos, out var centralOption))
             {
-                if (_objectsData.TryGetValue(centralOption, out JObject obj))
+                if (centralOption == TechObjectOption)
+                {
+                    DrawTechObject(g, bounds);
+                }
+                else if (_objectsData.TryGetValue(centralOption, out JObject obj))
                 {
                     int leftMargin = obj["LeftMargin"].ToObject<int>();
                     int rightMargin = obj["RightMargin"].ToObject<int>();
@@ -3569,7 +7249,7 @@ private void SaveMap(string filename)
                     }
 
                     if (centralOption == "Пустота") { }
-                    else  if (centralOption == "Не исследовано")
+                    else if (centralOption == "Не исследовано")
                         DrawUnexplored(g, bounds, pos);
                     else
                     {
@@ -3589,38 +7269,103 @@ private void SaveMap(string filename)
                 {
                     // Если центральный объект не найден, рисуем вопросительный знак
                     Font questionFont = new Font("Arial", 24, FontStyle.Bold);
-                    g.DrawString("?", questionFont, Brushes.White, new PointF(
-            bounds.X + bounds.Width / 2, // центр по горизонтали
-            bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
-                                           ), new StringFormat()
-                    {
-                        Alignment = StringAlignment.Center,
-                        LineAlignment = StringAlignment.Center
-                    });
+                    Brush questionBrush = centralOption == AnyObjectSpecOption
+                        ? Brushes.LightSkyBlue
+                        : centralOption == AnyObjectOption
+                            ? Brushes.White
+                            : Brushes.Yellow;
+
+                    g.DrawString("?", questionFont, questionBrush, new PointF(
+                bounds.X + bounds.Width / 2, // центр по горизонтали
+                bounds.Y + bounds.Height / 2 + 1 // центр по вертикали + смещение вниз на 1 пиксель
+                                               ), new StringFormat()
+                                               {
+                                                   Alignment = StringAlignment.Center,
+                                                   LineAlignment = StringAlignment.Center
+                                               });
                 }
             }
 
             // Визуализация значков сообщений на клетке
             if (messageStates.TryGetValue(pos, out var messages))
             {
-                if (messages.Item1) // topMessageCheck
+                if (messages.Top) // topMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.Right - 7, bounds.Y));
                 }
-                if (messages.Item2) // bottomMessageCheck
+                if (messages.Bottom) // bottomMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.X, bounds.Bottom - 7));
                 }
-                if (messages.Item3) // leftMessageCheck
+                if (messages.Left) // leftMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.X, bounds.Y));
                 }
-                if (messages.Item4) // rightMessageCheck
+                if (messages.Right) // rightMessageCheck
                 {
                     DrawEnvelope(g, bounds, new Point(bounds.Right - 7, bounds.Bottom - 7));
                 }
             }
 
+        }
+
+        private void DrawTechObject(Graphics g, Rectangle bounds)
+        {
+            float fontSize = Math.Max(8f, Math.Min(bounds.Width, bounds.Height) * 0.72f);
+
+            using (Font questionFont = new Font("Arial", fontSize, FontStyle.Bold, GraphicsUnit.Pixel))
+            using (Brush questionBrush = new SolidBrush(Color.FromArgb(164, 0x17, 0x78, 0x33)))
+            {
+                g.DrawString("?", questionFont, questionBrush, new PointF(
+                    bounds.X + bounds.Width / 2,
+                    bounds.Y + bounds.Height / 2 + 1
+                ), new StringFormat()
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                });
+            }
+        }
+
+        private bool ShouldPaintDangerArea(Point pos)
+        {
+            if (!isDangerStates.TryGetValue(pos, out var isDangerous) || !isDangerous)
+                return false;
+
+            if (AreAllBordersWater(pos))
+                return showDangerousWaterCells;
+
+            if (AreAllBordersDesert(pos))
+                return showDangerousDesertCells;
+
+            if (AreAllBordersSwamp(pos))
+                return showDangerousSwampCells;
+
+            return true;
+        }
+
+        private bool AreAllBordersWater(Point pos)
+        {
+            return AreAllBordersOfType(pos, BorderTypeWater);
+        }
+
+        private bool AreAllBordersDesert(Point pos)
+        {
+            return AreAllBordersOfType(pos, BorderTypeDesert);
+        }
+
+        private bool AreAllBordersSwamp(Point pos)
+        {
+            return AreAllBordersOfType(pos, BorderTypeSwamp);
+        }
+
+        private bool AreAllBordersOfType(Point pos, string borderType)
+        {
+            return borders.TryGetValue(pos, out var edgeTypes)
+                && string.Equals(edgeTypes.Top, borderType, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Bottom, borderType, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Left, borderType, StringComparison.Ordinal)
+                && string.Equals(edgeTypes.Right, borderType, StringComparison.Ordinal);
         }
 
         // Вспомогательный метод для преобразования изображения в массив пикселей
@@ -3753,6 +7498,91 @@ private void SaveMap(string filename)
             g.DrawImage(doorImage, targetRect);
         }
 
+        private void DrawDoor2(Graphics g, Rectangle bounds, Direction direction)
+        {
+            string[] pixels =
+            {
+                "AAAAABBAAAAA",
+                "ACCCADDACCCA",
+                "ACACABBACACA",
+                "ACCCADDACCCA",
+                "AAAAABBAAAAA",
+                "AAACADDACAAA",
+                "AAAAABBAAAAA"
+            };
+
+            int doorWidth = pixels[0].Length;
+            int doorHeight = pixels.Length;
+
+            using Bitmap doorImage = new Bitmap(doorWidth, doorHeight, PixelFormat.Format32bppArgb);
+            using (Graphics imgG = Graphics.FromImage(doorImage))
+            {
+                imgG.Clear(Color.Transparent);
+                imgG.InterpolationMode = InterpolationMode.NearestNeighbor;
+
+                for (int y = 0; y < pixels.Length; y++)
+                {
+                    for (int x = 0; x < pixels[y].Length; x++)
+                    {
+                        switch (pixels[y][x])
+                        {
+                            case 'A':
+                                imgG.FillRectangle(Brushes.Black, x, y, 1, 1);
+                                break;
+                            case 'B':
+                                imgG.FillRectangle(Brushes.DarkGray, x, y, 1, 1);
+                                break;
+                            case 'C':
+                                imgG.FillRectangle(Brushes.White, x, y, 1, 1);
+                                break;
+                            case 'D':
+                                imgG.FillRectangle(Brushes.LightGray, x, y, 1, 1);
+                                break;
+                        }
+                    }
+                }
+            }
+
+            Rectangle targetRect;
+            switch (direction)
+            {
+                case Direction.Top:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - doorWidth / 2,
+                        bounds.Y,
+                        doorWidth,
+                        doorHeight);
+                    break;
+                case Direction.Bottom:
+                    targetRect = new Rectangle(
+                        bounds.X + bounds.Width / 2 - doorWidth / 2,
+                        bounds.Bottom - doorHeight,
+                        doorWidth,
+                        doorHeight);
+                    break;
+                case Direction.Left:
+                    doorImage.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.X,
+                        (bounds.Y + bounds.Height / 2 - doorHeight / 2) - 3,
+                        doorHeight,
+                        doorWidth);
+                    break;
+                case Direction.Right:
+                    doorImage.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                    targetRect = new Rectangle(
+                        bounds.Right - doorHeight,
+                        (bounds.Y + bounds.Height / 2 - doorHeight / 2) - 3,
+                        doorHeight,
+                        doorWidth);
+                    break;
+                default:
+                    return;
+            }
+
+            g.DrawImage(doorImage, targetRect);
+        }
+
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
@@ -3787,14 +7617,14 @@ private void SaveMap(string filename)
                 centralOptions[position] = "Не исследовано";
 
                 // Инициализация состояний границ (старых чекбоксов)
-                closedStates[position] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                closedStates[position] = DirectionUtilities.Filled(false);
 
                 // Инициализация состояний новых чекбоксов (текстов)
-                messageStates[position] = new Tuple<bool, bool, bool, bool>(false, false, false, false);
+                messageStates[position] = DirectionUtilities.Filled(false);
 
                 // Инициализация прочих необходимых данных
-                borders[position] = new Tuple<string, string, string, string>("Пустота", "Пустота", "Пустота", "Пустота");
-                passageDict[position] = new Tuple<int, int, int, int>(0, 0, 0, 0);
+                borders[position] = DirectionUtilities.Filled("Пустота");
+                passageDict[position] = DirectionUtilities.Filled(0);
 
                 notesPerCell[position] = "";
                 imagesPerCell[position] = null;
@@ -3802,38 +7632,39 @@ private void SaveMap(string filename)
                 isDangerStates[position] = false;
                 noMagicStates[position] = false;
 
-                // По умолчанию устанавливаем освещение "Светло"
-                lightingLevels[position] = Lighting.Light;
+                // По умолчанию устанавливаем затемнённость "Светло"
+                darkeningLevels[position] = Lighting.Light;
 
-             //   key.Invalidate();
+                //   key.Invalidate();
             }
         }
 
         private void CenterComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
+            if (selectedPosition.HasValue && centerComboBox.SelectedItem != null)
             {
                 Point pos = selectedPosition.Value;
                 string previousCentralOption = centralOptions.TryGetValue(pos, out var prev) ? prev : "";
 
                 // Обновляем значение в словаре
                 centralOptions[pos] = centerComboBox.SelectedItem.ToString();
+                UpdateCenterComboBoxForCell(centralOptions[pos]);
 
                 // Проверка на изменение
                 bool hasChanged = previousCentralOption != centralOptions[pos];
 
-                if (hasChanged) 
+                if (hasChanged)
                 {
                     // Получаем соответствующую кнопку по текущей позиции
                     Button correspondingButton = gridButtons[pos.X, GridSize - 1 - (pos.Y)];
 
-                // Инвалидация кнопки приведет к повторному вызову метода Paint
-                correspondingButton.Invalidate();
+                    // Инвалидация кнопки приведет к повторному вызову метода Paint
+                    correspondingButton.Invalidate();
 
-                // Можно обновить UI или любые другие действия
-                UpdatePreview(); // Обновляем предпросмотр, если нужно
+                    // Можно обновить UI или любые другие действия
+                    UpdatePreview(); // Обновляем предпросмотр, если нужно
 
-                       isMapModified = true;
+                    isMapModified = true;
                 }
 
             }
@@ -5009,33 +8840,19 @@ private void SaveMap(string filename)
         // Временная структура для хранения состояния ячейки
         private struct CopiedCellInfo
         {
-            public Tuple<string, string, string, string> Borders;
-            public Tuple<int, int, int, int> Passages;
-            public Tuple<bool, bool, bool, bool> ClosedStates;
-            public Tuple<bool, bool, bool, bool> Messages;
+            public Directions<string> Borders;
+            public Directions<int> Passages;
+            public Directions<bool> ClosedStates;
+            public Directions<bool> Messages;
             public string CentralOption;
             public bool IsDanger;
             public bool NoMagic;
-            public Lighting LightingLevel;
+            public Lighting DarkeningLevel;
             public Image CellImage;
             public string Notes;
         };
     }
 
-    enum Direction
-    {
-        Top,
-        Bottom,
-        Left,
-        Right
-    }
-
-    enum Lighting
-    {
-        Light,
-        Dark,
-        Darkness
-    }
-
-
 }
+
+

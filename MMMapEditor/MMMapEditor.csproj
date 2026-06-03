@@ -25,9 +25,51 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!-- Dev-only diagnostics and regression-test UI stay out of Release by default. -->
+    <EnableDevelopmentTools Condition="'$(EnableDevelopmentTools)' == '' and '$(Configuration)' == 'Debug'">true</EnableDevelopmentTools>
+    <EnableDevelopmentTools Condition="'$(EnableDevelopmentTools)' == ''">false</EnableDevelopmentTools>
+    <EnableRegressionTests Condition="'$(EnableRegressionTests)' == ''">$(EnableDevelopmentTools)</EnableRegressionTests>
+    <KeepReleaseDebugSymbols Condition="'$(KeepReleaseDebugSymbols)' == ''">false</KeepReleaseDebugSymbols>
+    <DebugType Condition="'$(Configuration)' == 'Release' and '$(KeepReleaseDebugSymbols)' != 'true'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release' and '$(KeepReleaseDebugSymbols)' != 'true'">false</DebugSymbols>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnableDevelopmentTools)' == 'true'">
+    <DefineConstants>$(DefineConstants);DEVELOPMENT_TOOLS</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnableRegressionTests)' == 'true'">
+    <DefineConstants>$(DefineConstants);REGRESSION_TESTS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
+    <PackageReference Include="Gee.External.Capstone" Version="2.3.0" />
     <PackageReference Include="ini-parser" Version="2.5.2" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="bin\**\*.cs" />
+    <Compile Remove="obj\**\*.cs" />
+    <EmbeddedResource Remove="bin\**\*" />
+    <EmbeddedResource Remove="obj\**\*" />
+    <None Remove="bin\**\*" />
+    <None Remove="obj\**\*" />
+    <Content Remove="bin\**\*" />
+    <Content Remove="obj\**\*" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(EnableRegressionTests)' != 'true'">
+    <Compile Remove="OvrAnalyzerTestRunner.cs" />
+    <Compile Remove="PointConverters.cs" />
+    <Compile Remove="TestCase.cs" />
+    <Compile Remove="TestExpectationStore.cs" />
+    <Compile Remove="TestLogger.cs" />
+    <Compile Remove="TestResultsViewer.cs" />
+    <Compile Remove="TestResultsViewer.Designer.cs" />
+    <EmbeddedResource Remove="TestResultsViewer.resx" />
+    <None Remove="OvrAnalyzerTests.json" />
   </ItemGroup>
 
   <ItemGroup>
@@ -50,11 +92,21 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <ItemGroup Condition="'$(EnableRegressionTests)' == 'true'">
+    <None Update="OvrAnalyzerTests.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <ItemGroup>
     <None Update="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
     </None>
   </ItemGroup>
+
+  <Target Name="RemoveReleaseDebugSymbols" AfterTargets="Build" Condition="'$(Configuration)' == 'Release' and '$(KeepReleaseDebugSymbols)' != 'true'">
+    <Delete Files="$(TargetDir)$(TargetName).pdb" TreatErrorsAsWarnings="true" />
+  </Target>
 
 </Project>
