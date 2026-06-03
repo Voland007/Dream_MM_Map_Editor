@@ -12197,10 +12197,7 @@ namespace MMMapEditor
             }
 
             if (address == 0xC98B &&
-                string.Equals(fileNameOnly, "AREAE3.OVR", StringComparison.OrdinalIgnoreCase) &&
-                contextObject != null &&
-                contextObject.X == 12 &&
-                contextObject.Y == 7)
+                string.Equals(fileNameOnly, "AREAE3.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 annotation = polarity == StateConditionPolarity.Zero
                     ? "Льву не сказан правильный пароль"
@@ -12209,11 +12206,7 @@ namespace MMMapEditor
             }
 
             if (address == 0xC98F &&
-                string.Equals(fileNameOnly, "AREAE2.OVR", StringComparison.OrdinalIgnoreCase) &&
-                contextObject != null &&
-                ((contextObject.X == 2 && contextObject.Y == 11) ||
-                 (contextObject.X == 4 && contextObject.Y == 11) ||
-                 (contextObject.X == 3 && contextObject.Y == 12)))
+                string.Equals(fileNameOnly, "AREAE2.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 annotation = polarity == StateConditionPolarity.Zero
                     ? "Стычка с пришельцем на клетке (3,11) уже произошла"
@@ -12222,10 +12215,7 @@ namespace MMMapEditor
             }
 
             if (address == 0xC9AB &&
-                string.Equals(fileNameOnly, "AREAC2.OVR", StringComparison.OrdinalIgnoreCase) &&
-                contextObject != null &&
-                contextObject.X == 4 &&
-                contextObject.Y == 7)
+                string.Equals(fileNameOnly, "AREAC2.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 annotation = polarity == StateConditionPolarity.Zero
                     ? "Из фонтана ещё не пили"
@@ -12234,10 +12224,7 @@ namespace MMMapEditor
             }
 
             if (address == 0xC9D4 &&
-                string.Equals(fileNameOnly, "AREAA1.OVR", StringComparison.OrdinalIgnoreCase) &&
-                contextObject != null &&
-                contextObject.X == 7 &&
-                contextObject.Y == 14)
+                string.Equals(fileNameOnly, "AREAA1.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 annotation = polarity == StateConditionPolarity.Zero
                     ? "Клетка (15,7) не была посещена"
@@ -12246,10 +12233,7 @@ namespace MMMapEditor
             }
 
             if (address == 0xCB3F &&
-                string.Equals(fileNameOnly, "AREAA4.OVR", StringComparison.OrdinalIgnoreCase) &&
-                contextObject != null &&
-                contextObject.X == 4 &&
-                contextObject.Y == 2)
+                string.Equals(fileNameOnly, "AREAA4.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 annotation = polarity == StateConditionPolarity.Zero
                     ? "Привратнику на мосту не был дан правильный ответ"
@@ -12288,10 +12272,7 @@ namespace MMMapEditor
             }
 
             if (address == 0xCC7F &&
-                string.Equals(fileNameOnly, "RWL2.OVR", StringComparison.OrdinalIgnoreCase) &&
-                contextObject != null &&
-                contextObject.X == 14 &&
-                contextObject.Y == 14)
+                string.Equals(fileNameOnly, "RWL2.OVR", StringComparison.OrdinalIgnoreCase))
             {
                 annotation = polarity == StateConditionPolarity.Zero
                     ? "Партия не проехала по конвейерной ленте с клетки (14,13) и не налетела на стену копий"
