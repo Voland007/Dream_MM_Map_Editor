@@ -495,11 +495,11 @@ namespace MMMapEditor
             private int GetAdjustedIndex(string originalText, string upperText, int index)
             {
                 // Исключение ошибок вне диапазона
-                if (index < 0 || index >= upperText.Length)
+                if (index < 0 || index >= upperText.Length || index >= originalText.Length)
                     return -1;
 
                 // Возвращаем соответствующую позицию оригинального текста
-                return originalText.IndexOf(originalText[index], Math.Max(index - 10, 0));
+                return index;
             }
 
             // Вспомогательная функция для нахождения всех индексов строки
