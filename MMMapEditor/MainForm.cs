@@ -280,6 +280,39 @@ namespace MMMapEditor
             InvalidateGridButtons();
         }
 
+        public void ReplaceCentralObjectReferences(string oldName, string newName)
+        {
+            if (string.IsNullOrWhiteSpace(oldName) ||
+                string.IsNullOrWhiteSpace(newName) ||
+                string.Equals(oldName, newName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            bool changed = false;
+            foreach (Point position in centralOptions.Keys.ToList())
+            {
+                if (string.Equals(centralOptions[position], oldName, StringComparison.Ordinal))
+                {
+                    centralOptions[position] = newName;
+                    changed = true;
+                }
+            }
+
+            if (!changed)
+                return;
+
+            if (selectedPosition.HasValue &&
+                centralOptions.TryGetValue(selectedPosition.Value, out var centralOption))
+            {
+                UpdateCenterComboBoxForCell(centralOption);
+            }
+
+            InvalidateGridButtons();
+            UpdatePreview();
+            isMapModified = true;
+        }
+
         private void InvalidateGridButtons()
         {
             foreach (var button in gridButtons)

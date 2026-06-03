@@ -13,65 +13,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Data.Common;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Xml.Linq;
-using Newtonsoft.Json;
-using System.Runtime.InteropServices;
-using Newtonsoft.Json.Linq;
-using System.Text.RegularExpressions;
-using IniParser.Model;
 using IniParser;
+using IniParser.Model;
 
 namespace MMMapEditor
 {
     public partial class ObjectManagementForm : Form
     {
-        // Коллекция объектов
-        private List<CentralObject> objects;
+        private const int AutoSaveDelayMs = 300;
+        private const string FallbackObjectName = "Не исследовано";
 
-        // Контролы для отображения и взаимодействия с объектами
-        private ListView listViewObjects;
-        private Button btnAdd;
-        private Button btnEdit;
-        private Button btnDelete;
-        private Button btnExport;
-        private Button btnImport;
-        private ImageList iconList; // Для хранения иконок объектов
-
-        // Элементы для ввода данных объекта
-        private Label lblName;
-        private Label lblLeftMargin;
-        private Label lblRightMargin;
-        private Label lblFilterLevel;
-        private TextBox txtName;
-        private GroupBox grpObject; // Общий groupbox для всей группы
-        private GroupBox grpMargins; // Отдельный groupbox для отступов
-        private GroupBox grpPicIcon; // Отдельный groupbox для изображения
-        private GroupBox grpList; // Отдельный groupbox для списка
-        private TextBox txtLeftMargin;
-        private TextBox txtRightMargin;
-        private TextBox txtFilterLevel; // Поле для уровня фильтра
-        private Button btnChooseIcon;
-        private PictureBox picIcon;
-        private Button btnApplyClose;
         private readonly MainForm mainForm;
-        private string activeConfigFile;
+        private readonly ImageList iconList = new ImageList();
+        private readonly System.Windows.Forms.Timer autoSaveTimer = new System.Windows.Forms.Timer();
+        private readonly ToolTip toolTip = new ToolTip();
+        private readonly List<PendingReferenceReplacement> pendingReferenceReplacements =
+            new List<PendingReferenceReplacement>();
+
+        private List<CentralObject> objects = new List<CentralObject>();
+
+        private ListView listViewObjects;
+        private TextBox txtName;
+        private NumericUpDown nudLeftMargin;
+        private NumericUpDown nudRightMargin;
+        private NumericUpDown nudFilterLevel;
+        private PictureBox picIcon;
+        private Button btnNew;
+        private Button btnDelete;
+        private Button btnChooseIcon;
+        private Button btnClearIcon;
+        private Button btnLoadProfile;
+        private Button btnSaveProfileAs;
+        private Button btnShowPath;
+        private Button btnClose;
         private CheckBox chkUseAsDefault;
-        private Control currentFocusedControl;
-        private int currentlySelectedlistViewItemIndex = -1;
-        private bool iconChangeInProgress = false;
-        private bool showWarningOnImport = false; 
+        private Label profileLabel;
+        private Label statusLabel;
+        private Label validationLabel;
+
+        private CentralObject selectedObject;
+        private bool isUpdatingControls;
+        private bool isUpdatingDefaultCheckbox;
+        private bool hasPendingSave;
+        private bool showWarningOnImport;
 
         public string ActiveProfileFileName { get; private set; }
 
@@ -79,741 +69,1060 @@ namespace MMMapEditor
         {
             InitializeComponent();
 
-            this.MaximizeBox = false;         // Убирает кнопку максимального расширения
-            this.MinimizeBox = false;         // Убирает кнопку минимизации
-            this.FormBorderStyle = FormBorderStyle.FixedSingle; // Фиксируем размер окна
-            this.Width = 610;
-            this.Height = 380;
-            this.mainForm = mainForm;
-            this.Text = "Управление игровыми объектами: конфигурационный файл не выбран";
+            this.mainForm = mainForm ?? throw new ArgumentNullException(nameof(mainForm));
+            ActiveProfileFileName = ResolveInitialProfilePath(activeConfigFile);
 
-            // Инициализация ImageList для хранения иконок
-            iconList = new ImageList();
+            BuildInterface();
+            ConfigureAutoSave();
+            LoadObjectsFromProfile(ActiveProfileFileName);
+            if (File.Exists(ActiveProfileFileName))
+                ApplyCurrentProfileToMain();
+            CheckAndUpdateDefaultFlag();
+        }
+
+        private void BuildInterface()
+        {
+            SuspendLayout();
+
+            Font = new Font("Segoe UI", 9f);
+            Text = "Управление игровыми объектами";
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            ShowInTaskbar = false;
+            BackColor = Color.FromArgb(242, 245, 249);
+            ClientSize = new Size(820, 560);
+            MinimumSize = new Size(820, 560);
+
             iconList.ColorDepth = ColorDepth.Depth32Bit;
-            iconList.ImageSize = new Size(40, 40);
+            iconList.ImageSize = new Size(32, 32);
 
-            // Создание ListView для отображения объектов
-            listViewObjects = new ListView();
-            listViewObjects.View = View.Details;
-            listViewObjects.Columns.Add("Название объекта", -2); // Авторазмера колонки
-            listViewObjects.FullRowSelect = true;
-            listViewObjects.GridLines = true;
-            listViewObjects.HeaderStyle = ColumnHeaderStyle.None;
-            listViewObjects.LargeImageList = iconList;
-            listViewObjects.SmallImageList = iconList;
-            listViewObjects.Dock = DockStyle.Left;
-            listViewObjects.Width = 300;
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+                Padding = new Padding(14),
+                BackColor = BackColor
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 68));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
 
-            // Подавляем горизонтальную полосу прокрутки
+            root.Controls.Add(CreateHeaderPanel(), 0, 0);
+            root.Controls.Add(CreateContentPanel(), 0, 1);
+            root.Controls.Add(CreateFooterPanel(), 0, 2);
+            Controls.Add(root);
 
-            // Присоединение обработчика кликов мыши
-            listViewObjects.SelectedIndexChanged += listViewObjects_SelectedIndexChanged;
-            listViewObjects.AllowDrop = true;
-            listViewObjects.ItemDrag += listViewObjects_ItemDrag;
-            listViewObjects.DragEnter += listViewObjects_DragEnter;
-            listViewObjects.DragOver += listViewObjects_DragOver;
-            listViewObjects.DragDrop += listViewObjects_DragDrop;
-            Controls.Add(listViewObjects);
+            ResumeLayout(false);
+        }
 
-            // Основной GroupBox для редактирования
-            grpObject = new GroupBox();
-            grpObject.Text = "Объект";
-            grpObject.Location = new Point(listViewObjects.Right + 10, listViewObjects.Top);
-            grpObject.Size = new Size(280, 180);
-            Controls.Add(grpObject);
+        private Control CreateHeaderPanel()
+        {
+            var panel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(242, 245, 249)
+            };
 
-            // Надписи для ввода данных
-            lblName = new Label();
-            lblName.Text = "Название:";
-            lblName.AutoSize = true;
-            lblName.Location = new Point(5, 22);
-            grpObject.Controls.Add(lblName);
+            var titleLabel = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Top,
+                Height = 30,
+                Text = "Управление объектами",
+                Font = new Font("Segoe UI Semibold", 16f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(25, 35, 48)
+            };
 
-            // Поле ввода имени объекта
-            txtName = new TextBox();
-            txtName.Location = new Point(lblName.Right + 5, lblName.Top - 4);
-            txtName.Size = new Size(203, 20);
-            txtName.PlaceholderText = "Название нового объекта на карте";
-            grpObject.Controls.Add(txtName);
+            profileLabel = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Bottom,
+                Height = 28,
+                ForeColor = Color.FromArgb(91, 103, 117),
+                AutoEllipsis = true
+            };
 
-            // Основной GroupBox для редактирования
-            grpPicIcon = new GroupBox();
-            grpPicIcon.Text = "Изображение";
-            grpPicIcon.Location = new Point(lblName.Left, lblName.Bottom + 12);
-            grpPicIcon.Size = new Size(100, 120);
-            grpObject.Controls.Add(grpPicIcon);
+            panel.Controls.Add(profileLabel);
+            panel.Controls.Add(titleLabel);
+            return panel;
+        }
 
-            // Кнопка выбора иконки
-            btnChooseIcon = new Button();
-            btnChooseIcon.Text = "Выбрать ";
-            btnChooseIcon.Location = new Point(5 + 2, 20);
-            btnChooseIcon.Width = 80;
-            btnChooseIcon.Click += btnChooseIcon_Click;
-            grpPicIcon.Controls.Add(btnChooseIcon);
+        private Control CreateContentPanel()
+        {
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = BackColor,
+                ColumnCount = 2,
+                RowCount = 1
+            };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 455));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            // Элемент для отображения изображения объекта
-            picIcon = new PictureBox();
-            picIcon.Location = new Point(btnChooseIcon.Left + 8, btnChooseIcon.Bottom + 5);
-            picIcon.Size = new Size(64, 64);
-            picIcon.BorderStyle = BorderStyle.FixedSingle;
-            picIcon.SizeMode = PictureBoxSizeMode.StretchImage;
-            grpPicIcon.Controls.Add(picIcon);
+            var objectListPanel = CreateObjectListPanel();
+            objectListPanel.Margin = new Padding(0, 0, 10, 0);
 
-            // Внутренний GroupBox для отступов
-            grpMargins = new GroupBox();
-            grpMargins.Text = "Отступ";
-            grpMargins.Location = new Point(grpPicIcon.Right + 5, grpPicIcon.Top);
-            grpMargins.Size = new Size(165, 50);
-            grpObject.Controls.Add(grpMargins);
+            var editorPanel = CreateEditorPanel();
+            editorPanel.Margin = new Padding(0);
 
-            // Отступ слева
-            lblLeftMargin = new Label();
-            lblLeftMargin.Text = "Слева:";
-            lblLeftMargin.AutoSize = true;
-            lblLeftMargin.Location = new Point(5, 22);
-            grpMargins.Controls.Add(lblLeftMargin);
+            layout.Controls.Add(objectListPanel, 0, 0);
+            layout.Controls.Add(editorPanel, 1, 0);
+            return layout;
+        }
 
-            txtLeftMargin = new TextBox();
-            txtLeftMargin.Location = new Point(lblLeftMargin.Right + 5, lblLeftMargin.Top - 3);
-            txtLeftMargin.Size = new Size(20, 20);
-            txtLeftMargin.Text = "7"; // Начальное значение
-            grpMargins.Controls.Add(txtLeftMargin);
+        private Control CreateObjectListPanel()
+        {
+            var panel = CreateSurfacePanel();
 
-            // Отступ справа
-            lblRightMargin = new Label();
-            lblRightMargin.Text = "Справа:";
-            lblRightMargin.AutoSize = true;
-            lblRightMargin.Location = new Point(txtLeftMargin.Right + 10, lblLeftMargin.Top);
-            grpMargins.Controls.Add(lblRightMargin);
+            var header = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 28,
+                Text = "Объекты",
+                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(31, 41, 55)
+            };
 
-            txtRightMargin = new TextBox();
-            txtRightMargin.Location = new Point(lblRightMargin.Right + 5, txtLeftMargin.Top);
-            txtRightMargin.Size = new Size(20, 20);
-            txtRightMargin.Text = "7"; // Начальное значение
-            grpMargins.Controls.Add(txtRightMargin);
+            var buttons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 44,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(0, 8, 0, 0)
+            };
 
-            // Уровень фильтра
-            lblFilterLevel = new Label();
-            lblFilterLevel.Text = "Уровень фильтра:";
-            lblFilterLevel.AutoSize = true;
-            lblFilterLevel.Location = new Point(grpMargins.Left + 10, grpMargins.Bottom + 10);
-            grpObject.Controls.Add(lblFilterLevel);
+            btnNew = CreatePrimaryButton("Новый", 96);
+            btnNew.Click += BtnNew_Click;
 
-            txtFilterLevel = new TextBox();
-            txtFilterLevel.Location = new Point(lblFilterLevel.Right + 5, lblFilterLevel.Top - 3);
-            txtFilterLevel.Size = new Size(30, 20);
-            txtFilterLevel.Text = "100"; // Начальное значение
-            grpObject.Controls.Add(txtFilterLevel);
-
-            // Кнопка добавления объекта
-            btnAdd = new Button();
-            btnAdd.Text = "Добавить";
-            btnAdd.Location = new Point(grpPicIcon.Right + 7, grpPicIcon.Bottom - 30);
-            btnAdd.Click += btnAdd_Click;
-            btnAdd.Enabled = false;
-            grpObject.Controls.Add(btnAdd);
-
-            // Кнопка удаления объекта
-            btnDelete = new Button();
-            btnDelete.Text = "Удалить";
-            btnDelete.Location = new Point(btnAdd.Right + 10, btnAdd.Top);
-            btnDelete.Click += btnDelete_Click;
+            btnDelete = CreateSecondaryButton("Удалить", 96);
             btnDelete.Enabled = false;
-            grpObject.Controls.Add(btnDelete);
+            btnDelete.Click += BtnDelete_Click;
 
-            //// Кнопка изменения объекта
-            //btnEdit = new Button();
-            //btnEdit.Text = "Изменить";
-            //btnEdit.Location = new Point(btnAdd.Right + 10, btnAdd.Top);
-            //btnEdit.Click += btnEdit_Click;
-            //grpObject.Controls.Add(btnEdit);
+            buttons.Controls.Add(btnNew);
+            buttons.Controls.Add(btnDelete);
 
-            // Назначаем существующий метод btnEdit_Click() на нужные события
-            txtName.TextChanged += btnEdit_Click;
-           // picIcon.ImageChanged += btnEdit_Click;
-            txtLeftMargin.TextChanged += btnEdit_Click;
-            txtRightMargin.TextChanged += btnEdit_Click;
-            txtFilterLevel.TextChanged += btnEdit_Click;
+            listViewObjects = new ListView
+            {
+                Dock = DockStyle.Fill,
+                View = View.Details,
+                FullRowSelect = true,
+                HideSelection = false,
+                MultiSelect = false,
+                BorderStyle = BorderStyle.None,
+                BackColor = Color.White,
+                ForeColor = Color.FromArgb(31, 41, 55),
+                SmallImageList = iconList,
+                AllowDrop = true
+            };
+            listViewObjects.Columns.Add("Объект", 260);
+            listViewObjects.Columns.Add("Отступы", 82);
+            listViewObjects.Columns.Add("Фильтр", 72);
+            listViewObjects.SelectedIndexChanged += ListViewObjects_SelectedIndexChanged;
+            listViewObjects.ItemDrag += ListViewObjects_ItemDrag;
+            listViewObjects.DragEnter += ListViewObjects_DragEnter;
+            listViewObjects.DragOver += ListViewObjects_DragOver;
+            listViewObjects.DragDrop += ListViewObjects_DragDrop;
 
-            txtName.Enter += Control_FocusEnter;
-            txtLeftMargin.Enter += Control_FocusEnter;
-            txtRightMargin.Enter += Control_FocusEnter;
-            txtFilterLevel.Enter += Control_FocusEnter;
-            listViewObjects.SelectedIndexChanged += Control_FocusEnter;
+            panel.Controls.Add(listViewObjects);
+            panel.Controls.Add(buttons);
+            panel.Controls.Add(header);
+            return panel;
+        }
 
-            txtName.Leave += Control_Leave;
-            txtLeftMargin.Leave += Control_Leave;
-            txtRightMargin.Leave += Control_Leave;
-            txtFilterLevel.Leave += Control_Leave;
+        private Control CreateEditorPanel()
+        {
+            var panel = CreateSurfacePanel();
 
-            // GroupBox для списка
-            grpList = new GroupBox();
-            grpList.Text = "Набор объектов";
-            grpList.Location = new Point(listViewObjects.Right + 10, grpObject.Bottom + 15);
-            grpList.Size = new Size(280, 80);
-            Controls.Add(grpList);
+            var header = new Label
+            {
+                Dock = DockStyle.Top,
+                Height = 28,
+                Text = "Параметры объекта",
+                Font = new Font("Segoe UI Semibold", 10f, FontStyle.Bold),
+                ForeColor = Color.FromArgb(31, 41, 55)
+            };
 
-            // Кнопка экспорта объектов
-            btnExport = new Button();
-            btnExport.Text = "Сохранить";
-            btnExport.Location = new Point(10, 20);
-            btnExport.Click += btnExport_Click;
-            grpList.Controls.Add(btnExport);
+            var layout = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 158,
+                ColumnCount = 2,
+                RowCount = 5,
+                Padding = new Padding(0, 8, 0, 0)
+            };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 14));
 
-            // Кнопка импорта объектов
-            btnImport = new Button();
-            btnImport.Text = "Загрузить";
-            btnImport.Location = new Point(btnExport.Right + 10, btnExport.Top);
-            btnImport.Click += btnImport_Click;
-            grpList.Controls.Add(btnImport);
+            txtName = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 4, 0, 0)
+            };
+            txtName.TextChanged += TxtName_TextChanged;
 
-            // Кнопка "Показать путь к файлу"
-            Button btnShowPath = new Button();
-            btnShowPath.Text = "Полный путь";
-            btnShowPath.Location = new Point(btnImport.Right + 10, btnImport.Top);
-            btnShowPath.Size = new Size(btnShowPath.Width + 20, btnShowPath.Height);
-            btnShowPath.Click += btnShowPath_Click;
-            grpList.Controls.Add(btnShowPath);
+            nudLeftMargin = CreateNumberBox();
+            nudLeftMargin.ValueChanged += NumericField_ValueChanged;
 
-            btnApplyClose = new Button();
-            btnApplyClose.Text = "Применить и закрыть";
-            btnApplyClose.Location = new Point(grpList.Right - btnApplyClose.Width - 80, grpList.Bottom + 25);
-            btnApplyClose.Enabled = false;
-            btnApplyClose.Click += BtnApplyClose_Click;
-            btnApplyClose.Width = 150;
-            Controls.Add(btnApplyClose);
+            nudRightMargin = CreateNumberBox();
+            nudRightMargin.ValueChanged += NumericField_ValueChanged;
 
-            this.activeConfigFile = activeConfigFile;
-            this.Shown += ObjectManagementForm_Shown;
+            nudFilterLevel = CreateNumberBox();
+            nudFilterLevel.Maximum = 1000;
+            nudFilterLevel.ValueChanged += NumericField_ValueChanged;
+
+            validationLabel = new Label
+            {
+                Dock = DockStyle.Fill,
+                ForeColor = Color.FromArgb(185, 28, 28),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            layout.Controls.Add(CreateFieldLabel("Название"), 0, 0);
+            layout.Controls.Add(txtName, 1, 0);
+            layout.Controls.Add(CreateFieldLabel("Отступ слева"), 0, 1);
+            layout.Controls.Add(nudLeftMargin, 1, 1);
+            layout.Controls.Add(CreateFieldLabel("Отступ справа"), 0, 2);
+            layout.Controls.Add(nudRightMargin, 1, 2);
+            layout.Controls.Add(CreateFieldLabel("Порог фильтра"), 0, 3);
+            layout.Controls.Add(nudFilterLevel, 1, 3);
+            layout.Controls.Add(validationLabel, 1, 4);
+
+            var iconPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 94,
+                Padding = new Padding(0)
+            };
+
+            picIcon = new PictureBox
+            {
+                Location = new Point(0, 4),
+                Size = new Size(82, 82),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Color.FromArgb(248, 250, 252)
+            };
+
+            btnChooseIcon = CreateSecondaryButton("Выбрать иконку", 140);
+            btnChooseIcon.Location = new Point(100, 8);
+            btnChooseIcon.Click += BtnChooseIcon_Click;
+
+            btnClearIcon = CreateSecondaryButton("Очистить", 100);
+            btnClearIcon.Location = new Point(100, 46);
+            btnClearIcon.Click += BtnClearIcon_Click;
+
+            iconPanel.Controls.Add(picIcon);
+            iconPanel.Controls.Add(btnChooseIcon);
+            iconPanel.Controls.Add(btnClearIcon);
+
+            var profileButtons = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 40,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                Padding = new Padding(0, 4, 0, 0)
+            };
+
+            btnLoadProfile = CreateSecondaryButton("Загрузить", 96);
+            btnLoadProfile.Click += BtnLoadProfile_Click;
+
+            btnSaveProfileAs = CreateSecondaryButton("Сохранить как", 120);
+            btnSaveProfileAs.Click += BtnSaveProfileAs_Click;
+
+            btnShowPath = CreateSecondaryButton("Путь", 64);
+            btnShowPath.Click += BtnShowPath_Click;
+
+            profileButtons.Controls.Add(btnLoadProfile);
+            profileButtons.Controls.Add(btnSaveProfileAs);
+            profileButtons.Controls.Add(btnShowPath);
 
             chkUseAsDefault = new CheckBox
             {
-                Text = "Использовать по умолчанию",
-                AutoSize = true,
-                Location = new Point(btnExport.Left - 5, btnExport.Bottom + 10),
-                Enabled = true
+                Dock = DockStyle.Bottom,
+                Height = 30,
+                Text = "Использовать этот набор по умолчанию",
+                AutoSize = false,
+                ForeColor = Color.FromArgb(55, 65, 81)
             };
             chkUseAsDefault.CheckedChanged += ChkUseAsDefault_CheckedChanged;
-            grpList.Controls.Add(chkUseAsDefault);
 
-            // Загрузка существующих объектов
-            objects = DataManager.LoadObjects();
-            RefreshListView();
+            panel.Controls.Add(profileButtons);
+            panel.Controls.Add(chkUseAsDefault);
+            panel.Controls.Add(iconPanel);
+            panel.Controls.Add(layout);
+            panel.Controls.Add(header);
+
+            toolTip.SetToolTip(nudLeftMargin, "Смещение пикселей слева при рисовании объекта.");
+            toolTip.SetToolTip(nudRightMargin, "Смещение пикселей справа при рисовании объекта.");
+            toolTip.SetToolTip(nudFilterLevel, "Порог яркости для пиксельного фильтра объекта.");
+
+            return panel;
         }
 
-        private void ObjectManagementForm_Shown(object sender, EventArgs e)
+        private Control CreateFooterPanel()
         {
-            // Проверка и загрузка файла при каждом открытии формы
-            if (!string.IsNullOrEmpty(activeConfigFile) && File.Exists(activeConfigFile))
+            var panel = new Panel
             {
-                LoadObjectsData(activeConfigFile);
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(242, 245, 249),
+                Padding = new Padding(0, 10, 0, 0)
+            };
+
+            statusLabel = new Label
+            {
+                Dock = DockStyle.Fill,
+                ForeColor = Color.FromArgb(75, 85, 99),
+                TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true
+            };
+
+            btnClose = CreatePrimaryButton("Закрыть", 104);
+            btnClose.Dock = DockStyle.Right;
+            btnClose.Click += BtnClose_Click;
+
+            panel.Controls.Add(statusLabel);
+            panel.Controls.Add(btnClose);
+            return panel;
+        }
+
+        private Panel CreateSurfacePanel()
+        {
+            return new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(14),
+                BackColor = Color.White
+            };
+        }
+
+        private Button CreatePrimaryButton(string text, int width)
+        {
+            var button = CreateBaseButton(text, width);
+            button.BackColor = Color.FromArgb(37, 99, 235);
+            button.ForeColor = Color.White;
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(29, 78, 216);
+            return button;
+        }
+
+        private Button CreateSecondaryButton(string text, int width)
+        {
+            var button = CreateBaseButton(text, width);
+            button.BackColor = Color.FromArgb(241, 245, 249);
+            button.ForeColor = Color.FromArgb(31, 41, 55);
+            button.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
+            button.FlatAppearance.MouseOverBackColor = Color.FromArgb(226, 232, 240);
+            return button;
+        }
+
+        private Button CreateBaseButton(string text, int width)
+        {
+            return new Button
+            {
+                Text = text,
+                Width = width,
+                Height = 32,
+                Margin = new Padding(0, 0, 8, 0),
+                FlatStyle = FlatStyle.Flat,
+                UseVisualStyleBackColor = false
+            };
+        }
+
+        private Label CreateFieldLabel(string text)
+        {
+            return new Label
+            {
+                Text = text,
+                Dock = DockStyle.Fill,
+                ForeColor = Color.FromArgb(75, 85, 99),
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+        }
+
+        private NumericUpDown CreateNumberBox()
+        {
+            return new NumericUpDown
+            {
+                Dock = DockStyle.Left,
+                Width = 96,
+                Minimum = 0,
+                Maximum = 255,
+                Margin = new Padding(0, 4, 0, 0)
+            };
+        }
+
+        private void ConfigureAutoSave()
+        {
+            autoSaveTimer.Interval = AutoSaveDelayMs;
+            autoSaveTimer.Tick += AutoSaveTimer_Tick;
+            FormClosing += ObjectManagementForm_FormClosing;
+        }
+
+        private string ResolveInitialProfilePath(string activeConfigFile)
+        {
+            if (!string.IsNullOrWhiteSpace(activeConfigFile) && File.Exists(activeConfigFile))
+                return Path.GetFullPath(activeConfigFile);
+
+            string localObjectsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "objects.json");
+            return Path.GetFullPath(localObjectsPath);
+        }
+
+        private void LoadObjectsFromProfile(string profilePath)
+        {
+            try
+            {
+                ActiveProfileFileName = Path.GetFullPath(profilePath);
+                objects = File.Exists(ActiveProfileFileName)
+                    ? DataManager.LoadObjects(ActiveProfileFileName)
+                    : new List<CentralObject>();
+
+                RefreshListView(objects.FirstOrDefault());
+                UpdateProfileLabel();
+                SetStatus(File.Exists(ActiveProfileFileName)
+                    ? "Набор объектов загружен и применен."
+                    : "Будет создан новый набор объектов.");
             }
-            CheckAndUpdateDefaultFlag(); // проверяем флаг при открытии формы
+            catch (Exception ex)
+            {
+                objects = new List<CentralObject>();
+                RefreshListView(null);
+                SetStatus($"Ошибка загрузки набора: {ex.Message}", true);
+            }
         }
 
-        // Метод для загрузки объектов из файла
-        private void LoadObjectsData(string configCentralObjectFile)
+        private void RefreshListView(CentralObject objectToSelect)
         {
-            if (showWarningOnImport && configCentralObjectFile.EndsWith("Author.json"))
-            {
-                // Показываем диалоговое окно подтверждения
-                DialogResult dialogResult = ShowWarningDialog();
+            isUpdatingControls = true;
+            listViewObjects.BeginUpdate();
+            listViewObjects.Items.Clear();
+            iconList.Images.Clear();
 
-                if (dialogResult == DialogResult.No)
+            foreach (var obj in objects)
+            {
+                iconList.Images.Add(obj.Icon ?? CreatePlaceholderIcon());
+
+                var item = new ListViewItem(obj.Name ?? "", iconList.Images.Count - 1)
                 {
-                    // Пользователь отказался, прерываем процесс
+                    Tag = obj
+                };
+                item.SubItems.Add($"{obj.LeftMargin}/{obj.RightMargin}");
+                item.SubItems.Add(obj.FilterLevel.ToString());
+                listViewObjects.Items.Add(item);
+            }
+
+            listViewObjects.EndUpdate();
+            isUpdatingControls = false;
+
+            if (objectToSelect != null)
+                SelectObjectInList(objectToSelect);
+            else
+                SelectObject(null);
+        }
+
+        private Image CreatePlaceholderIcon()
+        {
+            var bitmap = new Bitmap(32, 32);
+            using (Graphics g = Graphics.FromImage(bitmap))
+            using (var borderPen = new Pen(Color.FromArgb(203, 213, 225)))
+            using (var textBrush = new SolidBrush(Color.FromArgb(100, 116, 139)))
+            using (var font = new Font("Segoe UI Semibold", 13f, FontStyle.Bold))
+            {
+                g.Clear(Color.FromArgb(248, 250, 252));
+                g.DrawRectangle(borderPen, 0, 0, 31, 31);
+                g.DrawString("?", font, textBrush, new RectangleF(0, 2, 32, 28), new StringFormat
+                {
+                    Alignment = StringAlignment.Center,
+                    LineAlignment = StringAlignment.Center
+                });
+            }
+
+            return bitmap;
+        }
+
+        private void SelectObjectInList(CentralObject obj)
+        {
+            foreach (ListViewItem item in listViewObjects.Items)
+            {
+                if (ReferenceEquals(item.Tag, obj))
+                {
+                    item.Selected = true;
+                    item.Focused = true;
+                    item.EnsureVisible();
+                    SelectObject(obj);
                     return;
                 }
             }
 
-            // Продолжаем стандартную обработку файла
-            if (File.Exists(configCentralObjectFile))
+            SelectObject(null);
+        }
+
+        private void SelectObject(CentralObject obj)
+        {
+            selectedObject = obj;
+            bool enabled = obj != null;
+
+            isUpdatingControls = true;
+            txtName.Enabled = enabled;
+            nudLeftMargin.Enabled = enabled;
+            nudRightMargin.Enabled = enabled;
+            nudFilterLevel.Enabled = enabled;
+            btnChooseIcon.Enabled = enabled;
+            btnClearIcon.Enabled = enabled;
+            btnDelete.Enabled = enabled;
+
+            if (obj == null)
             {
-                objects = DataManager.LoadObjects(configCentralObjectFile);
-                RefreshListView();
-                ProfileIsSet(configCentralObjectFile);
+                txtName.Text = "";
+                nudLeftMargin.Value = 0;
+                nudRightMargin.Value = 0;
+                nudFilterLevel.Value = 0;
+                picIcon.Image = null;
+                validationLabel.Text = "";
             }
             else
             {
-                MessageBox.Show("Файл с объектами '" + configCentralObjectFile + "' не найден!\nБудет использована базовая конфигурация.");
+                txtName.Text = obj.Name ?? "";
+                nudLeftMargin.Value = ClampToNumericRange(nudLeftMargin, obj.LeftMargin);
+                nudRightMargin.Value = ClampToNumericRange(nudRightMargin, obj.RightMargin);
+                nudFilterLevel.Value = ClampToNumericRange(nudFilterLevel, obj.FilterLevel);
+                picIcon.Image = obj.Icon;
+                validationLabel.Text = "";
             }
+
+            isUpdatingControls = false;
         }
 
-        // Новый метод для показа диалогового окна
-        private DialogResult ShowWarningDialog()
+        private decimal ClampToNumericRange(NumericUpDown numericUpDown, int value)
         {
-            return MessageBox.Show(
-                "ВНИМАНИЕ! Вы пытаетесь открыть набор объектов от автора.\nЭтот набор содержит объекты, являющиеся спойлерами для игрового сюжета и прохождения!\n\nДействительно ли вы хотите открыть его (на свой страх и риск)?",
-                "Предупреждение!",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning
-            );
+            if (value < numericUpDown.Minimum)
+                return numericUpDown.Minimum;
+
+            if (value > numericUpDown.Maximum)
+                return numericUpDown.Maximum;
+
+            return value;
         }
 
-        private void btnShowPath_Click(object sender, EventArgs e)
+        private void UpdateSelectedListItem()
         {
-            if (!string.IsNullOrEmpty(ActiveProfileFileName))
+            if (selectedObject == null || listViewObjects.SelectedItems.Count == 0)
+                return;
+
+            var item = listViewObjects.SelectedItems[0];
+            item.Text = selectedObject.Name ?? "";
+            item.SubItems[1].Text = $"{selectedObject.LeftMargin}/{selectedObject.RightMargin}";
+            item.SubItems[2].Text = selectedObject.FilterLevel.ToString();
+        }
+
+        private bool TryValidateObjectName(string newName, out string message)
+        {
+            if (string.IsNullOrWhiteSpace(newName))
             {
-                MessageBox.Show(ActiveProfileFileName, "Полный путь к файлу");
+                message = "Название не может быть пустым.";
+                return false;
+            }
+
+            bool duplicateExists = objects.Any(obj =>
+                !ReferenceEquals(obj, selectedObject) &&
+                string.Equals(obj.Name, newName, StringComparison.OrdinalIgnoreCase));
+
+            if (duplicateExists)
+            {
+                message = "Такое название уже есть в наборе.";
+                return false;
+            }
+
+            message = "";
+            return true;
+        }
+
+        private void ScheduleSaveAndApply(string statusText)
+        {
+            hasPendingSave = true;
+            SetStatus(statusText);
+            autoSaveTimer.Stop();
+            autoSaveTimer.Start();
+        }
+
+        private void SaveAndApplyNow(string successStatus)
+        {
+            autoSaveTimer.Stop();
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(ActiveProfileFileName))
+                    ActiveProfileFileName = ResolveInitialProfilePath(null);
+
+                DataManager.SaveObjects(objects, ActiveProfileFileName);
+                ApplyCurrentProfileToMain();
+
+                if (chkUseAsDefault.Checked)
+                    UpdateDefaultConfigFile(ActiveProfileFileName);
+
+                hasPendingSave = false;
+                UpdateProfileLabel();
+                CheckAndUpdateDefaultFlag();
+                SetStatus($"{successStatus} {DateTime.Now:HH:mm:ss}");
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Ошибка сохранения: {ex.Message}", true);
             }
         }
 
-        #region Вспомогательные методы
-
-        // Метод проверки того, щаполнены ли все поля для возможности добавления нового объекта
-        private bool IsValidForAdding()
+        private void ApplyCurrentProfileToMain()
         {
-            // Проверяем, заполнено ли имя объекта
-            if (string.IsNullOrWhiteSpace(txtName.Text))
-                return false;
+            if (string.IsNullOrWhiteSpace(ActiveProfileFileName))
+                return;
 
-            // Проверяем, выбрана ли иконка
-            if (picIcon.Image == null)
-                return false;
+            mainForm.ActiveConfigObjectFile = ActiveProfileFileName;
+            mainForm.ReloadData(ActiveProfileFileName);
+            ApplyPendingReferenceReplacements();
+        }
 
-            // Проверяем корректность значений чисел в полях
-            if (!int.TryParse(txtLeftMargin.Text, out _) ||
-                !int.TryParse(txtRightMargin.Text, out _) ||
-                !int.TryParse(txtFilterLevel.Text, out _))
-                return false;
+        private void QueueReferenceReplacement(string oldName, string newName)
+        {
+            if (string.IsNullOrWhiteSpace(oldName) ||
+                string.IsNullOrWhiteSpace(newName) ||
+                string.Equals(oldName, newName, StringComparison.Ordinal))
+            {
+                return;
+            }
 
-            return true;
+            var existing = pendingReferenceReplacements
+                .FirstOrDefault(replacement =>
+                    string.Equals(replacement.NewName, oldName, StringComparison.Ordinal));
+
+            if (existing != null)
+            {
+                existing.NewName = newName;
+                return;
+            }
+
+            pendingReferenceReplacements.Add(new PendingReferenceReplacement(oldName, newName));
+        }
+
+        private void ApplyPendingReferenceReplacements()
+        {
+            foreach (var replacement in pendingReferenceReplacements)
+            {
+                mainForm.ReplaceCentralObjectReferences(replacement.OldName, replacement.NewName);
+            }
+
+            pendingReferenceReplacements.Clear();
+        }
+
+        private string CreateUniqueObjectName()
+        {
+            int index = objects.Count + 1;
+            string name;
+
+            do
+            {
+                name = $"Новый объект {index}";
+                index++;
+            }
+            while (objects.Any(obj => string.Equals(obj.Name, name, StringComparison.OrdinalIgnoreCase)));
+
+            return name;
+        }
+
+        private void UpdateProfileLabel()
+        {
+            if (string.IsNullOrWhiteSpace(ActiveProfileFileName))
+            {
+                profileLabel.Text = "Файл набора: не выбран";
+                Text = "Управление игровыми объектами";
+                return;
+            }
+
+            profileLabel.Text = $"Файл набора: {ActiveProfileFileName}";
+            Text = $"Управление игровыми объектами: {Path.GetFileName(ActiveProfileFileName)}";
+        }
+
+        private void SetStatus(string text, bool isError = false)
+        {
+            statusLabel.Text = text;
+            statusLabel.ForeColor = isError
+                ? Color.FromArgb(185, 28, 28)
+                : Color.FromArgb(75, 85, 99);
         }
 
         private void CheckAndUpdateDefaultFlag()
         {
-            string defaultConfigFilePath = GetDefaultConfigFromINI();
+            isUpdatingDefaultCheckbox = true;
 
-            bool isDefault = !string.IsNullOrEmpty(defaultConfigFilePath) &&
-                             Path.GetFullPath(ActiveProfileFileName).Equals(Path.GetFullPath(defaultConfigFilePath));
+            string defaultConfigFilePath = GetDefaultConfigFromINI();
+            bool isDefault =
+                !string.IsNullOrWhiteSpace(defaultConfigFilePath) &&
+                !string.IsNullOrWhiteSpace(ActiveProfileFileName) &&
+                string.Equals(
+                    Path.GetFullPath(ActiveProfileFileName),
+                    Path.GetFullPath(defaultConfigFilePath),
+                    StringComparison.OrdinalIgnoreCase);
 
             chkUseAsDefault.Checked = isDefault;
-            chkUseAsDefault.Enabled = !isDefault;
+            chkUseAsDefault.Enabled = !isDefault && !string.IsNullOrWhiteSpace(ActiveProfileFileName);
+
+            isUpdatingDefaultCheckbox = false;
         }
 
         private string GetDefaultConfigFromINI()
         {
-            string configIniPath = "Settings.ini";
+            string configIniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.ini");
             var parser = new FileIniDataParser();
-            IniData data;
 
-            if (File.Exists(configIniPath))
+            if (!File.Exists(configIniPath))
+                return "";
+
+            try
             {
-                data = parser.ReadFile(configIniPath);
-                if (data.Sections.ContainsSection("General") && data["General"].ContainsKey("DefaultConfigObjectFile"))
+                IniData data = parser.ReadFile(configIniPath);
+                if (data.Sections.ContainsSection("General") &&
+                    data["General"].ContainsKey("DefaultConfigObjectFile"))
                 {
                     return data["General"]["DefaultConfigObjectFile"];
                 }
+            }
+            catch
+            {
+                return "";
             }
 
             return "";
         }
 
-        private void ChkUseAsDefault_CheckedChanged(object sender, EventArgs e)
-        {
-            if (chkUseAsDefault.Checked)
-            {        // Когда чекбокс отмечен, фиксируем его значение
-                     chkUseAsDefault.Enabled = false;
-            }
-        }
-
-                private void ProfileIsSet(string profilefilename)
-        {
-            ActiveProfileFileName = profilefilename; // запоминаем активный профиль
-            btnApplyClose.Enabled = true;
-            this.Text = "Управление игровыми объектами: " + "   ..\\" +Path.GetFileName(profilefilename);
-        }
-
-        // Внутри класса ObjectManagementForm
-        private void BtnApplyClose_Click(object sender, EventArgs e)
-        {
-            // Проверяем наличие активного файла профилей
-            if (!string.IsNullOrEmpty(ActiveProfileFileName))
-            {
-                // Сохраняем активированный профиль в основную форму
-                mainForm.ActiveConfigObjectFile = ActiveProfileFileName;
-
-                // Перезагружаем данные в основном окне
-                mainForm.ReloadData(ActiveProfileFileName);
-
-                // Если установлен флажок "Использовать по умолчанию", обновляем файл настроек
-                if (chkUseAsDefault.Checked)
-                {
-                    // Обновляем значение DefaultConfigObjectFile в Settings.ini
-                    UpdateDefaultConfigFile(ActiveProfileFileName);
-                }
-            }
-
-            // Деактивируем кнопку после применения изменений
-            btnApplyClose.Enabled = false;
-
-            // Закрываем форму
-            Close();
-        }
-
-        // Внутри класса ObjectManagementForm
         private void UpdateDefaultConfigFile(string newValue)
         {
-            string configIniPath = "Settings.ini";
-
-            // Создаем объект парсера для работы с INI-файлом
+            string configIniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.ini");
             var parser = new FileIniDataParser();
-
-            // Чтение данных из файла, если он существует
             IniData iniData;
+
             if (File.Exists(configIniPath))
             {
                 try
                 {
                     iniData = parser.ReadFile(configIniPath);
                 }
-                catch (Exception)
+                catch
                 {
-                    // Если файл поврежден, очищаем его и начинаем с нуля
                     iniData = new IniData();
                 }
             }
             else
             {
-                // Если файла нет, создаем новый
                 iniData = new IniData();
             }
 
-            // Проверяем наличие секции General и требуемого ключа
             if (!iniData.Sections.ContainsSection("General"))
-            {
                 iniData.Sections.AddSection("General");
-            }
 
-            // Установка значения по умолчанию
             iniData["General"]["DefaultConfigObjectFile"] = newValue;
-
-            // Записываем обновленную версию файла
             parser.WriteFile(configIniPath, iniData);
         }
 
-
-        private void RefreshListView()
+        private DialogResult ShowWarningDialog()
         {
-            listViewObjects.Items.Clear();
-            iconList.Images.Clear();
-
-            foreach (var obj in objects)
-            {
-                if (obj.Icon != null)
-                {
-                    // Добавляем иконку в ImageList
-                    iconList.Images.Add(obj.Icon);
-
-                    // Получаем индекс вручную (последняя добавленная иконка)
-                    int iconIndex = iconList.Images.Count - 1;
-
-                    // Создаем элемент ListView с иконкой
-                    ListViewItem item = new ListViewItem(obj.Name, iconIndex);
-                    listViewObjects.Items.Add(item);
-                }
-                else
-                {
-                    // Без иконки
-                    listViewObjects.Items.Add(new ListViewItem(obj.Name));
-                }
-            }
+            return MessageBox.Show(
+                "ВНИМАНИЕ! Вы пытаетесь открыть набор объектов от автора.\nЭтот набор содержит объекты, являющиеся спойлерами для игрового сюжета и прохождения!\n\nДействительно ли вы хотите открыть его?",
+                "Предупреждение",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
         }
 
-        #endregion
-
-        #region Обработчики событий
-
-        private void Control_Leave(object sender, EventArgs e)
+        private void AutoSaveTimer_Tick(object sender, EventArgs e)
         {
-            // Сбрасываем текущий активный элемент
-            currentFocusedControl = null;
+            SaveAndApplyNow("Сохранено и применено.");
         }
 
-        private void Control_FocusEnter(object sender, EventArgs e)
+        private void ObjectManagementForm_FormClosing(object sender, FormClosingEventArgs e)
         {
-            currentFocusedControl = (Control)sender;
-            if (listViewObjects.SelectedIndices.Count > 0)
-            {
-                currentlySelectedlistViewItemIndex = listViewObjects.SelectedIndices.Count > 0 ? listViewObjects.SelectedIndices[0] : -1;
-                if (currentlySelectedlistViewItemIndex == -1) btnDelete.Enabled = false; else btnDelete.Enabled = true;
-            }
+            if (hasPendingSave)
+                SaveAndApplyNow("Сохранено и применено.");
         }
 
-            private void btnAdd_Click(object sender, EventArgs e)
+        private void BtnNew_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrEmpty(txtName.Text.Trim()))
-            {
-                MessageBox.Show("Необходимо ввести название объекта.", "Ошибка");
-                return;
-            }
-
-            // Преобразуем введённые пользователем значения
-            int leftMargin = 0;
-            int rightMargin = 0;
-            int filterLevel = 0;
-
-            if (!int.TryParse(txtLeftMargin.Text, out leftMargin))
-                leftMargin = 7; // Использовать начальное значение, если ввод неверен
-
-            if (!int.TryParse(txtRightMargin.Text, out rightMargin))
-                rightMargin = 7; // Аналогично для правого отступа
-
-            if (!int.TryParse(txtFilterLevel.Text, out filterLevel))
-                filterLevel = 100; // Значение по умолчанию для фильтра
-
-            // Создаём новый объект с полной информацией
             var newObject = new CentralObject
             {
-                Name = txtName.Text.Trim(),
-                Icon = picIcon.Image,
-                LeftMargin = leftMargin,
-                RightMargin = rightMargin,
-                FilterLevel = filterLevel
+                Name = CreateUniqueObjectName(),
+                LeftMargin = 7,
+                RightMargin = 7,
+                FilterLevel = 100
             };
 
-            // Добавляем объект в коллекцию
             objects.Add(newObject);
-
-            // Обновляем представление
-            RefreshListView();
-
-            btnDelete.Enabled = false; 
+            RefreshListView(newObject);
+            SaveAndApplyNow("Новый объект добавлен и применен.");
+            txtName.Focus();
+            txtName.SelectAll();
         }
 
-        private void btnEdit_Click(object sender, EventArgs e)
+        private void BtnDelete_Click(object sender, EventArgs e)
         {
+            if (selectedObject == null)
+                return;
 
-            // Берём отправителя события (текущее изменённое поле)
-            var changedControl = (Control)sender;
+            string deletedName = selectedObject.Name ?? "";
+            DialogResult result = MessageBox.Show(
+                $"Удалить объект \"{deletedName}\"?\nКлетки карты с этим объектом будут переведены в \"{FallbackObjectName}\".",
+                "Удаление объекта",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
 
-            // Проверяем, соответствует ли текущее активное поле изменению
-            if (iconChangeInProgress || currentFocusedControl == changedControl)
-            { 
-                if (currentlySelectedlistViewItemIndex > 0)
+            if (result != DialogResult.Yes)
+                return;
+
+            int selectedIndex = objects.IndexOf(selectedObject);
+            objects.Remove(selectedObject);
+            QueueReferenceReplacement(deletedName, FallbackObjectName);
+
+            CentralObject nextSelection = null;
+            if (objects.Count > 0)
+                nextSelection = objects[Math.Min(selectedIndex, objects.Count - 1)];
+
+            RefreshListView(nextSelection);
+            SaveAndApplyNow("Объект удален и изменения применены.");
+        }
+
+        private void BtnChooseIcon_Click(object sender, EventArgs e)
+        {
+            if (selectedObject == null)
+                return;
+
+            using (var openFileDialog = new OpenFileDialog())
+            {
+                openFileDialog.Filter = "Изображения (*.png; *.jpg; *.bmp)|*.png;*.jpg;*.bmp";
+                if (openFileDialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                try
                 {
-                    var selectedObject = objects[currentlySelectedlistViewItemIndex];
-
-                    if (selectedObject != null)
+                    using (var sourceImage = Image.FromFile(openFileDialog.FileName))
                     {
-                        // Проверяем наличие данных в полях
-                        if (!string.IsNullOrEmpty(txtName.Text.Trim()))
-                        {
-                            // Меняем свойства объекта
-                            selectedObject.Name = txtName.Text.Trim();
-                            selectedObject.Icon = picIcon.Image;
-
-                            // Дополнительно обновляем численные значения
-                            if (int.TryParse(txtLeftMargin.Text, out int left))
-                                selectedObject.LeftMargin = left;
-                            if (int.TryParse(txtRightMargin.Text, out int right))
-                                selectedObject.RightMargin = right;
-                            if (int.TryParse(txtFilterLevel.Text, out int filter))
-                                selectedObject.FilterLevel = filter;
-
-                            // Обновляем отображение
-                            RefreshListView();
-                        }
+                        selectedObject.Icon = new Bitmap(sourceImage);
                     }
+
+                    picIcon.Image = selectedObject.Icon;
+                    RefreshListView(selectedObject);
+                    SaveAndApplyNow("Иконка обновлена и применена.");
                 }
-            }
-            btnAdd.Enabled = IsValidForAdding();
-        }
-
-        private void btnDelete_Click(object sender, EventArgs e)
-        {
-            if (currentlySelectedlistViewItemIndex >= 0)
-            {
-                var selectedObject = objects[currentlySelectedlistViewItemIndex];
-                objects.Remove(selectedObject);
-                RefreshListView();
-                currentlySelectedlistViewItemIndex = -1;
-                btnDelete.Enabled = false; 
-            }
-        }
-
-        private void btnExport_Click(object sender, EventArgs e)
-        {
-            using (var saveFileDialog = new SaveFileDialog())
-            {
-                saveFileDialog.Filter = "JSON файлы (*.json)|*.json";
-                if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                catch (Exception ex)
                 {
-                    try
-                    {
-                        // Сохраняем объекты в файл
-                        DataManager.SaveObjects(objects, saveFileDialog.FileName);
-                        MessageBox.Show("Данные успешно экспортированы!", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                        ProfileIsSet(saveFileDialog.FileName);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Ошибка при экспорте: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
+                    SetStatus($"Ошибка загрузки иконки: {ex.Message}", true);
                 }
             }
         }
 
-        private void btnImport_Click(object sender, EventArgs e)
+        private void BtnClearIcon_Click(object sender, EventArgs e)
+        {
+            if (selectedObject == null)
+                return;
+
+            selectedObject.Icon = null;
+            picIcon.Image = null;
+            RefreshListView(selectedObject);
+            SaveAndApplyNow("Иконка очищена и изменения применены.");
+        }
+
+        private void BtnLoadProfile_Click(object sender, EventArgs e)
         {
             using (var openFileDialog = new OpenFileDialog())
             {
                 openFileDialog.Filter = "JSON файлы (*.json)|*.json";
-                if (openFileDialog.ShowDialog() == DialogResult.OK)
+                openFileDialog.InitialDirectory = Directory.Exists(Path.GetDirectoryName(ActiveProfileFileName))
+                    ? Path.GetDirectoryName(ActiveProfileFileName)
+                    : AppDomain.CurrentDomain.BaseDirectory;
+
+                if (openFileDialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                if (Path.GetFileName(openFileDialog.FileName).Equals("Author.json", StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        showWarningOnImport = true; // Поднимаем флаг перед началом импортирования
-                        LoadObjectsData(openFileDialog.FileName);
-                        showWarningOnImport = false; // Сбрасываем флаг после успешного завершения
-                        CheckAndUpdateDefaultFlag(); // проверка флага после загрузки файла с набором объектов
-                        currentlySelectedlistViewItemIndex = -1;
-                        btnDelete.Enabled = false;
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show($"Ошибка при импорте: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
+                    showWarningOnImport = true;
                 }
+
+                if (showWarningOnImport && ShowWarningDialog() != DialogResult.Yes)
+                {
+                    showWarningOnImport = false;
+                    return;
+                }
+
+                showWarningOnImport = false;
+                LoadObjectsFromProfile(openFileDialog.FileName);
+                ApplyCurrentProfileToMain();
+                CheckAndUpdateDefaultFlag();
+                SetStatus("Набор объектов загружен и применен.");
             }
         }
 
-        private void btnChooseIcon_Click(object sender, EventArgs e)
+        private void BtnSaveProfileAs_Click(object sender, EventArgs e)
         {
-            using (var ofd = new OpenFileDialog())
+            using (var saveFileDialog = new SaveFileDialog())
             {
-                ofd.Filter = "Изображения (*.png; *.jpg; *.bmp)|*.png;*.jpg;*.bmp";
-                if (ofd.ShowDialog() == DialogResult.OK)
-                {
-                    picIcon.Image = Image.FromFile(ofd.FileName);
-                   
-                    iconChangeInProgress = true;  // Включаем флаг, означающий смену иконки
-                    btnEdit_Click(sender, EventArgs.Empty);
-                    iconChangeInProgress = false; // Сразу сбрасываем флаг обратно
-                }
+                saveFileDialog.Filter = "JSON файлы (*.json)|*.json";
+                saveFileDialog.FileName = string.IsNullOrWhiteSpace(ActiveProfileFileName)
+                    ? "objects.json"
+                    : Path.GetFileName(ActiveProfileFileName);
+                saveFileDialog.InitialDirectory = Directory.Exists(Path.GetDirectoryName(ActiveProfileFileName))
+                    ? Path.GetDirectoryName(ActiveProfileFileName)
+                    : AppDomain.CurrentDomain.BaseDirectory;
+
+                if (saveFileDialog.ShowDialog() != DialogResult.OK)
+                    return;
+
+                ActiveProfileFileName = Path.GetFullPath(saveFileDialog.FileName);
+                SaveAndApplyNow("Набор сохранен и применен.");
             }
         }
 
-        private void btnConfirmChanges_Click(object sender, EventArgs e)
+        private void BtnShowPath_Click(object sender, EventArgs e)
         {
-            if (string.IsNullOrEmpty(txtName.Text.Trim()))
+            if (!string.IsNullOrWhiteSpace(ActiveProfileFileName))
+                MessageBox.Show(ActiveProfileFileName, "Полный путь к файлу");
+        }
+
+        private void BtnClose_Click(object sender, EventArgs e)
+        {
+            Close();
+        }
+
+        private void ChkUseAsDefault_CheckedChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingDefaultCheckbox || !chkUseAsDefault.Checked)
+                return;
+
+            try
             {
-                MessageBox.Show("Необходимо ввести название объекта.");
+                UpdateDefaultConfigFile(ActiveProfileFileName);
+                CheckAndUpdateDefaultFlag();
+                SetStatus("Набор объектов назначен по умолчанию.");
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"Ошибка сохранения настройки по умолчанию: {ex.Message}", true);
+            }
+        }
+
+        private void TxtName_TextChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingControls || selectedObject == null)
+                return;
+
+            string newName = txtName.Text.Trim();
+            if (!TryValidateObjectName(newName, out string message))
+            {
+                validationLabel.Text = message;
+                txtName.BackColor = Color.FromArgb(254, 242, 242);
                 return;
             }
 
-            // Проверяем, редактируем или добавляем объект
-            CentralObject selectedObject = null;
-            if (listViewObjects.SelectedItems.Count > 0)
-            {
-                selectedObject = objects.FirstOrDefault(o => o.Name == listViewObjects.SelectedItems[0].Text);
-            }
+            txtName.BackColor = Color.White;
+            validationLabel.Text = "";
 
-            if (selectedObject != null)
-            {
-                // Редактируем существующий объект
-                selectedObject.Name = txtName.Text.Trim();
-                selectedObject.Icon = picIcon.Image;
-            }
-            else
-            {
-                // Добавляем новый объект
-                var newObject = new CentralObject
-                {
-                    Name = txtName.Text.Trim(),
-                    Icon = picIcon.Image
-                };
-                objects.Add(newObject);
-            }
+            string oldName = selectedObject.Name ?? "";
+            if (string.Equals(oldName, newName, StringComparison.Ordinal))
+                return;
 
-            // Обновляем отображение
-            RefreshListView();
-
-            btnDelete.Enabled = false; 
+            selectedObject.Name = newName;
+            QueueReferenceReplacement(oldName, newName);
+            UpdateSelectedListItem();
+            ScheduleSaveAndApply("Название обновляется...");
         }
 
-        private void listViewObjects_SelectedIndexChanged(object sender, EventArgs e)
+        private void NumericField_ValueChanged(object sender, EventArgs e)
         {
-            if (listViewObjects.SelectedItems.Count > 0)
-            {
-                var selectedObject = objects.FirstOrDefault(o => o.Name == listViewObjects.SelectedItems[0].Text);
-                if (selectedObject != null)
-                {
-                    // Заполняем текстовое поле названием объекта
-                    txtName.Text = selectedObject.Name;
+            if (isUpdatingControls || selectedObject == null)
+                return;
 
-                    // Отображаем картинку объекта
-                    picIcon.Image = selectedObject.Icon;
-
-                    // Дополнительно заполним поля с параметрами объекта
-                    txtLeftMargin.Text = selectedObject.LeftMargin.ToString();
-                    txtRightMargin.Text = selectedObject.RightMargin.ToString();
-                    txtFilterLevel.Text = selectedObject.FilterLevel.ToString();
-                }
-            }
+            selectedObject.LeftMargin = (int)nudLeftMargin.Value;
+            selectedObject.RightMargin = (int)nudRightMargin.Value;
+            selectedObject.FilterLevel = (int)nudFilterLevel.Value;
+            UpdateSelectedListItem();
+            ScheduleSaveAndApply("Параметры объекта обновляются...");
         }
 
-        private void listViewObjects_ItemDrag(object sender, ItemDragEventArgs e)
+        private void ListViewObjects_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (isUpdatingControls)
+                return;
+
+            if (listViewObjects.SelectedItems.Count == 0)
+            {
+                SelectObject(null);
+                return;
+            }
+
+            SelectObject((CentralObject)listViewObjects.SelectedItems[0].Tag);
+        }
+
+        private void ListViewObjects_ItemDrag(object sender, ItemDragEventArgs e)
         {
             DoDragDrop(e.Item, DragDropEffects.Move);
         }
 
-        private void listViewObjects_DragEnter(object sender, DragEventArgs e)
+        private void ListViewObjects_DragEnter(object sender, DragEventArgs e)
         {
-            if (e.Data.GetDataPresent(typeof(ListViewItem)))
-            {
-                e.Effect = DragDropEffects.Move;
-            }
-            else
-            {
-                e.Effect = DragDropEffects.None;
-            }
+            e.Effect = e.Data.GetDataPresent(typeof(ListViewItem))
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
         }
 
-        private void listViewObjects_DragOver(object sender, DragEventArgs e)
+        private void ListViewObjects_DragOver(object sender, DragEventArgs e)
         {
             Point clientPoint = listViewObjects.PointToClient(new Point(e.X, e.Y));
             ListViewItem targetItem = listViewObjects.GetItemAt(clientPoint.X, clientPoint.Y);
 
-            if (targetItem != null)
-            {
-                // Устанавливаем индикатор вставки перед целью
-                listViewObjects.SelectedIndices.Clear();
-                targetItem.Selected = true;
-            }
+            if (targetItem == null)
+                return;
+
+            listViewObjects.SelectedIndices.Clear();
+            targetItem.Selected = true;
         }
 
-        private void listViewObjects_DragDrop(object sender, DragEventArgs e)
+        private void ListViewObjects_DragDrop(object sender, DragEventArgs e)
         {
             Point clientPoint = listViewObjects.PointToClient(new Point(e.X, e.Y));
             ListViewItem targetItem = listViewObjects.GetItemAt(clientPoint.X, clientPoint.Y);
 
-            if (targetItem != null)
-            {
-                // Перемещаем объект в нужное место
-                int oldIndex = ((ListViewItem)e.Data.GetData(typeof(ListViewItem))).Index;
-                int newIndex = targetItem.Index;
+            if (targetItem == null)
+                return;
 
-                // Обновляем порядок в списке
-                ListViewItem draggedItem = listViewObjects.Items[oldIndex];
-                listViewObjects.Items.Remove(draggedItem);
-                listViewObjects.Items.Insert(newIndex, draggedItem);
+            var draggedItem = (ListViewItem)e.Data.GetData(typeof(ListViewItem));
+            int oldIndex = draggedItem.Index;
+            int newIndex = targetItem.Index;
 
-                // Переупорядочиваем внутренний список объектов
-                ReorderInternalCollection(oldIndex, newIndex);
-            }
-        }
+            if (oldIndex == newIndex)
+                return;
 
-        // Метод переупорядочивания внутреннего списка объектов
-        private void ReorderInternalCollection(int oldIndex, int newIndex)
-        {
-            CentralObject movedObj = objects[oldIndex];
+            CentralObject movedObject = objects[oldIndex];
             objects.RemoveAt(oldIndex);
-            objects.Insert(newIndex, movedObj);
+            objects.Insert(newIndex, movedObject);
+
+            RefreshListView(movedObject);
+            SaveAndApplyNow("Порядок объектов обновлен и применен.");
         }
 
+        private sealed class PendingReferenceReplacement
+        {
+            public PendingReferenceReplacement(string oldName, string newName)
+            {
+                OldName = oldName;
+                NewName = newName;
+            }
 
-        #endregion
+            public string OldName { get; }
+            public string NewName { get; set; }
+        }
     }
 }
-
