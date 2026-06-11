@@ -22,6 +22,8 @@ namespace MMMapEditor
 {
     internal static class OvrOverlayAddressReader
     {
+        public const int MaxDecodedTextLength = 1000;
+
         private const ushort KnownResidentDataTextAddress = 0x1296;
         private const ushort KnownResidentDataValidationAddress = 0x12D1;
         private static readonly byte[] KnownResidentDataTextAnchor =
@@ -135,11 +137,15 @@ namespace MMMapEditor
                 br.BaseStream.Position = fileOffset;
 
                 var bytes = new List<byte>();
-                byte b;
-                int maxLength = 250;
+                while (br.BaseStream.Position < br.BaseStream.Length &&
+                       bytes.Count < MaxDecodedTextLength)
+                {
+                    byte b = br.ReadByte();
+                    if (b == 0)
+                        break;
 
-                while ((b = br.ReadByte()) != 0 && bytes.Count < maxLength)
                     bytes.Add(b);
+                }
 
                 br.BaseStream.Position = originalPos;
 
@@ -190,8 +196,7 @@ namespace MMMapEditor
                 return false;
 
             var bytes = new List<byte>();
-            const int maxLength = 1000;
-            for (long pos = fileOffset; pos < image.Data.Length && bytes.Count < maxLength; pos++)
+            for (long pos = fileOffset; pos < image.Data.Length && bytes.Count < MaxDecodedTextLength; pos++)
             {
                 byte value = image.Data[pos];
                 if (value == 0)

@@ -181,9 +181,8 @@ namespace MMMapEditor
             try
             {
                 br.BaseStream.Position = fileOffset;
-                const int maxLength = 250;
-
-                while (br.BaseStream.Position < br.BaseStream.Length && bytes.Count < maxLength)
+                while (br.BaseStream.Position < br.BaseStream.Length &&
+                       bytes.Count < OvrOverlayAddressReader.MaxDecodedTextLength)
                 {
                     byte value = br.ReadByte();
                     if (value == 0)
