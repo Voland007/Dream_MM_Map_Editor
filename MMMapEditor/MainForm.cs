@@ -290,7 +290,7 @@ namespace MMMapEditor
             _objectsData.Clear();
             LoadObjectsData(configCentralObjectFile);  // Новая загрузка данных объектов
             LoadNamesFromJson(); // Заполняем выпадающий список объектов из файла
-            InvalidateGridButtons();
+            RefreshMapImages();
         }
 
         public void ReplaceCentralObjectReferences(string oldName, string newName)
@@ -321,8 +321,7 @@ namespace MMMapEditor
                 UpdateCenterComboBoxForCell(centralOption);
             }
 
-            InvalidateGridButtons();
-            UpdatePreview();
+            RefreshMapImages();
             isMapModified = true;
         }
 
@@ -332,6 +331,12 @@ namespace MMMapEditor
             {
                 button.Invalidate(); // вызываем перерисовку для каждой кнопки
             }
+        }
+
+        private void RefreshMapImages()
+        {
+            InvalidateGridButtons();
+            UpdatePreview();
         }
 
         // Метод для загрузки данных из JSON
@@ -635,12 +640,7 @@ namespace MMMapEditor
 
             InitializeAllCells();
             ResetForm();
-            UpdatePreview();
-
-            foreach (var button in gridButtons)
-            {
-                button.Invalidate();
-            }
+            RefreshMapImages();
 
             this.Text = "Редактор моей мечты";
             isMapModified = false;
@@ -1389,10 +1389,7 @@ namespace MMMapEditor
                 $"Телепорт (заклинание 5-5): {(loadResult.IsTeleportSpellAllowed ? "разрешён" : "запрещён")}";
 
             // Перерисовываем интерфейс
-            foreach (var button in gridButtons)
-            {
-                button.Invalidate();
-            }
+            RefreshMapImages();
 
             // Выводим сообщение в всплывающем окне
             MessageBox.Show(
@@ -1668,8 +1665,7 @@ namespace MMMapEditor
                 noteStyleSpansPerCell = buildResult.NoteStyleSpansPerCell ?? new Dictionary<Point, List<NoteInlineStyleSpan>>();
                 messageStates = buildResult.MessageStates;
 
-                foreach (var button in gridButtons)
-                    button.Invalidate();
+                RefreshMapImages();
 
                 if (selectedPosition.HasValue)
                     UpdateNotesFormatting();
@@ -4489,8 +4485,7 @@ namespace MMMapEditor
                     showDangerousWaterCells = form.ShowDangerousWaterCells;
                     showDangerousDesertCells = form.ShowDangerousDesertCells;
                     showDangerousSwampCells = form.ShowDangerousSwampCells;
-                    InvalidateGridButtons();
-                    UpdatePreview();
+                    RefreshMapImages();
                 }
             }
         }
@@ -4824,10 +4819,7 @@ namespace MMMapEditor
 
 
             // Обновляем визуализацию формы
-            foreach (var button in gridButtons)
-            {
-                button.Invalidate();
-            }
+            RefreshMapImages();
 
             // Показываем уведомление о выполнении загрузки
             //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -7414,23 +7406,36 @@ namespace MMMapEditor
 
         private void UpdatePreview()
         {
+            if (magnifierPictureBox == null)
+                return;
+
+            Image previousImage = magnifierPictureBox.Image;
+
             if (!selectedPosition.HasValue)
             {
                 magnifierPictureBox.Image = null;
+                previousImage?.Dispose();
                 return;
             }
 
             Point pos = selectedPosition.Value;
 
             // Готовим временный битмап для предварительного просмотра
-            Bitmap tempBitmap = new Bitmap(CellSize, CellSize);
-            using (Graphics g = Graphics.FromImage(tempBitmap))
+            Image previewImage;
+            using (Bitmap tempBitmap = new Bitmap(CellSize, CellSize))
             {
-                PrepareCellImage(pos, g, new Rectangle(0, 0, CellSize, CellSize));
+                using (Graphics g = Graphics.FromImage(tempBitmap))
+                {
+                    PrepareCellImage(pos, g, new Rectangle(0, 0, CellSize, CellSize));
+                }
+
+                // Масштабируем изображение для увеличения
+                previewImage = ScaleImage(tempBitmap, magnifierPictureBox.ClientSize.Width, magnifierPictureBox.ClientSize.Height);
             }
 
-            // Масштабируем изображение для увеличения
-            magnifierPictureBox.Image = ScaleImage(tempBitmap, magnifierPictureBox.ClientSize.Width, magnifierPictureBox.ClientSize.Height);
+            magnifierPictureBox.Image = previewImage;
+            previousImage?.Dispose();
+            magnifierPictureBox.Invalidate();
         }
 
         private Image ScaleImage(Image image, int maxWidth, int maxHeight)
