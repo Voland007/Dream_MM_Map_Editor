@@ -19,8 +19,6 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
-using IniParser;
-using IniParser.Model;
 
 namespace MMMapEditor
 {
@@ -72,6 +70,7 @@ namespace MMMapEditor
 
             BuildInterface();
             LoadObjectsFromProfile(ActiveProfileFileName);
+            ApplyLoadedProfileToMainIfAvailable();
             CheckAndUpdateDefaultFlag();
         }
 
@@ -559,11 +558,16 @@ namespace MMMapEditor
 
         private string ResolveInitialProfilePath(string activeConfigFile)
         {
-            if (!string.IsNullOrWhiteSpace(activeConfigFile) && File.Exists(activeConfigFile))
-                return Path.GetFullPath(activeConfigFile);
+            string activeProfilePath = ObjectProfileSettings.ResolveProfilePath(activeConfigFile);
+            if (!string.IsNullOrWhiteSpace(activeProfilePath) && File.Exists(activeProfilePath))
+                return activeProfilePath;
 
-            string localObjectsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "objects.json");
-            return Path.GetFullPath(localObjectsPath);
+            string defaultProfilePath = ObjectProfileSettings.ResolveDefaultProfilePath(
+                initializeFromLocalObjects: true);
+            if (!string.IsNullOrWhiteSpace(defaultProfilePath))
+                return defaultProfilePath;
+
+            return ObjectProfileSettings.LocalDefaultProfilePath;
         }
 
         private void LoadObjectsFromProfile(string profilePath)
@@ -799,6 +803,15 @@ namespace MMMapEditor
             ApplyPendingReferenceReplacements();
         }
 
+        private void ApplyLoadedProfileToMainIfAvailable()
+        {
+            if (!string.IsNullOrWhiteSpace(ActiveProfileFileName) &&
+                File.Exists(ActiveProfileFileName))
+            {
+                ApplyCurrentProfileToMain();
+            }
+        }
+
         private void QueueReferenceReplacement(string oldName, string newName)
         {
             if (string.IsNullOrWhiteSpace(oldName) ||
@@ -888,56 +901,12 @@ namespace MMMapEditor
 
         private string GetDefaultConfigFromINI()
         {
-            string configIniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.ini");
-            var parser = new FileIniDataParser();
-
-            if (!File.Exists(configIniPath))
-                return "";
-
-            try
-            {
-                IniData data = parser.ReadFile(configIniPath);
-                if (data.Sections.ContainsSection("General") &&
-                    data["General"].ContainsKey("DefaultConfigObjectFile"))
-                {
-                    return data["General"]["DefaultConfigObjectFile"];
-                }
-            }
-            catch
-            {
-                return "";
-            }
-
-            return "";
+            return ObjectProfileSettings.GetConfiguredDefaultProfilePath();
         }
 
         private void UpdateDefaultConfigFile(string newValue)
         {
-            string configIniPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Settings.ini");
-            var parser = new FileIniDataParser();
-            IniData iniData;
-
-            if (File.Exists(configIniPath))
-            {
-                try
-                {
-                    iniData = parser.ReadFile(configIniPath);
-                }
-                catch
-                {
-                    iniData = new IniData();
-                }
-            }
-            else
-            {
-                iniData = new IniData();
-            }
-
-            if (!iniData.Sections.ContainsSection("General"))
-                iniData.Sections.AddSection("General");
-
-            iniData["General"]["DefaultConfigObjectFile"] = newValue;
-            parser.WriteFile(configIniPath, iniData);
+            ObjectProfileSettings.WriteDefaultProfilePath(newValue);
         }
 
         private DialogResult ShowWarningDialog()

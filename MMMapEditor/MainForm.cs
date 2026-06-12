@@ -177,15 +177,17 @@ namespace MMMapEditor
             showDangerousDesertCells = GetBooleanSetting("DisplaySettings", "ShowDangerousDesertCells", true);
             showDangerousSwampCells = GetBooleanSetting("DisplaySettings", "ShowDangerousSwampCells", true);
 
-            // Читаем файл по умолчанию из INI
-            string defaultConfigObjectFile = GetSetting("General", "DefaultConfigObjectFile");
+            // Читаем файл по умолчанию из INI; при первом запуске закрепляем локальный objects.json.
+            string defaultConfigObjectFile = ObjectProfileSettings.ResolveDefaultProfilePath(
+                initializeFromLocalObjects: true);
+
             if (!string.IsNullOrEmpty(defaultConfigObjectFile))
             {
                 // Проверяем существование файла
                 if (File.Exists(defaultConfigObjectFile))
                 {
-                    ActiveConfigObjectFile = defaultConfigObjectFile;
-                    ReloadData(defaultConfigObjectFile); // Загружаем файл
+                    ActiveConfigObjectFile = Path.GetFullPath(defaultConfigObjectFile);
+                    ReloadData(ActiveConfigObjectFile); // Загружаем файл
                 }
                 else
                 {
@@ -221,8 +223,10 @@ namespace MMMapEditor
         {
             try
             {
+                string settingsPath = ObjectProfileSettings.SettingsFilePath;
+
                 // Проверяем, существует ли файл
-                if (!File.Exists("Settings.ini"))
+                if (!File.Exists(settingsPath))
                 {
                     // Если файл не найден, сразу возвращаем fallbackValue
                     return fallbackValue;
@@ -230,13 +234,16 @@ namespace MMMapEditor
 
                 // Парсим файл INI
                 var parser = new FileIniDataParser();
-                var iniFile = parser.ReadFile("Settings.ini");
+                var iniFile = parser.ReadFile(settingsPath);
 
                 // Секция настроек направлений
                 if (section == "CustomDirections")
                 {
                     string translatedKey = TranslateKey(key);
-                    string customValue = iniFile[section][translatedKey];
+                    string customValue = iniFile.Sections.ContainsSection(section) &&
+                        iniFile[section].ContainsKey(translatedKey)
+                            ? iniFile[section][translatedKey]
+                            : "";
 
                     // Возвращаем кастомизированное значение, если оно есть
                     if (!string.IsNullOrWhiteSpace(customValue))
@@ -246,7 +253,13 @@ namespace MMMapEditor
                 }
 
                 // Извлекаем значение по заданному ключу
-                return iniFile[section][key];
+                if (iniFile.Sections.ContainsSection(section) &&
+                    iniFile[section].ContainsKey(key))
+                {
+                    return iniFile[section][key];
+                }
+
+                return fallbackValue;
             }
             catch (Exception ex)
             {
