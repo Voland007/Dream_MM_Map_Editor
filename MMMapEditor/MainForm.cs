@@ -365,7 +365,7 @@ namespace MMMapEditor
             _objectsData["Пустота"] = new JObject(
                 new JProperty("Name", "Пустота"),
                 new JProperty("LeftMargin", 0),
-                new JProperty("RightMargin", 0),
+                new JProperty("UpMargin", 0),
                 new JProperty("FilterLevel", 0),
                 new JProperty("IconBase64", ""),
                 new JProperty("BodyPixels", new JArray())
@@ -374,12 +374,21 @@ namespace MMMapEditor
             _objectsData["Не исследовано"] = new JObject(
                 new JProperty("Name", "Не исследовано"),
                 new JProperty("LeftMargin", 0),
-                new JProperty("RightMargin", 0),
+                new JProperty("UpMargin", 0),
                 new JProperty("FilterLevel", 0),
                 new JProperty("IconBase64", ""),
                 new JProperty("BodyPixels", new JArray())
             );
 
+        }
+
+        private static int ReadObjectInt(JObject obj, string propertyName, string? legacyPropertyName = null)
+        {
+            JToken token = obj[propertyName];
+            if (token == null && !string.IsNullOrWhiteSpace(legacyPropertyName))
+                token = obj[legacyPropertyName];
+
+            return token?.ToObject<int>() ?? 0;
         }
 
         private void LoadNamesFromJson()
@@ -7245,9 +7254,9 @@ namespace MMMapEditor
                 }
                 else if (_objectsData.TryGetValue(centralOption, out JObject obj))
                 {
-                    int leftMargin = obj["LeftMargin"].ToObject<int>();
-                    int rightMargin = obj["RightMargin"].ToObject<int>();
-                    int brightnessLimit = obj["FilterLevel"].ToObject<int>();
+                    int leftMargin = ReadObjectInt(obj, "LeftMargin");
+                    int upMargin = ReadObjectInt(obj, "UpMargin", "RightMargin");
+                    int brightnessLimit = ReadObjectInt(obj, "FilterLevel");
 
                     // Получаем изображение из IconBase64
                     string iconBase64 = obj["IconBase64"]?.ToString() ?? "";
@@ -7274,7 +7283,7 @@ namespace MMMapEditor
 
                             // Передаем параметры в DrawCentralCell
 
-                            DrawCentralCell(g, bounds, leftMargin, rightMargin, brightnessLimit, bodyPixels);
+                            DrawCentralCell(g, bounds, leftMargin, upMargin, brightnessLimit, bodyPixels);
                         }
                     }
                 }

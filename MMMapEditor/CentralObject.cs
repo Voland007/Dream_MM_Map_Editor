@@ -28,8 +28,32 @@ namespace MMMapEditor
     {
         public string Name { get; set; }
         public int LeftMargin { get; set; }
-        public int RightMargin { get; set; }
+        public int UpMargin
+        {
+            get => _upMargin;
+            set
+            {
+                _upMargin = value;
+                _hasUpMargin = true;
+            }
+        }
         public int FilterLevel { get; set; }
+
+        [JsonIgnore]
+        private int _upMargin;
+
+        [JsonIgnore]
+        private bool _hasUpMargin;
+
+        [JsonProperty("RightMargin")]
+        private int LegacyRightMargin
+        {
+            set
+            {
+                if (!_hasUpMargin)
+                    _upMargin = value;
+            }
+        }
 
         // Поле для хранения изображения в виде Base64 строки
         [JsonProperty]
@@ -69,4 +93,4 @@ namespace MMMapEditor
             }
         }
     }
-}
+}

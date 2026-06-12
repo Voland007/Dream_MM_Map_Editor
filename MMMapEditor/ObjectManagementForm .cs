@@ -37,7 +37,7 @@ namespace MMMapEditor
         private ListView listViewObjects;
         private TextBox txtName;
         private NumericUpDown nudLeftMargin;
-        private NumericUpDown nudRightMargin;
+        private NumericUpDown nudUpMargin;
         private NumericUpDown nudFilterLevel;
         private PictureBox picIcon;
         private Button btnNew;
@@ -288,8 +288,8 @@ namespace MMMapEditor
             nudLeftMargin = CreateNumberBox();
             nudLeftMargin.ValueChanged += NumericField_ValueChanged;
 
-            nudRightMargin = CreateNumberBox();
-            nudRightMargin.ValueChanged += NumericField_ValueChanged;
+            nudUpMargin = CreateNumberBox();
+            nudUpMargin.ValueChanged += NumericField_ValueChanged;
 
             nudFilterLevel = CreateNumberBox();
             nudFilterLevel.Maximum = 1000;
@@ -346,8 +346,8 @@ namespace MMMapEditor
 
             numericLayout.Controls.Add(CreateFieldLabel("Отступ слева"), 0, 0);
             numericLayout.Controls.Add(nudLeftMargin, 1, 0);
-            numericLayout.Controls.Add(CreateFieldLabel("Отступ справа"), 0, 1);
-            numericLayout.Controls.Add(nudRightMargin, 1, 1);
+            numericLayout.Controls.Add(CreateFieldLabel("Отступ сверху"), 0, 1);
+            numericLayout.Controls.Add(nudUpMargin, 1, 1);
             numericLayout.Controls.Add(CreateFieldLabel("Порог фильтра"), 0, 2);
             numericLayout.Controls.Add(nudFilterLevel, 1, 2);
 
@@ -390,7 +390,7 @@ namespace MMMapEditor
             panel.Controls.Add(header);
 
             toolTip.SetToolTip(nudLeftMargin, "Смещение пикселей слева при рисовании объекта.");
-            toolTip.SetToolTip(nudRightMargin, "Смещение пикселей справа при рисовании объекта.");
+            toolTip.SetToolTip(nudUpMargin, "Смещение пикселей сверху при рисовании объекта.");
             toolTip.SetToolTip(nudFilterLevel, "Порог яркости для пиксельного фильтра объекта.");
 
             return panel;
@@ -609,7 +609,7 @@ namespace MMMapEditor
                 {
                     Tag = obj
                 };
-                item.SubItems.Add($"{obj.LeftMargin}/{obj.RightMargin}");
+                item.SubItems.Add($"{obj.LeftMargin}/{obj.UpMargin}");
                 item.SubItems.Add(obj.FilterLevel.ToString());
                 listViewObjects.Items.Add(item);
             }
@@ -668,7 +668,7 @@ namespace MMMapEditor
             isUpdatingControls = true;
             txtName.Enabled = enabled;
             nudLeftMargin.Enabled = enabled;
-            nudRightMargin.Enabled = enabled;
+            nudUpMargin.Enabled = enabled;
             nudFilterLevel.Enabled = enabled;
             btnChooseIcon.Enabled = enabled;
             btnClearIcon.Enabled = enabled;
@@ -678,7 +678,7 @@ namespace MMMapEditor
             {
                 txtName.Text = "";
                 nudLeftMargin.Value = 0;
-                nudRightMargin.Value = 0;
+                nudUpMargin.Value = 0;
                 nudFilterLevel.Value = 0;
                 picIcon.Image = null;
                 validationLabel.Text = "";
@@ -687,7 +687,7 @@ namespace MMMapEditor
             {
                 txtName.Text = obj.Name ?? "";
                 nudLeftMargin.Value = ClampToNumericRange(nudLeftMargin, obj.LeftMargin);
-                nudRightMargin.Value = ClampToNumericRange(nudRightMargin, obj.RightMargin);
+                nudUpMargin.Value = ClampToNumericRange(nudUpMargin, obj.UpMargin);
                 nudFilterLevel.Value = ClampToNumericRange(nudFilterLevel, obj.FilterLevel);
                 picIcon.Image = obj.Icon;
                 validationLabel.Text = "";
@@ -714,7 +714,7 @@ namespace MMMapEditor
 
             var item = listViewObjects.SelectedItems[0];
             item.Text = selectedObject.Name ?? "";
-            item.SubItems[1].Text = $"{selectedObject.LeftMargin}/{selectedObject.RightMargin}";
+            item.SubItems[1].Text = $"{selectedObject.LeftMargin}/{selectedObject.UpMargin}";
             item.SubItems[2].Text = selectedObject.FilterLevel.ToString();
         }
 
@@ -924,7 +924,7 @@ namespace MMMapEditor
             {
                 Name = CreateUniqueObjectName(),
                 LeftMargin = 7,
-                RightMargin = 7,
+                UpMargin = 7,
                 FilterLevel = 100
             };
 
@@ -1107,7 +1107,7 @@ namespace MMMapEditor
                 return;
 
             selectedObject.LeftMargin = (int)nudLeftMargin.Value;
-            selectedObject.RightMargin = (int)nudRightMargin.Value;
+            selectedObject.UpMargin = (int)nudUpMargin.Value;
             selectedObject.FilterLevel = (int)nudFilterLevel.Value;
             UpdateSelectedListItem();
             MarkUnsaved("Параметры изменены. Нажмите \"Применить и закрыть\", чтобы сохранить изменения.");
