@@ -62,6 +62,8 @@ namespace MMMapEditor
         private Button[,] gridButtons;
         private bool[,] highlightedCells; // Массив для подсветки
         private Pen highlightPen = new Pen(Color.White, 2); // Пен для выделения
+        private readonly Pen multiSelectionPen = new Pen(Color.Yellow, 3);
+        private readonly HashSet<Point> multiSelectedCells = new HashSet<Point>();
         private Label infoLabel; // Лейбл для отображения информации о выбранной клетке
         private List<string> options = new List<string>()
         {
@@ -141,10 +143,24 @@ namespace MMMapEditor
         private ToolStripMenuItem toolStripMenuItemManageObjects;
         private ToolStripMenuItem searchMenuItem;
         private ToolStripMenuItem onMapsSearchItem;
+        private ToolStripMenuItem editorMenuItem;
+        private ToolStripMenuItem undoEditorChangeItem;
+        private ToolStripMenuItem redoEditorChangeItem;
+        private ToolStripMenuItem multiSelectCellsItem;
+        private ToolStripMenuItem pointMultiSelectCellsItem;
+        private ToolStripMenuItem rangeMultiSelectCellsItem;
+        private bool isRangeMultiSelectionDragging;
+        private Point? rangeMultiSelectionAnchor;
+        private Control? rangeMultiSelectionCaptureControl;
         private ContextMenuStrip contextMenu;
         private CopiedCellInfo? copiedCellInfo; // Переменная для хранения временно скопированной ячейки
         private string lastSavedFilename; // Переменная для хранения пути к последней сохранённой карте
         private bool isMapModified = false; // Флаг отслеживает изменения на карте
+        private const int EditorHistoryLimit = 10;
+        private readonly List<EditorMapState> undoHistory = new List<EditorMapState>();
+        private readonly List<EditorMapState> redoHistory = new List<EditorMapState>();
+        private bool isApplyingEditorHistoryState;
+        private bool isRestoringCellSettings;
         private readonly Dictionary<string, JObject> _objectsData = new Dictionary<string, JObject>(); // Приватное поле для хранения данных объектов из JSON
         public string ActiveConfigObjectFile { get; set; }
         private LocalizedDirectionsForm localizedDirectionsForm; // Новые свойства для управления формой настроек
@@ -302,18 +318,20 @@ namespace MMMapEditor
                 return;
             }
 
-            bool changed = false;
-            foreach (Point position in centralOptions.Keys.ToList())
-            {
-                if (string.Equals(centralOptions[position], oldName, StringComparison.Ordinal))
-                {
-                    centralOptions[position] = newName;
-                    changed = true;
-                }
-            }
+            var positionsToReplace = centralOptions
+                .Where(entry => string.Equals(entry.Value, oldName, StringComparison.Ordinal))
+                .Select(entry => entry.Key)
+                .ToList();
 
-            if (!changed)
+            if (positionsToReplace.Count == 0)
                 return;
+
+            RecordEditorStateForUndo();
+
+            foreach (Point position in positionsToReplace)
+            {
+                centralOptions[position] = newName;
+            }
 
             if (selectedPosition.HasValue &&
                 centralOptions.TryGetValue(selectedPosition.Value, out var centralOption))
@@ -337,6 +355,415 @@ namespace MMMapEditor
         {
             InvalidateGridButtons();
             UpdatePreview();
+        }
+
+        private bool IsPointMultiCellSelectionEnabled =>
+            pointMultiSelectCellsItem != null && pointMultiSelectCellsItem.Checked;
+
+        private bool IsRangeMultiCellSelectionEnabled =>
+            rangeMultiSelectCellsItem != null && rangeMultiSelectCellsItem.Checked;
+
+        private bool IsMultiCellSelectionEnabled =>
+            IsPointMultiCellSelectionEnabled || IsRangeMultiCellSelectionEnabled;
+
+        private bool IsValidCellPosition(Point pos)
+        {
+            return pos.X >= 0 && pos.X < GridSize && pos.Y >= 0 && pos.Y < GridSize;
+        }
+
+        private void InvalidateCellButton(Point pos)
+        {
+            if (gridButtons == null || !IsValidCellPosition(pos))
+                return;
+
+            gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
+        }
+
+        private void UpdateSelectedCellInfoText(Point pos)
+        {
+            if (infoLabel == null)
+                return;
+
+            if (IsMultiCellSelectionEnabled && multiSelectedCells.Count > 0)
+            {
+                infoLabel.Text = $"Выделено клеток: {multiSelectedCells.Count}\nАктивная: X={pos.X}, Y={pos.Y}";
+                return;
+            }
+
+            infoLabel.Text = $"Выделен квадрат: X={pos.X}, Y={pos.Y}";
+        }
+
+        private Point GetFirstMultiSelectedCell()
+        {
+            return multiSelectedCells
+                .OrderBy(pos => pos.Y)
+                .ThenBy(pos => pos.X)
+                .First();
+        }
+
+        private bool ToggleMultiSelectedCell(Point pos)
+        {
+            bool isSelected;
+            if (multiSelectedCells.Contains(pos))
+            {
+                multiSelectedCells.Remove(pos);
+                isSelected = false;
+            }
+            else
+            {
+                multiSelectedCells.Add(pos);
+                isSelected = true;
+            }
+
+            InvalidateCellButton(pos);
+            return isSelected;
+        }
+
+        private void SetMultiSelectedRange(Point firstPos, Point secondPos)
+        {
+            int minX = Math.Min(firstPos.X, secondPos.X);
+            int maxX = Math.Max(firstPos.X, secondPos.X);
+            int minY = Math.Min(firstPos.Y, secondPos.Y);
+            int maxY = Math.Max(firstPos.Y, secondPos.Y);
+            HashSet<Point> newSelection = new HashSet<Point>();
+
+            for (int y = minY; y <= maxY; y++)
+            {
+                for (int x = minX; x <= maxX; x++)
+                    newSelection.Add(new Point(x, y));
+            }
+
+            ReplaceMultiSelectedCells(newSelection);
+        }
+
+        private void ReplaceMultiSelectedCells(HashSet<Point> newSelection)
+        {
+            List<Point> cellsToInvalidate = multiSelectedCells
+                .Concat(newSelection)
+                .Distinct()
+                .Where(pos => multiSelectedCells.Contains(pos) != newSelection.Contains(pos))
+                .ToList();
+
+            multiSelectedCells.Clear();
+
+            foreach (Point pos in newSelection)
+                multiSelectedCells.Add(pos);
+
+            foreach (Point pos in cellsToInvalidate)
+                InvalidateCellButton(pos);
+
+            if (selectedPosition.HasValue)
+                UpdateSelectedCellInfoText(selectedPosition.Value);
+        }
+
+        private void ClearMultiSelectedCells()
+        {
+            if (multiSelectedCells.Count == 0)
+                return;
+
+            List<Point> cellsToInvalidate = multiSelectedCells.ToList();
+            multiSelectedCells.Clear();
+
+            foreach (Point pos in cellsToInvalidate)
+                InvalidateCellButton(pos);
+
+            if (selectedPosition.HasValue)
+                UpdateSelectedCellInfoText(selectedPosition.Value);
+        }
+
+        private void SelectCell(Point pos, bool clearMultiSelection)
+        {
+            if (clearMultiSelection)
+                ClearMultiSelectedCells();
+
+            if (selectedPosition.HasValue)
+                InvalidateCellButton(selectedPosition.Value);
+
+            selectedPosition = pos;
+            InvalidateCellButton(pos);
+
+            UpdateSelectedCellInfoText(pos);
+            RestoreSettings(pos);
+        }
+
+        private List<Point> GetTargetPositionsForEdit()
+        {
+            if (IsMultiCellSelectionEnabled && multiSelectedCells.Count > 0)
+            {
+                return multiSelectedCells
+                    .OrderBy(pos => pos.Y)
+                    .ThenBy(pos => pos.X)
+                    .ToList();
+            }
+
+            return selectedPosition.HasValue
+                ? new List<Point> { selectedPosition.Value }
+                : new List<Point>();
+        }
+
+        private bool ApplyCellEditToTargets(Func<Point, bool> hasChanged, Action<Point> applyChange)
+        {
+            List<Point> changedPositions = GetTargetPositionsForEdit()
+                .Where(hasChanged)
+                .ToList();
+
+            if (changedPositions.Count == 0)
+                return false;
+
+            RecordEditorStateForUndo();
+
+            foreach (Point pos in changedPositions)
+            {
+                applyChange(pos);
+                InvalidateCellButton(pos);
+            }
+
+            UpdatePreview();
+            isMapModified = true;
+            return true;
+        }
+
+        private void RefreshSelectedCellImageBox()
+        {
+            if (cellImageBox == null)
+                return;
+
+            if (selectedPosition.HasValue &&
+                imagesPerCell.TryGetValue(selectedPosition.Value, out var image))
+            {
+                cellImageBox.Image = image;
+            }
+            else
+            {
+                cellImageBox.Image = null;
+            }
+
+            cellImageBox.Invalidate();
+        }
+
+        private void RecordEditorStateForUndo()
+        {
+            if (isApplyingEditorHistoryState)
+                return;
+
+            PushHistoryState(undoHistory, CaptureEditorMapState());
+            redoHistory.Clear();
+            UpdateEditorHistoryMenuItems();
+        }
+
+        private void ClearEditorHistory()
+        {
+            undoHistory.Clear();
+            redoHistory.Clear();
+            UpdateEditorHistoryMenuItems();
+        }
+
+        private void UndoEditorChange()
+        {
+            if (undoHistory.Count == 0)
+                return;
+
+            EditorMapState targetState = PopHistoryState(undoHistory);
+            PushHistoryState(redoHistory, CaptureEditorMapState());
+            ApplyEditorMapState(targetState);
+            isMapModified = true;
+            UpdateEditorHistoryMenuItems();
+        }
+
+        private void RedoEditorChange()
+        {
+            if (redoHistory.Count == 0)
+                return;
+
+            EditorMapState targetState = PopHistoryState(redoHistory);
+            PushHistoryState(undoHistory, CaptureEditorMapState());
+            ApplyEditorMapState(targetState);
+            isMapModified = true;
+            UpdateEditorHistoryMenuItems();
+        }
+
+        private void UndoEditorChangeItem_Click(object sender, EventArgs e)
+        {
+            UndoEditorChange();
+        }
+
+        private void RedoEditorChangeItem_Click(object sender, EventArgs e)
+        {
+            RedoEditorChange();
+        }
+
+        private void PointMultiSelectCellsItem_CheckedChanged(object sender, EventArgs e)
+        {
+            if (pointMultiSelectCellsItem.Checked && rangeMultiSelectCellsItem != null)
+                rangeMultiSelectCellsItem.Checked = false;
+
+            UpdateMultiCellSelectionMode();
+        }
+
+        private void RangeMultiSelectCellsItem_CheckedChanged(object sender, EventArgs e)
+        {
+            if (rangeMultiSelectCellsItem.Checked && pointMultiSelectCellsItem != null)
+                pointMultiSelectCellsItem.Checked = false;
+
+            UpdateMultiCellSelectionMode();
+        }
+
+        private void UpdateMultiCellSelectionMode()
+        {
+            if (!IsRangeMultiCellSelectionEnabled)
+                FinishRangeMultiSelectionDrag();
+
+            if (!IsMultiCellSelectionEnabled)
+                ClearMultiSelectedCells();
+
+            if (selectedPosition.HasValue)
+                UpdateSelectedCellInfoText(selectedPosition.Value);
+        }
+
+        private void FinishRangeMultiSelectionDrag()
+        {
+            isRangeMultiSelectionDragging = false;
+            rangeMultiSelectionAnchor = null;
+
+            if (rangeMultiSelectionCaptureControl != null)
+            {
+                rangeMultiSelectionCaptureControl.Capture = false;
+                rangeMultiSelectionCaptureControl = null;
+            }
+        }
+
+        private void UpdateEditorHistoryMenuItems()
+        {
+            if (undoEditorChangeItem != null)
+                undoEditorChangeItem.Enabled = undoHistory.Count > 0;
+
+            if (redoEditorChangeItem != null)
+                redoEditorChangeItem.Enabled = redoHistory.Count > 0;
+        }
+
+        private static void PushHistoryState(List<EditorMapState> history, EditorMapState state)
+        {
+            history.Add(state);
+
+            while (history.Count > EditorHistoryLimit)
+                history.RemoveAt(0);
+        }
+
+        private static EditorMapState PopHistoryState(List<EditorMapState> history)
+        {
+            int lastIndex = history.Count - 1;
+            EditorMapState state = history[lastIndex];
+            history.RemoveAt(lastIndex);
+            return state;
+        }
+
+        private EditorMapState CaptureEditorMapState()
+        {
+            return new EditorMapState
+            {
+                Borders = CloneDirectionsDictionary(borders),
+                Passages = CloneDirectionsDictionary(passageDict),
+                ClosedStates = CloneDirectionsDictionary(closedStates),
+                MessageStates = CloneDirectionsDictionary(messageStates),
+                CentralOptions = CloneValueDictionary(centralOptions),
+                NotesPerCell = CloneValueDictionary(notesPerCell),
+                NoteStyleSpansPerCell = CloneNoteStyleSpansDictionary(noteStyleSpansPerCell),
+                ImagesPerCell = CloneImageDictionary(imagesPerCell),
+                IsDangerStates = CloneValueDictionary(isDangerStates),
+                NoMagicStates = CloneValueDictionary(noMagicStates),
+                DarkeningLevels = CloneValueDictionary(darkeningLevels),
+                MapSector = mapSector,
+                Surface = surface,
+                MostDangerousCell = mostDangerousCell,
+                MostPeacefulCell = mostPeacefulCell
+            };
+        }
+
+        private void ApplyEditorMapState(EditorMapState state)
+        {
+            isApplyingEditorHistoryState = true;
+            try
+            {
+                borders = CloneDirectionsDictionary(state.Borders);
+                passageDict = CloneDirectionsDictionary(state.Passages);
+                closedStates = CloneDirectionsDictionary(state.ClosedStates);
+                messageStates = CloneDirectionsDictionary(state.MessageStates);
+                centralOptions = CloneValueDictionary(state.CentralOptions);
+                notesPerCell = CloneValueDictionary(state.NotesPerCell);
+                noteStyleSpansPerCell = CloneNoteStyleSpansDictionary(state.NoteStyleSpansPerCell);
+                imagesPerCell = CloneImageDictionary(state.ImagesPerCell);
+                isDangerStates = CloneValueDictionary(state.IsDangerStates);
+                noMagicStates = CloneValueDictionary(state.NoMagicStates);
+                darkeningLevels = CloneValueDictionary(state.DarkeningLevels);
+                mapSector = state.MapSector ?? "";
+                surface = state.Surface ?? "";
+                mostDangerousCell = state.MostDangerousCell;
+                mostPeacefulCell = state.MostPeacefulCell;
+
+                RefreshMapImages();
+
+                if (selectedPosition.HasValue)
+                    RestoreSettings(selectedPosition.Value);
+                else
+                    ResetForm();
+
+                UpdateWindowTitle();
+            }
+            finally
+            {
+                isApplyingEditorHistoryState = false;
+            }
+        }
+
+        private static Dictionary<Point, Directions<T>> CloneDirectionsDictionary<T>(Dictionary<Point, Directions<T>> source)
+        {
+            var clone = new Dictionary<Point, Directions<T>>(source.Count);
+            foreach (var entry in source)
+            {
+                clone[entry.Key] = entry.Value.Clone();
+            }
+            return clone;
+        }
+
+        private static Dictionary<Point, T> CloneValueDictionary<T>(Dictionary<Point, T> source)
+        {
+            var clone = new Dictionary<Point, T>(source.Count);
+            foreach (var entry in source)
+            {
+                clone[entry.Key] = entry.Value;
+            }
+            return clone;
+        }
+
+        private static Dictionary<Point, Image> CloneImageDictionary(Dictionary<Point, Image> source)
+        {
+            var clone = new Dictionary<Point, Image>(source.Count);
+            foreach (var entry in source)
+            {
+                clone[entry.Key] = entry.Value == null
+                    ? null
+                    : new Bitmap(entry.Value);
+            }
+            return clone;
+        }
+
+        private static Dictionary<Point, List<NoteInlineStyleSpan>> CloneNoteStyleSpansDictionary(
+            Dictionary<Point, List<NoteInlineStyleSpan>> source)
+        {
+            var clone = new Dictionary<Point, List<NoteInlineStyleSpan>>(source.Count);
+            foreach (var entry in source)
+            {
+                var spans = new List<NoteInlineStyleSpan>();
+                if (entry.Value != null)
+                {
+                    foreach (var span in entry.Value)
+                    {
+                        spans.Add(span.Clone());
+                    }
+                }
+                clone[entry.Key] = spans;
+            }
+            return clone;
         }
 
         // Метод для загрузки данных из JSON
@@ -515,27 +942,31 @@ namespace MMMapEditor
 
         private void PasteItem_Click(object sender, EventArgs e)
         {
-            if (copiedCellInfo.HasValue && selectedPosition.HasValue)
+            if (!copiedCellInfo.HasValue)
+                return;
+
+            CopiedCellInfo copiedCell = copiedCellInfo.Value;
+            bool applied = ApplyCellEditToTargets(
+                pos => true,
+                pos =>
+                {
+                    borders[pos] = copiedCell.Borders.Clone();
+                    passageDict[pos] = copiedCell.Passages.Clone();
+                    closedStates[pos] = copiedCell.ClosedStates.Clone();
+                    messageStates[pos] = copiedCell.Messages.Clone();
+                    centralOptions[pos] = copiedCell.CentralOption;
+                    isDangerStates[pos] = copiedCell.IsDanger;
+                    noMagicStates[pos] = copiedCell.NoMagic;
+                    darkeningLevels[pos] = copiedCell.DarkeningLevel;
+                    imagesPerCell[pos] = copiedCell.CellImage;
+                    notesPerCell[pos] = copiedCell.Notes;
+                    noteStyleSpansPerCell.Remove(pos);
+                });
+
+            if (applied && selectedPosition.HasValue)
             {
-                Point pos = selectedPosition.Value;
-
-                // Вставляем состояние из буфера в текущую ячейку
-                borders[pos] = copiedCellInfo.Value.Borders.Clone();
-                passageDict[pos] = copiedCellInfo.Value.Passages.Clone();
-                closedStates[pos] = copiedCellInfo.Value.ClosedStates.Clone();
-                messageStates[pos] = copiedCellInfo.Value.Messages.Clone();
-                centralOptions[pos] = copiedCellInfo.Value.CentralOption;
-                isDangerStates[pos] = copiedCellInfo.Value.IsDanger;
-                noMagicStates[pos] = copiedCellInfo.Value.NoMagic;
-                darkeningLevels[pos] = copiedCellInfo.Value.DarkeningLevel;
-                imagesPerCell[pos] = copiedCellInfo.Value.CellImage;
-                notesPerCell[pos] = copiedCellInfo.Value.Notes;
-
-                // Обновляем отображение
-                gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
-                UpdatePreview();
-                RestoreSettings(pos);
-                isMapModified = true;
+                RestoreSettings(selectedPosition.Value);
+                RefreshSelectedCellImageBox();
             }
         }
 
@@ -564,14 +995,14 @@ namespace MMMapEditor
 
         private void ResetItem_Click(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
+            bool applied = ApplyCellEditToTargets(
+                pos => true,
+                pos => InitializeCell(pos));
+
+            if (applied && selectedPosition.HasValue)
             {
-                Point pos = selectedPosition.Value;
-                InitializeCell(pos); // Инициализирует выбранную ячейку
-                gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
-                UpdatePreview();
-                RestoreSettings(pos);
-                isMapModified = true;
+                RestoreSettings(selectedPosition.Value);
+                RefreshSelectedCellImageBox();
             }
         }
 
@@ -636,6 +1067,7 @@ namespace MMMapEditor
             mostDangerousCell = null;
             mostPeacefulCell = null;
             copiedCellInfo = null;
+            ClearMultiSelectedCells();
             lastSavedFilename = "";
 
             InitializeAllCells();
@@ -644,6 +1076,7 @@ namespace MMMapEditor
 
             this.Text = "Редактор моей мечты";
             isMapModified = false;
+            ClearEditorHistory();
         }
 
         private void CreateGrid()
@@ -672,6 +1105,8 @@ namespace MMMapEditor
 
                     button.Paint += Button_Paint;
                     button.MouseDown += Button_MouseDown;
+                    button.MouseMove += Button_MouseMove;
+                    button.MouseUp += Button_MouseUp;
                     button.MouseEnter += Button_MouseEnter;
                     button.MouseLeave += Button_MouseLeave;
 
@@ -696,52 +1131,66 @@ namespace MMMapEditor
         // Обработчик изменения состояния чекбокса
         private void Checkbox_CheckedChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
+            if (isRestoringCellSettings)
+                return;
 
-                Directions<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
+            CheckBox checkbox = (CheckBox)sender;
+            bool checkedState = checkbox.Checked;
+
+            Directions<bool> BuildClosedStates(Point pos)
+            {
+                Directions<bool> newClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
                     ? prevClosed.Clone()
                     : DirectionUtilities.Filled(false);
 
-                Directions<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
+                if (checkbox == topCheck)
+                    newClosedStates.Top = checkedState;
+                else if (checkbox == bottomCheck)
+                    newClosedStates.Bottom = checkedState;
+                else if (checkbox == leftCheck)
+                    newClosedStates.Left = checkedState;
+                else if (checkbox == rightCheck)
+                    newClosedStates.Right = checkedState;
+
+                return newClosedStates;
+            }
+
+            Directions<bool> BuildMessageStates(Point pos)
+            {
+                Directions<bool> newMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
                     ? prevMsg.Clone()
                     : DirectionUtilities.Filled(false);
 
-                CheckBox checkbox = (CheckBox)sender;
-                bool checkedState = checkbox.Checked;
-
-                if (checkbox == topCheck)
-                    closedStates[pos].Top = checkedState;
-                else if (checkbox == bottomCheck)
-                    closedStates[pos].Bottom = checkedState;
-                else if (checkbox == leftCheck)
-                    closedStates[pos].Left = checkedState;
-                else if (checkbox == rightCheck)
-                    closedStates[pos].Right = checkedState;
-                else if (checkbox == topMessageCheck)
-                    messageStates[pos].Top = checkedState;
+                if (checkbox == topMessageCheck)
+                    newMessageStates.Top = checkedState;
                 else if (checkbox == bottomMessageCheck)
-                    messageStates[pos].Bottom = checkedState;
+                    newMessageStates.Bottom = checkedState;
                 else if (checkbox == leftMessageCheck)
-                    messageStates[pos].Left = checkedState;
+                    newMessageStates.Left = checkedState;
                 else if (checkbox == rightMessageCheck)
-                    messageStates[pos].Right = checkedState;
+                    newMessageStates.Right = checkedState;
 
-                Directions<bool> currentClosedStates = closedStates[pos];
-                Directions<bool> currentMessageStates = messageStates[pos];
-
-                bool hasChanged =
-                    !previousClosedStates.Equals(currentClosedStates) ||
-                    !previousMessageStates.Equals(currentMessageStates);
-
-                if (hasChanged)
-                {
-                    gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
-                    UpdatePreview();
-                    isMapModified = true;
-                }
+                return newMessageStates;
             }
+
+            ApplyCellEditToTargets(
+                pos =>
+                {
+                    Directions<bool> previousClosedStates = closedStates.TryGetValue(pos, out var prevClosed)
+                        ? prevClosed.Clone()
+                        : DirectionUtilities.Filled(false);
+                    Directions<bool> previousMessageStates = messageStates.TryGetValue(pos, out var prevMsg)
+                        ? prevMsg.Clone()
+                        : DirectionUtilities.Filled(false);
+
+                    return !previousClosedStates.Equals(BuildClosedStates(pos)) ||
+                        !previousMessageStates.Equals(BuildMessageStates(pos));
+                },
+                pos =>
+                {
+                    closedStates[pos] = BuildClosedStates(pos);
+                    messageStates[pos] = BuildMessageStates(pos);
+                });
         }
 
         private void CreateControls()
@@ -1145,6 +1594,33 @@ namespace MMMapEditor
             onMapsSearchItem.Click += OnMapsSearchItem_Click;
             searchMenuItem.DropDownItems.Add(onMapsSearchItem);
 
+            editorMenuItem = new ToolStripMenuItem("Редактор");
+            undoEditorChangeItem = new ToolStripMenuItem("Откатить последнее изменение");
+            undoEditorChangeItem.ShortcutKeys = Keys.Control | Keys.Z;
+            undoEditorChangeItem.Click += UndoEditorChangeItem_Click;
+
+            redoEditorChangeItem = new ToolStripMenuItem("Вернуть последнее изменение");
+            redoEditorChangeItem.ShortcutKeys = Keys.Control | Keys.Y;
+            redoEditorChangeItem.Click += RedoEditorChangeItem_Click;
+
+            multiSelectCellsItem = new ToolStripMenuItem("Мультивыделение клеток");
+            pointMultiSelectCellsItem = new ToolStripMenuItem("Точечное");
+            pointMultiSelectCellsItem.CheckOnClick = true;
+            pointMultiSelectCellsItem.CheckedChanged += PointMultiSelectCellsItem_CheckedChanged;
+
+            rangeMultiSelectCellsItem = new ToolStripMenuItem("Диапазон");
+            rangeMultiSelectCellsItem.CheckOnClick = true;
+            rangeMultiSelectCellsItem.CheckedChanged += RangeMultiSelectCellsItem_CheckedChanged;
+
+            multiSelectCellsItem.DropDownItems.Add(pointMultiSelectCellsItem);
+            multiSelectCellsItem.DropDownItems.Add(rangeMultiSelectCellsItem);
+
+            editorMenuItem.DropDownItems.Add(undoEditorChangeItem);
+            editorMenuItem.DropDownItems.Add(redoEditorChangeItem);
+            editorMenuItem.DropDownItems.Add(new ToolStripSeparator());
+            editorMenuItem.DropDownItems.Add(multiSelectCellsItem);
+            UpdateEditorHistoryMenuItems();
+
             //  menuStrip.Items.Insert(menuStrip.Items.IndexOf(settingMenuItem), searchMenuItem);
 
             settingMenuItem = new ToolStripMenuItem("Настройки");
@@ -1180,12 +1656,14 @@ namespace MMMapEditor
             // Добавляем панель на главную форму
             Controls.Add(rightPanel);
             menuStrip.Items.Add(fileMenuItem);
+            menuStrip.Items.Add(editorMenuItem);
             menuStrip.Items.Add(searchMenuItem);
             menuStrip.Items.Add(settingMenuItem);
 #if REGRESSION_TESTS
             testMenuItem.DropDownItems.Add(runAnalyzerTestsItem);
             menuStrip.Items.Add(testMenuItem);
 #endif
+            MainMenuStrip = menuStrip;
             Controls.Add(menuStrip);
         }
 
@@ -4422,6 +4900,13 @@ namespace MMMapEditor
             MetadataForm metadataForm = new MetadataForm(mapSector, surface);
             if (metadataForm.ShowDialog() == DialogResult.OK)
             {
+                if (mapSector != metadataForm.SelectedMapSector ||
+                    surface != metadataForm.SelectedSurface)
+                {
+                    RecordEditorStateForUndo();
+                    isMapModified = true;
+                }
+
                 mapSector = metadataForm.SelectedMapSector;
                 surface = metadataForm.SelectedSurface;
 
@@ -4431,22 +4916,26 @@ namespace MMMapEditor
 
         private void UpdateWindowTitle()
         {
+            string mapTitle = string.IsNullOrEmpty(lastSavedFilename)
+                ? "Редактор моей мечты"
+                : Path.GetFileNameWithoutExtension(lastSavedFilename);
+
             // Обновляем заголовок окна
             if (string.IsNullOrEmpty(mapSector) && string.IsNullOrEmpty(surface))
             {
-                this.Text = Path.GetFileNameWithoutExtension(lastSavedFilename);
+                this.Text = mapTitle;
             }
             else if (string.IsNullOrEmpty(mapSector))
             {
-                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - SURFACE: {surface}";
+                this.Text = $"{mapTitle} - SURFACE: {surface}";
             }
             else if (string.IsNullOrEmpty(surface))
             {
-                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}";
+                this.Text = $"{mapTitle} - MAP SECTOR: {mapSector}";
             }
             else
             {
-                this.Text = $"{Path.GetFileNameWithoutExtension(lastSavedFilename)} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
+                this.Text = $"{mapTitle} - MAP SECTOR: {mapSector}    SURFACE: {surface}";
             }
         }
 
@@ -4554,34 +5043,35 @@ namespace MMMapEditor
 
         private void DeleteImageButton_Click(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
-                Image previousImage = imagesPerCell.TryGetValue(pos, out var prev) ? prev : null;
+            List<Point> targetPositions = GetTargetPositionsForEdit();
+            if (targetPositions.Count == 0)
+                return;
 
-                if (imagesPerCell.TryGetValue(selectedPosition.Value, out var existingImage) && existingImage != null)
-                {
-                    // Выводим диалоговое окно с вопросом
-                    DialogResult result = MessageBox.Show("Вы действительно хотите удалить изображение?", "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                    if (result == DialogResult.Yes)
-                    {
-                        // Удаляем изображение из текущего положения
-                        imagesPerCell[pos] = null;
+            bool hasImages = targetPositions.Any(pos =>
+                imagesPerCell.TryGetValue(pos, out var existingImage) && existingImage != null);
 
-                        // Обновляем изображение в Preview-контроле
-                        cellImageBox.Image = null;
+            if (!hasImages)
+                return;
 
-                        // Принудительная перерисовка ячейки
-                        gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
+            string message = targetPositions.Count > 1
+                ? "Вы действительно хотите удалить изображения в выбранных клетках?"
+                : "Вы действительно хотите удалить изображение?";
 
-                        // Обновляем предварительный просмотр
-                        UpdatePreview();
+            DialogResult result = MessageBox.Show(
+                message,
+                "Подтверждение",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
 
-                        // Метка о внесении изменений в карту
-                        isMapModified = true;
-                    }
-                }
-            }
+            if (result != DialogResult.Yes)
+                return;
+
+            bool applied = ApplyCellEditToTargets(
+                pos => imagesPerCell.TryGetValue(pos, out var existingImage) && existingImage != null,
+                pos => imagesPerCell[pos] = null);
+
+            if (applied)
+                RefreshSelectedCellImageBox();
         }
 
         private void PopulateChangeToMapsSubmenu(ToolStripMenuItem parentMenu)
@@ -4748,6 +5238,7 @@ namespace MMMapEditor
             JArray cellsData = data.Cells;
 
             lastSavedFilename = filename; // Запоминаем путь к файлу
+            ClearMultiSelectedCells();
 
             // Восстанавливаем данные ячеек
             for (int i = 0; i < cellsData.Count; i++)
@@ -4820,6 +5311,7 @@ namespace MMMapEditor
 
             // Обновляем визуализацию формы
             RefreshMapImages();
+            ClearEditorHistory();
 
             // Показываем уведомление о выполнении загрузки
             //  MessageBox.Show("Карта успешно загружена", "Загрузка выполнена", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -4926,87 +5418,55 @@ namespace MMMapEditor
 
         private void IsDangerCheckBox_CheckedChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
-                bool previousDangerState = isDangerStates.TryGetValue(pos, out var prev) ? prev : false;
+            if (isRestoringCellSettings)
+                return;
 
-                isDangerStates[pos] = isDangerCheckBox.Checked;
-
-                // Проверка на изменение
-                bool hasChanged = previousDangerState != isDangerStates[pos];
-
-                if (hasChanged)
+            bool newDangerState = isDangerCheckBox.Checked;
+            ApplyCellEditToTargets(
+                pos =>
                 {
-
-                    gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
-
-                    UpdatePreview();
-                    isMapModified = true;
-                }
-            }
+                    bool previousDangerState = isDangerStates.TryGetValue(pos, out var prev) ? prev : false;
+                    return previousDangerState != newDangerState;
+                },
+                pos => isDangerStates[pos] = newDangerState);
         }
         private void NoMagicCheckBox_CheckedChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
-                bool previousNoMagicState = noMagicStates.TryGetValue(pos, out var prev) ? prev : false;
+            if (isRestoringCellSettings)
+                return;
 
-                noMagicStates[pos] = noMagicCheckBox.Checked;
-
-                // Проверка на изменение
-                bool hasChanged = previousNoMagicState != noMagicStates[pos];
-
-                if (hasChanged)
+            bool newNoMagicState = noMagicCheckBox.Checked;
+            ApplyCellEditToTargets(
+                pos =>
                 {
-                    gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
-
-                    UpdatePreview();
-
-                    isMapModified = true;
-                }
-            }
+                    bool previousNoMagicState = noMagicStates.TryGetValue(pos, out var prev) ? prev : false;
+                    return previousNoMagicState != newNoMagicState;
+                },
+                pos => noMagicStates[pos] = newNoMagicState);
         }
 
         private void DarkeningRadioButton_CheckedChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
-                Lighting previousDarkening = darkeningLevels.TryGetValue(pos, out var prev) ? prev : Lighting.Light;
+            if (isRestoringCellSettings)
+                return;
 
+            RadioButton rb = (RadioButton)sender;
+            if (!rb.Checked)
+                return;
 
-                RadioButton rb = (RadioButton)sender;
-                if (rb.Checked)
+            Lighting newDarkening = Lighting.Light;
+            if (rb == darkRadioButton)
+                newDarkening = Lighting.Dark;
+            else if (rb == darkeningRadioButton)
+                newDarkening = Lighting.Darkness;
+
+            ApplyCellEditToTargets(
+                pos =>
                 {
-                    // Обновляем затемнённость для выбранной ячейки
-                    if (rb == lightRadioButton)
-                    {
-                        ApplyDarkeningEffect(pos, Lighting.Light);
-                    }
-                    else if (rb == darkRadioButton)
-                    {
-                        ApplyDarkeningEffect(pos, Lighting.Dark);
-                    }
-                    else if (rb == darkeningRadioButton)
-                    {
-                        ApplyDarkeningEffect(pos, Lighting.Darkness);
-                    }
-
-                    // Проверка на изменение
-                    bool hasChanged = previousDarkening != darkeningLevels[pos];
-
-                    if (hasChanged)
-                    {
-                        // Обязательно заново перерисуем кнопку
-                        gridButtons[pos.X, GridSize - 1 - (pos.Y)].Invalidate();
-
-                        UpdatePreview();
-                        isMapModified = true;
-                    }
-                }
-            }
+                    Lighting previousDarkening = darkeningLevels.TryGetValue(pos, out var prev) ? prev : Lighting.Light;
+                    return previousDarkening != newDarkening;
+                },
+                pos => ApplyDarkeningEffect(pos, newDarkening));
         }
         private void ApplyDarkeningEffect(Point pos, Lighting level)
         {
@@ -5016,46 +5476,49 @@ namespace MMMapEditor
 
         private void BufferPasteImageButton_Click(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
+            if (!Clipboard.ContainsImage())
             {
-                Point pos = selectedPosition.Value;
-                Image previousImage = imagesPerCell.TryGetValue(pos, out var prev) ? prev : null;
-
-                if (Clipboard.ContainsImage())
-                {
-                    Image clipboardImage = Clipboard.GetImage();
-                    if (clipboardImage != null)
-                    {
-                        // Проверяем, есть ли уже изображение у выбранной ячейки
-                        if (imagesPerCell.TryGetValue(selectedPosition.Value, out var existingImage) && existingImage != null)
-                        {
-                            // Выводим диалоговое окно с вопросом
-                            DialogResult result = MessageBox.Show("Вы действительно хотите заменить изображение?", "Подтверждение", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                            if (result == DialogResult.Yes)
-                            {
-                                // Сохраняем новое изображение
-                                imagesPerCell[selectedPosition.Value] = clipboardImage;
-                                cellImageBox.Image = clipboardImage;
-                            }
-                        }
-                        else
-                        {
-                            // Если изображения нет, просто сохраняем новое
-                            imagesPerCell[selectedPosition.Value] = clipboardImage;
-                            cellImageBox.Image = clipboardImage;
-                        }
-                    }
-                    // Проверка на изменение
-                    bool hasChanged = previousImage != imagesPerCell[pos];
-
-                    if (hasChanged)
-                        isMapModified = true;
-                }
-                else
-                {
-                    MessageBox.Show("Буфер обмена пуст или не содержит изображения.");
-                }
+                MessageBox.Show("Буфер обмена пуст или не содержит изображения.");
+                return;
             }
+
+            Image clipboardImage = Clipboard.GetImage();
+            if (clipboardImage == null)
+                return;
+
+            List<Point> targetPositions = GetTargetPositionsForEdit();
+            if (targetPositions.Count == 0)
+                return;
+
+            bool hasExistingImage = targetPositions.Any(pos =>
+                imagesPerCell.TryGetValue(pos, out var existingImage) && existingImage != null);
+
+            if (hasExistingImage)
+            {
+                string message = targetPositions.Count > 1
+                    ? "Вы действительно хотите заменить изображение в выбранных клетках?"
+                    : "Вы действительно хотите заменить изображение?";
+
+                DialogResult result = MessageBox.Show(
+                    message,
+                    "Подтверждение",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                if (result != DialogResult.Yes)
+                    return;
+            }
+
+            bool applied = ApplyCellEditToTargets(
+                pos =>
+                {
+                    Image previousImage = imagesPerCell.TryGetValue(pos, out var prev) ? prev : null;
+                    return previousImage != clipboardImage;
+                },
+                pos => imagesPerCell[pos] = clipboardImage);
+
+            if (applied)
+                RefreshSelectedCellImageBox();
         }
 
         // Реализация метода для события Paint
@@ -5191,22 +5654,27 @@ namespace MMMapEditor
             if (!selectedPosition.HasValue)
                 return;
 
-            Point pos = selectedPosition.Value;
-
             using (var editorForm = new NotesEditorForm(this, notesTextBox))
             {
                 if (editorForm.ShowDialog(this) == DialogResult.OK)
                 {
                     string newNoteText = editorForm.EditedText;
-                    string previousNote = notesPerCell.TryGetValue(pos, out var prev) ? prev : "";
+                    bool applied = ApplyCellEditToTargets(
+                        pos =>
+                        {
+                            string previousNote = notesPerCell.TryGetValue(pos, out var prev) ? prev : "";
+                            return previousNote != newNoteText;
+                        },
+                        pos =>
+                        {
+                            notesPerCell[pos] = newNoteText;
+                            noteStyleSpansPerCell.Remove(pos);
+                        });
 
-                    if (previousNote != newNoteText)
+                    if (applied && selectedPosition.HasValue)
                     {
-                        notesPerCell[pos] = newNoteText;
-                        noteStyleSpansPerCell.Remove(pos);
-                        SetNotesTextProgrammatically(newNoteText);
+                        SetNotesTextProgrammatically(notesPerCell[selectedPosition.Value]);
                         UpdateNotesFormatting();
-                        isMapModified = true;
                     }
                 }
             }
@@ -5217,112 +5685,116 @@ namespace MMMapEditor
             if (isUpdatingNotesTextBoxProgrammatically)
                 return;
 
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
-                string previousNote = notesPerCell.TryGetValue(pos, out var prev) ? prev : "";
-
-                notesPerCell[pos] = notesTextBox.Text;
-
-                // Проверка на изменение
-                bool hasChanged = previousNote != notesPerCell[pos];
-
-                if (hasChanged)
+            string newNote = notesTextBox.Text;
+            ApplyCellEditToTargets(
+                pos =>
                 {
+                    string previousNote = notesPerCell.TryGetValue(pos, out var prev) ? prev : "";
+                    return previousNote != newNote;
+                },
+                pos =>
+                {
+                    notesPerCell[pos] = newNote;
                     noteStyleSpansPerCell.Remove(pos);
-                    isMapModified = true;
-                }
-            }
+                });
         }
 
         private void RestoreSettings(Point pos)
         {
-            // Проверяем, существует ли запись в словаре границ
-            if (borders.TryGetValue(pos, out var borderValues))
+            isRestoringCellSettings = true;
+            try
             {
-                // Устанавливаем значения комбинационных списков
-                topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Top);
-                bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Bottom);
-                leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Left);
-                rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Right);
-            }
-
-            // Проверяем, существует ли запись в словаре переходов
-            if (passageDict.TryGetValue(pos, out var passageValues))
-            {
-                // Устанавливаем значения комбинационных списков перехода
-                passTopComboBox.SelectedIndex = passageValues.Top;
-                passBottomComboBox.SelectedIndex = passageValues.Bottom;
-                passLeftComboBox.SelectedIndex = passageValues.Left;
-                passRightComboBox.SelectedIndex = passageValues.Right;
-            }
-
-            // Проверяем, существует ли запись в словаре закрытых состояний
-            if (closedStates.TryGetValue(pos, out var closedValues))
-            {
-                // Устанавливаем состояние чекбоксов закрытия
-                topCheck.Checked = closedValues.Top;
-                bottomCheck.Checked = closedValues.Bottom;
-                leftCheck.Checked = closedValues.Left;
-                rightCheck.Checked = closedValues.Right;
-            }
-
-            // Проверяем, существует ли запись в словаре сообщений
-            if (messageStates.TryGetValue(pos, out var messageValues))
-            {
-                // Устанавливаем состояние чекбоксов сообщений
-                topMessageCheck.Checked = messageValues.Top;
-                bottomMessageCheck.Checked = messageValues.Bottom;
-                leftMessageCheck.Checked = messageValues.Left;
-                rightMessageCheck.Checked = messageValues.Right;
-            }
-
-            //Считываем значение из тела ячейки
-            if (centralOptions.TryGetValue(pos, out var centralOption))
-            {
-                UpdateCenterComboBoxForCell(centralOption);
-            }
-
-            SetNotesTextProgrammatically(notesPerCell[pos]);
-            // Обновляем изображение в PictureBox
-            if (imagesPerCell.TryGetValue(pos, out var image))
-            {
-                cellImageBox.Image = image;
-            }
-            else
-            {
-                cellImageBox.Image = null;
-            }
-
-            if (isDangerStates.TryGetValue(pos, out var dangerState))
-            {
-                isDangerCheckBox.Checked = dangerState;
-            }
-
-            if (noMagicStates.TryGetValue(pos, out var noMagicState))
-            {
-                noMagicCheckBox.Checked = noMagicState;
-            }
-
-            // Восстановление состояния затемнённости
-            if (darkeningLevels.TryGetValue(pos, out var darkeningLevel))
-            {
-                switch (darkeningLevel)
+                // Проверяем, существует ли запись в словаре границ
+                if (borders.TryGetValue(pos, out var borderValues))
                 {
-                    case Lighting.Light:
-                        lightRadioButton.Checked = true;
-                        break;
-                    case Lighting.Dark:
-                        darkRadioButton.Checked = true;
-                        break;
-                    case Lighting.Darkness:
-                        darkeningRadioButton.Checked = true;
-                        break;
+                    // Устанавливаем значения комбинационных списков
+                    topComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Top);
+                    bottomComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Bottom);
+                    leftComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Left);
+                    rightComboBox.SelectedIndex = Array.IndexOf(options.ToArray(), borderValues.Right);
                 }
-            }
 
-            UpdatePreview(); // Обновляем предварительное изображение
-            UpdateNotesFormatting();
+                // Проверяем, существует ли запись в словаре переходов
+                if (passageDict.TryGetValue(pos, out var passageValues))
+                {
+                    // Устанавливаем значения комбинационных списков перехода
+                    passTopComboBox.SelectedIndex = passageValues.Top;
+                    passBottomComboBox.SelectedIndex = passageValues.Bottom;
+                    passLeftComboBox.SelectedIndex = passageValues.Left;
+                    passRightComboBox.SelectedIndex = passageValues.Right;
+                }
+
+                // Проверяем, существует ли запись в словаре закрытых состояний
+                if (closedStates.TryGetValue(pos, out var closedValues))
+                {
+                    // Устанавливаем состояние чекбоксов закрытия
+                    topCheck.Checked = closedValues.Top;
+                    bottomCheck.Checked = closedValues.Bottom;
+                    leftCheck.Checked = closedValues.Left;
+                    rightCheck.Checked = closedValues.Right;
+                }
+
+                // Проверяем, существует ли запись в словаре сообщений
+                if (messageStates.TryGetValue(pos, out var messageValues))
+                {
+                    // Устанавливаем состояние чекбоксов сообщений
+                    topMessageCheck.Checked = messageValues.Top;
+                    bottomMessageCheck.Checked = messageValues.Bottom;
+                    leftMessageCheck.Checked = messageValues.Left;
+                    rightMessageCheck.Checked = messageValues.Right;
+                }
+
+                //Считываем значение из тела ячейки
+                if (centralOptions.TryGetValue(pos, out var centralOption))
+                {
+                    UpdateCenterComboBoxForCell(centralOption);
+                }
+
+                SetNotesTextProgrammatically(notesPerCell[pos]);
+                // Обновляем изображение в PictureBox
+                if (imagesPerCell.TryGetValue(pos, out var image))
+                {
+                    cellImageBox.Image = image;
+                }
+                else
+                {
+                    cellImageBox.Image = null;
+                }
+
+                if (isDangerStates.TryGetValue(pos, out var dangerState))
+                {
+                    isDangerCheckBox.Checked = dangerState;
+                }
+
+                if (noMagicStates.TryGetValue(pos, out var noMagicState))
+                {
+                    noMagicCheckBox.Checked = noMagicState;
+                }
+
+                // Восстановление состояния затемнённости
+                if (darkeningLevels.TryGetValue(pos, out var darkeningLevel))
+                {
+                    switch (darkeningLevel)
+                    {
+                        case Lighting.Light:
+                            lightRadioButton.Checked = true;
+                            break;
+                        case Lighting.Dark:
+                            darkRadioButton.Checked = true;
+                            break;
+                        case Lighting.Darkness:
+                            darkeningRadioButton.Checked = true;
+                            break;
+                    }
+                }
+
+                UpdatePreview(); // Обновляем предварительное изображение
+                UpdateNotesFormatting();
+            }
+            finally
+            {
+                isRestoringCellSettings = false;
+            }
         }
 
         private Point ParseCurrentPosition()
@@ -5334,77 +5806,173 @@ namespace MMMapEditor
             return new Point(x, GridSize - 1 - y);
         }
 
+        private bool TryGetGridPositionFromScreenPoint(Point screenPoint, out Point pos)
+        {
+            pos = Point.Empty;
+
+            if (gridButtons == null || gridButtons[0, 0] == null || gridButtons[0, 0].Parent == null)
+                return false;
+
+            Point clientPoint = gridButtons[0, 0].Parent.PointToClient(screenPoint);
+            int gridPixelSize = GridSize * CellSize;
+
+            if (clientPoint.X < 0 ||
+                clientPoint.Y < 0 ||
+                clientPoint.X >= gridPixelSize ||
+                clientPoint.Y >= gridPixelSize)
+            {
+                return false;
+            }
+
+            int x = clientPoint.X / CellSize;
+            int y = GridSize - 1 - (clientPoint.Y / CellSize);
+            pos = new Point(x, y);
+            return IsValidCellPosition(pos);
+        }
+
+        private void BeginRangeMultiSelection(Point pos, Control captureControl)
+        {
+            FinishRangeMultiSelectionDrag();
+
+            isRangeMultiSelectionDragging = true;
+            rangeMultiSelectionAnchor = pos;
+            rangeMultiSelectionCaptureControl = captureControl;
+            rangeMultiSelectionCaptureControl.Capture = true;
+
+            SetMultiSelectedRange(pos, pos);
+            SelectCell(pos, clearMultiSelection: false);
+        }
+
+        private void ContinueRangeMultiSelectionDrag()
+        {
+            if (!isRangeMultiSelectionDragging || !IsRangeMultiCellSelectionEnabled)
+                return;
+
+            if ((Control.MouseButtons & MouseButtons.Left) != MouseButtons.Left)
+            {
+                FinishRangeMultiSelectionDrag();
+                return;
+            }
+
+            if (!rangeMultiSelectionAnchor.HasValue ||
+                !TryGetGridPositionFromScreenPoint(Control.MousePosition, out Point pos))
+            {
+                return;
+            }
+
+            SetMultiSelectedRange(rangeMultiSelectionAnchor.Value, pos);
+
+            if (!selectedPosition.HasValue || selectedPosition.Value != pos)
+                SelectCell(pos, clearMultiSelection: false);
+            else
+                UpdateSelectedCellInfoText(pos);
+        }
+
         private void Button_MouseDown(object sender, MouseEventArgs e)
         {
             Button button = (Button)sender;
             Point pos = GetPositionFromControl(button);
 
-            if (selectedPosition.HasValue)
+            if (e.Button == MouseButtons.Left)
             {
-                gridButtons[selectedPosition.Value.X, selectedPosition.Value.Y].Invalidate();
+                if (IsRangeMultiCellSelectionEnabled)
+                {
+                    BeginRangeMultiSelection(pos, button);
+                    return;
+                }
+
+                bool isControlPressed = (ModifierKeys & Keys.Control) == Keys.Control;
+                if (IsPointMultiCellSelectionEnabled && isControlPressed)
+                {
+                    bool isSelectedAfterToggle = ToggleMultiSelectedCell(pos);
+                    Point activePosition = isSelectedAfterToggle || multiSelectedCells.Count == 0
+                        ? pos
+                        : GetFirstMultiSelectedCell();
+
+                    SelectCell(activePosition, clearMultiSelection: false);
+                    return;
+                }
+
+                SelectCell(pos, clearMultiSelection: multiSelectedCells.Count > 0);
+                return;
             }
 
-            selectedPosition = pos;
-            button.Invalidate();
+            if (e.Button == MouseButtons.Right)
+            {
+                bool keepMultiSelection = IsMultiCellSelectionEnabled &&
+                    multiSelectedCells.Count > 0 &&
+                    multiSelectedCells.Contains(pos);
 
-            infoLabel.Text = $"Выделен квадрат: X={pos.X}, Y={pos.Y}";
-            RestoreSettings(pos);
-            UpdatePreview();
+                SelectCell(pos, clearMultiSelection: !keepMultiSelection);
+            }
         }
 
         private void WallComboBox_SelectionChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
+            ComboBox changedComboBox = (ComboBox)sender;
+            string newBorder = changedComboBox.SelectedItem?.ToString() ?? "";
+
+            Directions<string> BuildNewBorders(Point pos)
             {
-                Point pos = selectedPosition.Value;
-                Directions<string> previousBorders = borders.TryGetValue(pos, out var prev)
+                Directions<string> newBorders = borders.TryGetValue(pos, out var prev)
                     ? prev.Clone()
                     : DirectionUtilities.Filled("Пустота");
 
-                borders[pos] = new Directions<string>(
-                    topComboBox.SelectedItem?.ToString() ?? "",
-                    bottomComboBox.SelectedItem?.ToString() ?? "",
-                    leftComboBox.SelectedItem?.ToString() ?? "",
-                    rightComboBox.SelectedItem?.ToString() ?? ""
-                );
+                if (changedComboBox == topComboBox)
+                    newBorders.Top = newBorder;
+                else if (changedComboBox == bottomComboBox)
+                    newBorders.Bottom = newBorder;
+                else if (changedComboBox == leftComboBox)
+                    newBorders.Left = newBorder;
+                else if (changedComboBox == rightComboBox)
+                    newBorders.Right = newBorder;
 
-                bool hasChanged = !previousBorders.Equals(borders[pos]);
-
-                if (hasChanged)
-                {
-                    gridButtons[pos.X, GridSize - 1 - pos.Y].Invalidate();
-                    UpdatePreview();
-                    isMapModified = true;
-                }
+                return newBorders;
             }
+
+            ApplyCellEditToTargets(
+                pos =>
+                {
+                    Directions<string> previousBorders = borders.TryGetValue(pos, out var prev)
+                        ? prev.Clone()
+                        : DirectionUtilities.Filled("Пустота");
+                    return !previousBorders.Equals(BuildNewBorders(pos));
+                },
+                pos => borders[pos] = BuildNewBorders(pos));
         }
 
         private void PassageComboBox_SelectionChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue)
-            {
-                Point pos = selectedPosition.Value;
+            ComboBox changedComboBox = (ComboBox)sender;
+            int newPassage = changedComboBox.SelectedIndex;
 
-                Directions<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
+            Directions<int> BuildNewPassages(Point pos)
+            {
+                Directions<int> newPassages = passageDict.TryGetValue(pos, out var prev)
                     ? prev.Clone()
                     : DirectionUtilities.Filled(0);
 
-                passageDict[selectedPosition.Value] = new Directions<int>(
-                    passTopComboBox.SelectedIndex,
-                    passBottomComboBox.SelectedIndex,
-                    passLeftComboBox.SelectedIndex,
-                    passRightComboBox.SelectedIndex
-                );
+                if (changedComboBox == passTopComboBox)
+                    newPassages.Top = newPassage;
+                else if (changedComboBox == passBottomComboBox)
+                    newPassages.Bottom = newPassage;
+                else if (changedComboBox == passLeftComboBox)
+                    newPassages.Left = newPassage;
+                else if (changedComboBox == passRightComboBox)
+                    newPassages.Right = newPassage;
 
-                bool hasChanged = !previousPassages.Equals(passageDict[pos]);
-
-                if (hasChanged)
-                {
-                    gridButtons[selectedPosition.Value.X, GridSize - 1 - selectedPosition.Value.Y].Invalidate();
-                    UpdatePreview();
-                    isMapModified = true;
-                }
+                return newPassages;
             }
+
+            ApplyCellEditToTargets(
+                pos =>
+                {
+                    Directions<int> previousPassages = passageDict.TryGetValue(pos, out var prev)
+                        ? prev.Clone()
+                        : DirectionUtilities.Filled(0);
+                    return !previousPassages.Equals(BuildNewPassages(pos));
+                },
+                pos => passageDict[pos] = BuildNewPassages(pos));
         }
 
         private void Button_MouseEnter(object sender, EventArgs e)
@@ -5414,6 +5982,18 @@ namespace MMMapEditor
 
             highlightedCells[pos.X, pos.Y] = true;
             button.Invalidate();
+            ContinueRangeMultiSelectionDrag();
+        }
+
+        private void Button_MouseMove(object sender, MouseEventArgs e)
+        {
+            ContinueRangeMultiSelectionDrag();
+        }
+
+        private void Button_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+                FinishRangeMultiSelectionDrag();
         }
 
         private void Button_MouseLeave(object sender, EventArgs e)
@@ -5436,6 +6016,11 @@ namespace MMMapEditor
             if (highlightedCells[pos.X, pos.Y])
             {
                 e.Graphics.DrawRectangle(highlightPen, rect.X, rect.Y, rect.Width - 1, rect.Height - 1);
+            }
+
+            if (multiSelectedCells.Contains(pos))
+            {
+                e.Graphics.DrawRectangle(multiSelectionPen, rect.X + 1, rect.Y + 1, rect.Width - 3, rect.Height - 3);
             }
         }
 
@@ -7668,32 +8253,23 @@ namespace MMMapEditor
 
         private void CenterComboBox_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (selectedPosition.HasValue && centerComboBox.SelectedItem != null)
-            {
-                Point pos = selectedPosition.Value;
-                string previousCentralOption = centralOptions.TryGetValue(pos, out var prev) ? prev : "";
+            if (centerComboBox.SelectedItem == null)
+                return;
 
-                // Обновляем значение в словаре
-                centralOptions[pos] = centerComboBox.SelectedItem.ToString();
-                UpdateCenterComboBoxForCell(centralOptions[pos]);
-
-                // Проверка на изменение
-                bool hasChanged = previousCentralOption != centralOptions[pos];
-
-                if (hasChanged)
+            string newCentralOption = centerComboBox.SelectedItem.ToString() ?? "";
+            bool applied = ApplyCellEditToTargets(
+                pos =>
                 {
-                    // Получаем соответствующую кнопку по текущей позиции
-                    Button correspondingButton = gridButtons[pos.X, GridSize - 1 - (pos.Y)];
+                    string previousCentralOption = centralOptions.TryGetValue(pos, out var prev) ? prev : "";
+                    return previousCentralOption != newCentralOption;
+                },
+                pos => centralOptions[pos] = newCentralOption);
 
-                    // Инвалидация кнопки приведет к повторному вызову метода Paint
-                    correspondingButton.Invalidate();
-
-                    // Можно обновить UI или любые другие действия
-                    UpdatePreview(); // Обновляем предпросмотр, если нужно
-
-                    isMapModified = true;
-                }
-
+            if (applied &&
+                selectedPosition.HasValue &&
+                centralOptions.TryGetValue(selectedPosition.Value, out var centralOption))
+            {
+                UpdateCenterComboBoxForCell(centralOption);
             }
         }
 
@@ -8862,6 +9438,25 @@ namespace MMMapEditor
                 points[i] = new PointF(x, y);
             }
             return points;
+        }
+
+        private sealed class EditorMapState
+        {
+            public Dictionary<Point, Directions<string>> Borders { get; set; } = new Dictionary<Point, Directions<string>>();
+            public Dictionary<Point, Directions<int>> Passages { get; set; } = new Dictionary<Point, Directions<int>>();
+            public Dictionary<Point, Directions<bool>> ClosedStates { get; set; } = new Dictionary<Point, Directions<bool>>();
+            public Dictionary<Point, Directions<bool>> MessageStates { get; set; } = new Dictionary<Point, Directions<bool>>();
+            public Dictionary<Point, string> CentralOptions { get; set; } = new Dictionary<Point, string>();
+            public Dictionary<Point, string> NotesPerCell { get; set; } = new Dictionary<Point, string>();
+            public Dictionary<Point, List<NoteInlineStyleSpan>> NoteStyleSpansPerCell { get; set; } = new Dictionary<Point, List<NoteInlineStyleSpan>>();
+            public Dictionary<Point, Image> ImagesPerCell { get; set; } = new Dictionary<Point, Image>();
+            public Dictionary<Point, bool> IsDangerStates { get; set; } = new Dictionary<Point, bool>();
+            public Dictionary<Point, bool> NoMagicStates { get; set; } = new Dictionary<Point, bool>();
+            public Dictionary<Point, Lighting> DarkeningLevels { get; set; } = new Dictionary<Point, Lighting>();
+            public string MapSector { get; set; } = "";
+            public string Surface { get; set; } = "";
+            public Point? MostDangerousCell { get; set; }
+            public Point? MostPeacefulCell { get; set; }
         }
 
         // Временная структура для хранения состояния ячейки
