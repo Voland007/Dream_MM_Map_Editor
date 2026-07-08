@@ -1042,8 +1042,8 @@ namespace MMMapEditor
             {
                 Text = "Затемнённость",
                 ForeColor = Color.White,
-                Location = new Point(isDangerCheckBox.Right + 5, isDangerCheckBox.Top),
-                Width = 90,
+                Location = new Point(isDangerCheckBox.Right + 5, isDangerCheckBox.Top - 8),
+                Width = 115,
                 Height = 80
             };
 
@@ -4956,7 +4956,7 @@ namespace MMMapEditor
                 noMagicStates[pos] = noMagicCheckBox.Checked;
 
                 // Проверка на изменение
-                bool hasChanged = previousNoMagicState != isDangerStates[pos];
+                bool hasChanged = previousNoMagicState != noMagicStates[pos];
 
                 if (hasChanged)
                 {
