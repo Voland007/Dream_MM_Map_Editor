@@ -126,6 +126,7 @@ namespace MMMapEditor
         private bool isUpdatingNotesTextBoxProgrammatically;
         private PictureBox cellImageBox;
         private Button bufferPasteImageButton;
+        private Button concatenateImageButton;
         private Button deleteImageButton;
         private Dictionary<Point, Image> imagesPerCell = new Dictionary<Point, Image>();
         private CheckBox isDangerCheckBox, noMagicCheckBox;
@@ -1236,7 +1237,7 @@ namespace MMMapEditor
             bufferPasteImageButton = new Button
             {
                 // Text = "Вставить изображение",
-                Location = new Point(infoLabel.Left + 45, 400),
+                Location = new Point(infoLabel.Left + 14, 400),
                 Width = 50,
                 Height = 50,
                 Image = Properties.Resources.BufferPasterButtonIcon,
@@ -1246,10 +1247,22 @@ namespace MMMapEditor
 
             bufferPasteImageButton.Click += BufferPasteImageButton_Click;
 
+            concatenateImageButton = new Button
+            {
+                Location = new Point(bufferPasteImageButton.Right + 15, 400),
+                Width = 50,
+                Height = 50,
+                Image = Properties.Resources.ConcatenateImageButtonIcon,
+                ImageAlign = ContentAlignment.MiddleLeft,
+                AccessibleName = "Конкатенировать изображение"
+            };
+
+            concatenateImageButton.Click += ConcatenateImageButton_Click;
+
             deleteImageButton = new Button
             {
                 // Text = "Вставить изображение",
-                Location = new Point(bufferPasteImageButton.Right + 30, 400),
+                Location = new Point(concatenateImageButton.Right + 15, 400),
                 Width = 50,
                 Height = 50,
                 Image = Properties.Resources.TrashBasket,
@@ -1546,6 +1559,7 @@ namespace MMMapEditor
             rightPanel.Controls.Add(notesTextBox);
             rightPanel.Controls.Add(cellImageBox);
             rightPanel.Controls.Add(bufferPasteImageButton);
+            rightPanel.Controls.Add(concatenateImageButton);
             rightPanel.Controls.Add(deleteImageButton);
 
             // Создание меню
@@ -5519,6 +5533,86 @@ namespace MMMapEditor
 
             if (applied)
                 RefreshSelectedCellImageBox();
+        }
+
+        private void ConcatenateImageButton_Click(object sender, EventArgs e)
+        {
+            if (!Clipboard.ContainsImage())
+            {
+                MessageBox.Show("Буфер обмена пуст или не содержит изображения.");
+                return;
+            }
+
+            Image clipboardImage = Clipboard.GetImage();
+            if (clipboardImage == null)
+                return;
+
+            List<Point> targetPositions = GetTargetPositionsForEdit();
+            if (targetPositions.Count == 0)
+                return;
+
+            var concatenatedImages = new Dictionary<Point, Image>();
+            foreach (Point pos in targetPositions)
+            {
+                if (imagesPerCell.TryGetValue(pos, out var existingImage) && existingImage != null)
+                    concatenatedImages[pos] = ConcatenateImagesVertically(existingImage, clipboardImage);
+            }
+
+            if (concatenatedImages.Count == 0)
+            {
+                MessageBox.Show(
+                    targetPositions.Count > 1
+                        ? "В выбранных клетках нет изображений для конкатенации."
+                        : "В выбранной клетке нет изображения для конкатенации.");
+                return;
+            }
+
+            bool applied = ApplyCellEditToTargets(
+                pos => concatenatedImages.ContainsKey(pos),
+                pos => imagesPerCell[pos] = concatenatedImages[pos]);
+
+            if (applied)
+                RefreshSelectedCellImageBox();
+        }
+
+        private static Image ConcatenateImagesVertically(Image topImage, Image bottomImage)
+        {
+            int resultWidth = Math.Max(topImage.Width, bottomImage.Width);
+            int resultHeight = topImage.Height + bottomImage.Height;
+
+            Bitmap result = new Bitmap(resultWidth, resultHeight, PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(result))
+            using (SolidBrush topBackgroundBrush = new SolidBrush(GetImageBackgroundColor(topImage)))
+            using (SolidBrush bottomBackgroundBrush = new SolidBrush(GetImageBackgroundColor(bottomImage)))
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.FillRectangle(topBackgroundBrush, 0, 0, resultWidth, topImage.Height);
+                graphics.FillRectangle(bottomBackgroundBrush, 0, topImage.Height, resultWidth, bottomImage.Height);
+
+                graphics.DrawImage(
+                    topImage,
+                    new Rectangle(0, 0, topImage.Width, topImage.Height),
+                    new Rectangle(0, 0, topImage.Width, topImage.Height),
+                    GraphicsUnit.Pixel);
+                graphics.DrawImage(
+                    bottomImage,
+                    new Rectangle(0, topImage.Height, bottomImage.Width, bottomImage.Height),
+                    new Rectangle(0, 0, bottomImage.Width, bottomImage.Height),
+                    GraphicsUnit.Pixel);
+            }
+
+            return result;
+        }
+
+        private static Color GetImageBackgroundColor(Image image)
+        {
+            if (image is Bitmap bitmap && bitmap.Width > 0 && bitmap.Height > 0)
+                return bitmap.GetPixel(0, 0);
+
+            using (Bitmap bitmapCopy = new Bitmap(image))
+            {
+                return bitmapCopy.GetPixel(0, 0);
+            }
         }
 
         // Реализация метода для события Paint

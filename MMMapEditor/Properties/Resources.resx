@@ -121,6 +121,9 @@
   <data name="BufferPasterButtonIcon" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\BufferPasterButtonIcon1.bmp;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
+  <data name="ConcatenateImageButtonIcon" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\Resources\ConcatenateImageButtonIcon.bmp;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
   <data name="TrashBasket" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\TrashBasket3_1.bmp;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
